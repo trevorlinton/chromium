@@ -33,9 +33,11 @@ void UvNoOp(uv_async_t* handle, int status) {
 const CFTimeInterval kCFTimeIntervalMax =
     std::numeric_limits<CFTimeInterval>::max();
 
+#if !defined(OS_IOS)
 // Set to true if MessagePumpMac::Create() is called before NSApp is
 // initialized.  Only accessed from the main thread.
-bool not_using_crapp = false;
+bool g_not_using_cr_app = false;
+#endif
 
 }  // namespace
 
@@ -750,7 +752,7 @@ bool MessagePumpMac::UsingCrApp() {
   DCHECK(NSApp);
 
   // The pump was created using MessagePumpNSApplication.
-  if (not_using_crapp)
+  if (g_not_using_cr_app)
     return false;
 
   return [NSApp conformsToProtocol:@protocol(CrAppProtocol)];
@@ -781,7 +783,7 @@ MessagePump* MessagePumpMac::Create(bool forNode) {
     // NSApplication subclass should initialize appropriately before
     // creating an event loop.
     [NSApplication sharedApplication];
-    not_using_crapp = true;
+    g_not_using_cr_app = true;
     return new MessagePumpNSApplication(forNode);
 #endif
   }

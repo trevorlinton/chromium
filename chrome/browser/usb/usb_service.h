@@ -13,7 +13,7 @@
 #include "base/threading/platform_thread.h"
 #include "chrome/browser/profiles/profile_keyed_service.h"
 #include "chrome/browser/usb/usb_device.h"
-#include "third_party/libusb/libusb.h"
+#include "third_party/libusb/src/libusb/libusb.h"
 
 class UsbEventHandler;
 typedef libusb_context* PlatformUsbContext;
@@ -33,10 +33,11 @@ class UsbService : public ProfileKeyedService {
 
   // Find all of the devices attached to the system that are identified by
   // |vendor_id| and |product_id|, inserting them into |devices|. Clears
-  // |devices| before use.
+  // |devices| before use. Calls |callback| once |devices| is populated.
   void FindDevices(const uint16 vendor_id,
                    const uint16 product_id,
-                   std::vector<scoped_refptr<UsbDevice> >* devices);
+                   std::vector<scoped_refptr<UsbDevice> >* devices,
+                   const base::Callback<void()>& callback);
 
   // This function should not be called by normal code. It is invoked by a
   // UsbDevice's Close function and disposes of the associated platform handle.
@@ -73,6 +74,7 @@ class UsbService : public ProfileKeyedService {
   void FindDevicesImpl(const uint16 vendor_id,
                        const uint16 product_id,
                        std::vector<scoped_refptr<UsbDevice> >* devices,
+                       const base::Callback<void()>& callback,
                        bool success);
 
   // Populates |output| with the result of enumerating all attached USB devices.

@@ -33,16 +33,6 @@
 
 namespace aura {
 
-Window::TestApi::TestApi(Window* window) : window_(window) {}
-
-bool Window::TestApi::OwnsLayer() const {
-  return !!window_->layer_owner_.get();
-}
-
-bool Window::TestApi::ContainsMouse() {
-  return window_->ContainsMouse();
-}
-
 Window::Window(WindowDelegate* delegate)
     : type_(client::WINDOW_TYPE_UNKNOWN),
       owned_by_parent_(true),
@@ -118,6 +108,7 @@ Window::~Window() {
   DCHECK(transient_children_.empty());
 
   FOR_EACH_OBSERVER(WindowObserver, observers_, OnWindowDestroyed(this));
+  FOR_EACH_OBSERVER(WindowObserver, observers_, OnUnobservingWindow(this));
 
   // Clear properties.
   for (std::map<const void*, Value>::const_iterator iter = prop_map_.begin();
@@ -154,14 +145,22 @@ ui::Layer* Window::RecreateLayer() {
     return NULL;
 
   old_layer->set_delegate(NULL);
-  if (delegate_ && old_layer->external_texture())
+  scoped_refptr<ui::Texture> old_texture = old_layer->external_texture();
+  if (delegate_ && old_texture)
     old_layer->SetExternalTexture(delegate_->CopyTexture());
+
   layer_ = new ui::Layer(old_layer->type());
   layer_owner_.reset(layer_);
   layer_->SetVisible(old_layer->visible());
   layer_->set_scale_content(old_layer->scale_content());
   layer_->set_delegate(this);
   layer_->SetMasksToBounds(old_layer->GetMasksToBounds());
+  // Move the original texture to the new layer if the old layer has a
+  // texture and we could copy it into the old layer,
+  // crbug.com/175211.
+  if (delegate_ && old_texture)
+    layer_->SetExternalTexture(old_texture);
+
   UpdateLayerName(name_);
   layer_->SetFillsBoundsOpaquely(!transparent_);
   // Install new layer as a sibling of the old layer, stacked on top of it.
@@ -316,15 +315,11 @@ void Window::SchedulePaintInRect(const gfx::Rect& rect) {
 
 void Window::SetExternalTexture(ui::Texture* texture) {
   layer_->SetExternalTexture(texture);
-  gfx::Rect region(bounds().size());
-  FOR_EACH_OBSERVER(
-      WindowObserver, observers_, OnWindowPaintScheduled(this, region));
 }
 
 void Window::SetDefaultParentByRootWindow(RootWindow* root_window,
                                           const gfx::Rect& bounds_in_screen) {
-  // TODO(erg): Enable this DCHECK once it is safe.
-  //  DCHECK(root_window);
+  DCHECK(root_window);
 
   // Stacking clients are mandatory on RootWindow objects.
   client::StackingClient* client = client::GetStackingClient(root_window);
@@ -350,6 +345,13 @@ void Window::StackChildBelow(Window* child, Window* target) {
 }
 
 void Window::AddChild(Window* child) {
+  WindowObserver::HierarchyChangeParams params;
+  params.target = child;
+  params.new_parent = this;
+  params.old_parent = child->parent();
+  params.phase = WindowObserver::HierarchyChangeParams::HIERARCHY_CHANGING;
+  NotifyWindowHierarchyChange(params);
+
   RootWindow* old_root = child->GetRootWindow();
 
   DCHECK(std::find(children_.begin(), children_.end(), child) ==
@@ -371,6 +373,31 @@ void Window::AddChild(Window* child) {
     root_window->OnWindowAddedToRootWindow(child);
     child->NotifyAddedToRootWindow();
   }
+
+  params.phase = WindowObserver::HierarchyChangeParams::HIERARCHY_CHANGED;
+  NotifyWindowHierarchyChange(params);
+}
+
+void Window::RemoveChild(Window* child) {
+  WindowObserver::HierarchyChangeParams params;
+  params.target = child;
+  params.new_parent = NULL;
+  params.old_parent = this;
+  params.phase = WindowObserver::HierarchyChangeParams::HIERARCHY_CHANGING;
+  NotifyWindowHierarchyChange(params);
+
+  RemoveChildImpl(child, NULL);
+
+  params.phase = WindowObserver::HierarchyChangeParams::HIERARCHY_CHANGED;
+  NotifyWindowHierarchyChange(params);
+}
+
+bool Window::Contains(const Window* other) const {
+  for (const Window* parent = other; parent; parent = parent->parent_) {
+    if (parent == this)
+      return true;
+  }
+  return false;
 }
 
 void Window::AddTransientChild(Window* child) {
@@ -380,6 +407,8 @@ void Window::AddTransientChild(Window* child) {
                    child) == transient_children_.end());
   transient_children_.push_back(child);
   child->transient_parent_ = this;
+  FOR_EACH_OBSERVER(WindowObserver, observers_,
+                    OnAddTransientChild(this, child));
 }
 
 void Window::RemoveTransientChild(Window* child) {
@@ -389,18 +418,8 @@ void Window::RemoveTransientChild(Window* child) {
   transient_children_.erase(i);
   if (child->transient_parent_ == this)
     child->transient_parent_ = NULL;
-}
-
-void Window::RemoveChild(Window* child) {
-  RemoveChildImpl(child, NULL);
-}
-
-bool Window::Contains(const Window* other) const {
-  for (const Window* parent = other; parent; parent = parent->parent_) {
-    if (parent == this)
-      return true;
-  }
-  return false;
+  FOR_EACH_OBSERVER(WindowObserver, observers_,
+                    OnRemoveTransientChild(this, child));
 }
 
 Window* Window::GetChildById(int id) {
@@ -459,10 +478,12 @@ void Window::SetEventFilter(ui::EventHandler* event_filter) {
 }
 
 void Window::AddObserver(WindowObserver* observer) {
+  observer->OnObservingWindow(this);
   observers_.AddObserver(observer);
 }
 
 void Window::RemoveObserver(WindowObserver* observer) {
+  observer->OnUnobservingWindow(this);
   observers_.RemoveObserver(observer);
 }
 
@@ -525,13 +546,13 @@ Window* Window::GetToplevelWindow() {
 void Window::Focus() {
   client::FocusClient* client = client::GetFocusClient(this);
   DCHECK(client);
-  client->FocusWindow(this, NULL);
+  client->FocusWindow(this);
 }
 
 void Window::Blur() {
   client::FocusClient* client = client::GetFocusClient(this);
   DCHECK(client);
-  client->FocusWindow(NULL, NULL);
+  client->FocusWindow(NULL);
 }
 
 bool Window::HasFocus() const {
@@ -701,11 +722,12 @@ void Window::SetVisible(bool visible) {
   }
   visible_ = visible;
   SchedulePaint();
+  if (parent_ && parent_->layout_manager_.get())
+    parent_->layout_manager_->OnChildWindowVisibilityChanged(this, visible);
+
   if (delegate_)
     delegate_->OnWindowTargetVisibilityChanged(visible);
 
-  if (parent_ && parent_->layout_manager_.get())
-    parent_->layout_manager_->OnChildWindowVisibilityChanged(this, visible);
   FOR_EACH_OBSERVER(WindowObserver, observers_,
                     OnWindowVisibilityChanged(this, visible));
 
@@ -906,6 +928,59 @@ void Window::NotifyAddedToRootWindow() {
   for (Window::Windows::const_iterator it = children_.begin();
        it != children_.end(); ++it) {
     (*it)->NotifyAddedToRootWindow();
+  }
+}
+
+void Window::NotifyWindowHierarchyChange(
+    const WindowObserver::HierarchyChangeParams& params) {
+  params.target->NotifyWindowHierarchyChangeDown(params);
+  switch (params.phase) {
+  case WindowObserver::HierarchyChangeParams::HIERARCHY_CHANGING:
+    if (params.old_parent)
+      params.old_parent->NotifyWindowHierarchyChangeUp(params);
+    break;
+  case WindowObserver::HierarchyChangeParams::HIERARCHY_CHANGED:
+    if (params.new_parent)
+      params.new_parent->NotifyWindowHierarchyChangeUp(params);
+    break;
+  default:
+    NOTREACHED();
+    break;
+  }
+}
+
+void Window::NotifyWindowHierarchyChangeDown(
+    const WindowObserver::HierarchyChangeParams& params) {
+  NotifyWindowHierarchyChangeAtReceiver(params);
+  for (Window::Windows::const_iterator it = children_.begin();
+       it != children_.end(); ++it) {
+    (*it)->NotifyWindowHierarchyChangeDown(params);
+  }
+}
+
+void Window::NotifyWindowHierarchyChangeUp(
+    const WindowObserver::HierarchyChangeParams& params) {
+  for (Window* window = this; window; window = window->parent())
+    window->NotifyWindowHierarchyChangeAtReceiver(params);
+}
+
+void Window::NotifyWindowHierarchyChangeAtReceiver(
+    const WindowObserver::HierarchyChangeParams& params) {
+  WindowObserver::HierarchyChangeParams local_params = params;
+  local_params.receiver = this;
+
+  switch (params.phase) {
+  case WindowObserver::HierarchyChangeParams::HIERARCHY_CHANGING:
+    FOR_EACH_OBSERVER(WindowObserver, observers_,
+                      OnWindowHierarchyChanging(local_params));
+    break;
+  case WindowObserver::HierarchyChangeParams::HIERARCHY_CHANGED:
+    FOR_EACH_OBSERVER(WindowObserver, observers_,
+                      OnWindowHierarchyChanged(local_params));
+    break;
+  default:
+    NOTREACHED();
+    break;
   }
 }
 

@@ -6,10 +6,12 @@
 #include "cc/content_layer_client.h"
 #include "cc/picture.h"
 #include "cc/rendering_stats.h"
+#include "skia/ext/analysis_canvas.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkData.h"
 #include "third_party/skia/include/utils/SkPictureUtils.h"
 #include "ui/gfx/rect_conversions.h"
+#include "ui/gfx/skia_util.h"
 
 namespace {
 // URI label for a lazily decoded SkPixelRef.
@@ -37,28 +39,48 @@ Picture::Picture(const skia::RefPtr<SkPicture>& picture,
 Picture::~Picture() {
 }
 
-scoped_refptr<Picture> Picture::Clone() const {
-  // SkPicture is not thread-safe to rasterize with, so return a thread-safe
-  // clone of it.
+scoped_refptr<Picture> Picture::GetCloneForDrawingOnThread(
+    unsigned thread_index) const {
+  // SkPicture is not thread-safe to rasterize with, this returns a clone
+  // to rasterize with on a specific thread.
+  CHECK_GT(clones_.size(), thread_index);
+  return clones_[thread_index];
+}
+
+void Picture::CloneForDrawing(int num_threads) {
+  TRACE_EVENT1("cc", "Picture::CloneForDrawing", "num_threads", num_threads);
+
   DCHECK(picture_);
-  skia::RefPtr<SkPicture> clone = skia::AdoptRef(picture_->clone());
-  return make_scoped_refptr(new Picture(clone, layer_rect_, opaque_rect_));
+  scoped_array<SkPicture> clones(new SkPicture[num_threads]);
+  picture_->clone(&clones[0], num_threads);
+
+  clones_.clear();
+  for (int i = 0; i < num_threads; i++) {
+    scoped_refptr<Picture> clone = make_scoped_refptr(
+        new Picture(skia::AdoptRef(new SkPicture(clones[i])),
+                    layer_rect_,
+                    opaque_rect_));
+    clones_.push_back(clone);
+  }
 }
 
 void Picture::Record(ContentLayerClient* painter,
-                     RenderingStats& stats) {
-  TRACE_EVENT0("cc", "Picture::Record");
+                     RenderingStats* stats,
+                     const SkTileGridPicture::TileGridInfo& tileGridInfo) {
+  TRACE_EVENT2("cc", "Picture::Record",
+               "width", layer_rect_.width(), "height", layer_rect_.height());
 
   // Record() should only be called once.
   DCHECK(!picture_);
-  picture_ = skia::AdoptRef(new SkPicture);
+  DCHECK(!tileGridInfo.fTileInterval.isEmpty());
+  picture_ = skia::AdoptRef(new SkTileGridPicture(
+      layer_rect_.width(), layer_rect_.height(), tileGridInfo));
 
-  // TODO(enne): Use SkPicture::kOptimizeForClippedPlayback_RecordingFlag
-  // once http://code.google.com/p/skia/issues/detail?id=1014 is fixed.
   SkCanvas* canvas = picture_->beginRecording(
       layer_rect_.width(),
       layer_rect_.height(),
-      SkPicture::kUsePathBoundsForClip_RecordingFlag);
+      SkPicture::kUsePathBoundsForClip_RecordingFlag |
+      SkPicture::kOptimizeForClippedPlayback_RecordingFlag);
 
   canvas->save();
   canvas->translate(SkFloatToScalar(-layer_rect_.x()),
@@ -75,12 +97,15 @@ void Picture::Record(ContentLayerClient* painter,
   canvas->drawRect(layer_skrect, paint);
 
   gfx::RectF opaque_layer_rect;
-  base::TimeTicks beginPaintTime = base::TimeTicks::Now();
+  base::TimeTicks begin_paint_time;
+  if (stats)
+    begin_paint_time = base::TimeTicks::Now();
   painter->paintContents(canvas, layer_rect_, opaque_layer_rect);
-  double delta = (base::TimeTicks::Now() - beginPaintTime).InSecondsF();
-  stats.totalPaintTimeInSeconds += delta;
-  stats.totalPixelsPainted += layer_rect_.width() *
-                              layer_rect_.height();
+  if (stats) {
+    stats->totalPaintTime += base::TimeTicks::Now() - begin_paint_time;
+    stats->totalPixelsPainted +=
+        layer_rect_.width() * layer_rect_.height();
+  }
 
   canvas->restore();
   picture_->endRecording();
@@ -88,23 +113,44 @@ void Picture::Record(ContentLayerClient* painter,
   opaque_rect_ = gfx::ToEnclosedRect(opaque_layer_rect);
 }
 
-void Picture::Raster(SkCanvas* canvas) {
-  TRACE_EVENT0("cc", "Picture::Raster");
+void Picture::Raster(
+    SkCanvas* canvas,
+    gfx::Rect content_rect,
+    float contents_scale) {
+  TRACE_EVENT2("cc", "Picture::Raster",
+               "layer width", layer_rect_.width(),
+               "layer height", layer_rect_.height());
   DCHECK(picture_);
+
   canvas->save();
+  canvas->clipRect(gfx::RectToSkRect(content_rect));
+  canvas->scale(contents_scale, contents_scale);
   canvas->translate(layer_rect_.x(), layer_rect_.y());
   canvas->drawPicture(*picture_);
   canvas->restore();
 }
 
-void Picture::GatherPixelRefs(const gfx::Rect& rect,
-                              std::list<skia::LazyPixelRef*>& result) {
+bool Picture::IsCheapInRect(const gfx::Rect& layer_rect) const {
+  TRACE_EVENT0("cc", "Picture::IsCheapInRect");
+
+  SkBitmap emptyBitmap;
+  emptyBitmap.setConfig(SkBitmap::kNo_Config, layer_rect.width(),
+                        layer_rect.height());
+  skia::AnalysisDevice device(emptyBitmap);
+  skia::AnalysisCanvas canvas(&device);
+
+  canvas.drawPicture(*picture_);
+  return canvas.isCheap();
+}
+
+void Picture::GatherPixelRefs(const gfx::Rect& layer_rect,
+                              std::list<skia::LazyPixelRef*>& pixel_ref_list) {
   DCHECK(picture_);
   SkData* pixel_refs = SkPictureUtils::GatherPixelRefs(
-      picture_.get(), SkRect::MakeXYWH(rect.x(),
-                                       rect.y(),
-                                       rect.width(),
-                                       rect.height()));
+      picture_.get(), SkRect::MakeXYWH(layer_rect.x(),
+                                       layer_rect.y(),
+                                       layer_rect.width(),
+                                       layer_rect.height()));
   if (!pixel_refs)
     return;
 
@@ -118,7 +164,7 @@ void Picture::GatherPixelRefs(const gfx::Rect& rect,
   for (unsigned int i = 0; i < pixel_refs->size() / sizeof(SkPixelRef*); ++i) {
     if (*refs && (*refs)->getURI() && !strncmp(
         (*refs)->getURI(), labelLazyDecoded, 4)) {
-      result.push_back(static_cast<skia::LazyPixelRef*>(*refs));
+      pixel_ref_list.push_back(static_cast<skia::LazyPixelRef*>(*refs));
     }
     refs++;
   }

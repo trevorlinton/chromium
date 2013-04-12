@@ -4,54 +4,112 @@
 
 #include "chrome/test/chromedriver/commands.h"
 
-#include "base/bind.h"
 #include "base/callback.h"
 #include "base/file_util.h"
-#include "base/format_macros.h"
-#include "base/rand_util.h"
 #include "base/stringprintf.h"
+#include "base/sys_info.h"
 #include "base/values.h"
 #include "chrome/test/chromedriver/chrome.h"
-#include "chrome/test/chromedriver/chrome_launcher.h"
+#include "chrome/test/chromedriver/chrome_android_impl.h"
+#include "chrome/test/chromedriver/chrome_desktop_impl.h"
+#include "chrome/test/chromedriver/net/url_request_context_getter.h"
 #include "chrome/test/chromedriver/session.h"
+#include "chrome/test/chromedriver/session_map.h"
 #include "chrome/test/chromedriver/status.h"
+#include "chrome/test/chromedriver/util.h"
+#include "chrome/test/chromedriver/version.h"
+#include "chrome/test/chromedriver/web_view.h"
+
+Status ExecuteGetStatus(
+    const base::DictionaryValue& params,
+    const std::string& session_id,
+    scoped_ptr<base::Value>* out_value,
+    std::string* out_session_id) {
+  base::DictionaryValue build;
+  build.SetString("version", "alpha");
+
+  base::DictionaryValue os;
+  os.SetString("name", base::SysInfo::OperatingSystemName());
+  os.SetString("version", base::SysInfo::OperatingSystemVersion());
+  os.SetString("arch", base::SysInfo::OperatingSystemArchitecture());
+
+  base::DictionaryValue info;
+  info.Set("build", build.DeepCopy());
+  info.Set("os", os.DeepCopy());
+  out_value->reset(info.DeepCopy());
+  return Status(kOk);
+}
 
 Status ExecuteNewSession(
     SessionMap* session_map,
-    ChromeLauncher* launcher,
+    scoped_refptr<URLRequestContextGetter> context_getter,
+    const SyncWebSocketFactory& socket_factory,
     const base::DictionaryValue& params,
     const std::string& session_id,
     scoped_ptr<base::Value>* out_value,
     std::string* out_session_id) {
   scoped_ptr<Chrome> chrome;
-  FilePath::StringType path_str;
-  FilePath chrome_exe;
-  if (params.GetString("desiredCapabilities.chromeOptions.binary", &path_str)) {
-    chrome_exe = FilePath(path_str);
-    if (!file_util::PathExists(chrome_exe)) {
-      std::string message = base::StringPrintf(
-          "no chrome binary at %" PRFilePath,
-          path_str.c_str());
-      return Status(kUnknownError, message);
+  Status status(kOk);
+  int port = 33081;
+  std::string android_package;
+
+  if (params.GetString("desiredCapabilities.chromeOptions.android_package",
+                       &android_package)) {
+    scoped_ptr<ChromeAndroidImpl> chrome_android(new ChromeAndroidImpl(
+        context_getter, port, socket_factory));
+    status = chrome_android->Launch(android_package);
+    chrome.reset(chrome_android.release());
+  } else {
+    base::FilePath::StringType path_str;
+    base::FilePath chrome_exe;
+    if (params.GetString("desiredCapabilities.chromeOptions.binary",
+                         &path_str)) {
+      chrome_exe = base::FilePath(path_str);
+      if (!file_util::PathExists(chrome_exe)) {
+        std::string message = base::StringPrintf(
+            "no chrome binary at %" PRFilePath,
+            path_str.c_str());
+        return Status(kUnknownError, message);
+      }
     }
+
+    const base::Value* args = NULL;
+    const base::ListValue* args_list = NULL;
+    if (params.Get("desiredCapabilities.chromeOptions.args", &args) &&
+        !args->GetAsList(&args_list)) {
+        return Status(kUnknownError,
+                      "command line arguments for chrome must be a list");
+    }
+
+    scoped_ptr<ChromeDesktopImpl> chrome_desktop(new ChromeDesktopImpl(
+        context_getter, port, socket_factory));
+    status = chrome_desktop->Launch(chrome_exe, args_list);
+    chrome.reset(chrome_desktop.release());
   }
-  Status status = launcher->Launch(chrome_exe, &chrome);
   if (status.IsError())
     return Status(kSessionNotCreatedException, status.message());
 
-  uint64 msb = base::RandUint64();
-  uint64 lsb = base::RandUint64();
-  std::string new_id =
-      base::StringPrintf("%016" PRIx64 "%016" PRIx64, msb, lsb);
+  std::list<WebView*> web_views;
+  status = chrome->GetWebViews(&web_views);
+  if (status.IsError() || web_views.empty()) {
+    chrome->Quit();
+    return status.IsError() ? status :
+        Status(kUnknownError, "unable to discover open window in chrome");
+  }
+  WebView* default_web_view = web_views.front();
+
+  std::string new_id = session_id;
+  if (new_id.empty())
+    new_id = GenerateId();
   scoped_ptr<Session> session(new Session(new_id, chrome.Pass()));
+  session->window = default_web_view->GetId();
+  out_value->reset(session->capabilities->DeepCopy());
+  *out_session_id = new_id;
+
   scoped_refptr<SessionAccessor> accessor(
       new SessionAccessorImpl(session.Pass()));
   session_map->Set(new_id, accessor);
 
-  base::DictionaryValue* returned_value = new base::DictionaryValue();
-  returned_value->SetString("browserName", "chrome");
-  out_value->reset(returned_value);
-  *out_session_id = new_id;
   return Status(kOk);
 }
 
@@ -70,38 +128,4 @@ Status ExecuteQuitAll(
     quit_command.Run(params, session_ids[i], &unused_value, &unused_session_id);
   }
   return Status(kOk);
-}
-
-Status ExecuteQuit(
-    SessionMap* session_map,
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
-  CHECK(session_map->Remove(session->id));
-  return session->chrome->Quit();
-}
-
-Status ExecuteGet(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
-  std::string url;
-  if (!params.GetString("url", &url))
-    return Status(kUnknownError, "'url' must be a string");
-  return session->chrome->Load(url);
-}
-
-Status ExecuteExecuteScript(
-    Session* session,
-    const base::DictionaryValue& params,
-    scoped_ptr<base::Value>* value) {
-  std::string script;
-  if (!params.GetString("script", &script))
-    return Status(kUnknownError, "'script' must be a string");
-  const base::ListValue* args;
-  if (!params.GetList("args", &args))
-    return Status(kUnknownError, "'args' must be a list");
-
-  return session->chrome->CallFunction(
-      "function(){" + script + "}", *args, value);
 }

@@ -9,8 +9,9 @@
 #include <vector>
 
 #include "base/callback.h"
-#include "base/string16.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/scoped_vector.h"
+#include "base/string16.h"
 
 namespace device {
 
@@ -144,6 +145,10 @@ class BluetoothDevice {
     virtual void DismissDisplayOrConfirm() = 0;
   };
 
+  // Returns true if uuid is in a a valid canonical format
+  // (see utils::CanonicalUuid).
+  static bool IsUUIDValid(const std::string& uuid);
+
   virtual ~BluetoothDevice();
 
   // Returns the Bluetooth of address the device. This should be used as
@@ -178,6 +183,15 @@ class BluetoothDevice {
   // and at least one service available for use.
   virtual bool IsConnected() const;
 
+  // Indicates whether the bonded device accepts connections initiated from the
+  // adapter. This value is undefined for unbonded devices.
+  virtual bool IsConnectable() const;
+
+  // Indicates whether there is a call to Connect() ongoing. For this attribute,
+  // we consider a call is ongoing if none of the callbacks passed to Connect()
+  // were called after the corresponding call to Connect().
+  virtual bool IsConnecting() const;
+
   // Returns the services (as UUID strings) that this device provides.
   typedef std::vector<std::string> ServiceList;
   virtual const ServiceList& GetServices() const = 0;
@@ -198,9 +212,8 @@ class BluetoothDevice {
   virtual void GetServiceRecords(const ServiceRecordsCallback& callback,
                                  const ErrorCallback& error_callback) = 0;
 
-  // Indicates whether this device provides the given service.  |uuid| should
-  // be in canonical form (see utils::CanonicalUuid).
-  virtual bool ProvidesServiceWithUUID(const std::string& uuid) const = 0;
+  // Indicates whether this device provides the given service.
+  virtual bool ProvidesServiceWithUUID(const std::string& uuid) const;
 
   // The ProvidesServiceCallback is used by ProvidesServiceWithName to indicate
   // whether or not a matching service was found.
@@ -240,6 +253,9 @@ class BluetoothDevice {
   //
   // If the request fails, |error_callback| will be called; otherwise,
   // |callback| is called when the request is complete.
+  // After calling Connect, CancelPairing should be called to cancel the pairing
+  // process and release |pairing_delegate_| if user cancels the pairing and
+  // closes the pairing UI.
   virtual void Connect(PairingDelegate* pairing_delegate,
                        const base::Closure& callback,
                        const ConnectErrorCallback& error_callback) = 0;
@@ -264,7 +280,8 @@ class BluetoothDevice {
   // Rejects a pairing or connection request from a remote device.
   virtual void RejectPairing() = 0;
 
-  // Cancels a pairing or connection attempt to a remote device.
+  // Cancels a pairing or connection attempt to a remote device or release
+  // |pairing_deleage_| and |agent_|.
   virtual void CancelPairing() = 0;
 
   // Disconnects the device, terminating the low-level ACL connection
@@ -324,6 +341,16 @@ class BluetoothDevice {
   bool visible_;
   bool bonded_;
   bool connected_;
+
+  // Indicates whether the device normally accepts connections initiated from
+  // the adapter once paired.
+  bool connectable_;
+
+  // Indicated whether the device is in a connecting status.
+  bool connecting_;
+
+  // The services (identified by UUIDs) that this device provides.
+  ServiceList service_uuids_;
 
  private:
   // Returns a localized string containing the device's bluetooth address and

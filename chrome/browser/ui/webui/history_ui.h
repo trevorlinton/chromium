@@ -9,10 +9,10 @@
 
 #include "base/string16.h"
 #include "base/timer.h"
+#include "base/values.h"
 #include "chrome/browser/common/cancelable_request.h"
-#include "chrome/browser/history/history.h"
+#include "chrome/browser/history/history_service.h"
 #include "chrome/browser/history/web_history_service.h"
-#include "chrome/browser/ui/webui/chrome_url_data_manager.h"
 #include "chrome/common/cancelable_task_tracker.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_ui_controller.h"
@@ -32,8 +32,8 @@ class BrowsingHistoryHandler : public content::WebUIMessageHandler,
   // Handler for the "queryHistory" message.
   void HandleQueryHistory(const base::ListValue* args);
 
-  // Handler for the "removeURLsOnOneDay" message.
-  void HandleRemoveURLsOnOneDay(const base::ListValue* args);
+  // Handler for the "removeUrlsOnOneDay" message.
+  void HandleRemoveUrlsOnOneDay(const base::ListValue* args);
 
   // Handler for "clearBrowsingData" message.
   void HandleClearBrowsingData(const base::ListValue* args);
@@ -41,22 +41,59 @@ class BrowsingHistoryHandler : public content::WebUIMessageHandler,
   // Handler for "removeBookmark" message.
   void HandleRemoveBookmark(const base::ListValue* args);
 
+#if !defined(OS_ANDROID)
+  // Handler for "processManagedUrls".
+  void HandleProcessManagedUrls(const ListValue* args);
+#endif
+
+#if defined(ENABLE_MANAGED_USERS)
+  // Handler for the "setElevated" message.
+  void HandleSetElevated(const base::ListValue* args);
+
+  // Handler for the "managedUserGetElevated" message.
+  void HandleManagedUserGetElevated(const base::ListValue* args);
+
+  // Sets the managed user in elevated state if the authentication was
+  // successful.
+  void PassphraseDialogCallback(bool success);
+
+#endif
+
   // content::NotificationObserver implementation.
   virtual void Observe(int type,
                        const content::NotificationSource& source,
                        const content::NotificationDetails& details) OVERRIDE;
 
+  // Removes duplicate visits from the given list of query results, only
+  // retaining the most recent visit to a URL on a particular day. |results|
+  // must already be sorted by visit time, most recent first.
+  static void RemoveDuplicateResults(base::ListValue* results);
+
  private:
+  // The range for which to return results:
+  // - ALLTIME: allows access to all the results in a paginated way.
+  // - WEEK: the last 7 days.
+  // - MONTH: the last calendar month.
+  enum Range {
+    ALL_TIME = 0,
+    WEEK = 1,
+    MONTH = 2
+  };
+
   // Core implementation of history querying.
   void QueryHistory(string16 search_text, const history::QueryOptions& options);
 
   // Creates a history query result value.
-  DictionaryValue* CreateQueryResultValue(
-      const GURL& url, const string16 title, base::Time visit_time,
+  base::DictionaryValue* CreateQueryResultValue(
+      const GURL& url, const string16& title, base::Time visit_time,
       bool is_search_result, const string16& snippet);
 
-  // Helper to send the accumulated results of the query to the front end.
-  void ReturnResultsToFrontEnd();
+  // Sends the accumulated results of the query to the front end, truncating
+  // the number to |max_count| if necessary. If |max_count| is 0, the results
+  // are not truncated.
+  // If |remove_duplicates| is true, duplicate visits on the same day are
+  // removed.
+  void ReturnResultsToFrontEnd(bool remove_duplicates, int max_count);
 
   // Callback from |web_history_timer_| when a response from web history has
   // not been received in time.
@@ -72,19 +109,28 @@ class BrowsingHistoryHandler : public content::WebUIMessageHandler,
   void WebHistoryQueryComplete(const string16& search_text,
                                const history::QueryOptions& options,
                                history::WebHistoryService::Request* request,
-                               const DictionaryValue* results_value);
+                               const base::DictionaryValue* results_value);
 
   // Callback from the history system when visits were deleted.
   void RemoveComplete();
 
+  // Callback from history server when visits were deleted.
+  void RemoveWebHistoryComplete(history::WebHistoryService::Request* request,
+                                bool success);
+
   bool ExtractIntegerValueAtIndex(
       const base::ListValue* value, int index, int* out_int);
 
-  // Set the query options for a month-wide query, |depth| months ago.
-  void SetQueryDepthInMonths(history::QueryOptions& options, int depth);
+  // Set the query options for a week-wide query, |offset| weeks ago.
+  void SetQueryTimeInWeeks(int offset, history::QueryOptions* options);
 
-  // Set the query options for a day-wide query, |depth| days ago.
-  void SetQueryDepthInDays(history::QueryOptions& options, int depth);
+  // Sets the query options for a monthly query, |offset| months ago.
+  void SetQueryTimeInMonths(int offset, history::QueryOptions* options);
+
+#if defined(ENABLE_MANAGED_USERS)
+  // Updates the UI according to the elevation state of the managed user.
+  void ManagedUserSetElevated();
+#endif
 
   content::NotificationRegistrar registrar_;
 
@@ -95,6 +141,10 @@ class BrowsingHistoryHandler : public content::WebUIMessageHandler,
   // Deleting the request will cancel it.
   scoped_ptr<history::WebHistoryService::Request> web_history_request_;
 
+  // The currently-executing delete request for synced history.
+  // Deleting the request will cancel it.
+  scoped_ptr<history::WebHistoryService::Request> web_history_delete_request_;
+
   // Tracker for delete requests to the history service.
   CancelableTaskTracker delete_task_tracker_;
 
@@ -102,10 +152,10 @@ class BrowsingHistoryHandler : public content::WebUIMessageHandler,
   std::set<GURL> urls_to_be_deleted_;
 
   // The info value that is returned to the front end with the query results.
-  DictionaryValue results_info_value_;
+  base::DictionaryValue results_info_value_;
 
   // The list of query results that is returned to the front end.
-  ListValue results_value_;
+  base::ListValue results_value_;
 
   // Timer used to implement a timeout on a Web History response.
   base::OneShotTimer<BrowsingHistoryHandler> web_history_timer_;

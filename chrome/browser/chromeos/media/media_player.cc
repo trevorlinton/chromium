@@ -9,13 +9,15 @@
 #include "ash/shell.h"
 #include "base/bind.h"
 #include "chrome/browser/chromeos/extensions/file_manager_util.h"
+#include "chrome/browser/chromeos/extensions/media_player_api.h"
 #include "chrome/browser/chromeos/extensions/media_player_event_router.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_iterator.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "content/public/browser/browser_thread.h"
@@ -110,7 +112,11 @@ void MediaPlayer::SetPlaylistPosition(int position) {
 }
 
 void MediaPlayer::NotifyPlaylistChanged() {
-  ExtensionMediaPlayerEventRouter::GetInstance()->NotifyPlaylistChanged();
+  Browser* browser = GetBrowser();
+  if (browser) {
+    extensions::MediaPlayerAPI::Get(browser->profile())->
+        media_player_event_router()->NotifyPlaylistChanged();
+  }
 }
 
 void MediaPlayer::PopupMediaPlayer() {
@@ -132,7 +138,8 @@ void MediaPlayer::PopupMediaPlayer() {
                            kPopupHeight);
 
     Profile* profile = ProfileManager::GetDefaultProfileOrOffTheRecord();
-    Browser::CreateParams params(Browser::TYPE_POPUP, profile);
+    Browser::CreateParams params(Browser::TYPE_POPUP, profile,
+                                 chrome::HOST_DESKTOP_TYPE_ASH);
     params.app_name = kMediaPlayerAppName;
     params.initial_bounds = bounds;
     browser = new Browser(params);
@@ -148,9 +155,8 @@ GURL MediaPlayer::GetMediaPlayerUrl() {
 }
 
 Browser* MediaPlayer::GetBrowser() {
-  for (BrowserList::const_iterator browser_iterator = BrowserList::begin();
-       browser_iterator != BrowserList::end(); ++browser_iterator) {
-    Browser* browser = *browser_iterator;
+  for (chrome::BrowserIterator it; !it.done(); it.Next()) {
+    Browser* browser = *it;
     TabStripModel* tab_strip = browser->tab_strip_model();
     for (int idx = 0; idx < tab_strip->count(); idx++) {
       const GURL& url = tab_strip->GetWebContentsAt(idx)->GetURL();

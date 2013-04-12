@@ -16,3 +16,7 @@ ProfileSyncServiceSessionTest.ValidTabs
 
 # http://crbug.com/139652
 BackgroundApplicationListModelTest.RandomTest
+
+# http://crbug.com/179427
+ExtensionPrefsDelayedInstallInfo.DelayedInstallInfo
+ExtensionServiceTest.*

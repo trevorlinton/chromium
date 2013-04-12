@@ -8,38 +8,45 @@
 
 #include "base/command_line.h"
 #include "chrome/common/chrome_switches.h"
+#include "google_apis/gaia/gaia_urls.h"
 #include "googleurl/src/gurl.h"
+#include "net/base/url_util.h"
 
 namespace {
 
-const char kDefaultWalletServiceUrl[] = "https://wallet.google.com/online/v2/";
+const char kDefaultWalletServiceUrl[] = "https://wallet.google.com/";
 
-const char kDefaultWalletSecureServiceUrl[] =
-    "https://wallet.google.com/online-secure/temporarydata/cvv?s7e=cvv";
-
-GURL GetBaseWalletUrl() {
+GURL GetWalletHostUrl() {
   const CommandLine& command_line = *CommandLine::ForCurrentProcess();
-  std::string base_wallet_service_url =
+  std::string wallet_service_hostname =
       command_line.GetSwitchValueASCII(switches::kWalletServiceUrl);
-  return !base_wallet_service_url.empty() ? GURL(base_wallet_service_url) :
+  return !wallet_service_hostname.empty() ? GURL(wallet_service_hostname) :
                                             GURL(kDefaultWalletServiceUrl);
 }
 
+GURL GetBaseWalletUrl() {
+  return GetWalletHostUrl().Resolve("online/v2/");
+}
+
 GURL GetBaseAutocheckoutUrl() {
-  return GetBaseWalletUrl().Resolve("wallet/autocheckout/");
+  return GetBaseWalletUrl().Resolve("wallet/autocheckout/v1/");
+}
+
+GURL GetBaseSecureUrl() {
+  const CommandLine& command_line = *CommandLine::ForCurrentProcess();
+  std::string wallet_secure_url =
+      command_line.GetSwitchValueASCII(switches::kWalletSecureServiceUrl);
+  return !wallet_secure_url.empty() ? GURL(wallet_secure_url) :
+                                      GURL(kDefaultWalletServiceUrl);
 }
 
 }  // anonymous namespace
 
+namespace autofill {
 namespace wallet {
 
-// TODO(ahutter): This shouldn't live in this class. See
-// http://crbug.com/164281.
-const char kApiKey[] = "abcdefg";
-
 GURL GetGetWalletItemsUrl() {
-  return GetBaseWalletUrl().Resolve(
-      "wallet/autocheckout/getWalletItemsJwtless");
+  return GetBaseAutocheckoutUrl().Resolve("getWalletItemsJwtless");
 }
 
 GURL GetGetFullWalletUrl() {
@@ -47,7 +54,11 @@ GURL GetGetFullWalletUrl() {
 }
 
 GURL GetAcceptLegalDocumentsUrl() {
-  return GetBaseAutocheckoutUrl().Resolve("acceptLegalDocuments");
+  return GetBaseAutocheckoutUrl().Resolve("acceptLegalDocument");
+}
+
+GURL GetAuthenticateInstrumentUrl() {
+  return GetBaseAutocheckoutUrl().Resolve("authenticateInstrument");
 }
 
 GURL GetSendStatusUrl() {
@@ -62,12 +73,35 @@ GURL GetPassiveAuthUrl() {
   return GetBaseWalletUrl().Resolve("passiveauth");
 }
 
-GURL GetSecureUrl() {
-  const CommandLine& command_line = *CommandLine::ForCurrentProcess();
-  std::string wallet_secure_url =
-      command_line.GetSwitchValueASCII(switches::kWalletSecureServiceUrl);
-  return !wallet_secure_url.empty() ? GURL(wallet_secure_url) :
-                                      GURL(kDefaultWalletSecureServiceUrl);
+GURL GetEncryptionUrl() {
+  return GetWalletHostUrl().Resolve("online-secure/temporarydata/cvv?s7e=cvv");
+}
+
+GURL GetEscrowUrl() {
+  return GetBaseSecureUrl().Resolve("dehEfe?s7e=cardNumber%3Bcvv");
+}
+
+GURL GetSignInUrl() {
+  GURL url(GaiaUrls::GetInstance()->service_login_url());
+  url = net::AppendQueryParameter(url, "service", "sierra");
+  url = net::AppendQueryParameter(url, "btmpl", "popup");
+  url = net::AppendQueryParameter(url,
+                                  "continue",
+                                  GetSignInContinueUrl().spec());
+  return url;
+}
+
+// The continue url portion of the sign-in URL.
+GURL GetSignInContinueUrl() {
+  return GetPassiveAuthUrl();
+}
+
+bool IsSignInContinueUrl(const GURL& url) {
+  GURL final_url = wallet::GetSignInContinueUrl();
+  return url.SchemeIsSecure() &&
+         url.host() == final_url.host() &&
+         url.path() == final_url.path();
 }
 
 }  // namespace wallet
+}  // namespace autofill

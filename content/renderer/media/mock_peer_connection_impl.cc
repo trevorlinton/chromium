@@ -9,9 +9,11 @@
 
 #include "base/logging.h"
 
+using webrtc::AudioTrackInterface;
 using webrtc::CreateSessionDescriptionObserver;
+using webrtc::DtmfSenderInterface;
+using webrtc::DtmfSenderObserverInterface;
 using webrtc::IceCandidateInterface;
-using webrtc::LocalMediaStreamInterface;
 using webrtc::MediaConstraintsInterface;
 using webrtc::MediaStreamInterface;
 using webrtc::PeerConnectionInterface;
@@ -32,6 +34,26 @@ class MockStreamCollection : public webrtc::StreamCollectionInterface {
     for (size_t i = 0; i < streams_.size(); ++i) {
       if (streams_[i]->label() == label)
         return streams_[i];
+    }
+    return NULL;
+  }
+  virtual webrtc::MediaStreamTrackInterface* FindAudioTrack(
+      const std::string& id) OVERRIDE {
+    for (size_t i = 0; i < streams_.size(); ++i) {
+      webrtc::MediaStreamTrackInterface* track =
+          streams_.at(i)->FindAudioTrack(id);
+      if (track)
+        return track;
+    }
+    return NULL;
+  }
+  virtual webrtc::MediaStreamTrackInterface* FindVideoTrack(
+      const std::string& id) OVERRIDE {
+    for (size_t i = 0; i < streams_.size(); ++i) {
+      webrtc::MediaStreamTrackInterface* track =
+          streams_.at(i)->FindVideoTrack(id);
+      if (track)
+        return track;
     }
     return NULL;
   }
@@ -73,7 +95,7 @@ class MockDataChannel : public webrtc::DataChannelInterface {
   virtual void UnregisterObserver() OVERRIDE {
   }
 
-  virtual const std::string& label() const OVERRIDE {
+  virtual std::string label() const OVERRIDE {
     return label_;
   }
 
@@ -99,12 +121,56 @@ class MockDataChannel : public webrtc::DataChannelInterface {
   }
 
  protected:
-  ~MockDataChannel() {}
+  virtual ~MockDataChannel() {}
 
  private:
   std::string label_;
   bool reliable_;
   webrtc::DataChannelInterface::DataState state_;
+};
+
+class MockDtmfSender : public DtmfSenderInterface {
+ public:
+  explicit MockDtmfSender(AudioTrackInterface* track)
+      : track_(track),
+        observer_(NULL),
+        duration_(0),
+        inter_tone_gap_(0) {}
+  virtual void RegisterObserver(
+      DtmfSenderObserverInterface* observer) OVERRIDE {
+    observer_ = observer;
+  }
+  virtual void UnregisterObserver() OVERRIDE {
+    observer_ = NULL;
+  }
+  virtual bool CanInsertDtmf() OVERRIDE {
+    return true;
+  }
+  virtual bool InsertDtmf(const std::string& tones, int duration,
+                          int inter_tone_gap) OVERRIDE {
+    tones_ = tones;
+    duration_ = duration;
+    inter_tone_gap_ = inter_tone_gap;
+    return true;
+  }
+  virtual const AudioTrackInterface* track() const OVERRIDE {
+    return track_.get();
+  }
+  virtual std::string tones() const OVERRIDE {
+    return tones_;
+  }
+  virtual int duration() const OVERRIDE { return duration_; }
+  virtual int inter_tone_gap() const OVERRIDE { return inter_tone_gap_; }
+
+ protected:
+  virtual ~MockDtmfSender() {}
+
+ private:
+  talk_base::scoped_refptr<AudioTrackInterface> track_;
+  DtmfSenderObserverInterface* observer_;
+  std::string tones_;
+  int duration_;
+  int inter_tone_gap_;
 };
 
 const char MockPeerConnectionImpl::kDummyOffer[] = "dummy offer";
@@ -117,11 +183,7 @@ MockPeerConnectionImpl::MockPeerConnectionImpl(
       remote_streams_(new talk_base::RefCountedObject<MockStreamCollection>),
       hint_audio_(false),
       hint_video_(false),
-      action_(kAnswer),
-      ice_options_(kOnlyRelay),
-      sdp_mline_index_(-1),
-      ready_state_(kNew),
-      ice_state_(kIceNew) {
+      sdp_mline_index_(-1) {
 }
 
 MockPeerConnectionImpl::~MockPeerConnectionImpl() {}
@@ -152,19 +214,12 @@ void MockPeerConnectionImpl::RemoveStream(
   local_streams_->RemoveStream(local_stream);
 }
 
-
-bool MockPeerConnectionImpl::CanSendDtmf(
-    const webrtc::AudioTrackInterface* track) {
-  NOTIMPLEMENTED();
-  return false;
-}
-
-bool MockPeerConnectionImpl::SendDtmf(
-    const webrtc::AudioTrackInterface* send_track,
-    const std::string& tones, int duration,
-    const webrtc::AudioTrackInterface* play_track) {
-  NOTIMPLEMENTED();
-  return false;
+talk_base::scoped_refptr<DtmfSenderInterface>
+MockPeerConnectionImpl::CreateDtmfSender(AudioTrackInterface* track) {
+  if (!track) {
+    return NULL;
+  }
+  return new talk_base::RefCountedObject<MockDtmfSender>(track);
 }
 
 talk_base::scoped_refptr<webrtc::DataChannelInterface>
@@ -203,52 +258,6 @@ bool MockPeerConnectionImpl::GetStats(
   return true;
 }
 
-MockPeerConnectionImpl::ReadyState MockPeerConnectionImpl::ready_state() {
-  return ready_state_;
-}
-
-bool MockPeerConnectionImpl::StartIce(IceOptions options) {
-  ice_options_ = options;
-  return true;
-}
-
-webrtc::SessionDescriptionInterface* MockPeerConnectionImpl::CreateOffer(
-    const webrtc::MediaHints& hints) {
-  hint_audio_ = hints.has_audio();
-  hint_video_ = hints.has_video();
-  return dependency_factory_->CreateSessionDescription(kDummyOffer);
-}
-
-webrtc::SessionDescriptionInterface* MockPeerConnectionImpl::CreateAnswer(
-    const webrtc::MediaHints& hints,
-    const webrtc::SessionDescriptionInterface* offer) {
-  hint_audio_ = hints.has_audio();
-  hint_video_ = hints.has_video();
-  offer->ToString(&description_sdp_);
-  return dependency_factory_->CreateSessionDescription(description_sdp_);
-}
-
-bool MockPeerConnectionImpl::SetLocalDescription(
-    Action action,
-    webrtc::SessionDescriptionInterface* desc) {
-  action_ = action;
-  local_desc_.reset(desc);
-  return desc->ToString(&description_sdp_);
-}
-
-bool MockPeerConnectionImpl::SetRemoteDescription(
-    Action action,
-    webrtc::SessionDescriptionInterface* desc) {
-  action_ = action;
-  remote_desc_.reset(desc);
-  return desc->ToString(&description_sdp_);
-}
-
-bool MockPeerConnectionImpl::ProcessIceMessage(
-    const webrtc::IceCandidateInterface* ice_candidate) {
-  return AddIceCandidate(ice_candidate);
-}
-
 const webrtc::SessionDescriptionInterface*
 MockPeerConnectionImpl::local_description() const {
   return local_desc_.get();
@@ -268,7 +277,8 @@ void MockPeerConnectionImpl::CreateOffer(
     const MediaConstraintsInterface* constraints) {
   DCHECK(observer);
   created_sessiondescription_.reset(
-      dependency_factory_->CreateSessionDescription(kDummyOffer));
+      dependency_factory_->CreateSessionDescription("unknown", kDummyOffer,
+                                                    NULL));
 }
 
 void MockPeerConnectionImpl::CreateAnswer(
@@ -276,10 +286,11 @@ void MockPeerConnectionImpl::CreateAnswer(
     const MediaConstraintsInterface* constraints) {
   DCHECK(observer);
   created_sessiondescription_.reset(
-      dependency_factory_->CreateSessionDescription(kDummyAnswer));
+      dependency_factory_->CreateSessionDescription("unknown", kDummyAnswer,
+                                                    NULL));
 }
 
-void MockPeerConnectionImpl::SetLocalDescription(
+void MockPeerConnectionImpl::SetLocalDescriptionWorker(
     SetSessionDescriptionObserver* observer,
     SessionDescriptionInterface* desc) {
   desc->ToString(&description_sdp_);
@@ -304,10 +315,6 @@ bool MockPeerConnectionImpl::AddIceCandidate(
   sdp_mid_ = candidate->sdp_mid();
   sdp_mline_index_ = candidate->sdp_mline_index();
   return candidate->ToString(&ice_sdp_);
-}
-
-PeerConnectionInterface::IceState MockPeerConnectionImpl::ice_state() {
-  return ice_state_;
 }
 
 }  // namespace content

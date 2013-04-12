@@ -12,7 +12,7 @@
 #include "base/utf_string_conversions.h"
 #include "ppapi/shared_impl/api_id.h"
 #include "ppapi/shared_impl/id_assignment.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebString.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebConsoleMessage.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebDocument.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebElement.h"
@@ -48,7 +48,7 @@ void GetAllContainersForModule(PluginModule* module,
 WebConsoleMessage::Level LogLevelToWebLogLevel(PP_LogLevel level) {
   switch (level) {
     case PP_LOGLEVEL_TIP:
-      return WebConsoleMessage::LevelTip;
+      return WebConsoleMessage::LevelDebug;
     case PP_LOGLEVEL_LOG:
       return WebConsoleMessage::LevelLog;
     case PP_LOGLEVEL_WARNING:
@@ -79,8 +79,9 @@ HostGlobals::HostGlobals() : ::ppapi::PpapiGlobals() {
   host_globals_ = this;
 }
 
-HostGlobals::HostGlobals(::ppapi::PpapiGlobals::ForTest for_test)
-    : ::ppapi::PpapiGlobals(for_test) {
+HostGlobals::HostGlobals(
+    ::ppapi::PpapiGlobals::PerThreadForTest per_thread_for_test)
+    : ::ppapi::PpapiGlobals(per_thread_for_test) {
   DCHECK(!host_globals_);
 }
 

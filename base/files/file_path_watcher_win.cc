@@ -5,8 +5,8 @@
 #include "base/files/file_path_watcher.h"
 
 #include "base/bind.h"
-#include "base/file_path.h"
 #include "base/file_util.h"
+#include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop_proxy.h"
@@ -14,7 +14,6 @@
 #include "base/win/object_watcher.h"
 
 namespace base {
-namespace files {
 
 namespace {
 
@@ -23,14 +22,13 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate,
                             public MessageLoop::DestructionObserver {
  public:
   FilePathWatcherImpl()
-      : delegate_(NULL),
-        handle_(INVALID_HANDLE_VALUE),
+      : handle_(INVALID_HANDLE_VALUE),
         recursive_watch_(false) {}
 
   // FilePathWatcher::PlatformDelegate overrides.
   virtual bool Watch(const FilePath& path,
                      bool recursive,
-                     FilePathWatcher::Delegate* delegate) OVERRIDE;
+                     const FilePathWatcher::Callback& callback) OVERRIDE;
   virtual void Cancel() OVERRIDE;
 
   // Deletion of the FilePathWatcher will call Cancel() to dispose of this
@@ -61,10 +59,10 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate,
   // Cleans up and stops observing the |message_loop_| thread.
   void CancelOnMessageLoopThread() OVERRIDE;
 
-  // Delegate to notify upon changes.
-  scoped_refptr<FilePathWatcher::Delegate> delegate_;
+  // Callback to notify upon changes.
+  FilePathWatcher::Callback callback_;
 
-  // Path we're supposed to watch (passed to delegate).
+  // Path we're supposed to watch (passed to callback).
   FilePath target_;
 
   // Handle for FindFirstChangeNotification.
@@ -89,11 +87,11 @@ class FilePathWatcherImpl : public FilePathWatcher::PlatformDelegate,
 
 bool FilePathWatcherImpl::Watch(const FilePath& path,
                                 bool recursive,
-                                FilePathWatcher::Delegate* delegate) {
+                                const FilePathWatcher::Callback& callback) {
   DCHECK(target_.value().empty());  // Can only watch one path.
 
   set_message_loop(base::MessageLoopProxy::current());
-  delegate_ = delegate;
+  callback_ = callback;
   target_ = path;
   recursive_watch_ = recursive;
   MessageLoop::current()->AddDestructionObserver(this);
@@ -107,7 +105,7 @@ bool FilePathWatcherImpl::Watch(const FilePath& path,
 }
 
 void FilePathWatcherImpl::Cancel() {
-  if (!delegate_) {
+  if (callback_.is_null()) {
     // Watch was never called, or the |message_loop_| has already quit.
     set_cancelled();
     return;
@@ -129,9 +127,9 @@ void FilePathWatcherImpl::CancelOnMessageLoopThread() {
   if (handle_ != INVALID_HANDLE_VALUE)
     DestroyWatch();
 
-  if (delegate_) {
+  if (!callback_.is_null()) {
     MessageLoop::current()->RemoveDestructionObserver(this);
-    delegate_ = NULL;
+    callback_.Reset();
   }
 }
 
@@ -145,18 +143,18 @@ void FilePathWatcherImpl::OnObjectSignaled(HANDLE object) {
   scoped_refptr<FilePathWatcherImpl> keep_alive(this);
 
   if (!UpdateWatch()) {
-    delegate_->OnFilePathError(target_);
+    callback_.Run(target_, true /* error */);
     return;
   }
 
-  // Check whether the event applies to |target_| and notify the delegate.
+  // Check whether the event applies to |target_| and notify the callback.
   base::PlatformFileInfo file_info;
   bool file_exists = file_util::GetFileInfo(target_, &file_info);
   if (file_exists && (last_modified_.is_null() ||
       last_modified_ != file_info.last_modified)) {
     last_modified_ = file_info.last_modified;
     first_notification_ = base::Time::Now();
-    delegate_->OnFilePathChanged(target_);
+    callback_.Run(target_, false);
   } else if (file_exists && !first_notification_.is_null()) {
     // The target's last modification time is equal to what's on record. This
     // means that either an unrelated event occurred, or the target changed
@@ -177,10 +175,10 @@ void FilePathWatcherImpl::OnObjectSignaled(HANDLE object) {
       // Stop further notifications for this |last_modification_| time stamp.
       first_notification_ = base::Time();
     }
-    delegate_->OnFilePathChanged(target_);
+    callback_.Run(target_, false);
   } else if (!file_exists && !last_modified_.is_null()) {
     last_modified_ = base::Time();
-    delegate_->OnFilePathChanged(target_);
+    callback_.Run(target_, false);
   }
 
   // The watch may have been cancelled by the callback.
@@ -291,5 +289,4 @@ FilePathWatcher::FilePathWatcher() {
   impl_ = new FilePathWatcherImpl();
 }
 
-}  // namespace files
 }  // namespace base

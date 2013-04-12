@@ -7,6 +7,7 @@
 #include "base/logging.h"
 #include "base/message_loop.h"
 #include "chrome/browser/policy/cloud_policy_client.h"
+#include "chrome/browser/policy/cloud_policy_constants.h"
 #include "chrome/browser/policy/cloud_policy_refresh_scheduler.h"
 #include "chrome/browser/policy/device_local_account_policy_store.h"
 #include "chrome/browser/policy/device_management_service.h"
@@ -22,8 +23,9 @@ namespace policy {
 DeviceLocalAccountPolicyBroker::DeviceLocalAccountPolicyBroker(
     scoped_ptr<DeviceLocalAccountPolicyStore> store)
     : store_(store.Pass()),
-      core_(store_.get()) {
-}
+      core_(PolicyNamespaceKey(dm_protocol::kChromePublicAccountPolicyType,
+                               store_->account_id()),
+            store_.get()) {}
 
 DeviceLocalAccountPolicyBroker::~DeviceLocalAccountPolicyBroker() {}
 
@@ -165,12 +167,19 @@ void DeviceLocalAccountPolicyService::UpdateAccountList(
   RepeatedPtrField<em::DeviceLocalAccountInfoProto>::const_iterator entry;
   for (entry = accounts.begin(); entry != accounts.end(); ++entry) {
     if (entry->has_id()) {
-      // Reuse the existing broker if present.
-      DeviceLocalAccountPolicyBroker*& broker = policy_brokers_[entry->id()];
+      // Sanity check for whether this account ID has already been processed.
       DeviceLocalAccountPolicyBroker*& new_broker =
           new_policy_brokers[entry->id()];
-      new_broker = broker;
-      broker = NULL;
+      if (new_broker) {
+        LOG(WARNING) << "Duplicate public account " << entry->id();
+        continue;
+      }
+
+      // Reuse the existing broker if present.
+      DeviceLocalAccountPolicyBroker*& existing_broker =
+          policy_brokers_[entry->id()];
+      new_broker = existing_broker;
+      existing_broker = NULL;
 
       // Fire up the cloud connection for fetching policy for the account from
       // the cloud if this is an enterprise-managed device.
@@ -240,11 +249,9 @@ scoped_ptr<CloudPolicyClient>
   scoped_ptr<CloudPolicyClient> client(
       new CloudPolicyClient(std::string(), std::string(),
                             USER_AFFILIATION_MANAGED,
-                            CloudPolicyClient::POLICY_TYPE_PUBLIC_ACCOUNT,
                             NULL, device_management_service_));
   client->SetupRegistration(policy_data->request_token(),
                             policy_data->device_id());
-  client->set_entity_id(account_id);
   return client.Pass();
 }
 

@@ -4,6 +4,7 @@
 
 #include "cc/draw_quad.h"
 
+#include "base/bind.h"
 #include "cc/checkerboard_draw_quad.h"
 #include "cc/debug_border_draw_quad.h"
 #include "cc/io_surface_draw_quad.h"
@@ -25,20 +26,20 @@ namespace {
 
 TEST(DrawQuadTest, copySharedQuadState)
 {
-    gfx::Transform quadTransform = MathUtil::createGfxTransform(1, 0.5, 0, 1, 0.5, 0);
+    gfx::Transform quadTransform = gfx::Transform(1.0, 0.0, 0.5, 1.0, 0.5, 0.0);
+    gfx::Size contentBounds(26, 28);
     gfx::Rect visibleContentRect(10, 12, 14, 16);
-    gfx::Rect clippedRectInTarget(19, 21, 23, 25);
-    gfx::Rect clipRect = clippedRectInTarget;
+    gfx::Rect clipRect(19, 21, 23, 25);
     bool isClipped = true;
     float opacity = 0.25;
 
     scoped_ptr<SharedQuadState> state(SharedQuadState::Create());
-    state->SetAll(quadTransform, visibleContentRect, clippedRectInTarget, clipRect, isClipped, opacity);
+    state->SetAll(quadTransform, contentBounds, visibleContentRect, clipRect,
+                  isClipped, opacity);
 
     scoped_ptr<SharedQuadState> copy(state->Copy());
     EXPECT_EQ(quadTransform, copy->content_to_target_transform);
     EXPECT_RECT_EQ(visibleContentRect, copy->visible_content_rect);
-    EXPECT_RECT_EQ(clippedRectInTarget, copy->clipped_rect_in_target);
     EXPECT_EQ(opacity, copy->opacity);
     EXPECT_RECT_EQ(clipRect, copy->clip_rect);
     EXPECT_EQ(isClipped, copy->is_clipped);
@@ -46,15 +47,16 @@ TEST(DrawQuadTest, copySharedQuadState)
 
 scoped_ptr<SharedQuadState> createSharedQuadState()
 {
-    gfx::Transform quadTransform = MathUtil::createGfxTransform(1, 0.5, 0, 1, 0.5, 0);
+    gfx::Transform quadTransform = gfx::Transform(1.0, 0.0, 0.5, 1.0, 0.5, 0.0);
+    gfx::Size contentBounds(26, 28);
     gfx::Rect visibleContentRect(10, 12, 14, 16);
-    gfx::Rect clippedRectInTarget(19, 21, 23, 25);
-    gfx::Rect clipRect = clippedRectInTarget;
+    gfx::Rect clipRect(19, 21, 23, 25);
     bool isClipped = false;
     float opacity = 1;
 
     scoped_ptr<SharedQuadState> state(SharedQuadState::Create());
-    state->SetAll(quadTransform, visibleContentRect, clippedRectInTarget, clipRect, isClipped, opacity);
+    state->SetAll(quadTransform, contentBounds, visibleContentRect, clipRect,
+                  isClipped, opacity);
     return state.Pass();
 }
 
@@ -342,7 +344,7 @@ TEST(DrawQuadTest, copyStreamVideoDrawQuad)
 {
     gfx::Rect opaqueRect(3, 7, 10, 12);
     unsigned textureId = 64;
-    gfx::Transform matrix = MathUtil::createGfxTransform(0.5, 1, 0.25, 0.75, 0, 1);
+    gfx::Transform matrix = gfx::Transform(0.5, 0.25, 1, 0.75, 0, 1);
     CREATE_SHARED_STATE();
 
     CREATE_QUAD_3_NEW(StreamVideoDrawQuad, opaqueRect, textureId, matrix);
@@ -362,27 +364,98 @@ TEST(DrawQuadTest, copyTextureDrawQuad)
     gfx::Rect opaqueRect(3, 7, 10, 12);
     unsigned resourceId = 82;
     bool premultipliedAlpha = true;
-    gfx::RectF uvRect(0.5, 224, -51, 36);
+    gfx::PointF uvTopLeft(0.5f, 224.f);
+    gfx::PointF uvBottomRight(51.5f, 260.f);
     const float vertex_opacity[] = {1.0f, 1.0f, 1.0f, 1.0f};
     bool flipped = true;
     CREATE_SHARED_STATE();
 
-    CREATE_QUAD_6_NEW(TextureDrawQuad, opaqueRect, resourceId, premultipliedAlpha, uvRect, vertex_opacity, flipped);
+    CREATE_QUAD_7_NEW(TextureDrawQuad, opaqueRect, resourceId, premultipliedAlpha, uvTopLeft, uvBottomRight, vertex_opacity, flipped);
     EXPECT_EQ(DrawQuad::TEXTURE_CONTENT, copyQuad->material);
     EXPECT_RECT_EQ(opaqueRect, copyQuad->opaque_rect);
     EXPECT_EQ(resourceId, copyQuad->resource_id);
     EXPECT_EQ(premultipliedAlpha, copyQuad->premultiplied_alpha);
-    EXPECT_FLOAT_RECT_EQ(uvRect, copyQuad->uv_rect);
+    EXPECT_EQ(uvTopLeft, copyQuad->uv_top_left);
+    EXPECT_EQ(uvBottomRight, copyQuad->uv_bottom_right);
     EXPECT_FLOAT_ARRAY_EQ(vertex_opacity, copyQuad->vertex_opacity, 4);
     EXPECT_EQ(flipped, copyQuad->flipped);
 
-    CREATE_QUAD_5_ALL(TextureDrawQuad, resourceId, premultipliedAlpha, uvRect, vertex_opacity, flipped);
+    CREATE_QUAD_6_ALL(TextureDrawQuad, resourceId, premultipliedAlpha, uvTopLeft, uvBottomRight, vertex_opacity, flipped);
     EXPECT_EQ(DrawQuad::TEXTURE_CONTENT, copyQuad->material);
     EXPECT_EQ(resourceId, copyQuad->resource_id);
     EXPECT_EQ(premultipliedAlpha, copyQuad->premultiplied_alpha);
-    EXPECT_FLOAT_RECT_EQ(uvRect, copyQuad->uv_rect);
+    EXPECT_EQ(uvTopLeft, copyQuad->uv_top_left);
+    EXPECT_EQ(uvBottomRight, copyQuad->uv_bottom_right);
     EXPECT_FLOAT_ARRAY_EQ(vertex_opacity, copyQuad->vertex_opacity, 4);
     EXPECT_EQ(flipped, copyQuad->flipped);
+}
+
+TEST(DrawQuadTest, clipTextureDrawQuad)
+{
+    gfx::Rect opaqueRect(3, 7, 10, 12);
+    unsigned resourceId = 82;
+    bool premultipliedAlpha = true;
+    bool flipped = true;
+    CREATE_SHARED_STATE();
+    // The original quad position is (30, 40) its size is 50*60.
+    sharedState->content_to_target_transform = gfx::Transform(1.f, 0.f, 0.f, 1.f, 10.f, 20.f);
+    // After transformation, the quad position is (40, 60) its size is 50*60.
+    sharedState->clip_rect = gfx::Rect(50, 70, 30, 20);
+
+    // The original quad is 'ABCD', the clipped quad is 'abcd':
+    //40 50       90
+    // B--:-------C 60
+    // |  b----c -|-70
+    // |  |    |  |
+    // |  a----d -|-90
+    // |          |
+    // A----------D 120
+    // UV and vertex opacity are stored per vertex on the parent rectangle 'ABCD'.
+
+    // This is the UV value for vertex 'B'.
+    gfx::PointF uvTopLeft(0.1f, 0.2f);
+    // This is the UV value for vertex 'D'.
+    gfx::PointF uvBottomRight(0.9f, 0.8f);
+    // This the vertex opacity for the vertices 'ABCD'.
+    const float vertexOpacity[] = {0.3f, 0.4f, 0.7f, 0.8f};
+
+    {
+      CREATE_QUAD_7_NEW(TextureDrawQuad, opaqueRect, resourceId, premultipliedAlpha, uvTopLeft, uvBottomRight, vertexOpacity, flipped);
+      CREATE_QUAD_6_ALL(TextureDrawQuad, resourceId, premultipliedAlpha, uvTopLeft, uvBottomRight, vertexOpacity, flipped);
+      EXPECT_TRUE(quadAll->PerformClipping());
+
+      // This is the expected UV value for vertex 'b'.
+      // uv(b) = uv(B) + (Bb / BD) * (uv(D) - uv(B))
+      // 0.3 = 0.2 + (10 / 60) * (0.8 - 0.2)
+      gfx::PointF uvTopLeftClipped(0.26f, 0.3f);
+      // This is the expected UV value for vertex 'd'.
+      // uv(d) = uv(B) + (Bd / BD) * (uv(D) - uv(B))
+      gfx::PointF uvBottomRightClipped(0.74f, 0.5f);
+      // This the expected vertex opacity for the vertices 'abcd'.
+      // They are computed with a bilinear interpolation of the corner values.
+      const float vertexOpacityClipped[] = {0.43f, 0.45f, 0.65f, 0.67f};
+
+      EXPECT_EQ(uvTopLeftClipped, quadAll->uv_top_left);
+      EXPECT_EQ(uvBottomRightClipped, quadAll->uv_bottom_right);
+      EXPECT_FLOAT_ARRAY_EQ(vertexOpacityClipped, quadAll->vertex_opacity, 4);
+    }
+
+    uvTopLeft = gfx::PointF(0.8f, 0.7f);
+    uvBottomRight = gfx::PointF(0.2f, 0.1f);
+
+    {
+      CREATE_QUAD_7_NEW(TextureDrawQuad, opaqueRect, resourceId, premultipliedAlpha, uvTopLeft, uvBottomRight, vertexOpacity, flipped);
+      CREATE_QUAD_6_ALL(TextureDrawQuad, resourceId, premultipliedAlpha, uvTopLeft, uvBottomRight, vertexOpacity, flipped);
+      EXPECT_TRUE(quadAll->PerformClipping());
+
+      // This is the expected UV value for vertex 'b'.
+      gfx::PointF uvTopLeftClipped(0.68f, 0.6f);
+      // This is the expected UV value for vertex 'd'.
+      gfx::PointF uvBottomRightClipped(0.32f, 0.4f);
+
+      EXPECT_EQ(uvTopLeftClipped, quadAll->uv_top_left);
+      EXPECT_EQ(uvBottomRightClipped, quadAll->uv_bottom_right);
+    }
 }
 
 TEST(DrawQuadTest, copyTileDrawQuad)
@@ -392,34 +465,22 @@ TEST(DrawQuadTest, copyTileDrawQuad)
     gfx::RectF texCoordRect(31, 12, 54, 20);
     gfx::Size textureSize(85, 32);
     bool swizzleContents = true;
-    bool leftEdgeAA = true;
-    bool topEdgeAA = true;
-    bool rightEdgeAA = false;
-    bool bottomEdgeAA = true;
     CREATE_SHARED_STATE();
 
-    CREATE_QUAD_9_NEW(TileDrawQuad, opaqueRect, resourceId, texCoordRect, textureSize, swizzleContents, leftEdgeAA, topEdgeAA, rightEdgeAA, bottomEdgeAA);
+    CREATE_QUAD_5_NEW(TileDrawQuad, opaqueRect, resourceId, texCoordRect, textureSize, swizzleContents);
     EXPECT_EQ(DrawQuad::TILED_CONTENT, copyQuad->material);
     EXPECT_RECT_EQ(opaqueRect, copyQuad->opaque_rect);
     EXPECT_EQ(resourceId, copyQuad->resource_id);
     EXPECT_EQ(texCoordRect, copyQuad->tex_coord_rect);
     EXPECT_EQ(textureSize, copyQuad->texture_size);
     EXPECT_EQ(swizzleContents, copyQuad->swizzle_contents);
-    EXPECT_EQ(leftEdgeAA, copyQuad->left_edge_aa);
-    EXPECT_EQ(topEdgeAA, copyQuad->top_edge_aa);
-    EXPECT_EQ(rightEdgeAA, copyQuad->right_edge_aa);
-    EXPECT_EQ(bottomEdgeAA, copyQuad->bottom_edge_aa);
 
-    CREATE_QUAD_8_ALL(TileDrawQuad, resourceId, texCoordRect, textureSize, swizzleContents, leftEdgeAA, topEdgeAA, rightEdgeAA, bottomEdgeAA);
+    CREATE_QUAD_4_ALL(TileDrawQuad, resourceId, texCoordRect, textureSize, swizzleContents);
     EXPECT_EQ(DrawQuad::TILED_CONTENT, copyQuad->material);
     EXPECT_EQ(resourceId, copyQuad->resource_id);
     EXPECT_EQ(texCoordRect, copyQuad->tex_coord_rect);
     EXPECT_EQ(textureSize, copyQuad->texture_size);
     EXPECT_EQ(swizzleContents, copyQuad->swizzle_contents);
-    EXPECT_EQ(leftEdgeAA, copyQuad->left_edge_aa);
-    EXPECT_EQ(topEdgeAA, copyQuad->top_edge_aa);
-    EXPECT_EQ(rightEdgeAA, copyQuad->right_edge_aa);
-    EXPECT_EQ(bottomEdgeAA, copyQuad->bottom_edge_aa);
 }
 
 TEST(DrawQuadTest, copyYUVVideoDrawQuad)
@@ -467,6 +528,154 @@ TEST(DrawQuadTest, copyYUVVideoDrawQuad)
     EXPECT_EQ(vPlane.size, copyQuad->v_plane.size);
     EXPECT_EQ(vPlane.format, copyQuad->v_plane.format);
 }
+
+class DrawQuadIteratorTest : public testing::Test {
+ protected:
+  ResourceProvider::ResourceId IncrementResourceId(
+      ResourceProvider::ResourceId id) {
+    ++num_resources_;
+    return id + 1;
+  }
+
+  int IterateAndCount(DrawQuad* quad) {
+    num_resources_ = 0;
+    quad->IterateResources(base::Bind(
+        &DrawQuadIteratorTest::IncrementResourceId,
+        base::Unretained(this)));
+    return num_resources_;
+  }
+
+ private:
+  int num_resources_;
+};
+
+TEST_F(DrawQuadIteratorTest, CheckerboardDrawQuad) {
+  SkColor color = 0xfabb0011;
+
+  CREATE_SHARED_STATE();
+  CREATE_QUAD_1_NEW(CheckerboardDrawQuad, color);
+  EXPECT_EQ(0, IterateAndCount(quadNew.get()));
+}
+
+TEST_F(DrawQuadIteratorTest, DebugBorderDrawQuad) {
+  SkColor color = 0xfabb0011;
+  int width = 99;
+
+  CREATE_SHARED_STATE();
+  CREATE_QUAD_2_NEW(DebugBorderDrawQuad, color, width);
+  EXPECT_EQ(0, IterateAndCount(quadNew.get()));
+}
+
+TEST_F(DrawQuadIteratorTest, IOSurfaceDrawQuad) {
+  gfx::Rect opaqueRect(3, 7, 10, 12);
+  gfx::Size size(58, 95);
+  unsigned textureId = 72;
+  IOSurfaceDrawQuad::Orientation orientation = IOSurfaceDrawQuad::UNFLIPPED;
+
+  CREATE_SHARED_STATE();
+  CREATE_QUAD_4_NEW(IOSurfaceDrawQuad, opaqueRect, size, textureId, orientation);
+  EXPECT_EQ(0, IterateAndCount(quadNew.get()));
+}
+
+TEST_F(DrawQuadIteratorTest, RenderPassDrawQuad) {
+  RenderPass::Id renderPassId(22, 64);
+  bool isReplica = true;
+  ResourceProvider::ResourceId maskResourceId = 78;
+  gfx::Rect contentsChangedSinceLastFrame(42, 11, 74, 24);
+  gfx::RectF maskUVRect(-45, -21, 33, 19);
+  WebKit::WebFilterOperations filters;
+  filters.append(WebKit::WebFilterOperation::createBlurFilter(1.f));
+  WebKit::WebFilterOperations background_filters;
+  background_filters.append(
+      WebKit::WebFilterOperation::createGrayscaleFilter(1.f));
+  skia::RefPtr<SkImageFilter> filter = skia::AdoptRef(
+      new SkBlurImageFilter(SK_Scalar1, SK_Scalar1));
+
+  RenderPass::Id copiedRenderPassId(235, 11);
+
+  CREATE_SHARED_STATE();
+  CREATE_QUAD_8_NEW_1(RenderPassDrawQuad, renderPassId, isReplica, maskResourceId, contentsChangedSinceLastFrame, maskUVRect, filters, filter, background_filters, copiedRenderPassId);
+  EXPECT_EQ(maskResourceId, quadNew->mask_resource_id);
+  EXPECT_EQ(1, IterateAndCount(quadNew.get()));
+  EXPECT_EQ(maskResourceId + 1, quadNew->mask_resource_id);
+}
+
+TEST_F(DrawQuadIteratorTest, SolidColorDrawQuad) {
+  SkColor color = 0x49494949;
+
+  CREATE_SHARED_STATE();
+  CREATE_QUAD_1_NEW(SolidColorDrawQuad, color);
+  EXPECT_EQ(0, IterateAndCount(quadNew.get()));
+}
+
+TEST_F(DrawQuadIteratorTest, StreamVideoDrawQuad) {
+  gfx::Rect opaqueRect(3, 7, 10, 12);
+  unsigned textureId = 64;
+  gfx::Transform matrix = gfx::Transform(0.5, 0.25, 1, 0.75, 0, 1);
+
+  CREATE_SHARED_STATE();
+  CREATE_QUAD_3_NEW(StreamVideoDrawQuad, opaqueRect, textureId, matrix);
+  EXPECT_EQ(0, IterateAndCount(quadNew.get()));
+}
+
+TEST_F(DrawQuadIteratorTest, TextureDrawQuad) {
+  gfx::Rect opaqueRect(3, 7, 10, 12);
+  unsigned resourceId = 82;
+  bool premultipliedAlpha = true;
+  gfx::PointF uvTopLeft(0.5f, 224.f);
+  gfx::PointF uvBottomRight(51.5f, 260.f);
+  const float vertex_opacity[] = {1.0f, 1.0f, 1.0f, 1.0f};
+  bool flipped = true;
+
+  CREATE_SHARED_STATE();
+  CREATE_QUAD_7_NEW(TextureDrawQuad, opaqueRect, resourceId, premultipliedAlpha, uvTopLeft, uvBottomRight, vertex_opacity, flipped);
+  EXPECT_EQ(resourceId, quadNew->resource_id);
+  EXPECT_EQ(1, IterateAndCount(quadNew.get()));
+  EXPECT_EQ(resourceId + 1, quadNew->resource_id);
+}
+
+TEST_F(DrawQuadIteratorTest, TileDrawQuad) {
+  gfx::Rect opaqueRect(33, 44, 22, 33);
+  unsigned resourceId = 104;
+  gfx::RectF texCoordRect(31, 12, 54, 20);
+  gfx::Size textureSize(85, 32);
+  bool swizzleContents = true;
+
+  CREATE_SHARED_STATE();
+  CREATE_QUAD_5_NEW(TileDrawQuad, opaqueRect, resourceId, texCoordRect, textureSize, swizzleContents);
+  EXPECT_EQ(resourceId, quadNew->resource_id);
+  EXPECT_EQ(1, IterateAndCount(quadNew.get()));
+  EXPECT_EQ(resourceId + 1, quadNew->resource_id);
+}
+
+TEST_F(DrawQuadIteratorTest, YUVVideoDrawQuad) {
+  gfx::Rect opaqueRect(3, 7, 10, 12);
+  gfx::SizeF texScale(0.75, 0.5);
+  VideoLayerImpl::FramePlane yPlane;
+  yPlane.resourceId = 45;
+  yPlane.size = gfx::Size(34, 23);
+  yPlane.format = 8;
+  VideoLayerImpl::FramePlane uPlane;
+  uPlane.resourceId = 532;
+  uPlane.size = gfx::Size(134, 16);
+  uPlane.format = 2;
+  VideoLayerImpl::FramePlane vPlane;
+  vPlane.resourceId = 4;
+  vPlane.size = gfx::Size(456, 486);
+  vPlane.format = 46;
+
+  CREATE_SHARED_STATE();
+  CREATE_QUAD_5_NEW(YUVVideoDrawQuad, opaqueRect, texScale, yPlane, uPlane, vPlane);
+  EXPECT_EQ(DrawQuad::YUV_VIDEO_CONTENT, copyQuad->material);
+  EXPECT_EQ(yPlane.resourceId, quadNew->y_plane.resourceId);
+  EXPECT_EQ(uPlane.resourceId, quadNew->u_plane.resourceId);
+  EXPECT_EQ(vPlane.resourceId, quadNew->v_plane.resourceId);
+  EXPECT_EQ(3, IterateAndCount(quadNew.get()));
+  EXPECT_EQ(yPlane.resourceId + 1, quadNew->y_plane.resourceId);
+  EXPECT_EQ(uPlane.resourceId + 1, quadNew->u_plane.resourceId);
+  EXPECT_EQ(vPlane.resourceId + 1, quadNew->v_plane.resourceId);
+}
+
 
 }  // namespace
 }  // namespace cc

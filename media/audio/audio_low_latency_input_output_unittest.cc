@@ -24,7 +24,6 @@
 #elif defined(OS_MACOSX)
 #include "media/audio/mac/audio_manager_mac.h"
 #elif defined(OS_WIN)
-#include "base/win/scoped_com_initializer.h"
 #include "media/audio/win/audio_manager_win.h"
 #include "media/audio/win/core_audio_util_win.h"
 #elif defined(OS_ANDROID)
@@ -52,7 +51,7 @@ static const size_t kMaxDelayMeasurements = 1000;
 // Example: \src\build\Debug\audio_delay_values_ms.txt.
 // See comments for the WASAPIAudioInputOutputFullDuplex test for more details
 // about the file format.
-static const char* kDelayValuesFileName = "audio_delay_values_ms.txt";
+static const char kDelayValuesFileName[] = "audio_delay_values_ms.txt";
 
 // Contains delay values which are reported during the full-duplex test.
 // Total delay = |buffer_delay_ms| + |input_delay_ms| + |output_delay_ms|.
@@ -154,7 +153,7 @@ class FullDuplexAudioSinkSource
   virtual ~FullDuplexAudioSinkSource() {
     // Get complete file path to output file in the directory containing
     // media_unittests.exe. Example: src/build/Debug/audio_delay_values_ms.txt.
-    FilePath file_name;
+    base::FilePath file_name;
     EXPECT_TRUE(PathService::Get(base::DIR_EXE, &file_name));
     file_name = file_name.AppendASCII(kDelayValuesFileName);
 
@@ -331,9 +330,6 @@ class StreamWrapper {
 
   explicit StreamWrapper(AudioManager* audio_manager)
       :
-#if defined(OS_WIN)
-        com_init_(base::win::ScopedCOMInitializer::kMTA),
-#endif
         audio_manager_(audio_manager),
         format_(AudioParameters::AUDIO_PCM_LOW_LATENCY),
 #if defined(OS_ANDROID)
@@ -373,10 +369,6 @@ class StreamWrapper {
     EXPECT_TRUE(stream);
     return stream;
   }
-
-#if defined(OS_WIN)
-  base::win::ScopedCOMInitializer com_init_;
-#endif
 
   AudioManager* audio_manager_;
   AudioParameters::Format format_;

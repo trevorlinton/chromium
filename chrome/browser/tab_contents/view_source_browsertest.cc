@@ -6,7 +6,7 @@
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -21,6 +21,7 @@
 
 namespace {
 const char kTestHtml[] = "files/viewsource/test.html";
+const char kTestMedia[] = "files/media/pink_noise_140ms.wav";
 }
 
 typedef InProcessBrowserTest ViewSourceTest;
@@ -40,7 +41,7 @@ IN_PROC_BROWSER_TEST_F(ViewSourceTest, DoesBrowserRenderInViewSource) {
   // Check that the title didn't get set.  It should not be there (because we
   // are in view-source mode).
   EXPECT_NE(ASCIIToUTF16("foo"),
-            chrome::GetActiveWebContents(browser())->GetTitle());
+            browser()->tab_strip_model()->GetActiveWebContents()->GetTitle());
 }
 
 // This test renders a page normally and then renders the same page in
@@ -61,7 +62,8 @@ IN_PROC_BROWSER_TEST_F(ViewSourceTest, DoesBrowserConsumeViewSourcePrefix) {
 
   // The URL should still be prefixed with "view-source:".
   EXPECT_EQ(url_viewsource.spec(),
-            chrome::GetActiveWebContents(browser())->GetURL().spec());
+            browser()->tab_strip_model()->GetActiveWebContents()->
+                GetURL().spec());
 }
 
 // Make sure that when looking at the actual page, we can select "View Source"
@@ -73,6 +75,21 @@ IN_PROC_BROWSER_TEST_F(ViewSourceTest, ViewSourceInMenuEnabledOnANormalPage) {
   ui_test_utils::NavigateToURL(browser(), url);
 
   EXPECT_TRUE(chrome::CanViewSource(browser()));
+}
+
+// For page that is media content, make sure that we cannot select "View Source"
+// See http://crbug.com/83714
+IN_PROC_BROWSER_TEST_F(ViewSourceTest, ViewSourceInMenuDisabledOnAMediaPage) {
+  ASSERT_TRUE(test_server()->Start());
+
+  GURL url(test_server()->GetURL(kTestMedia));
+  ui_test_utils::NavigateToURL(browser(), url);
+
+  const char* mime_type = browser()->tab_strip_model()->GetActiveWebContents()->
+      GetContentsMimeType().c_str();
+
+  EXPECT_STREQ("audio/wav", mime_type);
+  EXPECT_FALSE(chrome::CanViewSource(browser()));
 }
 
 // Make sure that when looking at the page source, we can't select "View Source"
@@ -103,13 +120,14 @@ IN_PROC_BROWSER_TEST_F(ViewSourceTest, DISABLED_TestViewSourceReload) {
   ui_test_utils::NavigateToURL(browser(), url_viewsource);
   observer.Wait();
 
-  ASSERT_TRUE(content::ExecuteScript(chrome::GetWebContentsAt(browser(), 0),
-                                     "window.location.reload();"));
+  ASSERT_TRUE(
+      content::ExecuteScript(browser()->tab_strip_model()->GetWebContentsAt(0),
+                             "window.location.reload();"));
 
   content::WindowedNotificationObserver observer2(
       content::NOTIFICATION_LOAD_STOP,
       content::NotificationService::AllSources());
   observer2.Wait();
-  ASSERT_TRUE(chrome::GetWebContentsAt(browser(), 0)->GetController().
-                  GetActiveEntry()->IsViewSourceMode());
+  ASSERT_TRUE(browser()->tab_strip_model()->GetWebContentsAt(0)->
+                  GetController().GetActiveEntry()->IsViewSourceMode());
 }

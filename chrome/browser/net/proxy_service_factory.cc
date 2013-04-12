@@ -5,7 +5,7 @@
 #include "chrome/browser/net/proxy_service_factory.h"
 
 #include "base/command_line.h"
-#include "base/string_number_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/threading/thread.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/io_thread.h"
@@ -27,8 +27,7 @@
 using content::BrowserThread;
 
 // static
-ChromeProxyConfigService* ProxyServiceFactory::CreateProxyConfigService(
-    bool wait_for_first_update) {
+ChromeProxyConfigService* ProxyServiceFactory::CreateProxyConfigService() {
   // The linux gconf-based proxy settings getter relies on being initialized
   // from the UI thread.
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
@@ -52,7 +51,7 @@ ChromeProxyConfigService* ProxyServiceFactory::CreateProxyConfigService(
       BrowserThread::UnsafeGetMessageLoopForThread(BrowserThread::FILE));
 #endif  // !defined(OS_CHROMEOS)
 
-  return new ChromeProxyConfigService(base_service, wait_for_first_update);
+  return new ChromeProxyConfigService(base_service);
 }
 
 #if defined(OS_CHROMEOS)
@@ -106,7 +105,7 @@ net::ProxyService* ProxyServiceFactory::CreateProxyService(
     }
   }
 
-  net::ProxyService* proxy_service;
+  net::ProxyService* proxy_service = NULL;
   if (use_v8) {
 #if defined(OS_IOS)
     NOTREACHED();
@@ -118,7 +117,6 @@ net::ProxyService* ProxyServiceFactory::CreateProxyService(
 
     proxy_service = net::CreateProxyServiceUsingV8ProxyResolver(
         proxy_config_service,
-        num_pac_threads,
         new net::ProxyScriptFetcherImpl(context),
         dhcp_factory.Create(context),
         context->host_resolver(),

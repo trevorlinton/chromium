@@ -19,8 +19,11 @@ HybridSlowStart::HybridSlowStart(const QuicClock* clock)
       started_(false),
       found_ack_train_(false),
       found_delay_(false),
+      round_start_(QuicTime::Zero()),
       end_sequence_number_(0),
-      sample_count_(0) {
+      last_time_(QuicTime::Zero()),
+      sample_count_(0),
+      current_rtt_(QuicTime::Delta::Zero()) {
 }
 
 void HybridSlowStart::Restart() {
@@ -30,9 +33,9 @@ void HybridSlowStart::Restart() {
 
 void HybridSlowStart::Reset(QuicPacketSequenceNumber end_sequence_number) {
   DLOG(INFO) << "Reset hybrid slow start @" << end_sequence_number;
-  round_start_ = last_time_ = clock_->Now();
+  round_start_ = last_time_ = clock_->ApproximateNow();
   end_sequence_number_ = end_sequence_number;
-  current_rtt_ = QuicTime::Delta();  // Reset to 0.
+  current_rtt_ = QuicTime::Delta::Zero();
   sample_count_ = 0;
   started_ = true;
 }
@@ -49,7 +52,7 @@ void HybridSlowStart::Update(QuicTime::Delta rtt, QuicTime::Delta delay_min) {
   if (found_ack_train_ || found_delay_) {
     return;
   }
-  QuicTime current_time = clock_->Now();
+  QuicTime current_time = clock_->ApproximateNow();
 
   // First detection parameter - ack-train detection.
   // Since slow start burst out packets we can indirectly estimate the inter-

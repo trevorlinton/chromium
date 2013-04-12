@@ -67,6 +67,7 @@ public:
     void setChildren(const LayerList&);
 
     const LayerList& children() const { return m_children; }
+    Layer* childAt(size_t index);
 
     void setAnchorPoint(const gfx::PointF&);
     gfx::PointF anchorPoint() const { return m_anchorPoint; }
@@ -80,8 +81,6 @@ public:
     // A layer's bounds are in logical, non-page-scaled pixels (however, the
     // root layer's bounds are in physical pixels).
     void setBounds(const gfx::Size&);
-    // TODO(enne): remove this function: http://crbug.com/166023
-    virtual void didUpdateBounds();
     const gfx::Size& bounds() const { return m_bounds; }
 
     void setMasksToBounds(bool);
@@ -93,7 +92,6 @@ public:
 
     virtual void setNeedsDisplayRect(const gfx::RectF& dirtyRect);
     void setNeedsDisplay() { setNeedsDisplayRect(gfx::RectF(gfx::PointF(), bounds())); }
-    virtual bool needsDisplay() const;
 
     void setOpacity(float);
     float opacity() const;
@@ -165,11 +163,9 @@ public:
     bool haveWheelEventHandlers() const { return m_haveWheelEventHandlers; }
 
     void setNonFastScrollableRegion(const Region&);
-    void setNonFastScrollableRegionChanged() { m_nonFastScrollableRegionChanged = true; }
     const Region& nonFastScrollableRegion() const { return m_nonFastScrollableRegion; }
 
     void setTouchEventHandlerRegion(const Region&);
-    void setTouchEventHandlerRegionChanged() { m_touchEventHandlerRegionChanged = true; }
     const Region& touchEventHandlerRegion() const { return m_touchEventHandlerRegion; }
 
     void setLayerScrollClient(WebKit::WebLayerScrollClient* layerScrollClient) { m_layerScrollClient = layerScrollClient; }
@@ -211,7 +207,7 @@ public:
 
     // These methods typically need to be overwritten by derived classes.
     virtual bool drawsContent() const;
-    virtual void update(ResourceUpdateQueue&, const OcclusionTracker*, RenderingStats&) { }
+    virtual void update(ResourceUpdateQueue&, const OcclusionTracker*, RenderingStats*) { }
     virtual bool needMoreUpdates();
     virtual void setIsMask(bool) { }
 
@@ -230,6 +226,7 @@ public:
     gfx::Size contentBounds() const { return m_drawProperties.content_bounds; }
     virtual void calculateContentsScale(
         float idealContentsScale,
+        bool animatingTransformToScreen,
         float* contentsScaleX,
         float* contentsScaleY,
         gfx::Size* contentBounds);
@@ -288,6 +285,16 @@ public:
     // compatible with the main thread running freely, such as a double-buffered
     // canvas that doesn't want to be triple-buffered across all three trees.
     virtual bool blocksPendingCommit() const;
+    // Returns true if anything in this tree blocksPendingCommit.
+    bool blocksPendingCommitRecursive() const;
+
+    virtual bool canClipSelf() const;
+
+    // Constructs a LayerImpl of the correct runtime type for this Layer type.
+    virtual scoped_ptr<LayerImpl> createLayerImpl(LayerTreeImpl* treeImpl);
+
+    bool needsDisplayForTesting() const { return m_needsDisplay; }
+    void resetNeedsDisplayForTesting() { m_needsDisplay = false; }
 
 protected:
     friend class LayerImpl;
@@ -313,8 +320,6 @@ protected:
 
     scoped_refptr<Layer> m_maskLayer;
 
-    // Constructs a LayerImpl of the correct runtime type for this Layer type.
-    virtual scoped_ptr<LayerImpl> createLayerImpl(LayerTreeImpl* treeImpl);
     int m_layerId;
 
     // When true, the layer is about to perform an update. Any commit requests
@@ -328,13 +333,11 @@ private:
     bool hasAncestor(Layer*) const;
     bool descendantIsFixedToContainerLayer() const;
 
-    size_t numChildren() const { return m_children.size(); }
-
     // Returns the index of the child or -1 if not found.
     int indexOfChild(const Layer*);
 
     // This should only be called from removeFromParent.
-    void removeChild(Layer*);
+    void removeChildOrDependent(Layer*);
 
     // LayerAnimationValueObserver implementation.
     virtual void OnOpacityAnimated(float) OVERRIDE;
@@ -362,9 +365,7 @@ private:
     bool m_shouldScrollOnMainThread;
     bool m_haveWheelEventHandlers;
     Region m_nonFastScrollableRegion;
-    bool m_nonFastScrollableRegionChanged;
     Region m_touchEventHandlerRegion;
-    bool m_touchEventHandlerRegionChanged;
     gfx::PointF m_position;
     gfx::PointF m_anchorPoint;
     SkColor m_backgroundColor;

@@ -32,15 +32,21 @@ class TrayBubbleContentMask;
 
 class VIEWS_EXPORT TrayBubbleView : public views::BubbleDelegateView {
  public:
+  // AnchorType differentiates between bubbles that are anchored on a tray
+  // element (ANCHOR_TYPE_TRAY) and display an arrow, or that are floating on
+  // the screen away from the tray (ANCHOR_TYPE_BUBBLE).
   enum AnchorType {
     ANCHOR_TYPE_TRAY,
-    ANCHOR_TYPE_BUBBLE
+    ANCHOR_TYPE_BUBBLE,
   };
 
+  // AnchorAlignment determines to which side of the anchor the bubble will
+  // align itself.
   enum AnchorAlignment {
     ANCHOR_ALIGNMENT_BOTTOM,
     ANCHOR_ALIGNMENT_LEFT,
-    ANCHOR_ALIGNMENT_RIGHT
+    ANCHOR_ALIGNMENT_RIGHT,
+    ANCHOR_ALIGNMENT_TOP
   };
 
   class VIEWS_EXPORT Delegate {
@@ -94,7 +100,9 @@ class VIEWS_EXPORT TrayBubbleView : public views::BubbleDelegateView {
     SkColor arrow_color;
     views::BubbleBorder::ArrowLocation arrow_location;
     int arrow_offset;
+    views::BubbleBorder::ArrowPaintType arrow_paint_type;
     views::BubbleBorder::Shadow shadow;
+    views::BubbleBorder::BubbleAlignment arrow_alignment;
   };
 
   // Constructs and returns a TrayBubbleView. init_params may be modified.
@@ -119,7 +127,7 @@ class VIEWS_EXPORT TrayBubbleView : public views::BubbleDelegateView {
   void SetWidth(int width);
 
   // Sets whether or not to paint the bubble border arrow.
-  void SetPaintArrow(bool paint_arrow);
+  void SetArrowPaintType(views::BubbleBorder::ArrowPaintType arrow_paint_type);
 
   // Returns the border insets. Called by TrayEventFilter.
   gfx::Insets GetBorderInsets() const;
@@ -134,13 +142,12 @@ class VIEWS_EXPORT TrayBubbleView : public views::BubbleDelegateView {
 
   // Overridden from views::WidgetDelegate.
   virtual bool CanActivate() const OVERRIDE;
-  virtual views::NonClientFrameView* CreateNonClientFrameView(
-      views::Widget* widget) OVERRIDE;
   virtual bool WidgetHasHitTestMask() const OVERRIDE;
   virtual void GetWidgetHitTestMask(gfx::Path* mask) const OVERRIDE;
 
   // Overridden from views::BubbleDelegateView.
   virtual gfx::Rect GetAnchorRect() OVERRIDE;
+  virtual BubbleFrameView* CreateBubbleFrameView() OVERRIDE;
 
   // Overridden from views::View.
   virtual gfx::Size GetPreferredSize() OVERRIDE;

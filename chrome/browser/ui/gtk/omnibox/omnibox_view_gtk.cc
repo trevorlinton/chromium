@@ -11,7 +11,7 @@
 
 #include "base/logging.h"
 #include "base/string_util.h"
-#include "base/utf_string_conversion_utils.h"
+#include "base/strings/utf_string_conversion_utils.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/autocomplete/autocomplete_input.h"
@@ -21,7 +21,6 @@
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/gtk/gtk_theme_service.h"
 #include "chrome/browser/ui/gtk/gtk_util.h"
 #include "chrome/browser/ui/gtk/location_bar_view_gtk.h"
@@ -31,6 +30,7 @@
 #include "chrome/browser/ui/omnibox/omnibox_edit_model.h"
 #include "chrome/browser/ui/omnibox/omnibox_popup_model.h"
 #include "chrome/browser/ui/search/search.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/toolbar/toolbar_model.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "content/public/browser/notification_source.h"
@@ -407,7 +407,7 @@ void OmniboxViewGtk::Init() {
                  content::Source<ThemeService>(theme_service_));
   theme_service_->InitThemesFor(this);
 
-  ViewIDUtil::SetID(GetNativeView(), VIEW_ID_AUTOCOMPLETE);
+  ViewIDUtil::SetID(GetNativeView(), VIEW_ID_OMNIBOX);
 }
 
 void OmniboxViewGtk::HandleHierarchyChanged(GtkWidget* sender,
@@ -573,14 +573,16 @@ void OmniboxViewGtk::UpdatePopup() {
 
 void OmniboxViewGtk::OnTemporaryTextMaybeChanged(
     const string16& display_text,
-    bool save_original_selection) {
+    bool save_original_selection,
+    bool notify_text_changed) {
   if (save_original_selection)
     saved_temporary_selection_ = GetSelection();
 
   StartUpdatingHighlightedText();
   SetWindowTextAndCaretPos(display_text, display_text.length(), false, false);
   FinishUpdatingHighlightedText();
-  TextChanged();
+  if (notify_text_changed)
+    TextChanged();
 }
 
 bool OmniboxViewGtk::OnInlineAutocompleteTextMaybeChanged(
@@ -601,7 +603,6 @@ void OmniboxViewGtk::OnRevertTemporaryText() {
   StartUpdatingHighlightedText();
   SetSelectedRange(saved_temporary_selection_);
   FinishUpdatingHighlightedText();
-  TextChanged();
 }
 
 void OmniboxViewGtk::OnBeforePossibleChange() {
@@ -1231,7 +1232,7 @@ void OmniboxViewGtk::HandlePopulatePopup(GtkWidget* sender, GtkMenu* menu) {
   g_free(text);
 
   // Copy URL menu item.
-  if (chrome::search::IsInstantExtendedAPIEnabled(browser_->profile())) {
+  if (chrome::search::IsQueryExtractionEnabled(browser_->profile())) {
     GtkWidget* copy_url_menuitem = gtk_menu_item_new_with_mnemonic(
         ui::ConvertAcceleratorsFromWindowsStyle(
             l10n_util::GetStringUTF8(IDS_COPY_URL)).c_str());
@@ -1383,7 +1384,8 @@ void OmniboxViewGtk::HandleDragDataGet(GtkWidget* widget,
       break;
     }
     case ui::CHROME_NAMED_URL: {
-      WebContents* current_tab = chrome::GetActiveWebContents(browser_);
+      WebContents* current_tab =
+          browser_->tab_strip_model()->GetActiveWebContents();
       string16 tab_title = current_tab->GetTitle();
       // Pass an empty string if user has edited the URL.
       if (current_tab->GetURL().spec() != dragged_text_)
@@ -1446,21 +1448,21 @@ void OmniboxViewGtk::HandleInsertText(GtkTextBuffer* buffer,
   if (len == 1 && (text[0] == '\n' || text[0] == '\r'))
     enter_was_inserted_ = true;
 
-  for (const gchar* p = text; *p && (p - text) < len;
-       p = g_utf8_next_char(p)) {
-    gunichar c = g_utf8_get_char(p);
+  if (model()->is_pasting()) {
+    filtered_text = GetClipboardText();
+  } else {
+    for (const gchar* p = text; *p && (p - text) < len;
+         p = g_utf8_next_char(p)) {
+      gunichar c = g_utf8_get_char(p);
 
-    // 0x200B is Zero Width Space, which is inserted just before the Instant
-    // anchor for working around the GtkTextView's misalignment bug.
-    // This character might be captured and inserted into the content by undo
-    // manager, so we need to filter it out here.
-    if (c != 0x200B)
-      base::WriteUnicodeCharacter(c, &filtered_text);
+      // 0x200B is Zero Width Space, which is inserted just before the Instant
+      // anchor for working around the GtkTextView's misalignment bug.
+      // This character might be captured and inserted into the content by undo
+      // manager, so we need to filter it out here.
+      if (c != 0x200B)
+        base::WriteUnicodeCharacter(c, &filtered_text);
+    }
   }
-
-  if (model()->is_pasting())
-    filtered_text = StripJavascriptSchemas(
-        CollapseWhitespace(filtered_text, true));
 
   if (!filtered_text.empty()) {
     // Avoid inserting the text after the Instant anchor.
@@ -1577,10 +1579,12 @@ void OmniboxViewGtk::HandleCopyOrCutClipboard(bool copy) {
   model()->AdjustTextForCopy(selection.selection_min(), IsSelectAll(), &text,
                             &url, &write_url);
 
-  // TODO(dominich): On other platforms we write |text| to the clipboard
-  // irregardless of |write_url|. Is this correct?
+  // On other platforms we write |text| to the clipboard irregardless of
+  // |write_url|.  We don't need to do that here because we fall through to
+  // the default signal handlers.
   if (write_url) {
     DoWriteToClipboard(url, text);
+    SetSelectedRange(selection);
 
     // Stop propagating the signal.
     static guint copy_signal_id =

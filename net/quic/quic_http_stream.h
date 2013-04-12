@@ -46,6 +46,8 @@ class NET_EXPORT_PRIVATE QuicHttpStream :
   virtual bool IsConnectionReused() const OVERRIDE;
   virtual void SetConnectionReused() OVERRIDE;
   virtual bool IsConnectionReusable() const OVERRIDE;
+  virtual bool GetLoadTimingInfo(
+      LoadTimingInfo* load_timing_info) const OVERRIDE;
   virtual void GetSSLInfo(SSLInfo* ssl_info) OVERRIDE;
   virtual void GetSSLCertRequestInfo(
       SSLCertRequestInfo* cert_request_info) OVERRIDE;
@@ -89,7 +91,7 @@ class NET_EXPORT_PRIVATE QuicHttpStream :
 
   void BufferResponseBody(const char* data, int length);
 
-  State io_state_;
+  State next_state_;
 
   QuicReliableClientStream* stream_;  // Non-owning.
 
@@ -132,6 +134,8 @@ class NET_EXPORT_PRIVATE QuicHttpStream :
   scoped_refptr<IOBufferWithSize> raw_request_body_buf_;
   // Wraps raw_request_body_buf_ to read the remaining data progressively.
   scoped_refptr<DrainableIOBuffer> request_body_buf_;
+
+  BoundNetLog stream_net_log_;
 
   base::WeakPtrFactory<QuicHttpStream> weak_factory_;
 };

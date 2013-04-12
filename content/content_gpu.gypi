@@ -6,6 +6,7 @@
   'dependencies': [
     '../base/base.gyp:base',
     '../skia/skia.gyp:skia',
+    '../third_party/re2/re2.gyp:re2',
     '../ui/gl/gl.gyp:gl',
   ],
   'sources': [
@@ -44,29 +45,17 @@
           '-lsetupapi.lib',
         ],
       },
+      'copies': [
+        {
+          'destination': '<(PRODUCT_DIR)',
+          'files': [
+            '<(windows_sdk_path)/Redist/D3D/x86/d3dcompiler_46.dll',
+          ],
+        },
+      ],
     }],
     ['OS=="win" and directxsdk_exists=="True"', {
       'actions': [
-        {
-          'action_name': 'extract_d3dx9',
-          'variables': {
-            'input': 'Jun2010_d3dx9_43_x86.cab',
-            'output': 'd3dx9_43.dll',
-          },
-          'inputs': [
-            '../third_party/directxsdk/files/Redist/<(input)',
-          ],
-          'outputs': [
-            '<(PRODUCT_DIR)/<(output)',
-          ],
-          'action': [
-            'python',
-            '../build/extract_from_cab.py',
-            '..\\third_party\\directxsdk\\files\\Redist\\<(input)',
-            '<(output)',
-            '<(PRODUCT_DIR)',
-          ],
-        },
         {
           'action_name': 'extract_d3dcompiler',
           'variables': {
@@ -86,6 +75,7 @@
             '<(output)',
             '<(PRODUCT_DIR)',
           ],
+          'msvs_cygwin_shell': 1,
         },
       ],
     }],

@@ -6,14 +6,17 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_registrar.h"
-#include "ui/base/dialogs/select_file_dialog_android.h"
+#include "ui/gfx/android/device_display_info.h"
+#include "ui/gfx/android/java_bitmap.h"
 #include "ui/gfx/android/window_android.h"
 
 namespace ui {
+namespace android {
 
 static base::android::RegistrationMethod kUiRegisteredMethods[] = {
-  { "NativeWindow", WindowAndroid::RegisterWindowAndroid },
-  { "SelectFileDialog", SelectFileDialogImpl::RegisterSelectFileDialog },
+  { "DeviceDisplayInfo", gfx::DeviceDisplayInfo::RegisterDeviceDisplayInfo },
+  { "JavaBitmap", gfx::JavaBitmap::RegisterJavaBitmap },
+  { "NativeWindow", ui::WindowAndroid::RegisterWindowAndroid },
 };
 
 bool RegisterJni(JNIEnv* env) {
@@ -21,4 +24,5 @@ bool RegisterJni(JNIEnv* env) {
                                arraysize(kUiRegisteredMethods));
 }
 
-} // namespace ui
+}  // namespace android
+}  // namespace ui

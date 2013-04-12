@@ -48,14 +48,14 @@ chrome.test.runTests([
 
   function sendCommand() {
     function onResponse() {
-      if (chrome.extension.lastError &&
-          chrome.extension.lastError.message.indexOf("invalidMethod") != -1)
+      if (chrome.runtime.lastError &&
+          chrome.runtime.lastError.message.indexOf("invalidMethod") != -1)
         chrome.test.succeed();
       else
         chrome.test.fail();
     }
     chrome.debugger.sendCommand(debuggee,
-                               "invalidMethod",
+                               "DOM.invalidMethod",
                                null,
                                onResponse);
   },
@@ -98,6 +98,18 @@ chrome.test.runTests([
           fail("Can not attach to the page with the \"chrome://\" scheme."));
       chrome.tabs.remove(tab.id);
     });
-  }
+  },
 
+  function attachToMissing() {
+    var missingDebuggee = {tabId: -1};
+    chrome.debugger.attach(missingDebuggee, protocolVersion,
+        fail("No tab with given id " + missingDebuggee.tabId + "."));
+  },
+
+  function attachToExtensionWithNoSilentFlag() {
+    debuggeeExtension = {extensionId: "foo"};
+    chrome.debugger.attach(debuggeeExtension, protocolVersion,
+        fail("Cannot attach to an extension unless " +
+            "'silent-debugger-extension-api' flag is enabled."));
+  }
 ]);

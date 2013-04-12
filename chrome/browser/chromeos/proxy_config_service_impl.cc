@@ -9,13 +9,15 @@
 #include "base/bind.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/logging.h"
+#include "base/prefs/pref_registry_simple.h"
+#include "base/prefs/pref_service.h"
 #include "base/string_util.h"
 #include "chrome/browser/chromeos/cros/cros_library.h"
 #include "chrome/browser/chromeos/login/user_manager.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/cros_settings_names.h"
 #include "chrome/browser/policy/proto/chrome_device_policy.pb.h"
-#include "chrome/browser/prefs/pref_service.h"
+#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/prefs/proxy_config_dictionary.h"
 #include "chrome/browser/prefs/proxy_prefs.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -103,7 +105,7 @@ bool IsNetworkProxySettingsEditable(const Network* network) {
   proxy_settings_ui_data.ParseOncProperty(
       network->ui_data(),
       onc,
-      onc::kProxySettings);
+      onc::network_config::kProxySettings);
   return proxy_settings_ui_data.editable();
 }
 
@@ -363,7 +365,7 @@ bool ProxyConfigServiceImpl::ProxyConfig::SerializeForNetwork(
 
 // static
 void ProxyConfigServiceImpl::ProxyConfig::EncodeAndAppendProxyServer(
-    const std::string& scheme,
+    const std::string& url_scheme,
     const net::ProxyServer& server,
     std::string* spec) {
   if (!server.is_valid())
@@ -372,8 +374,8 @@ void ProxyConfigServiceImpl::ProxyConfig::EncodeAndAppendProxyServer(
   if (!spec->empty())
     *spec += ';';
 
-  if (!scheme.empty()) {
-    *spec += scheme;
+  if (!url_scheme.empty()) {
+    *spec += url_scheme;
     *spec += "=";
   }
   *spec += server.ToURI();
@@ -580,18 +582,17 @@ bool ProxyConfigServiceImpl::ParseProxyConfig(const Network* network,
 }
 
 // static
-void ProxyConfigServiceImpl::RegisterPrefs(PrefServiceSimple* pref_service) {
+void ProxyConfigServiceImpl::RegisterPrefs(PrefRegistrySimple* registry) {
   // Use shared proxies default to off.  GetUseSharedProxies will return the
   // correct value based on pre-login and login.
-  pref_service->RegisterBooleanPref(prefs::kUseSharedProxies, true);
+  registry->RegisterBooleanPref(prefs::kUseSharedProxies, true);
 }
 
 // static
-void ProxyConfigServiceImpl::RegisterUserPrefs(
-    PrefServiceSyncable* pref_service) {
-  pref_service->RegisterBooleanPref(prefs::kUseSharedProxies,
-                                    true,
-                                    PrefServiceSyncable::UNSYNCABLE_PREF);
+void ProxyConfigServiceImpl::RegisterUserPrefs(PrefRegistrySyncable* registry) {
+  registry->RegisterBooleanPref(prefs::kUseSharedProxies,
+                                true,
+                                PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
 //------------------ ProxyConfigServiceImpl: private methods -------------------

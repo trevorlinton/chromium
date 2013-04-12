@@ -12,6 +12,7 @@
 #include "base/i18n/rtl.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram.h"
+#include "base/prefs/pref_service.h"
 #include "base/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/app_notification.h"
@@ -23,7 +24,7 @@
 #include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/management_policy.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
-#include "chrome/browser/prefs/pref_service.h"
+#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -31,9 +32,9 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
 #include "chrome/browser/ui/extensions/extension_enable_flow.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/webui/extensions/extension_icon_source.h"
 #include "chrome/browser/ui/webui/ntp/new_tab_ui.h"
-#include "chrome/browser/ui/webui/web_ui_util.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
@@ -51,13 +52,26 @@
 #include "net/base/escape.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/favicon_size.h"
+#include "ui/webui/web_ui_util.h"
 
-using application_launch::LaunchParams;
-using application_launch::OpenApplication;
+using chrome::AppLaunchParams;
+using chrome::OpenApplication;
 using content::WebContents;
 using extensions::CrxInstaller;
 using extensions::Extension;
 using extensions::ExtensionPrefs;
+
+namespace {
+
+bool ShouldDisplayInNewTabPage(const Extension* app, PrefService* prefs) {
+  bool blocked_by_policy =
+    (app->id() == extension_misc::kWebStoreAppId ||
+     app->id() == extension_misc::kEnterpriseWebStoreAppId) &&
+    prefs->GetBoolean(prefs::kHideWebStoreIcon);
+  return app->ShouldDisplayInNewTabPage() && !blocked_by_policy;
+}
+
+}  // namespace
 
 const net::UnescapeRule::Type kUnescapeRules =
     net::UnescapeRule::NORMAL | net::UnescapeRule::URL_SPECIAL_CHARS;
@@ -133,7 +147,7 @@ void AppLauncherHandler::CreateAppInfo(
       prefs->GetLaunchType(extension,
                            ExtensionPrefs::LAUNCH_DEFAULT));
   value->SetBoolean("is_component",
-      extension->location() == Extension::COMPONENT);
+                    extension->location() == extensions::Manifest::COMPONENT);
   value->SetBoolean("is_webstore",
       extension->id() == extension_misc::kWebStoreAppId);
 
@@ -335,11 +349,12 @@ void AppLauncherHandler::FillAppDictionary(DictionaryValue* dictionary) {
   base::AutoReset<bool> auto_reset(&ignore_changes_, true);
 
   ListValue* list = new ListValue();
+  PrefService* prefs = Profile::FromWebUI(web_ui())->GetPrefs();
 
   for (std::set<std::string>::iterator it = visible_apps_.begin();
        it != visible_apps_.end(); ++it) {
     const Extension* extension = extension_service_->GetInstalledExtension(*it);
-    if (extension && extension->ShouldDisplayInNewTabPage()) {
+    if (extension && ShouldDisplayInNewTabPage(extension, prefs)) {
       DictionaryValue* app_info = GetAppInfo(extension);
       list->Append(app_info);
     }
@@ -361,7 +376,6 @@ void AppLauncherHandler::FillAppDictionary(DictionaryValue* dictionary) {
   dictionary->SetBoolean("disableCreateAppShortcut", true);
 #endif
 
-  PrefService* prefs = Profile::FromWebUI(web_ui())->GetPrefs();
   const ListValue* app_page_names = prefs->GetList(prefs::kNtpAppPageNames);
   if (!app_page_names || !app_page_names->GetSize()) {
     ListPrefUpdate update(prefs, prefs::kNtpAppPageNames);
@@ -486,7 +500,7 @@ void AppLauncherHandler::HandleLaunchApp(const ListValue* args) {
   Profile* profile = extension_service_->profile();
 
   WindowOpenDisposition disposition = args->GetSize() > 3 ?
-        web_ui_util::GetDispositionFromClick(args, 3) : CURRENT_TAB;
+        webui::GetDispositionFromClick(args, 3) : CURRENT_TAB;
   if (extension_id != extension_misc::kWebStoreAppId) {
     RecordAppLaunchByID(launch_bucket);
   } else {
@@ -496,36 +510,32 @@ void AppLauncherHandler::HandleLaunchApp(const ListValue* args) {
   if (disposition == NEW_FOREGROUND_TAB || disposition == NEW_BACKGROUND_TAB ||
       disposition == NEW_WINDOW) {
     // TODO(jamescook): Proper support for background tabs.
-    LaunchParams params(profile, extension,
-                        disposition == NEW_WINDOW ?
-                            extension_misc::LAUNCH_WINDOW :
-                            extension_misc::LAUNCH_TAB,
-                        disposition);
+    AppLaunchParams params(profile, extension,
+                           disposition == NEW_WINDOW ?
+                               extension_misc::LAUNCH_WINDOW :
+                               extension_misc::LAUNCH_TAB,
+                           disposition);
     params.override_url = GURL(url);
     OpenApplication(params);
   } else {
-    // Look at preference to find the right launch container.  If no preference
-    // is set, launch as a regular tab.
-    extension_misc::LaunchContainer launch_container =
-        extension_service_->extension_prefs()->GetLaunchContainer(
-            extension, ExtensionPrefs::LAUNCH_REGULAR);
-
     // To give a more "launchy" experience when using the NTP launcher, we close
     // it automatically.
     Browser* browser = chrome::FindBrowserWithWebContents(
         web_ui()->GetWebContents());
     WebContents* old_contents = NULL;
     if (browser)
-      old_contents = chrome::GetActiveWebContents(browser);
+      old_contents = browser->tab_strip_model()->GetActiveWebContents();
 
-    LaunchParams params(profile, extension, launch_container,
-                        old_contents ? CURRENT_TAB : NEW_FOREGROUND_TAB);
+    AppLaunchParams params(profile, extension,
+                           old_contents ? CURRENT_TAB : NEW_FOREGROUND_TAB);
     params.override_url = GURL(url);
     WebContents* new_contents = OpenApplication(params);
 
     // This will also destroy the handler, so do not perform any actions after.
-    if (new_contents != old_contents && browser && browser->tab_count() > 1)
+    if (new_contents != old_contents && browser &&
+        browser->tab_strip_model()->count() > 1) {
       chrome::CloseWebContents(browser, old_contents, true);
+    }
   }
 }
 
@@ -779,9 +789,9 @@ void AppLauncherHandler::OnPreferenceChanged() {
 }
 
 // static
-void AppLauncherHandler::RegisterUserPrefs(PrefServiceSyncable* pref_service) {
-  pref_service->RegisterListPref(prefs::kNtpAppPageNames,
-                                 PrefServiceSyncable::SYNCABLE_PREF);
+void AppLauncherHandler::RegisterUserPrefs(PrefRegistrySyncable* registry) {
+  registry->RegisterListPref(prefs::kNtpAppPageNames,
+                             PrefRegistrySyncable::SYNCABLE_PREF);
 }
 
 void AppLauncherHandler::CleanupAfterUninstall() {
@@ -830,7 +840,7 @@ void AppLauncherHandler::PromptToEnableApp(const std::string& extension_id) {
   extension_id_prompting_ = extension_id;
   extension_enable_flow_.reset(new ExtensionEnableFlow(
       Profile::FromWebUI(web_ui()), extension_id, this));
-  extension_enable_flow_->Start();
+  extension_enable_flow_->StartForWebContents(web_ui()->GetWebContents());
 }
 
 void AppLauncherHandler::ExtensionUninstallAccepted() {
@@ -851,10 +861,6 @@ void AppLauncherHandler::ExtensionUninstallAccepted() {
 
 void AppLauncherHandler::ExtensionUninstallCanceled() {
   CleanupAfterUninstall();
-}
-
-ExtensionInstallPrompt* AppLauncherHandler::CreateExtensionInstallPrompt() {
-  return new ExtensionInstallPrompt(web_ui()->GetWebContents());
 }
 
 void AppLauncherHandler::ExtensionEnableFlowFinished() {
@@ -893,7 +899,8 @@ ExtensionUninstallDialog* AppLauncherHandler::GetExtensionUninstallDialog() {
     Browser* browser = chrome::FindBrowserWithWebContents(
         web_ui()->GetWebContents());
     extension_uninstall_dialog_.reset(
-        ExtensionUninstallDialog::Create(browser, this));
+        ExtensionUninstallDialog::Create(extension_service_->profile(),
+                                         browser, this));
   }
   return extension_uninstall_dialog_.get();
 }

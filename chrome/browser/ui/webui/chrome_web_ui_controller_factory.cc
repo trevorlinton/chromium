@@ -8,14 +8,15 @@
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/message_loop_proxy.h"
+#include "base/prefs/pref_service.h"
 #include "chrome/browser/about_flags.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_web_ui.h"
 #include "chrome/browser/history/history_types.h"
-#include "chrome/browser/prefs/pref_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/webui/about_ui.h"
+#include "chrome/browser/ui/webui/app_launcher_page_ui.h"
 #include "chrome/browser/ui/webui/bookmarks_ui.h"
 #include "chrome/browser/ui/webui/constrained_web_dialog_ui.h"
 #include "chrome/browser/ui/webui/crashes_ui.h"
@@ -27,17 +28,12 @@
 #include "chrome/browser/ui/webui/feedback_ui.h"
 #include "chrome/browser/ui/webui/flags_ui.h"
 #include "chrome/browser/ui/webui/flash_ui.h"
-#include "chrome/browser/ui/webui/generic_handler.h"
-#include "chrome/browser/ui/webui/gpu_internals_ui.h"
 #include "chrome/browser/ui/webui/help/help_ui.h"
 #include "chrome/browser/ui/webui/history_ui.h"
 #include "chrome/browser/ui/webui/inspect_ui.h"
 #include "chrome/browser/ui/webui/instant_ui.h"
 #include "chrome/browser/ui/webui/local_omnibox_popup/local_omnibox_popup_ui.h"
-#include "chrome/browser/ui/webui/media/media_internals_ui.h"
-#if !defined(DISABLE_NACL)
-#include "chrome/browser/ui/webui/nacl_ui.h"
-#endif
+#include "chrome/browser/ui/webui/memory_internals/memory_internals_ui.h"
 #include "chrome/browser/ui/webui/net_internals/net_internals_ui.h"
 #include "chrome/browser/ui/webui/ntp/new_tab_ui.h"
 #include "chrome/browser/ui/webui/omnibox/omnibox_ui.h"
@@ -48,11 +44,9 @@
 #include "chrome/browser/ui/webui/print_preview/print_preview_ui.h"
 #include "chrome/browser/ui/webui/profiler_ui.h"
 #include "chrome/browser/ui/webui/quota_internals_ui.h"
+#include "chrome/browser/ui/webui/signin/profile_signin_confirmation_ui.h"
 #include "chrome/browser/ui/webui/signin_internals_ui.h"
 #include "chrome/browser/ui/webui/sync_internals_ui.h"
-#include "chrome/browser/ui/webui/task_manager/task_manager_ui.h"
-#include "chrome/browser/ui/webui/test_chrome_web_ui_controller_factory.h"
-#include "chrome/browser/ui/webui/tracing_ui.h"
 #include "chrome/browser/ui/webui/user_actions/user_actions_ui.h"
 #include "chrome/browser/ui/webui/version_ui.h"
 #include "chrome/common/chrome_switches.h"
@@ -68,6 +62,10 @@
 #include "ui/gfx/favicon_size.h"
 #include "ui/web_dialogs/web_dialog_ui.h"
 
+#if !defined(DISABLE_NACL)
+#include "chrome/browser/ui/webui/nacl_ui.h"
+#endif
+
 #if defined(ENABLE_CONFIGURATION_POLICY)
 #include "chrome/browser/ui/webui/policy_ui.h"
 #endif
@@ -79,7 +77,13 @@
 #include "chrome/browser/ui/webui/uber/uber_ui.h"
 #endif
 
+#if defined(OS_ANDROID) || defined(OS_IOS)
+#include "chrome/browser/ui/webui/net_export_ui.h"
+#endif
+
 #if defined(OS_CHROMEOS)
+#include "chrome/browser/ui/webui/chromeos/app_launch_ui.h"
+#include "chrome/browser/ui/webui/chromeos/bluetooth_pairing_ui.h"
 #include "chrome/browser/ui/webui/chromeos/choose_mobile_network_ui.h"
 #include "chrome/browser/ui/webui/chromeos/cryptohome_ui.h"
 #include "chrome/browser/ui/webui/chromeos/diagnostics/diagnostics_ui.h"
@@ -89,7 +93,6 @@
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "chrome/browser/ui/webui/chromeos/mobile_setup_ui.h"
 #include "chrome/browser/ui/webui/chromeos/proxy_settings_ui.h"
-#include "chrome/browser/ui/webui/chromeos/register_page_ui.h"
 #include "chrome/browser/ui/webui/chromeos/sim_unlock_ui.h"
 #include "chrome/browser/ui/webui/chromeos/system_info_ui.h"
 #endif
@@ -198,19 +201,28 @@ WebUIFactoryFunction GetWebUIFactoryFunction(WebUI* web_ui,
     return &NewWebUI<WebDialogUI>;
   if (url.spec() == chrome::kChromeUIConstrainedHTMLTestURL)
     return &NewWebUI<ConstrainedWebDialogUI>;
-  if (url.host() == chrome::kChromeUIGpuInternalsHost)
-    return &NewWebUI<GpuInternalsUI>;
+  if (url.host() == chrome::kChromeUIFlagsHost)
+    return &NewWebUI<FlagsUI>;
   if (url.host() == chrome::kChromeUIHistoryFrameHost)
     return &NewWebUI<HistoryUI>;
   if (url.host() == chrome::kChromeUIInstantHost)
     return &NewWebUI<InstantUI>;
   if (url.host() == chrome::kChromeUILocalOmniboxPopupHost)
     return &NewWebUI<LocalOmniboxPopupUI>;
-  if (url.host() == chrome::kChromeUIMediaInternalsHost)
-    return &NewWebUI<MediaInternalsUI>;
+  if (url.host() == chrome::kChromeUIManagedUserPassphrasePageHost)
+    return &NewWebUI<ConstrainedWebDialogUI>;
+  if (url.host() == chrome::kChromeUIMemoryInternalsHost &&
+      CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kEnableMemoryInternalsUI)) {
+    return &NewWebUI<MemoryInternalsUI>;
+  }
 #if !defined(DISABLE_NACL)
   if (url.host() == chrome::kChromeUINaClHost)
     return &NewWebUI<NaClUI>;
+#endif
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  if (url.host() == chrome::kChromeUINetExportHost)
+    return &NewWebUI<NetExportUI>;
 #endif
   if (url.host() == chrome::kChromeUINetInternalsHost)
     return &NewWebUI<NetInternalsUI>;
@@ -240,6 +252,11 @@ WebUIFactoryFunction GetWebUIFactoryFunction(WebUI* web_ui,
   if (url.host() == chrome::kChromeUIWelcomeHost)
     return &NewWebUI<WelcomeUI>;
 #else
+  // AppLauncherPage is not needed on Android.
+  if (url.host() == chrome::kChromeUIAppLauncherPageHost &&
+      profile && profile->GetExtensionService()) {
+    return &NewWebUI<AppLauncherPageUI>;
+  }
   // Bookmarks are part of NTP on Android.
   if (url.host() == chrome::kChromeUIBookmarksHost)
     return &NewWebUI<BookmarksUI>;
@@ -251,15 +268,9 @@ WebUIFactoryFunction GetWebUIFactoryFunction(WebUI* web_ui,
   // Downloads list on Android uses the built-in download manager.
   if (url.host() == chrome::kChromeUIDownloadsHost)
     return &NewWebUI<DownloadsUI>;
-  if (url.host() == chrome::kChromeUIDialogHost)
-    return &NewWebUI<ConstrainedWebDialogUI>;
   // Feedback on Android uses the built-in feedback app.
   if (url.host() == chrome::kChromeUIFeedbackHost)
     return &NewWebUI<FeedbackUI>;
-  // chrome://flags is currently unsupported on Android.
-  // TODO(satish): Enable after http://crbug.com/143146 is fixed.
-  if (url.host() == chrome::kChromeUIFlagsHost)
-    return &NewWebUI<FlagsUI>;
   // Flash is not available on android.
   if (url.host() == chrome::kChromeUIFlashHost)
     return &NewWebUI<FlashUI>;
@@ -282,8 +293,6 @@ WebUIFactoryFunction GetWebUIFactoryFunction(WebUI* web_ui,
     return &NewWebUI<options::OptionsUI>;
   if (url.host() == chrome::kChromeUISuggestionsInternalsHost)
     return &NewWebUI<SuggestionsInternalsUI>;
-  if (url.host() == chrome::kChromeUITracingHost)
-    return &NewWebUI<TracingUI>;
   // Uber frame is not used on Android.
   if (url.host() == chrome::kChromeUIUberFrameHost)
     return &NewWebUI<UberFrameUI>;
@@ -302,6 +311,10 @@ WebUIFactoryFunction GetWebUIFactoryFunction(WebUI* web_ui,
     return &NewWebUI<CertificateViewerUI>;
 #endif
 #if defined(OS_CHROMEOS)
+  if (url.host() == chrome::kChromeUIAppLaunchHost)
+    return &NewWebUI<chromeos::AppLaunchUI>;
+  if (url.host() == chrome::kChromeUIBluetoothPairingHost)
+    return &NewWebUI<chromeos::BluetoothPairingUI>;
   if (url.host() == chrome::kChromeUIChooseMobileNetworkHost)
     return &NewWebUI<chromeos::ChooseMobileNetworkUI>;
   if (url.host() == chrome::kChromeUICryptohomeHost)
@@ -320,8 +333,6 @@ WebUIFactoryFunction GetWebUIFactoryFunction(WebUI* web_ui,
     return &NewWebUI<chromeos::OobeUI>;
   if (url.host() == chrome::kChromeUIProxySettingsHost)
     return &NewWebUI<chromeos::ProxySettingsUI>;
-  if (url.host() == chrome::kChromeUIRegisterPageHost)
-    return &NewWebUI<RegisterPageUI>;
   if (url.host() == chrome::kChromeUISimUnlockHost)
     return &NewWebUI<chromeos::SimUnlockUI>;
   if (url.host() == chrome::kChromeUISystemInfoHost)
@@ -335,15 +346,14 @@ WebUIFactoryFunction GetWebUIFactoryFunction(WebUI* web_ui,
   if (url.host() == chrome::kChromeUIPolicyHost)
     return &NewWebUI<PolicyUI>;
 #endif
-#if defined(USE_AURA)
-  if (url.host() == chrome::kChromeUITaskManagerHost)
-    return &NewWebUI<TaskManagerUI>;
-#endif  // defined(USE_AURA)
+
+#if defined(ENABLE_CONFIGURATION_POLICY) && !defined(OS_CHROMEOS)
+  if (url.host() == chrome::kChromeUIProfileSigninConfirmationHost)
+    return &NewWebUI<ProfileSigninConfirmationUI>;
+#endif
 
 #if (defined(OS_LINUX) && defined(TOOLKIT_VIEWS)) || defined(USE_AURA)
-  if (url.host() == chrome::kChromeUICollectedCookiesHost ||
-      url.host() == chrome::kChromeUIHttpAuthHost ||
-      url.host() == chrome::kChromeUITabModalConfirmDialogHost) {
+  if (url.host() == chrome::kChromeUITabModalConfirmDialogHost) {
     return &NewWebUI<ConstrainedWebDialogUI>;
   }
 #endif
@@ -412,28 +422,13 @@ WebUIFactoryFunction GetWebUIFactoryFunction(WebUI* web_ui,
   return NULL;
 }
 
-// When the test-type switch is set, return a TestType object, which should be a
-// subclass of Type. The logic is provided here in the traits class, rather than
-// in GetInstance() so that the choice is made only once, when the Singleton is
-// first instantiated, rather than every time GetInstance() is called.
-template<typename Type, typename TestType>
-struct PossibleTestSingletonTraits : public DefaultSingletonTraits<Type> {
-  static Type* New() {
-    if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kTestType))
-      return DefaultSingletonTraits<TestType>::New();
-    else
-      return DefaultSingletonTraits<Type>::New();
-  }
-};
-
 void RunFaviconCallbackAsync(
     const FaviconService::FaviconResultsCallback& callback,
-    const std::vector<history::FaviconBitmapResult>* results,
-    const history::IconURLSizesMap* size_map) {
+    const std::vector<history::FaviconBitmapResult>* results) {
   base::MessageLoopProxy::current()->PostTask(
       FROM_HERE,
       base::Bind(&FaviconService::FaviconResultsCallbackRunner,
-                 callback, base::Owned(results), base::Owned(size_map)));
+                 callback, base::Owned(results)));
 }
 
 }  // namespace
@@ -459,27 +454,6 @@ bool ChromeWebUIControllerFactory::UseWebUIBindingsForURL(
       UseWebUIForURL(browser_context, url);
 }
 
-bool ChromeWebUIControllerFactory::IsURLAcceptableForWebUI(
-    content::BrowserContext* browser_context,
-    const GURL& url,
-    bool data_urls_allowed) const {
-  return UseWebUIForURL(browser_context, url) ||
-      // javacsript: URLs are allowed to run in Web UI pages
-      url.SchemeIs(chrome::kJavaScriptScheme) ||
-      // It's possible to load about:blank in a Web UI renderer.
-      // See http://crbug.com/42547
-      url.spec() == chrome::kAboutBlankURL ||
-      // Chrome URLs crash, kill, hang, and shorthang are allowed.
-      url == GURL(chrome::kChromeUICrashURL) ||
-      url == GURL(chrome::kChromeUIKillURL) ||
-      url == GURL(chrome::kChromeUIHangURL) ||
-      url == GURL(content::kChromeUIShorthangURL) ||
-      // Data URLs are usually not allowed in WebUI for security reasons.
-      // BalloonHosts are one exception needed by ChromeOS, and are safe because
-      // they cannot be scripted by other pages.
-      (data_urls_allowed && url.SchemeIs(chrome::kDataScheme));
-}
-
 WebUIController* ChromeWebUIControllerFactory::CreateWebUIControllerForURL(
     WebUI* web_ui,
     const GURL& url) const {
@@ -488,10 +462,7 @@ WebUIController* ChromeWebUIControllerFactory::CreateWebUIControllerForURL(
   if (!function)
     return NULL;
 
-  WebUIController* controller = (*function)(web_ui, url);
-  if (controller)
-    web_ui->AddMessageHandler(new GenericHandler());
-  return controller;
+  return (*function)(web_ui, url);
 }
 
 void ChromeWebUIControllerFactory::GetFaviconForURL(
@@ -513,15 +484,13 @@ void ChromeWebUIControllerFactory::GetFaviconForURL(
     ExtensionWebUI::GetFaviconForURL(profile, url, callback);
 #else
     RunFaviconCallbackAsync(callback,
-                            new std::vector<history::FaviconBitmapResult>(),
-                            new history::IconURLSizesMap());
+                            new std::vector<history::FaviconBitmapResult>());
 #endif
     return;
   }
 
   std::vector<history::FaviconBitmapResult>* favicon_bitmap_results =
       new std::vector<history::FaviconBitmapResult>();
-  history::IconURLSizesMap* icon_url_sizes = new history::IconURLSizesMap();
 
   for (size_t i = 0; i < scale_factors.size(); ++i) {
     scoped_refptr<base::RefCountedMemory> bitmap(GetFaviconResourceBytes(
@@ -542,24 +511,12 @@ void ChromeWebUIControllerFactory::GetFaviconForURL(
     }
   }
 
-  // Populate IconURLSizesMap such that the requirement that all the icon URLs
-  // in |favicon_bitmap_results| be present in |icon_url_sizes| holds.
-  // Populate the favicon sizes with the pixel sizes of the bitmaps available
-  // for |url|.
-  for (size_t i = 0; i < favicon_bitmap_results->size(); ++i) {
-    const history::FaviconBitmapResult& bitmap_result =
-        (*favicon_bitmap_results)[i];
-    const GURL& icon_url = bitmap_result.icon_url;
-    (*icon_url_sizes)[icon_url].push_back(bitmap_result.pixel_size);
-  }
-
-  RunFaviconCallbackAsync(callback, favicon_bitmap_results, icon_url_sizes);
+  RunFaviconCallbackAsync(callback, favicon_bitmap_results);
 }
 
 // static
 ChromeWebUIControllerFactory* ChromeWebUIControllerFactory::GetInstance() {
-  return Singleton< ChromeWebUIControllerFactory, PossibleTestSingletonTraits<
-      ChromeWebUIControllerFactory, TestChromeWebUIControllerFactory> >::get();
+  return Singleton<ChromeWebUIControllerFactory>::get();
 }
 
 ChromeWebUIControllerFactory::ChromeWebUIControllerFactory() {
@@ -583,7 +540,7 @@ base::RefCountedMemory* ChromeWebUIControllerFactory::GetFaviconResourceBytes(
   }
 #endif
 
-  if (!content::GetContentClient()->HasWebUIScheme(page_url))
+  if (!content::HasWebUIScheme(page_url))
     return NULL;
 
 #if defined(OS_WIN)
@@ -594,10 +551,17 @@ base::RefCountedMemory* ChromeWebUIControllerFactory::GetFaviconResourceBytes(
   if (page_url.host() == chrome::kChromeUICrashesHost)
     return CrashesUI::GetFaviconResourceBytes(scale_factor);
 
+  if (page_url.host() == chrome::kChromeUIFlagsHost)
+    return FlagsUI::GetFaviconResourceBytes(scale_factor);
+
   if (page_url.host() == chrome::kChromeUIHistoryHost)
     return HistoryUI::GetFaviconResourceBytes(scale_factor);
 
 #if !defined(OS_ANDROID)
+  // The Apps launcher page is not available on android.
+  if (page_url.host() == chrome::kChromeUIAppLauncherPageHost)
+    return AppLauncherPageUI::GetFaviconResourceBytes(scale_factor);
+
   // Flash is not available on android.
   if (page_url.host() == chrome::kChromeUIFlashHost)
     return FlashUI::GetFaviconResourceBytes(scale_factor);
@@ -605,11 +569,6 @@ base::RefCountedMemory* ChromeWebUIControllerFactory::GetFaviconResourceBytes(
   // Android uses the native download manager.
   if (page_url.host() == chrome::kChromeUIDownloadsHost)
     return DownloadsUI::GetFaviconResourceBytes(scale_factor);
-
-  // chrome://flags is currently unsupported on Android.
-  // TODO(satish): Enable after http://crbug.com/143146 is fixed.
-  if (page_url.host() == chrome::kChromeUIFlagsHost)
-    return FlagsUI::GetFaviconResourceBytes(scale_factor);
 
   // Android doesn't use the Options pages.
   if (page_url.host() == chrome::kChromeUISettingsFrameHost)

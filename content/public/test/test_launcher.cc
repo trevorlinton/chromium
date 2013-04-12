@@ -68,7 +68,7 @@ const char kTestTotalShards[] = "GTEST_TOTAL_SHARDS";
 const char kTestShardIndex[] = "GTEST_SHARD_INDEX";
 
 // The default output file for XML output.
-const FilePath::CharType kDefaultOutputFile[] = FILE_PATH_LITERAL(
+const base::FilePath::CharType kDefaultOutputFile[] = FILE_PATH_LITERAL(
     "test_detail.xml");
 
 // Quit test execution after this number of tests has timed out.
@@ -166,23 +166,24 @@ ResultsPrinter::ResultsPrinter(const CommandLine& command_line) : out_(NULL) {
     return;
   std::string flag = command_line.GetSwitchValueASCII(kGTestOutputFlag);
   size_t colon_pos = flag.find(':');
-  FilePath path;
+  base::FilePath path;
   if (colon_pos != std::string::npos) {
-    FilePath flag_path = command_line.GetSwitchValuePath(kGTestOutputFlag);
-    FilePath::StringType path_string = flag_path.value();
-    path = FilePath(path_string.substr(colon_pos + 1));
+    base::FilePath flag_path =
+        command_line.GetSwitchValuePath(kGTestOutputFlag);
+    base::FilePath::StringType path_string = flag_path.value();
+    path = base::FilePath(path_string.substr(colon_pos + 1));
     // If the given path ends with '/', consider it is a directory.
     // Note: This does NOT check that a directory (or file) actually exists
     // (the behavior is same as what gtest does).
     if (file_util::EndsWithSeparator(path)) {
-      FilePath executable = command_line.GetProgram().BaseName();
+      base::FilePath executable = command_line.GetProgram().BaseName();
       path = path.Append(executable.ReplaceExtension(
-          FilePath::StringType(FILE_PATH_LITERAL("xml"))));
+          base::FilePath::StringType(FILE_PATH_LITERAL("xml"))));
     }
   }
   if (path.value().empty())
-    path = FilePath(kDefaultOutputFile);
-  FilePath dir_name = path.DirName();
+    path = base::FilePath(kDefaultOutputFile);
+  base::FilePath dir_name = path.DirName();
   if (!file_util::DirectoryExists(dir_name)) {
     LOG(WARNING) << "The output directory does not exist. "
                  << "Creating the directory: " << dir_name.value();
@@ -519,7 +520,7 @@ bool RunTests(TestLauncherDelegate* launcher_delegate,
         continue;
       }
 
-      base::Time start_time = base::Time::Now();
+      base::TimeTicks start_time = base::TimeTicks::Now();
       ++test_run_count;
       bool was_timeout = false;
       int exit_code = RunTest(launcher_delegate,
@@ -529,16 +530,18 @@ bool RunTests(TestLauncherDelegate* launcher_delegate,
                               &was_timeout);
       if (exit_code == 0) {
         // Test passed.
-        printer.OnTestEnd(test_info->name(), test_case->name(), true, false,
-                          false,
-                          (base::Time::Now() - start_time).InMillisecondsF());
+        printer.OnTestEnd(
+            test_info->name(), test_case->name(), true, false,
+            false,
+            (base::TimeTicks::Now() - start_time).InMillisecondsF());
       } else {
         failed_tests.push_back(test_name);
 
         bool ignore_failure = false;
-        printer.OnTestEnd(test_info->name(), test_case->name(), true, true,
-                          ignore_failure,
-                          (base::Time::Now() - start_time).InMillisecondsF());
+        printer.OnTestEnd(
+            test_info->name(), test_case->name(), true, true,
+            ignore_failure,
+            (base::TimeTicks::Now() - start_time).InMillisecondsF());
         if (ignore_failure)
           ignored_tests.insert(test_name);
 

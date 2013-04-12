@@ -16,6 +16,7 @@
 #include "base/metrics/statistics_recorder.h"
 #include "base/metrics/stats_counters.h"
 #include "base/path_service.h"
+#include "base/pending_task.h"
 #include "base/process_util.h"
 #include "base/string_util.h"
 #include "base/system_monitor/system_monitor.h"
@@ -30,6 +31,7 @@
 #include "content/renderer/render_thread_impl.h"
 #include "content/renderer/renderer_main_platform_delegate.h"
 #include "ui/base/ui_base_switches.h"
+#include "webkit/glue/webkit_glue.h"
 #include "webkit/plugins/ppapi/ppapi_interface_factory.h"
 
 #if defined(OS_MACOSX)
@@ -69,19 +71,35 @@ class RendererMessageLoopObserver : public MessageLoop::TaskObserver {
             1, 3600000, 50, base::Histogram::kUmaTargetedHistogramFlag)) {}
   virtual ~RendererMessageLoopObserver() {}
 
-  virtual void WillProcessTask(base::TimeTicks time_posted) {
+  virtual void WillProcessTask(const base::PendingTask& pending_task) OVERRIDE {
     begin_process_message_ = base::TimeTicks::Now();
   }
 
-  virtual void DidProcessTask(base::TimeTicks time_posted) {
+  virtual void DidProcessTask(const base::PendingTask& pending_task) OVERRIDE {
     if (!begin_process_message_.is_null())
       process_times_->AddTime(base::TimeTicks::Now() - begin_process_message_);
   }
 
  private:
   base::TimeTicks begin_process_message_;
-  base::Histogram* const process_times_;
+  base::HistogramBase* const process_times_;
   DISALLOW_COPY_AND_ASSIGN(RendererMessageLoopObserver);
+};
+
+// For measuring memory usage after each task. Behind a command line flag.
+class MemoryObserver : public MessageLoop::TaskObserver {
+ public:
+  MemoryObserver() {}
+  virtual ~MemoryObserver() {}
+
+  virtual void WillProcessTask(const base::PendingTask& pending_task) OVERRIDE {
+  }
+
+  virtual void DidProcessTask(const base::PendingTask& pending_task) OVERRIDE {
+    HISTOGRAM_MEMORY_KB("Memory.RendererUsed", webkit_glue::MemoryUsageKB());
+  }
+ private:
+  DISALLOW_COPY_AND_ASSIGN(MemoryObserver);
 };
 
 // mainline routine for running as the Renderer process
@@ -134,6 +152,12 @@ int RendererMain(const MainFunctionParams& parameters) {
               MessageLoop::TYPE_UI : MessageLoop::TYPE_NODE);
 #endif
   main_message_loop.AddTaskObserver(&task_observer);
+
+  scoped_ptr<MemoryObserver> memory_observer;
+  if (parsed_command_line.HasSwitch(switches::kMemoryMetrics)) {
+    memory_observer.reset(new MemoryObserver());
+    main_message_loop.AddTaskObserver(memory_observer.get());
+  }
 
   base::PlatformThread::SetName("CrRendererMain");
 

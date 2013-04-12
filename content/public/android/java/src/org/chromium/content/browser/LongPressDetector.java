@@ -109,6 +109,7 @@ class LongPressDetector {
                 }
                 break;
             case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
                 if (mCurrentDownEvent.getDownTime() + TAP_TIMEOUT + LONGPRESS_TIMEOUT >
                     ev.getEventTime()) {
                     mInLongPress = false;
@@ -171,5 +172,14 @@ class LongPressDetector {
             }
         }
         return mMoveConfirmed;
+    }
+
+    /**
+     * This is for testing only.
+     * Sends a LongPress gesture. This should always be called after a down event.
+     */
+    void sendLongPressGestureForTest() {
+        if (mCurrentDownEvent == null) return;
+        dispatchLongPress();
     }
 }

@@ -200,36 +200,6 @@
       },
     },
     {
-      'target_name': 'sandbox_win64',
-      'type': 'static_library',
-      'variables': {
-        'sandbox_windows_target': 1,
-        'target_arch': 'x64',
-      },
-      'dependencies': [
-        '../testing/gtest.gyp:gtest',
-        '../base/base.gyp:base_nacl_win64',
-        '../base/base.gyp:base_static_win64',
-      ],
-      'configurations': {
-        'Common_Base': {
-          'msvs_target_platform': 'x64',
-        },
-      },
-      'include_dirs': [
-        '../..',
-      ],
-      'direct_dependent_settings': {
-        'include_dirs': [
-          'src',
-          '../..',
-        ],
-      },
-      'defines': [
-        '<@(nacl_win64_defines)',
-      ]
-    },
-    {
       'target_name': 'sbox_integration_tests',
       'type': 'executable',
       'dependencies': [
@@ -239,6 +209,7 @@
       'sources': [
         'src/app_container_test.cc',
         'src/file_policy_test.cc',
+        'src/handle_inheritance_test.cc',
         'src/handle_policy_test.cc',
         'tests/integration_tests/integration_tests_test.cc',
         'src/handle_closer_test.cc',
@@ -349,5 +320,41 @@
         '../..',
       ],
     },
+  ],
+  'conditions': [
+    ['OS=="win" and target_arch=="ia32"', {
+      'targets': [
+        {
+          'target_name': 'sandbox_win64',
+          'type': 'static_library',
+          'variables': {
+            'sandbox_windows_target': 1,
+            'target_arch': 'x64',
+          },
+          'dependencies': [
+            '../testing/gtest.gyp:gtest',
+            '../base/base.gyp:base_nacl_win64',
+            '../base/base.gyp:base_static_win64',
+          ],
+          'configurations': {
+            'Common_Base': {
+              'msvs_target_platform': 'x64',
+            },
+          },
+          'include_dirs': [
+            '../..',
+          ],
+          'direct_dependent_settings': {
+            'include_dirs': [
+              'src',
+              '../..',
+            ],
+          },
+          'defines': [
+            '<@(nacl_win64_defines)',
+          ]
+        },
+      ],
+    }],
   ],
 }

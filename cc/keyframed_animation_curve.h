@@ -9,7 +9,7 @@
 #include "cc/cc_export.h"
 #include "cc/scoped_ptr_vector.h"
 #include "cc/timing_function.h"
-#include "third_party/WebKit/Source/Platform/chromium/public/WebTransformOperations.h"
+#include "cc/transform_operations.h"
 
 namespace cc {
 
@@ -46,17 +46,17 @@ private:
 
 class CC_EXPORT TransformKeyframe : public Keyframe {
 public:
-    static scoped_ptr<TransformKeyframe> create(double time, const WebKit::WebTransformOperations& value, scoped_ptr<TimingFunction>);
+    static scoped_ptr<TransformKeyframe> create(double time, const TransformOperations& value, scoped_ptr<TimingFunction>);
     virtual ~TransformKeyframe();
 
-    const WebKit::WebTransformOperations& value() const;
+    const TransformOperations& value() const;
 
     scoped_ptr<TransformKeyframe> clone() const;
 
 private:
-    TransformKeyframe(double time, const WebKit::WebTransformOperations& value, scoped_ptr<TimingFunction>);
+    TransformKeyframe(double time, const TransformOperations& value, scoped_ptr<TimingFunction>);
 
-    WebKit::WebTransformOperations m_value;
+    TransformOperations m_value;
 };
 
 class CC_EXPORT KeyframedFloatAnimationCurve : public FloatAnimationCurve {
@@ -99,7 +99,7 @@ public:
     virtual scoped_ptr<AnimationCurve> clone() const OVERRIDE;
 
     // TransformAnimationCurve implementation
-    virtual WebKit::WebTransformationMatrix getValue(double t) const OVERRIDE;
+    virtual gfx::Transform getValue(double t) const OVERRIDE;
 
 private:
     KeyframedTransformAnimationCurve();

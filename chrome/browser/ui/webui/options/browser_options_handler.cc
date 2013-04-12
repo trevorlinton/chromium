@@ -13,8 +13,9 @@
 #include "base/command_line.h"
 #include "base/memory/singleton.h"
 #include "base/path_service.h"
+#include "base/prefs/pref_service.h"
 #include "base/stl_util.h"
-#include "base/string_number_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "base/value_conversions.h"
 #include "base/values.h"
@@ -24,7 +25,8 @@
 #include "chrome/browser/custom_home_pages_table_model.h"
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/net/url_fixer_upper.h"
-#include "chrome/browser/prefs/pref_service.h"
+#include "chrome/browser/policy/user_cloud_policy_manager.h"
+#include "chrome/browser/policy/user_cloud_policy_manager_factory.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/printing/cloud_print/cloud_print_proxy_service.h"
 #include "chrome/browser/printing/cloud_print/cloud_print_proxy_service_factory.h"
@@ -50,9 +52,7 @@
 #include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/options/options_util.h"
 #include "chrome/browser/ui/search/search.h"
-#include "chrome/browser/ui/webui/chrome_url_data_manager.h"
 #include "chrome/browser/ui/webui/favicon_source.h"
-#include "chrome/browser/ui/webui/web_ui_util.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/chrome_paths.h"
@@ -66,6 +66,7 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/notification_types.h"
+#include "content/public/browser/url_data_source.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
@@ -78,6 +79,12 @@
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebView.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/webui/web_ui_util.h"
+
+#if defined(ENABLE_MANAGED_USERS)
+#include "chrome/browser/managed_mode/managed_user_service.h"
+#include "chrome/browser/managed_mode/managed_user_service_factory.h"
+#endif
 
 #if !defined(OS_CHROMEOS)
 #include "chrome/browser/printing/cloud_print/cloud_print_setup_handler.h"
@@ -85,6 +92,8 @@
 #endif
 
 #if defined(OS_CHROMEOS)
+#include "ash/magnifier/magnifier_constants.h"
+#include "base/chromeos/chromeos_version.h"
 #include "chrome/browser/chromeos/accessibility/accessibility_util.h"
 #include "chrome/browser/chromeos/extensions/wallpaper_manager_util.h"
 #include "chrome/browser/chromeos/login/user_manager.h"
@@ -117,8 +126,7 @@ namespace options {
 BrowserOptionsHandler::BrowserOptionsHandler()
     : page_initialized_(false),
       template_url_service_(NULL),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_ptr_factory_for_file_(this)),
-      ALLOW_THIS_IN_INITIALIZER_LIST(weak_ptr_factory_for_ui_(this)) {
+      ALLOW_THIS_IN_INITIALIZER_LIST(weak_ptr_factory_(this)) {
   multiprofile_ = ProfileManager::IsMultipleProfilesEnabled();
 #if !defined(OS_MACOSX)
   default_browser_worker_ = new ShellIntegration::DefaultBrowserWorker(this);
@@ -219,14 +227,11 @@ void BrowserOptionsHandler::GetLocalizedValues(DictionaryValue* values) {
     { "importData", IDS_OPTIONS_IMPORT_DATA_BUTTON },
     { "improveBrowsingExperience", IDS_OPTIONS_IMPROVE_BROWSING_EXPERIENCE },
     { "languageAndSpellCheckSettingsButton",
-#if defined(OS_CHROMEOS)
-      IDS_OPTIONS_SETTINGS_LANGUAGES_CUSTOMIZE },
-#else
       IDS_OPTIONS_SETTINGS_LANGUAGE_AND_INPUT_SETTINGS },
-#endif
     { "linkDoctorPref", IDS_OPTIONS_LINKDOCTOR_PREF },
     { "manageAutofillSettings", IDS_OPTIONS_MANAGE_AUTOFILL_SETTINGS_LINK },
     { "managePasswords", IDS_OPTIONS_PASSWORDS_MANAGE_PASSWORDS_LINK },
+    { "managedUsersSectionTitle", IDS_OPTIONS_MANAGED_USERS_SECTION_TITLE },
     { "networkPredictionEnabledDescription",
       IDS_NETWORK_PREDICTION_ENABLED_DESCRIPTION },
     { "passwordsAndAutofillGroupName",
@@ -242,7 +247,12 @@ void BrowserOptionsHandler::GetLocalizedValues(DictionaryValue* values) {
     { "profilesDeleteSingle", IDS_PROFILES_DELETE_SINGLE_BUTTON_LABEL },
     { "profilesListItemCurrent", IDS_PROFILES_LIST_ITEM_CURRENT },
     { "profilesManage", IDS_PROFILES_MANAGE_BUTTON_LABEL },
-    { "proxiesLabel", IDS_OPTIONS_PROXIES_LABEL },
+#if defined(ENABLE_SETTINGS_APP)
+    { "profilesAppListSwitch", IDS_SETTINGS_APP_PROFILES_SWITCH_BUTTON_LABEL },
+#endif
+    { "proxiesLabelExtension", IDS_OPTIONS_EXTENSION_PROXIES_LABEL },
+    { "proxiesLabelSystem", IDS_OPTIONS_SYSTEM_PROXIES_LABEL,
+      IDS_PRODUCT_NAME },
     { "safeBrowsingEnableProtection",
       IDS_OPTIONS_SAFEBROWSING_ENABLEPROTECTION },
     { "sectionTitleAppearance", IDS_APPEARANCE_GROUP_NAME },
@@ -303,6 +313,7 @@ void BrowserOptionsHandler::GetLocalizedValues(DictionaryValue* values) {
       IDS_OPTIONS_SETTINGS_ACCESSIBILITY_VIRTUAL_KEYBOARD_DESCRIPTION },
     { "accessibilityAlwaysShowMenu",
       IDS_OPTIONS_SETTINGS_ACCESSIBILITY_SHOULD_ALWAYS_SHOW_MENU },
+    { "advancedSectionTitleKiosk", IDS_OPTIONS_KIOSK },
     { "factoryResetHeading", IDS_OPTIONS_FACTORY_RESET_HEADING },
     { "factoryResetTitle", IDS_OPTIONS_FACTORY_RESET },
     { "factoryResetRestart", IDS_OPTIONS_FACTORY_RESET_BUTTON },
@@ -320,6 +331,7 @@ void BrowserOptionsHandler::GetLocalizedValues(DictionaryValue* values) {
     { "keyboardSettingsButtonTitle",
       IDS_OPTIONS_DEVICE_GROUP_KEYBOARD_SETTINGS_BUTTON_TITLE },
     { "manageAccountsButtonTitle", IDS_OPTIONS_ACCOUNTS_BUTTON_TITLE },
+    { "manageKioskAppsButton", IDS_OPTIONS_KIOSK_MANAGE_BUTTON },
     { "noPointingDevices", IDS_OPTIONS_NO_POINTING_DEVICES },
     { "sectionTitleDevice", IDS_OPTIONS_DEVICE_GROUP_NAME },
     { "sectionTitleInternet", IDS_OPTIONS_INTERNET_OPTIONS_GROUP_LABEL },
@@ -372,6 +384,8 @@ void BrowserOptionsHandler::GetLocalizedValues(DictionaryValue* values) {
     { "profilesSingleUser", IDS_PROFILES_SINGLE_USER_MESSAGE,
       IDS_SETTINGS_APP_LAUNCHER_PRODUCT_NAME },
     { "languageSectionLabel", IDS_OPTIONS_ADVANCED_LANGUAGE_LABEL,
+      IDS_SETTINGS_APP_LAUNCHER_PRODUCT_NAME },
+    { "proxiesLabelSystem", IDS_OPTIONS_SYSTEM_PROXIES_LABEL,
       IDS_SETTINGS_APP_LAUNCHER_PRODUCT_NAME },
   };
   DictionaryValue* app_values = NULL;
@@ -427,7 +441,32 @@ void BrowserOptionsHandler::GetLocalizedValues(DictionaryValue* values) {
 
   values->SetString("accessibilityLearnMoreURL",
                     chrome::kChromeAccessibilityHelpURL);
+
+  // Creates magnifierList.
+  scoped_ptr<base::ListValue> magnifier_list(new base::ListValue);
+
+  scoped_ptr<base::ListValue> option_full(new base::ListValue);
+  option_full->AppendInteger(ash::MAGNIFIER_FULL);
+  option_full->AppendString(l10n_util::GetStringUTF16(
+      IDS_OPTIONS_SETTINGS_ACCESSIBILITY_SCREEN_MAGNIFIER_FULL));
+  magnifier_list->Append(option_full.release());
+
+  scoped_ptr<base::ListValue> option_partial(new base::ListValue);
+  option_partial->AppendInteger(ash::MAGNIFIER_PARTIAL);
+  option_partial->Append(new base::StringValue(l10n_util::GetStringUTF16(
+      IDS_OPTIONS_SETTINGS_ACCESSIBILITY_SCREEN_MAGNIFIER_PARTIAL)));
+  magnifier_list->Append(option_partial.release());
+
+  values->Set("magnifierList", magnifier_list.release());
+
+  // Sets flag of whether kiosk section should be enabled.
+  values->SetBoolean(
+      "enableKioskSection",
+      CommandLine::ForCurrentProcess()->HasSwitch(switches::kEnableAppMode) &&
+      (chromeos::UserManager::Get()->IsCurrentUserOwner() ||
+       !base::chromeos::IsRunningOnChromeOS()));
 #endif
+
 #if defined(OS_MACOSX)
   values->SetString("macPasswordsWarning",
       l10n_util::GetStringUTF16(IDS_OPTIONS_PASSWORDS_MAC_WARNING));
@@ -437,6 +476,12 @@ void BrowserOptionsHandler::GetLocalizedValues(DictionaryValue* values) {
 
   if (multiprofile_)
     values->Set("profilesInfo", GetProfilesInfoList().release());
+
+#if defined(ENABLE_MANAGED_USERS)
+  ManagedUserService* service =
+      ManagedUserServiceFactory::GetForProfile(Profile::FromWebUI(web_ui()));
+  values->SetBoolean("profileIsManaged", service->ProfileIsManaged());
+#endif
 }
 
 void BrowserOptionsHandler::RegisterCloudPrintValues(DictionaryValue* values) {
@@ -559,6 +604,13 @@ void BrowserOptionsHandler::OnStateChanged() {
   SendProfilesInfo();
 }
 
+void BrowserOptionsHandler::OnSigninAllowedPrefChange() {
+  web_ui()->CallJavascriptFunction("BrowserOptions.updateSyncState",
+                                   *GetSyncStateDictionary());
+
+  SendProfilesInfo();
+}
+
 void BrowserOptionsHandler::PageLoadStarted() {
   page_initialized_ = false;
 }
@@ -573,8 +625,8 @@ void BrowserOptionsHandler::InitializeHandler() {
     sync_service->AddObserver(this);
 
   // Create our favicon data source.
-  ChromeURLDataManager::AddDataSource(profile,
-      new FaviconSource(profile, FaviconSource::FAVICON));
+  content::URLDataSource::Add(
+      profile, new FaviconSource(profile, FaviconSource::FAVICON));
 
   default_browser_policy_.Init(
       prefs::kDefaultBrowserSettingEnabled,
@@ -591,7 +643,10 @@ void BrowserOptionsHandler::InitializeHandler() {
   registrar_.Add(this, chrome::NOTIFICATION_BROWSER_THEME_CHANGED,
                  content::Source<ThemeService>(
                      ThemeServiceFactory::GetForProfile(profile)));
-
+  registrar_.Add(this, chrome::NOTIFICATION_GOOGLE_SIGNIN_SUCCESSFUL,
+                 content::Source<Profile>(profile));
+  registrar_.Add(this, chrome::NOTIFICATION_GOOGLE_SIGNED_OUT,
+                 content::Source<Profile>(profile));
   AddTemplateUrlServiceObserver();
 
 #if defined(OS_WIN)
@@ -600,10 +655,8 @@ void BrowserOptionsHandler::InitializeHandler() {
       !command_line.HasSwitch(switches::kUserDataDir)) {
     BrowserThread::PostTask(BrowserThread::FILE, FROM_HERE,
         base::Bind(&BrowserOptionsHandler::CheckAutoLaunch,
-                   weak_ptr_factory_for_ui_.GetWeakPtr(),
-                   weak_ptr_factory_for_file_.GetWeakPtr(),
+                   weak_ptr_factory_.GetWeakPtr(),
                    profile->GetPath()));
-    weak_ptr_factory_for_ui_.DetachFromThread();
   }
 #endif
 
@@ -628,11 +681,16 @@ void BrowserOptionsHandler::InitializeHandler() {
       prefs::kDefaultZoomLevel, prefs,
       base::Bind(&BrowserOptionsHandler::SetupPageZoomSelector,
                  base::Unretained(this)));
+  profile_pref_registrar_.Init(prefs);
+  profile_pref_registrar_.Add(
+      prefs::kSigninAllowed,
+      base::Bind(&BrowserOptionsHandler::OnSigninAllowedPrefChange,
+                 base::Unretained(this)));
 #if !defined(OS_CHROMEOS)
-  proxy_prefs_.Init(prefs);
-  proxy_prefs_.Add(prefs::kProxy,
-                   base::Bind(&BrowserOptionsHandler::SetupProxySettingsSection,
-                              base::Unretained(this)));
+  profile_pref_registrar_.Add(
+      prefs::kProxy,
+      base::Bind(&BrowserOptionsHandler::SetupProxySettingsSection,
+                 base::Unretained(this)));
 #endif  // !defined(OS_CHROMEOS)
 }
 
@@ -664,13 +722,13 @@ void BrowserOptionsHandler::InitializePage() {
     web_ui()->CallJavascriptFunction(
         "BrowserOptions.enableFactoryResetSection");
   }
-
 #endif
 }
 
+// static
 void BrowserOptionsHandler::CheckAutoLaunch(
     base::WeakPtr<BrowserOptionsHandler> weak_this,
-    const FilePath& profile_path) {
+    const base::FilePath& profile_path) {
 #if defined(OS_WIN)
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::FILE));
 
@@ -687,7 +745,7 @@ void BrowserOptionsHandler::CheckAutoLaunch(
                  auto_launch_util::AutoStartRequested(
                      profile_path.BaseName().value(),
                      true,  // Window requested.
-                     FilePath())));
+                     base::FilePath())));
 #endif
 }
 
@@ -877,17 +935,26 @@ void BrowserOptionsHandler::Observe(
   if (!page_initialized_)
     return;
 
-  if (type == chrome::NOTIFICATION_BROWSER_THEME_CHANGED) {
-    ObserveThemeChanged();
+  switch (type) {
+    case chrome::NOTIFICATION_BROWSER_THEME_CHANGED:
+      ObserveThemeChanged();
+      break;
 #if defined(OS_CHROMEOS)
-  } else if (type == chrome::NOTIFICATION_LOGIN_USER_IMAGE_CHANGED) {
-    UpdateAccountPicture();
+    case chrome::NOTIFICATION_LOGIN_USER_IMAGE_CHANGED:
+      UpdateAccountPicture();
+      break;
 #endif
-  } else if (type == chrome::NOTIFICATION_PROFILE_CACHED_INFO_CHANGED) {
-    if (multiprofile_)
-      SendProfilesInfo();
-  } else {
-    NOTREACHED();
+    case chrome::NOTIFICATION_PROFILE_CACHED_INFO_CHANGED:
+      if (multiprofile_)
+        SendProfilesInfo();
+      break;
+    case chrome::NOTIFICATION_GOOGLE_SIGNIN_SUCCESSFUL:
+    case chrome::NOTIFICATION_GOOGLE_SIGNED_OUT:
+      // Update our sync/signin status display.
+      OnStateChanged();
+      break;
+    default:
+      NOTREACHED();
   }
 }
 
@@ -912,10 +979,11 @@ void BrowserOptionsHandler::ToggleAutoLaunch(const ListValue* args) {
   Profile* profile = Profile::FromWebUI(web_ui());
   content::BrowserThread::PostTask(
       content::BrowserThread::FILE, FROM_HERE,
-      enable ? base::Bind(&auto_launch_util::EnableForegroundStartAtLogin,
-                          profile->GetPath().BaseName().value(), FilePath()) :
-               base::Bind(&auto_launch_util::DisableForegroundStartAtLogin,
-                          profile->GetPath().BaseName().value()));
+      enable ?
+          base::Bind(&auto_launch_util::EnableForegroundStartAtLogin,
+                     profile->GetPath().BaseName().value(), base::FilePath()) :
+          base::Bind(&auto_launch_util::DisableForegroundStartAtLogin,
+                      profile->GetPath().BaseName().value()));
 #endif  // OS_WIN
 }
 
@@ -923,13 +991,13 @@ scoped_ptr<ListValue> BrowserOptionsHandler::GetProfilesInfoList() {
   ProfileInfoCache& cache =
       g_browser_process->profile_manager()->GetProfileInfoCache();
   scoped_ptr<ListValue> profile_info_list(new ListValue);
-  FilePath current_profile_path =
+  base::FilePath current_profile_path =
       web_ui()->GetWebContents()->GetBrowserContext()->GetPath();
 
   for (size_t i = 0, e = cache.GetNumberOfProfiles(); i < e; ++i) {
     DictionaryValue* profile_value = new DictionaryValue();
     profile_value->SetString("name", cache.GetNameOfProfileAtIndex(i));
-    FilePath profile_path = cache.GetPathOfProfileAtIndex(i);
+    base::FilePath profile_path = cache.GetPathOfProfileAtIndex(i);
     profile_value->Set("filePath", base::CreateFilePathValue(profile_path));
     profile_value->SetBoolean("isCurrentProfile",
                               profile_path == current_profile_path);
@@ -943,7 +1011,7 @@ scoped_ptr<ListValue> BrowserOptionsHandler::GetProfilesInfoList() {
       gfx::Image icon = profiles::GetAvatarIconForWebUI(
           cache.GetAvatarIconOfProfileAtIndex(i), true);
       profile_value->SetString("iconURL",
-          web_ui_util::GetBitmapDataUrl(icon.AsBitmap()));
+          webui::GetBitmapDataUrl(icon.AsBitmap()));
     } else {
       size_t icon_index = cache.GetAvatarIconIndexOfProfileAtIndex(i);
       profile_value->SetString("iconURL",
@@ -962,8 +1030,15 @@ void BrowserOptionsHandler::SendProfilesInfo() {
 }
 
 void BrowserOptionsHandler::CreateProfile(const ListValue* args) {
+#if defined(ENABLE_MANAGED_USERS)
   // This handler could have been called in managed mode, for example because
   // the user fiddled with the web inspector. Silently return in this case.
+  ManagedUserService* service =
+      ManagedUserServiceFactory::GetForProfile(Profile::FromWebUI(web_ui()));
+  if (service->ProfileIsManaged())
+    return;
+#endif
+
   if (!ProfileManager::IsMultipleProfilesEnabled())
     return;
 
@@ -1039,21 +1114,30 @@ void BrowserOptionsHandler::UpdateAccountPicture() {
 
 scoped_ptr<DictionaryValue> BrowserOptionsHandler::GetSyncStateDictionary() {
   scoped_ptr<DictionaryValue> sync_status(new DictionaryValue);
-  ProfileSyncService* service(ProfileSyncServiceFactory::
-      GetInstance()->GetForProfile(Profile::FromWebUI(web_ui())));
-  sync_status->SetBoolean("syncSystemEnabled", !!service);
-  if (!service)
+  Profile* profile = Profile::FromWebUI(web_ui());
+  if (profile->IsGuestSession()) {
+    // Cannot display signin status when running in guest mode on chromeos
+    // because there is no SigninManager.
+    sync_status->SetBoolean("signinAllowed", false);
     return sync_status.Pass();
+  }
 
+  // Signout is not allowed if the user has policy (crbug.com/172204).
+  SigninManager* signin = SigninManagerFactory::GetForProfile(profile);
+  DCHECK(signin);
+  sync_status->SetBoolean("signoutAllowed", !signin->IsSignoutProhibited());
+  ProfileSyncService* service(
+      ProfileSyncServiceFactory::GetInstance()->GetForProfile(profile));
+  sync_status->SetBoolean("signinAllowed", signin->IsSigninAllowed());
+  sync_status->SetBoolean("syncSystemEnabled", !!service);
   sync_status->SetBoolean("setupCompleted",
-                          service->HasSyncSetupCompleted());
-  sync_status->SetBoolean("setupInProgress", service->FirstSetupInProgress());
+                          service && service->HasSyncSetupCompleted());
+  sync_status->SetBoolean("setupInProgress",
+      service && !service->IsManaged() && service->FirstSetupInProgress());
 
   string16 status_label;
   string16 link_label;
-  SigninManager* signin = SigninManagerFactory::GetForProfile(
-      Profile::FromWebUI(web_ui()));
-
+  DCHECK(signin);
   bool status_has_error = sync_ui_util::GetStatusLabels(
       service, *signin, sync_ui_util::WITH_HTML, &status_label, &link_label) ==
           sync_ui_util::SYNC_ERROR;
@@ -1061,13 +1145,16 @@ scoped_ptr<DictionaryValue> BrowserOptionsHandler::GetSyncStateDictionary() {
   sync_status->SetString("actionLinkText", link_label);
   sync_status->SetBoolean("hasError", status_has_error);
 
-  sync_status->SetBoolean("managed", service->IsManaged());
+  sync_status->SetBoolean("managed", service && service->IsManaged());
+  sync_status->SetBoolean("signedIn",
+                          !signin->GetAuthenticatedUsername().empty());
   sync_status->SetBoolean("hasUnrecoverableError",
-                          service->HasUnrecoverableError());
+                          service && service->HasUnrecoverableError());
   sync_status->SetBoolean(
       "autoLoginVisible",
       CommandLine::ForCurrentProcess()->HasSwitch(switches::kEnableAutologin) &&
-      service->IsSyncEnabledAndLoggedIn() && service->IsSyncTokenAvailable());
+      service && service->IsSyncEnabledAndLoggedIn() &&
+      service->IsSyncTokenAvailable());
 
   return sync_status.Pass();
 }
@@ -1078,7 +1165,7 @@ void BrowserOptionsHandler::HandleSelectDownloadLocation(
   select_folder_dialog_ = ui::SelectFileDialog::Create(
       this, new ChromeSelectFilePolicy(web_ui()->GetWebContents()));
   ui::SelectFileDialog::FileTypeInfo info;
-  info.support_gdata = true;
+  info.support_drive = true;
   select_folder_dialog_->SelectFile(
       ui::SelectFileDialog::SELECT_FOLDER,
       l10n_util::GetStringUTF16(IDS_OPTIONS_DOWNLOADLOCATION_BROWSE_TITLE),
@@ -1087,7 +1174,7 @@ void BrowserOptionsHandler::HandleSelectDownloadLocation(
       web_ui()->GetWebContents()->GetView()->GetTopLevelNativeWindow(), NULL);
 }
 
-void BrowserOptionsHandler::FileSelected(const FilePath& path, int index,
+void BrowserOptionsHandler::FileSelected(const base::FilePath& path, int index,
                                          void* params) {
   content::RecordAction(UserMetricsAction("Options_SetDownloadDirectory"));
   PrefService* pref_service = Profile::FromWebUI(web_ui())->GetPrefs();
@@ -1384,21 +1471,12 @@ void BrowserOptionsHandler::SetupProxySettingsSection() {
   bool is_extension_controlled = (proxy_config &&
                                   proxy_config->IsExtensionControlled());
 
-  base::FundamentalValue disabled(proxy_prefs_.IsManaged() ||
+  base::FundamentalValue disabled(profile_pref_registrar_.IsManaged() ||
                                   is_extension_controlled);
+  base::FundamentalValue extension_controlled(is_extension_controlled);
+  web_ui()->CallJavascriptFunction("BrowserOptions.setupProxySettingsSection",
+                                   disabled, extension_controlled);
 
-  // Get the appropriate info string to describe the button.
-  string16 label_str;
-  if (is_extension_controlled) {
-    label_str = l10n_util::GetStringUTF16(IDS_OPTIONS_EXTENSION_PROXIES_LABEL);
-  } else {
-    label_str = l10n_util::GetStringFUTF16(IDS_OPTIONS_SYSTEM_PROXIES_LABEL,
-        l10n_util::GetStringUTF16(IDS_PRODUCT_NAME));
-  }
-  StringValue label(label_str);
-
-  web_ui()->CallJavascriptFunction(
-      "BrowserOptions.setupProxySettingsSection", disabled, label);
 #endif  // !defined(OS_CHROMEOS)
 }
 

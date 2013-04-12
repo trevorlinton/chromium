@@ -48,7 +48,8 @@ public:
     // are kept in sync. This function does not take ownership of the impl thread controller.
     virtual void pushAnimationUpdatesTo(LayerAnimationController*);
 
-    void animate(double monotonicTime, AnimationEventsVector*);
+    void animate(double monotonicTime);
+    void updateState(AnimationEventsVector*);
 
     // Returns the active animation in the given group, animating the given property, if such an
     // animation exists.
@@ -62,7 +63,7 @@ public:
     bool hasActiveAnimation() const;
 
     // Returns true if there are any animations at all to process.
-    bool hasAnyAnimation() const { return !m_activeAnimations.isEmpty(); }
+    bool hasAnyAnimation() const { return !m_activeAnimations.empty(); }
 
     // Returns true if there is an animation currently animating the given property, or
     // if there is an animation scheduled to animate this property in the future.
@@ -95,10 +96,12 @@ private:
     void pushPropertiesToImplThread(LayerAnimationController*) const;
     void replaceImplThreadAnimations(LayerAnimationController*) const;
 
-    void startAnimationsWaitingForNextTick(double monotonicTime, AnimationEventsVector*);
-    void startAnimationsWaitingForStartTime(double monotonicTime, AnimationEventsVector*);
-    void startAnimationsWaitingForTargetAvailability(double monotonicTime, AnimationEventsVector*);
+    void startAnimationsWaitingForNextTick(double monotonicTime);
+    void startAnimationsWaitingForStartTime(double monotonicTime);
+    void startAnimationsWaitingForTargetAvailability(double monotonicTime);
     void resolveConflicts(double monotonicTime);
+    void promoteStartedAnimations(double monotonicTime, AnimationEventsVector*);
+    void markFinishedAnimations(double monotonicTime);
     void markAnimationsForDeletion(double monotonicTime, AnimationEventsVector*);
     void purgeAnimationsMarkedForDeletion();
 
@@ -120,6 +123,8 @@ private:
 
     // This is used to ensure that we don't spam the registrar.
     bool m_isActive;
+
+    double m_lastTickTime;
 
     ObserverList<LayerAnimationValueObserver> m_observers;
 

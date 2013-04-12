@@ -4,14 +4,11 @@
 
 #include "chrome/browser/bookmarks/bookmark_prompt_prefs.h"
 
-#include "chrome/browser/prefs/pref_service.h"
+#include "base/prefs/pref_service.h"
+#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/common/pref_names.h"
 
-namespace {
-
-}  // namespace
-
-BookmarkPromptPrefs::BookmarkPromptPrefs(PrefServiceBase* user_prefs)
+BookmarkPromptPrefs::BookmarkPromptPrefs(PrefService* user_prefs)
     : prefs_(user_prefs) {
 }
 
@@ -36,11 +33,11 @@ bool BookmarkPromptPrefs::IsBookmarkPromptEnabled() const {
 }
 
 // static
-void BookmarkPromptPrefs::RegisterUserPrefs(PrefServiceSyncable* user_prefs) {
+void BookmarkPromptPrefs::RegisterUserPrefs(PrefRegistrySyncable* registry) {
   // We always register preferences without checking FieldTrial, because
   // we may not receive field trial list from the server yet.
-  user_prefs->RegisterBooleanPref(prefs::kBookmarkPromptEnabled, true,
-                                  PrefServiceSyncable::UNSYNCABLE_PREF);
-  user_prefs->RegisterIntegerPref(prefs::kBookmarkPromptImpressionCount, 0,
-                                  PrefServiceSyncable::UNSYNCABLE_PREF);
+  registry->RegisterBooleanPref(prefs::kBookmarkPromptEnabled, true,
+                                PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterIntegerPref(prefs::kBookmarkPromptImpressionCount, 0,
+                                PrefRegistrySyncable::UNSYNCABLE_PREF);
 }

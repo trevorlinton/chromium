@@ -51,14 +51,14 @@ std::string GetUserLoginStatus() {
 bool AutotestPrivateLogoutFunction::RunImpl() {
   DVLOG(1) << "AutotestPrivateLogoutFunction";
   if (!AutotestPrivateAPIFactory::GetForProfile(profile())->test_mode())
-    browser::AttemptUserExit();
+    chrome::AttemptUserExit();
   return true;
 }
 
 bool AutotestPrivateRestartFunction::RunImpl() {
   DVLOG(1) << "AutotestPrivateRestartFunction";
   if (!AutotestPrivateAPIFactory::GetForProfile(profile())->test_mode())
-    browser::AttemptRestart();
+    chrome::AttemptRestart();
   return true;
 }
 
@@ -72,12 +72,12 @@ bool AutotestPrivateShutdownFunction::RunImpl() {
 #if defined(OS_CHROME)
   if (params->force) {
     if (!AutotestPrivateAPIFactory::GetForProfile(profile())->test_mode())
-      browser::ExitCleanly();
+      chrome::ExitCleanly();
     return true;
   }
 #endif
   if (!AutotestPrivateAPIFactory::GetForProfile(profile())->test_mode())
-    browser::AttemptExit();
+    chrome::AttemptExit();
   return true;
 }
 
@@ -88,12 +88,6 @@ bool AutotestPrivateLoginStatusFunction::RunImpl() {
 }
 
 AutotestPrivateAPI::AutotestPrivateAPI() : test_mode_(false) {
-  ExtensionFunctionRegistry* registry =
-      ExtensionFunctionRegistry::GetInstance();
-  registry->RegisterFunction<AutotestPrivateLogoutFunction>();
-  registry->RegisterFunction<AutotestPrivateRestartFunction>();
-  registry->RegisterFunction<AutotestPrivateShutdownFunction>();
-  registry->RegisterFunction<AutotestPrivateLoginStatusFunction>();
 }
 
 AutotestPrivateAPI::~AutotestPrivateAPI() {

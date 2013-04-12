@@ -50,8 +50,10 @@ namespace {
 class ExperimentURLRequestContext : public net::URLRequestContext {
  public:
   explicit ExperimentURLRequestContext(
-      net::URLRequestContext* proxy_request_context)
-      : proxy_request_context_(proxy_request_context),
+      net::URLRequestContext* proxy_request_context) :
+#if !defined(OS_IOS)
+        proxy_request_context_(proxy_request_context),
+#endif
         ALLOW_THIS_IN_INITIALIZER_LIST(storage_(this)),
         ALLOW_THIS_IN_INITIALIZER_LIST(weak_factory_(this)) {}
 
@@ -204,7 +206,6 @@ class ExperimentURLRequestContext : public net::URLRequestContext {
     experiment_proxy_service->reset(
         net::CreateProxyServiceUsingV8ProxyResolver(
             proxy_config_service->release(),
-            0u,
             new net::ProxyScriptFetcherImpl(proxy_request_context_),
             dhcp_factory.Create(proxy_request_context_),
             host_resolver(),
@@ -286,7 +287,9 @@ class ExperimentURLRequestContext : public net::URLRequestContext {
 #endif
   }
 
+#if !defined(OS_IOS)
   net::URLRequestContext* const proxy_request_context_;
+#endif
   net::URLRequestContextStorage storage_;
   base::WeakPtrFactory<ExperimentURLRequestContext> weak_factory_;
 };
@@ -318,8 +321,9 @@ class ConnectionTester::TestRunner : public net::URLRequest::Delegate {
   void Run(const Experiment& experiment);
 
   // Overridden from net::URLRequest::Delegate:
-  virtual void OnResponseStarted(net::URLRequest* request);
-  virtual void OnReadCompleted(net::URLRequest* request, int bytes_read);
+  virtual void OnResponseStarted(net::URLRequest* request) OVERRIDE;
+  virtual void OnReadCompleted(net::URLRequest* request,
+                               int bytes_read) OVERRIDE;
   // TODO(eroman): handle cases requiring authentication.
 
  private:

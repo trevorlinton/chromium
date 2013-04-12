@@ -10,7 +10,6 @@
 
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "chrome/browser/extensions/image_loading_tracker.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/window/dialog_delegate.h"
@@ -100,7 +99,6 @@ class CreateUrlApplicationShortcutView : public CreateApplicationShortcutView {
   void DidDownloadFavicon(
       int id,
       const GURL& image_url,
-      bool errored,
       int requested_size,
       const std::vector<SkBitmap>& bitmaps);
 
@@ -118,23 +116,19 @@ class CreateUrlApplicationShortcutView : public CreateApplicationShortcutView {
 
 // Create an application shortcut pointing to a chrome application.
 class CreateChromeApplicationShortcutView
-    : public CreateApplicationShortcutView,
-     public ImageLoadingTracker::Observer {
+    : public CreateApplicationShortcutView {
  public:
   CreateChromeApplicationShortcutView(Profile* profile,
                                       const extensions::Extension* app);
   virtual ~CreateChromeApplicationShortcutView();
 
-  // Implement ImageLoadingTracker::Observer.  |tracker_| is used to
-  // load the app's icon.  This method recieves the icon, and adds
-  // it to the "Create Shortcut" dailog box.
-  virtual void OnImageLoaded(const gfx::Image& image,
-                             const std::string& extension_id,
-                             int index) OVERRIDE;
-
  private:
+  void OnShortcutInfoLoaded(
+      const ShellIntegration::ShortcutInfo& shortcut_info);
+
   const extensions::Extension* app_;
-  ImageLoadingTracker tracker_;
+
+  base::WeakPtrFactory<CreateChromeApplicationShortcutView> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(CreateChromeApplicationShortcutView);
 };

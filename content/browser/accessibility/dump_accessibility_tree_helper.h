@@ -5,9 +5,9 @@
 #ifndef CONTENT_BROWSER_ACCESSIBILITY_DUMP_ACCESSIBILITY_TREE_HELPER_H_
 #define CONTENT_BROWSER_ACCESSIBILITY_DUMP_ACCESSIBILITY_TREE_HELPER_H_
 
-#include <set>
+#include <vector>
 
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/string16.h"
 #include "base/utf_string_conversions.h"
 #include "content/browser/accessibility/browser_accessibility.h"
@@ -26,30 +26,47 @@ class DumpAccessibilityTreeHelper {
   void DumpAccessibilityTree(BrowserAccessibility* node,
                              string16* contents);
 
+  // A single filter specification. See GetAllowString() and GetDenyString()
+  // for more information.
+  struct Filter {
+    enum Type {
+      ALLOW,
+      ALLOW_EMPTY,
+      DENY
+    };
+    string16 match_str;
+    Type type;
+
+    Filter(string16 match_str, Type type)
+        : match_str(match_str), type(type) {}
+  };
+
   // Set regular expression filters that apply to each component of every
   // line before it's output.
-  void SetFilters(const std::set<string16>& allow_filters,
-                  const std::set<string16>& deny_filters);
+  void SetFilters(const std::vector<Filter>& filters);
 
   // Suffix of the expectation file corresponding to html file.
   // Example:
   // HTML test:      test-file.html
   // Expected:       test-file-expected-mac.txt.
   // Auto-generated: test-file-actual-mac.txt
-  const FilePath::StringType GetActualFileSuffix() const;
-  const FilePath::StringType GetExpectedFileSuffix() const;
+  const base::FilePath::StringType GetActualFileSuffix() const;
+  const base::FilePath::StringType GetExpectedFileSuffix() const;
 
   // A platform-specific string that indicates a given line in a file
-  // is an allow or deny filter. Example:
+  // is an allow-empty, allow or deny filter. Example:
   // Mac values:
+  //   GetAllowEmptyString() -> "@MAC-ALLOW-EMPTY:"
   //   GetAllowString() -> "@MAC-ALLOW:"
   //   GetDenyString() -> "@MAC-DENY:"
   // Example html:
   // <!--
+  // @MAC-ALLOW-EMPTY:description*
   // @MAC-ALLOW:roleDescription*
   // @MAC-DENY:subrole*
   // -->
   // <p>Text</p>
+  const std::string GetAllowEmptyString() const;
   const std::string GetAllowString() const;
   const std::string GetDenyString() const;
 
@@ -70,8 +87,7 @@ class DumpAccessibilityTreeHelper {
   void Add(bool include_by_default, const string16& attr);
   string16 FinishLine();
 
-  std::set<string16> allow_filters_;
-  std::set<string16> deny_filters_;
+  std::vector<Filter> filters_;
   string16 line_;
 
   DISALLOW_COPY_AND_ASSIGN(DumpAccessibilityTreeHelper);

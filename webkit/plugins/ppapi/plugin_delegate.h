@@ -12,6 +12,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/message_loop_proxy.h"
 #include "base/platform_file.h"
+#include "base/process.h"
 #include "base/shared_memory.h"
 #include "base/sync_socket.h"
 #include "base/time.h"
@@ -26,6 +27,7 @@
 #include "ppapi/c/pp_resource.h"
 #include "ppapi/c/pp_stdint.h"
 #include "ppapi/c/private/ppb_flash.h"
+#include "ppapi/c/private/ppb_tcp_socket_private.h"
 #include "ppapi/c/private/ppb_udp_socket_private.h"
 #include "ppapi/shared_impl/dir_contents.h"
 #include "ui/gfx/size.h"
@@ -37,7 +39,6 @@ class GURL;
 class SkBitmap;
 class SkCanvas;
 class TransportDIB;
-struct PP_HostResolver_Private_Hint;
 struct PP_NetAddress_Private;
 
 namespace WebKit {
@@ -63,7 +64,6 @@ class CommandBuffer;
 
 namespace ppapi {
 class PepperFilePath;
-class PPB_HostResolver_Shared;
 class PPB_X509Certificate_Fields;
 struct DeviceRefData;
 struct HostPortPair;
@@ -100,7 +100,6 @@ class PPB_Broker_Impl;
 class PPB_Flash_Menu_Impl;
 class PPB_ImageData_Impl;
 class PPB_TCPSocket_Private_Impl;
-class PPB_UDPSocket_Private_Impl;
 
 // Virtual interface that the browser implements to implement features for
 // PPAPI plugins.
@@ -154,6 +153,8 @@ class PluginDelegate {
     // regular instance shutdown so the out-of-process code can clean up its
     // tracking information.
     virtual void RemoveInstance(PP_Instance instance) = 0;
+
+    virtual base::ProcessId GetPeerProcessId() = 0;
   };
 
   // Represents an image. This is to allow the browser layer to supply a correct
@@ -390,7 +391,7 @@ class PluginDelegate {
   // Creates a replacement plug-in that is shown when the plug-in at |file_path|
   // couldn't be loaded.
   virtual WebKit::WebPlugin* CreatePluginReplacement(
-      const FilePath& file_path) = 0;
+      const base::FilePath& file_path) = 0;
 
   // The caller will own the pointer returned from this.
   virtual PlatformImage2D* CreateImage2D(int width, int height) = 0;
@@ -458,7 +459,7 @@ class PluginDelegate {
   // Sends an async IPC to open a local file.
   typedef base::Callback<void (base::PlatformFileError, base::PassPlatformFile)>
       AsyncOpenFileCallback;
-  virtual bool AsyncOpenFile(const FilePath& path,
+  virtual bool AsyncOpenFile(const base::FilePath& path,
                              int flags,
                              const AsyncOpenFileCallback& callback) = 0;
 
@@ -516,7 +517,7 @@ class PluginDelegate {
 
   // Synchronously returns the platform file path for a filesystem URL.
   virtual void SyncGetFileSystemPlatformPath(const GURL& url,
-                                             FilePath* platform_path) = 0;
+                                             base::FilePath* platform_path) = 0;
 
   // Returns a MessageLoopProxy instance associated with the message loop
   // of the file thread in this renderer.
@@ -542,23 +543,11 @@ class PluginDelegate {
   virtual void TCPSocketRead(uint32 socket_id, int32_t bytes_to_read) = 0;
   virtual void TCPSocketWrite(uint32 socket_id, const std::string& buffer) = 0;
   virtual void TCPSocketDisconnect(uint32 socket_id) = 0;
+  virtual void TCPSocketSetBoolOption(uint32 socket_id,
+                                      PP_TCPSocketOption_Private name,
+                                      bool value) = 0;
   virtual void RegisterTCPSocket(PPB_TCPSocket_Private_Impl* socket,
                                  uint32 socket_id) = 0;
-
-  // For PPB_UDPSocket_Private.
-  virtual uint32 UDPSocketCreate() = 0;
-  virtual void UDPSocketSetBoolSocketFeature(PPB_UDPSocket_Private_Impl* socket,
-                                             uint32 socket_id,
-                                             int32_t name,
-                                             bool value) = 0;
-  virtual void UDPSocketBind(PPB_UDPSocket_Private_Impl* socket,
-                             uint32 socket_id,
-                             const PP_NetAddress_Private& addr) = 0;
-  virtual void UDPSocketRecvFrom(uint32 socket_id, int32_t num_bytes) = 0;
-  virtual void UDPSocketSendTo(uint32 socket_id,
-                               const std::string& buffer,
-                               const PP_NetAddress_Private& addr) = 0;
-  virtual void UDPSocketClose(uint32 socket_id) = 0;
 
   // For PPB_TCPServerSocket_Private.
   virtual void TCPServerSocketListen(PP_Resource socket_resource,
@@ -568,16 +557,6 @@ class PluginDelegate {
   virtual void TCPServerSocketStopListening(
       PP_Resource socket_resource,
       uint32 socket_id) = 0;
-
-  // For PPB_HostResolver_Private.
-  virtual void RegisterHostResolver(
-      ::ppapi::PPB_HostResolver_Shared* host_resolver,
-      uint32 host_resolver_id) = 0;
-  virtual void HostResolverResolve(
-      uint32 host_resolver_id,
-      const ::ppapi::HostPortPair& host_port,
-      const PP_HostResolver_Private_Hint* hint) = 0;
-  virtual void UnregisterHostResolver(uint32 host_resolver_id) = 0;
 
   // Add/remove a network list observer.
   virtual bool AddNetworkListObserver(
@@ -618,7 +597,7 @@ class PluginDelegate {
 
   // Create an anonymous shared memory segment of size |size| bytes, and return
   // a pointer to it, or NULL on error.  Caller owns the returned pointer.
-  virtual base::SharedMemory* CreateAnonymousSharedMemory(uint32_t size) = 0;
+  virtual base::SharedMemory* CreateAnonymousSharedMemory(size_t size) = 0;
 
   // Returns the current preferences.
   virtual ::ppapi::Preferences GetPreferences() = 0;

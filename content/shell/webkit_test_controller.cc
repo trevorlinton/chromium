@@ -7,10 +7,17 @@
 #include <iostream>
 
 #include "base/command_line.h"
-#include "base/file_util.h"
 #include "base/message_loop.h"
+#include "base/process_util.h"
 #include "base/run_loop.h"
+#include "base/string_number_conversions.h"
+#include "base/stringprintf.h"
+#include "content/public/browser/devtools_manager.h"
 #include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/notification_service.h"
+#include "content/public/browser/notification_types.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/shell/shell.h"
@@ -19,20 +26,21 @@
 #include "content/shell/shell_messages.h"
 #include "content/shell/shell_switches.h"
 #include "content/shell/webkit_test_helpers.h"
-#include "webkit/fileapi/isolated_context.h"
+#include "webkit/glue/glue_serialize.h"
 #include "webkit/support/webkit_support_gfx.h"
 
 namespace content {
 
 namespace {
 const int kTestTimeoutMilliseconds = 30 * 1000;
+const int kVirtualWindowBorder = 3;
 }  // namespace
 
 // WebKitTestResultPrinter ----------------------------------------------------
 
 WebKitTestResultPrinter::WebKitTestResultPrinter(
     std::ostream* output, std::ostream* error)
-    : state_(BEFORE_TEST),
+    : state_(DURING_TEST),
       capture_text_only_(false),
       output_(output),
       error_(error) {
@@ -42,14 +50,16 @@ WebKitTestResultPrinter::~WebKitTestResultPrinter() {
 }
 
 void WebKitTestResultPrinter::PrintTextHeader() {
-  DCHECK_EQ(state_, BEFORE_TEST);
+  if (state_ != DURING_TEST)
+    return;
   if (!capture_text_only_)
     *output_ << "Content-Type: text/plain\n";
   state_ = IN_TEXT_BLOCK;
 }
 
 void WebKitTestResultPrinter::PrintTextBlock(const std::string& block) {
-  DCHECK_EQ(state_, IN_TEXT_BLOCK);
+  if (state_ != IN_TEXT_BLOCK)
+    return;
   *output_ << block;
 }
 
@@ -58,9 +68,7 @@ void WebKitTestResultPrinter::PrintTextFooter() {
     return;
   if (!capture_text_only_) {
     *output_ << "#EOF\n";
-    *error_ << "#EOF\n";
     output_->flush();
-    error_->flush();
   }
   state_ = IN_IMAGE_BLOCK;
 }
@@ -90,9 +98,39 @@ void WebKitTestResultPrinter::PrintImageFooter() {
     return;
   if (!capture_text_only_) {
     *output_ << "#EOF\n";
+    *error_ << "#EOF\n";
     output_->flush();
+    error_->flush();
   }
   state_ = AFTER_TEST;
+}
+
+void WebKitTestResultPrinter::PrintAudioHeader() {
+  DCHECK_EQ(state_, DURING_TEST);
+  if (!capture_text_only_)
+    *output_ << "Content-Type: audio/wav\n";
+  state_ = IN_AUDIO_BLOCK;
+}
+
+void WebKitTestResultPrinter::PrintAudioBlock(
+    const std::vector<unsigned char>& audio_data) {
+  if (state_ != IN_AUDIO_BLOCK || capture_text_only_)
+    return;
+  *output_ << "Content-Length: " << audio_data.size() << "\n";
+  output_->write(
+      reinterpret_cast<const char*>(&audio_data[0]), audio_data.size());
+}
+
+void WebKitTestResultPrinter::PrintAudioFooter() {
+  if (state_ != IN_AUDIO_BLOCK)
+    return;
+  if (!capture_text_only_) {
+    *output_ << "#EOF\n";
+    *error_ << "#EOF\n";
+    output_->flush();
+    error_->flush();
+  }
+  state_ = IN_IMAGE_BLOCK;
 }
 
 void WebKitTestResultPrinter::AddMessage(const std::string& message) {
@@ -100,20 +138,20 @@ void WebKitTestResultPrinter::AddMessage(const std::string& message) {
 }
 
 void WebKitTestResultPrinter::AddMessageRaw(const std::string& message) {
-  if (state_ != IN_TEXT_BLOCK)
+  if (state_ != DURING_TEST)
     return;
   *output_ << message;
 }
 
 void WebKitTestResultPrinter::AddErrorMessage(const std::string& message) {
-  if (state_ != IN_TEXT_BLOCK)
+  if (state_ != DURING_TEST)
     return;
+  PrintTextHeader();
   *output_ << message << "\n";
   if (!capture_text_only_)
     *error_ << message << "\n";
   PrintTextFooter();
   PrintImageFooter();
-  MessageLoop::current()->PostTask(FROM_HERE, MessageLoop::QuitClosure());
 }
 
 // WebKitTestController -------------------------------------------------------
@@ -126,54 +164,63 @@ WebKitTestController* WebKitTestController::Get() {
   return instance_;
 }
 
-WebKitTestController::WebKitTestController() {
+WebKitTestController::WebKitTestController()
+    : main_window_(NULL) {
   CHECK(!instance_);
   instance_ = this;
   printer_.reset(new WebKitTestResultPrinter(&std::cout, &std::cerr));
+  registrar_.Add(this,
+                 NOTIFICATION_RENDERER_PROCESS_CREATED,
+                 NotificationService::AllSources());
   ResetAfterLayoutTest();
 }
 
 WebKitTestController::~WebKitTestController() {
   DCHECK(CalledOnValidThread());
   CHECK(instance_ == this);
-  if (main_window_)
-    main_window_->Close();
   instance_ = NULL;
 }
 
 bool WebKitTestController::PrepareForLayoutTest(
     const GURL& test_url,
-    const FilePath& current_working_directory,
+    const base::FilePath& current_working_directory,
     bool enable_pixel_dumping,
     const std::string& expected_pixel_hash) {
   DCHECK(CalledOnValidThread());
   current_working_directory_ = current_working_directory;
   enable_pixel_dumping_ = enable_pixel_dumping;
   expected_pixel_hash_ = expected_pixel_hash;
+  test_url_ = test_url;
   printer_->reset();
-  printer_->PrintTextHeader();
   content::ShellBrowserContext* browser_context =
       static_cast<content::ShellContentBrowserClient*>(
           content::GetContentClient()->browser())->browser_context();
+  if (test_url.spec().find("compositing/") != std::string::npos)
+    is_compositing_test_ = true;
+  gfx::Size initial_size;
+  // The W3C SVG layout tests use a different size than the other layout tests.
+  if (test_url.spec().find("W3C-SVG-1.1") != std::string::npos)
+    initial_size = gfx::Size(480, 360);
+  // TODO(jochen): Only create a new window if we can't reuse an existing
+  // window.
   main_window_ = content::Shell::CreateNewWindow(
       browser_context,
       GURL(),
       NULL,
       MSG_ROUTING_NONE,
-      NULL);
-  Observe(main_window_->web_contents());
+      initial_size);
+  WebContentsObserver::Observe(main_window_->web_contents());
   main_window_->LoadURL(test_url);
-  if (test_url.spec().find("/dumpAsText/") != std::string::npos ||
-      test_url.spec().find("\\dumpAsText\\") != std::string::npos) {
-    dump_as_text_ = true;
-    enable_pixel_dumping_ = false;
-  }
-  if (test_url.spec().find("/inspector/") != std::string::npos ||
-      test_url.spec().find("\\inspector\\") != std::string::npos) {
-    main_window_->ShowDevTools();
-  }
-  main_window_->web_contents()->GetRenderViewHost()->Focus();
   main_window_->web_contents()->GetRenderViewHost()->SetActive(true);
+  main_window_->web_contents()->GetRenderViewHost()->Focus();
+  if (!CommandLine::ForCurrentProcess()->HasSwitch(switches::kNoTimeout)) {
+    watchdog_.Reset(base::Bind(&WebKitTestController::TimeoutHandler,
+                               base::Unretained(this)));
+    MessageLoop::current()->PostDelayedTask(
+        FROM_HERE,
+        watchdog_.callback(),
+        base::TimeDelta::FromMilliseconds(kTestTimeoutMilliseconds + 1000));
+  }
   return true;
 }
 
@@ -181,129 +228,132 @@ bool WebKitTestController::ResetAfterLayoutTest() {
   DCHECK(CalledOnValidThread());
   printer_->PrintTextFooter();
   printer_->PrintImageFooter();
+  is_compositing_test_ = false;
   enable_pixel_dumping_ = false;
   expected_pixel_hash_.clear();
-  captured_dump_ = false;
-  dump_as_text_ = false;
-  dump_child_frames_ = false;
-  is_printing_ = false;
-  should_stay_on_page_after_handling_before_unload_ = false;
-  wait_until_done_ = false;
-  did_finish_load_ = false;
+  test_url_ = GURL();
   prefs_ = webkit_glue::WebPreferences();
   should_override_prefs_ = false;
-  {
-    base::AutoLock lock(lock_);
-    can_open_windows_ = false;
-  }
   watchdog_.Cancel();
-  if (main_window_) {
-    Observe(NULL);
-    main_window_ = NULL;
-  }
-  Shell::CloseAllWindows();
   Send(new ShellViewMsg_ResetAll);
+  // TODO(jochen): Reuse the main window for the next test.
+  if (main_window_)
+    DiscardMainWindow(DO_NOT_QUIT_MESSAGE_LOOP);
   return true;
+}
+
+void WebKitTestController::SetTempPath(const base::FilePath& temp_path) {
+  temp_path_ = temp_path;
 }
 
 void WebKitTestController::RendererUnresponsive() {
   DCHECK(CalledOnValidThread());
-  if (!CommandLine::ForCurrentProcess()->HasSwitch(switches::kNoTimeout))
-    printer_->AddErrorMessage("#PROCESS UNRESPONSIVE - renderer");
+  if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kNoTimeout))
+    return;
+  printer_->AddErrorMessage("#PROCESS UNRESPONSIVE - renderer");
+  DiscardMainWindow(QUIT_MESSAGE_LOOP);
 }
 
 void WebKitTestController::OverrideWebkitPrefs(
     webkit_glue::WebPreferences* prefs) {
-  if (should_override_prefs_)
+  if (should_override_prefs_) {
     *prefs = prefs_;
-  else
+  } else {
     ApplyLayoutTestDefaultPreferences(prefs);
-}
-
-bool WebKitTestController::CanOpenWindows() const {
-  base::AutoLock lock(lock_);
-  return can_open_windows_;
+    if (is_compositing_test_) {
+      CommandLine& command_line = *CommandLine::ForCurrentProcess();
+      if (command_line.HasSwitch(switches::kEnableSoftwareCompositing))
+        prefs->accelerated_2d_canvas_enabled = true;
+      prefs->accelerated_compositing_for_video_enabled = true;
+      prefs->deferred_2d_canvas_enabled = true;
+      prefs->mock_scrollbars_enabled = true;
+    }
+  }
 }
 
 bool WebKitTestController::OnMessageReceived(const IPC::Message& message) {
   DCHECK(CalledOnValidThread());
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP(WebKitTestController, message)
-    IPC_MESSAGE_HANDLER(ShellViewHostMsg_DidFinishLoad, OnDidFinishLoad)
     IPC_MESSAGE_HANDLER(ShellViewHostMsg_PrintMessage, OnPrintMessage)
-    IPC_MESSAGE_HANDLER(ShellViewHostMsg_ReadFileToString, OnReadFileToString)
-    IPC_MESSAGE_HANDLER(ShellViewHostMsg_RegisterIsolatedFileSystem,
-                        OnRegisterIsolatedFileSystem)
     IPC_MESSAGE_HANDLER(ShellViewHostMsg_TextDump, OnTextDump)
     IPC_MESSAGE_HANDLER(ShellViewHostMsg_ImageDump, OnImageDump)
+    IPC_MESSAGE_HANDLER(ShellViewHostMsg_AudioDump, OnAudioDump)
     IPC_MESSAGE_HANDLER(ShellViewHostMsg_OverridePreferences,
                         OnOverridePreferences)
-    IPC_MESSAGE_HANDLER(ShellViewHostMsg_NotifyDone, OnNotifyDone)
-    IPC_MESSAGE_HANDLER(ShellViewHostMsg_DumpAsText, OnDumpAsText)
-    IPC_MESSAGE_HANDLER(ShellViewHostMsg_DumpChildFramesAsText,
-                        OnDumpChildFramesAsText)
-    IPC_MESSAGE_HANDLER(ShellViewHostMsg_SetPrinting, OnSetPrinting)
-    IPC_MESSAGE_HANDLER(
-        ShellViewHostMsg_SetShouldStayOnPageAfterHandlingBeforeUnload,
-        OnSetShouldStayOnPageAfterHandlingBeforeUnload)
-    IPC_MESSAGE_HANDLER(ShellViewHostMsg_WaitUntilDone, OnWaitUntilDone)
-    IPC_MESSAGE_HANDLER(ShellViewHostMsg_CanOpenWindows, OnCanOpenWindows)
-    IPC_MESSAGE_HANDLER(ShellViewHostMsg_ShowWebInspector, OnShowWebInspector)
-    IPC_MESSAGE_HANDLER(ShellViewHostMsg_CloseWebInspector, OnCloseWebInspector)
-    IPC_MESSAGE_HANDLER(ShellViewHostMsg_NotImplemented, OnNotImplemented)
+    IPC_MESSAGE_HANDLER(ShellViewHostMsg_TestFinished, OnTestFinished)
+    IPC_MESSAGE_HANDLER(ShellViewHostMsg_ShowDevTools, OnShowDevTools)
+    IPC_MESSAGE_HANDLER(ShellViewHostMsg_CloseDevTools, OnCloseDevTools)
+    IPC_MESSAGE_HANDLER(ShellViewHostMsg_GoToOffset, OnGoToOffset)
+    IPC_MESSAGE_HANDLER(ShellViewHostMsg_Reload, OnReload)
+    IPC_MESSAGE_HANDLER(ShellViewHostMsg_LoadURLForFrame, OnLoadURLForFrame)
+    IPC_MESSAGE_HANDLER(ShellViewHostMsg_SetClientWindowRect,
+                        OnSetClientWindowRect)
+    IPC_MESSAGE_HANDLER(ShellViewHostMsg_CaptureSessionHistory,
+                        OnCaptureSessionHistory)
+    IPC_MESSAGE_HANDLER(ShellViewHostMsg_CloseRemainingWindows,
+                        OnCloseRemainingWindows)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
 
   return handled;
 }
 
-void WebKitTestController::PluginCrashed(const FilePath& plugin_path) {
+void WebKitTestController::PluginCrashed(const base::FilePath& plugin_path,
+                                         base::ProcessId plugin_pid) {
   DCHECK(CalledOnValidThread());
-  printer_->AddErrorMessage("#CRASHED - plugin");
+  printer_->AddErrorMessage(
+      base::StringPrintf("#CRASHED - plugin (pid %d)", plugin_pid));
+  DiscardMainWindow(QUIT_MESSAGE_LOOP);
 }
 
 void WebKitTestController::RenderViewCreated(RenderViewHost* render_view_host) {
   DCHECK(CalledOnValidThread());
-  render_view_host->Send(new ShellViewMsg_SetCurrentWorkingDirectory(
-      render_view_host->GetRoutingID(), current_working_directory_));
+  // Might be kNullProcessHandle, in which case we will receive a notification
+  // later when the RenderProcessHost was created.
+  if (render_view_host->GetProcess()->GetHandle() != base::kNullProcessHandle)
+    current_pid_ = base::GetProcId(render_view_host->GetProcess()->GetHandle());
+  SendTestConfiguration();
 }
 
 void WebKitTestController::RenderViewGone(base::TerminationStatus status) {
   DCHECK(CalledOnValidThread());
-  if (status == base::TERMINATION_STATUS_PROCESS_CRASHED ||
-      status == base::TERMINATION_STATUS_ABNORMAL_TERMINATION) {
+  if (current_pid_ != base::kNullProcessId) {
+    printer_->AddErrorMessage(std::string("#CRASHED - renderer (pid ") +
+                              base::IntToString(current_pid_) + ")");
+  } else {
     printer_->AddErrorMessage("#CRASHED - renderer");
   }
+  DiscardMainWindow(QUIT_MESSAGE_LOOP);
 }
 
 void WebKitTestController::WebContentsDestroyed(WebContents* web_contents) {
   DCHECK(CalledOnValidThread());
-  main_window_ = NULL;
   printer_->AddErrorMessage("FAIL: main window was destroyed");
+  DiscardMainWindow(QUIT_MESSAGE_LOOP);
 }
 
-void WebKitTestController::CaptureDump() {
-  if (captured_dump_ || !main_window_ || !printer_->in_text_block())
-    return;
-  captured_dump_ = true;
-
-  if (main_window_->web_contents()->GetContentsMimeType() == "text/plain") {
-    dump_as_text_ = true;
-    enable_pixel_dumping_ = false;
-  }
-
-  RenderViewHost* render_view_host =
-      main_window_->web_contents()->GetRenderViewHost();
-
-  render_view_host->Send(new ShellViewMsg_CaptureTextDump(
-      render_view_host->GetRoutingID(),
-      dump_as_text_,
-      is_printing_,
-      dump_child_frames_));
-  if (!dump_as_text_ && enable_pixel_dumping_) {
-    render_view_host->Send(new ShellViewMsg_CaptureImageDump(
-        render_view_host->GetRoutingID(),
-        expected_pixel_hash_));
+void WebKitTestController::Observe(int type,
+                                   const NotificationSource& source,
+                                   const NotificationDetails& details) {
+  DCHECK(CalledOnValidThread());
+  switch (type) {
+    case NOTIFICATION_RENDERER_PROCESS_CREATED: {
+      if (!main_window_)
+        return;
+      RenderViewHost* render_view_host =
+          main_window_->web_contents()->GetRenderViewHost();
+      if (!render_view_host)
+        return;
+      RenderProcessHost* render_process_host =
+          Source<RenderProcessHost>(source).ptr();
+      if (render_process_host != render_view_host->GetProcess())
+        return;
+      current_pid_ = base::GetProcId(render_process_host->GetHandle());
+      break;
+    }
+    default:
+      NOTREACHED();
   }
 }
 
@@ -311,13 +361,46 @@ void WebKitTestController::TimeoutHandler() {
   DCHECK(CalledOnValidThread());
   printer_->AddErrorMessage(
       "FAIL: Timed out waiting for notifyDone to be called");
+  DiscardMainWindow(QUIT_MESSAGE_LOOP);
 }
 
-void WebKitTestController::OnDidFinishLoad() {
-  did_finish_load_ = true;
-  if (wait_until_done_)
+void WebKitTestController::DiscardMainWindow(
+    WhetherToQuitMessageLoop quit_message_loop) {
+  main_window_ = NULL;
+  WebContentsObserver::Observe(NULL);
+  current_pid_ = base::kNullProcessId;
+  Shell::CloseAllWindows();
+  if (quit_message_loop == QUIT_MESSAGE_LOOP)
+    MessageLoop::current()->PostTask(FROM_HERE, MessageLoop::QuitClosure());
+}
+
+void WebKitTestController::SendTestConfiguration() {
+  RenderViewHost* render_view_host =
+      main_window_->web_contents()->GetRenderViewHost();
+  ShellViewMsg_SetTestConfiguration_Params params;
+  params.current_working_directory = current_working_directory_;
+  params.temp_path = temp_path_;
+  params.test_url = test_url_;
+  params.enable_pixel_dumping = enable_pixel_dumping_;
+  params.layout_test_timeout = kTestTimeoutMilliseconds;
+  params.allow_external_pages = CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kAllowExternalPages);
+  params.expected_pixel_hash = expected_pixel_hash_;
+  render_view_host->Send(new ShellViewMsg_SetTestConfiguration(
+      render_view_host->GetRoutingID(), params));
+}
+
+void WebKitTestController::OnTestFinished(bool did_timeout) {
+  watchdog_.Cancel();
+  if (did_timeout) {
+    printer_->AddErrorMessage(
+        "FAIL: Timed out waiting for notifyDone to be called");
+    DiscardMainWindow(QUIT_MESSAGE_LOOP);
     return;
-  CaptureDump();
+  }
+  if (!printer_->output_finished())
+    printer_->PrintImageFooter();
+  MessageLoop::current()->PostTask(FROM_HERE, MessageLoop::QuitClosure());
 }
 
 void WebKitTestController::OnImageDump(
@@ -363,25 +446,22 @@ void WebKitTestController::OnImageDump(
       printer_->PrintImageBlock(png);
   }
   printer_->PrintImageFooter();
-  MessageLoop::current()->PostTask(FROM_HERE, MessageLoop::QuitClosure());
+}
+
+void WebKitTestController::OnAudioDump(const std::vector<unsigned char>& dump) {
+  printer_->PrintAudioHeader();
+  printer_->PrintAudioBlock(dump);
+  printer_->PrintAudioFooter();
 }
 
 void WebKitTestController::OnTextDump(const std::string& dump) {
+  printer_->PrintTextHeader();
   printer_->PrintTextBlock(dump);
   printer_->PrintTextFooter();
-  if (dump_as_text_ || !enable_pixel_dumping_) {
-    printer_->PrintImageFooter();
-    MessageLoop::current()->PostTask(FROM_HERE, MessageLoop::QuitClosure());
-  }
 }
 
 void WebKitTestController::OnPrintMessage(const std::string& message) {
   printer_->AddMessageRaw(message);
-}
-
-void WebKitTestController::OnReadFileToString(const FilePath& local_file,
-                                              std::string* contents) {
-  file_util::ReadFileToString(local_file, contents);
 }
 
 void WebKitTestController::OnOverridePreferences(
@@ -390,77 +470,87 @@ void WebKitTestController::OnOverridePreferences(
   prefs_ = prefs;
 }
 
-void WebKitTestController::OnNotifyDone() {
-  if (!wait_until_done_)
-    return;
-  watchdog_.Cancel();
-  if (!did_finish_load_) {
-    wait_until_done_ = false;
-    return;
-  }
-  CaptureDump();
-}
-
-void WebKitTestController::OnDumpAsText() {
-  dump_as_text_ = true;
-}
-
-void WebKitTestController::OnSetPrinting() {
-  is_printing_ = true;
-}
-
-void WebKitTestController::OnSetShouldStayOnPageAfterHandlingBeforeUnload(
-    bool should_stay_on_page) {
-  should_stay_on_page_after_handling_before_unload_ = should_stay_on_page;
-}
-
-void WebKitTestController::OnDumpChildFramesAsText() {
-  dump_child_frames_ = true;
-}
-
-void WebKitTestController::OnWaitUntilDone() {
-  if (wait_until_done_)
-    return;
-  if (!CommandLine::ForCurrentProcess()->HasSwitch(switches::kNoTimeout)) {
-    watchdog_.Reset(base::Bind(&WebKitTestController::TimeoutHandler,
-                               base::Unretained(this)));
-    MessageLoop::current()->PostDelayedTask(
-        FROM_HERE,
-        watchdog_.callback(),
-        base::TimeDelta::FromMilliseconds(kTestTimeoutMilliseconds));
-  }
-  wait_until_done_ = true;
-}
-
-void WebKitTestController::OnCanOpenWindows() {
-  base::AutoLock lock(lock_);
-  can_open_windows_ = true;
-}
-
-void WebKitTestController::OnShowWebInspector() {
+void WebKitTestController::OnShowDevTools() {
   main_window_->ShowDevTools();
 }
 
-void WebKitTestController::OnCloseWebInspector() {
+void WebKitTestController::OnCloseDevTools() {
   main_window_->CloseDevTools();
 }
 
-void WebKitTestController::OnRegisterIsolatedFileSystem(
-    const std::vector<FilePath>& absolute_filenames,
-    std::string* filesystem_id) {
-  fileapi::IsolatedContext::FileInfoSet files;
-  for (size_t i = 0; i < absolute_filenames.size(); ++i)
-    files.AddPath(absolute_filenames[i], NULL);
-  *filesystem_id =
-      fileapi::IsolatedContext::GetInstance()->RegisterDraggedFileSystem(files);
+void WebKitTestController::OnGoToOffset(int offset) {
+  main_window_->GoBackOrForward(offset);
 }
 
-void WebKitTestController::OnNotImplemented(
-    const std::string& object_name,
-    const std::string& property_name) {
-  printer_->AddErrorMessage(
-      std::string("FAIL: NOT IMPLEMENTED: ") +
-      object_name + "." + property_name);
+void WebKitTestController::OnReload() {
+  main_window_->Reload();
+}
+
+void WebKitTestController::OnLoadURLForFrame(const GURL& url,
+                                             const std::string& frame_name) {
+  main_window_->LoadURLForFrame(url, frame_name);
+}
+
+void WebKitTestController::OnSetClientWindowRect(const gfx::Rect& rect) {
+#if (defined(OS_WIN) && !defined(USE_AURA)) || defined(TOOLKIT_GTK)
+  main_window_->SizeTo(rect.width() - 2 * kVirtualWindowBorder,
+                       rect.height() - 2 * kVirtualWindowBorder);
+  main_window_->web_contents()->GetRenderViewHost()->WasResized();
+#endif
+}
+
+void WebKitTestController::OnCaptureSessionHistory() {
+  std::vector<int> routing_ids;
+  std::vector<std::vector<std::string> > session_histories;
+  std::vector<unsigned> current_entry_indexes;
+
+  RenderViewHost* render_view_host =
+      main_window_->web_contents()->GetRenderViewHost();
+
+  for (std::vector<Shell*>::iterator window = Shell::windows().begin();
+       window != Shell::windows().end();
+       ++window) {
+    WebContents* web_contents = (*window)->web_contents();
+    // Only capture the history from windows in the same process as the main
+    // window. During layout tests, we only use two processes when an
+    // devtools window is open. This should not happen during history navigation
+    // tests.
+    if (render_view_host->GetProcess() !=
+        web_contents->GetRenderViewHost()->GetProcess()) {
+      NOTREACHED();
+      continue;
+    }
+    routing_ids.push_back(web_contents->GetRenderViewHost()->GetRoutingID());
+    current_entry_indexes.push_back(
+        web_contents->GetController().GetCurrentEntryIndex());
+    std::vector<std::string> history;
+    for (int entry = 0; entry < web_contents->GetController().GetEntryCount();
+         ++entry) {
+      std::string state = web_contents->GetController().GetEntryAtIndex(entry)
+          ->GetContentState();
+      if (state.empty()) {
+        state = webkit_glue::CreateHistoryStateForURL(
+            web_contents->GetController().GetEntryAtIndex(entry)->GetURL());
+      }
+      history.push_back(state);
+    }
+    session_histories.push_back(history);
+  }
+
+  Send(new ShellViewMsg_SessionHistory(render_view_host->GetRoutingID(),
+                                       routing_ids,
+                                       session_histories,
+                                       current_entry_indexes));
+}
+
+void WebKitTestController::OnCloseRemainingWindows() {
+  DevToolsManager::GetInstance()->CloseAllClientHosts();
+  std::vector<Shell*> open_windows(Shell::windows());
+  for (size_t i = 0; i < open_windows.size(); ++i) {
+    if (open_windows[i] != main_window_)
+      open_windows[i]->Close();
+  }
+  MessageLoop::current()->RunUntilIdle();
 }
 
 }  // namespace content

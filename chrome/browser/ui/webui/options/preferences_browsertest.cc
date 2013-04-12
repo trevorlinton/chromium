@@ -10,14 +10,14 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/prefs/public/pref_service_base.h"
+#include "base/prefs/pref_service.h"
 #include "base/stl_util.h"
 #include "base/values.h"
 #include "chrome/browser/policy/browser_policy_connector.h"
 #include "chrome/browser/policy/policy_map.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
@@ -40,7 +40,9 @@
 using testing::AllOf;
 using testing::Mock;
 using testing::Property;
+using testing::AnyNumber;
 using testing::Return;
+using testing::_;
 
 namespace base {
 
@@ -74,12 +76,13 @@ PreferencesBrowserTest::~PreferencesBrowserTest() {
 void PreferencesBrowserTest::SetUpOnMainThread() {
   ui_test_utils::NavigateToURL(browser(),
                                GURL(chrome::kChromeUISettingsFrameURL));
-  content::WebContents* web_contents = chrome::GetActiveWebContents(browser());
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
   ASSERT_TRUE(web_contents);
   render_view_host_ = web_contents->GetRenderViewHost();
   ASSERT_TRUE(render_view_host_);
   pref_change_registrar_.Init(
-      PrefServiceBase::FromBrowserContext(browser()->profile()));
+      PrefServiceFromBrowserContext(browser()->profile()));
   pref_service_ = browser()->profile()->GetPrefs();
   ASSERT_TRUE(content::ExecuteScript(render_view_host_,
       "function TestEnv() {"
@@ -168,8 +171,10 @@ void PreferencesBrowserTest::OnPreferenceChanged(const std::string& pref_name) {
 
 // Sets up a mock user policy provider.
 void PreferencesBrowserTest::SetUpInProcessBrowserTestFixture() {
-  EXPECT_CALL(policy_provider_, IsInitializationComplete())
+  EXPECT_CALL(policy_provider_, IsInitializationComplete(_))
       .WillRepeatedly(Return(true));
+  EXPECT_CALL(policy_provider_, RegisterPolicyDomain(_, _))
+      .Times(AnyNumber());
   policy::BrowserPolicyConnector::SetPolicyProviderForTesting(
       &policy_provider_);
 };

@@ -18,11 +18,11 @@ namespace {
 // Make a deep copy of |node|, but don't include empty lists or dictionaries
 // in the copy. It's possible for this function to return NULL and it
 // expects |node| to always be non-NULL.
-Value* CopyWithoutEmptyChildren(Value* node) {
+Value* CopyWithoutEmptyChildren(const Value* node) {
   DCHECK(node);
   switch (node->GetType()) {
     case Value::TYPE_LIST: {
-      ListValue* list = static_cast<ListValue*>(node);
+      const ListValue* list = static_cast<const ListValue*>(node);
       ListValue* copy = new ListValue;
       for (ListValue::const_iterator it = list->begin(); it != list->end();
            ++it) {
@@ -38,16 +38,12 @@ Value* CopyWithoutEmptyChildren(Value* node) {
     }
 
     case Value::TYPE_DICTIONARY: {
-      DictionaryValue* dict = static_cast<DictionaryValue*>(node);
+      const DictionaryValue* dict = static_cast<const DictionaryValue*>(node);
       DictionaryValue* copy = new DictionaryValue;
-      for (DictionaryValue::key_iterator it = dict->begin_keys();
-           it != dict->end_keys(); ++it) {
-        Value* child = NULL;
-        bool rv = dict->GetWithoutPathExpansion(*it, &child);
-        DCHECK(rv);
-        Value* child_copy = CopyWithoutEmptyChildren(child);
+      for (DictionaryValue::Iterator it(*dict); !it.IsAtEnd(); it.Advance()) {
+        Value* child_copy = CopyWithoutEmptyChildren(&it.value());
         if (child_copy)
-          copy->SetWithoutPathExpansion(*it, child_copy);
+          copy->SetWithoutPathExpansion(it.key(), child_copy);
       }
       if (!copy->empty())
         return copy;
@@ -68,7 +64,7 @@ class ValueEquals {
   // Pass the value against which all consecutive calls of the () operator will
   // compare their argument to. This Value object must not be destroyed while
   // the ValueEquals is  in use.
-  ValueEquals(const Value* first) : first_(first) { }
+  explicit ValueEquals(const Value* first) : first_(first) { }
 
   bool operator ()(const Value* second) const {
     return first_->Equals(second);
@@ -308,7 +304,6 @@ bool StringValue::Equals(const Value* other) const {
 
 BinaryValue::BinaryValue()
     : Value(TYPE_BINARY),
-      buffer_(NULL),
       size_(0) {
 }
 
@@ -1005,13 +1000,13 @@ bool ListValue::Remove(const Value& value, size_t* index) {
   return false;
 }
 
-void ListValue::Erase(iterator iter, Value** out_value) {
+ListValue::iterator ListValue::Erase(iterator iter, Value** out_value) {
   if (out_value)
     *out_value = *iter;
   else
     delete *iter;
 
-  list_.erase(iter);
+  return list_.erase(iter);
 }
 
 void ListValue::Append(Value* in_value) {

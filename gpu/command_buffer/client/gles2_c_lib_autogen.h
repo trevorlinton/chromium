@@ -355,7 +355,8 @@ void GLES2ShaderBinary(
       n, shaders, binaryformat, binary, length);
 }
 void GLES2ShaderSource(
-    GLuint shader, GLsizei count, const char** str, const GLint* length) {
+    GLuint shader, GLsizei count, const GLchar* const* str,
+    const GLint* length) {
   gles2::GetGLContext()->ShaderSource(shader, count, str, length);
 }
 void GLES2StencilFunc(GLenum func, GLint ref, GLuint mask) {
@@ -718,6 +719,9 @@ void GLES2DiscardFramebufferEXT(
 void GLES2LoseContextCHROMIUM(GLenum current, GLenum other) {
   gles2::GetGLContext()->LoseContextCHROMIUM(current, other);
 }
+void GLES2WaitSyncPointCHROMIUM(GLuint sync_point) {
+  gles2::GetGLContext()->WaitSyncPointCHROMIUM(sync_point);
+}
 
 namespace gles2 {
 
@@ -1053,6 +1057,8 @@ NameToFunc g_gles2_function_table[] = {
       glDiscardFramebufferEXT), },
   { "glLoseContextCHROMIUM", reinterpret_cast<GLES2FunctionPointer>(
       glLoseContextCHROMIUM), },
+  { "glWaitSyncPointCHROMIUM", reinterpret_cast<GLES2FunctionPointer>(
+      glWaitSyncPointCHROMIUM), },
   { NULL, NULL, },
 };
 

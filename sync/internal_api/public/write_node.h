@@ -67,15 +67,12 @@ class SYNC_EXPORT WriteNode : public BaseNode {
       ModelType model_type,
       const std::string& tag) OVERRIDE;
 
-  // Create a new node with the specified parent and predecessor.  |model_type|
-  // dictates the type of the item, and controls which EntitySpecifics proto
-  // extension can be used with this item.  Use a NULL |predecessor|
-  // to indicate that this is to be the first child.
+  // Create a new bookmark node with the specified parent and predecessor.  Use
+  // a NULL |predecessor| to indicate that this is to be the first child.
   // |predecessor| must be a child of |new_parent| or NULL. Returns false on
   // failure.
-  bool InitByCreation(ModelType model_type,
-                      const BaseNode& parent,
-                      const BaseNode* predecessor);
+  bool InitBookmarkByCreation(const BaseNode& parent,
+                              const BaseNode* predecessor);
 
   // Create nodes using this function if they're unique items that
   // you want to fetch using client_tag. Note that the behavior of these
@@ -101,8 +98,13 @@ class SYNC_EXPORT WriteNode : public BaseNode {
   // be synced again.
   void SetExternalId(int64 external_id);
 
-  // Remove this node and its children.
-  void Remove();
+  // Remove this node and its children and sync deletion to server.
+  void Tombstone();
+
+  // If the node is known by server, remove it and its children but don't sync
+  // deletion to server. Do nothing if the node is not known by server so that
+  // server can have a record of the node.
+  void Drop();
 
   // Set a new parent and position.  Position is specified by |predecessor|; if
   // it is NULL, the node is moved to the first position.  |predecessor| must
@@ -166,6 +168,11 @@ class SYNC_EXPORT WriteNode : public BaseNode {
   // Should only be called if GetModelType() == EXPERIMENTS.
   void SetExperimentsSpecifics(const sync_pb::ExperimentsSpecifics& specifics);
 
+  // Set the priority preference specifics.
+  // Should only be called if GetModelType() == PRIORITY_PREFERENCE.
+  void SetPriorityPreferenceSpecifics(
+      const sync_pb::PriorityPreferenceSpecifics& specifics);
+
   // Implementation of BaseNode's abstract virtual accessors.
   virtual const syncable::Entry* GetEntry() const OVERRIDE;
 
@@ -177,9 +184,6 @@ class SYNC_EXPORT WriteNode : public BaseNode {
   FRIEND_TEST_ALL_PREFIXES(SyncManagerTest, EncryptBookmarksWithLegacyData);
 
   void* operator new(size_t size);  // Node is meant for stack use only.
-
-  // Helper to set model type. This will clear any specifics data.
-  void PutModelType(ModelType model_type);
 
   // Helper to set the previous node.
   bool PutPredecessor(const BaseNode* predecessor) WARN_UNUSED_RESULT;

@@ -8,9 +8,9 @@
 
 #include "base/lazy_instance.h"
 #include "chrome/browser/browser_shutdown.h"
-#include "chrome/browser/tab_contents/web_drag_bookmark_handler_gtk.h"
 #include "chrome/browser/ui/gtk/constrained_window_gtk.h"
 #include "chrome/browser/ui/gtk/tab_contents/render_view_context_menu_gtk.h"
+#include "chrome/browser/ui/gtk/tab_contents/web_drag_bookmark_handler_gtk.h"
 #include "chrome/browser/ui/tab_contents/chrome_web_contents_view_delegate.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -155,6 +155,10 @@ void ChromeWebContentsViewDelegateGtk::ShowContextMenu(
       new RenderViewContextMenuGtk(web_contents_, params, view));
   context_menu_->Init();
 
+  // Don't show empty menus.
+  if (context_menu_->menu_model().GetItemCount() == 0)
+    return;
+
   gfx::Rect bounds;
   web_contents_->GetView()->GetContainerBounds(&bounds);
   gfx::Point point = bounds.origin();
@@ -172,7 +176,7 @@ void ChromeWebContentsViewDelegateGtk::OnSetFloatingPosition(
   if (!constrained_window_)
     return;
 
-  // Place each WebContentsModalDialog in the center of the view.
+  // Place each ConstrainedWindowGtk in the center of the view.
   GtkWidget* widget = constrained_window_->widget();
   DCHECK(gtk_widget_get_parent(widget) == floating_.get());
 

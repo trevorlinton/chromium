@@ -13,6 +13,7 @@
 #include <string>
 
 #include "base/basictypes.h"
+#include "chrome/browser/ui/host_desktop.h"
 
 class AutomationProviderList;
 class BackgroundModeManager;
@@ -29,7 +30,8 @@ class IntranetRedirectDetector;
 class IOThread;
 class MetricsService;
 class NotificationUIManager;
-class PrefServiceSimple;
+class PrefRegistrySimple;
+class PrefService;
 class Profile;
 class ProfileManager;
 class RenderWidgetSnapshotTaker;
@@ -54,6 +56,12 @@ class VariationsService;
 namespace extensions {
 class EventRouterForwarder;
 }
+
+#if defined(ENABLE_MESSAGE_CENTER)
+namespace message_center {
+class MessageCenter;
+}
+#endif
 
 namespace net {
 class URLRequestContextGetter;
@@ -97,7 +105,7 @@ class BrowserProcess {
   // Services: any of these getters may return NULL
   virtual MetricsService* metrics_service() = 0;
   virtual ProfileManager* profile_manager() = 0;
-  virtual PrefServiceSimple* local_state() = 0;
+  virtual PrefService* local_state() = 0;
   virtual net::URLRequestContextGetter* system_request_context() = 0;
   virtual chrome_variations::VariationsService* variations_service() = 0;
 
@@ -111,6 +119,11 @@ class BrowserProcess {
 
   // Returns the manager for desktop notifications.
   virtual NotificationUIManager* notification_ui_manager() = 0;
+
+#if defined(ENABLE_MESSAGE_CENTER)
+  // MessageCenter is a global list of currently displayed notifications.
+  virtual message_center::MessageCenter* message_center() = 0;
+#endif
 
   // Returns the state object for the thread that we perform I/O
   // coordination on (network requests, communication with renderers,
@@ -142,6 +155,7 @@ class BrowserProcess {
 
   virtual void CreateDevToolsHttpProtocolHandler(
       Profile* profile,
+      chrome::HostDesktopType host_desktop_type,
       const std::string& ip,
       int port,
       const std::string& frontend_url) = 0;

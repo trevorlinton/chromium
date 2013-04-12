@@ -77,8 +77,9 @@ cr.define('ntp', function() {
       this.uninstall_.addEventListener('activate',
                                        this.onUninstall_.bind(this));
 
-      if (!cr.isMac && !cr.isChromeOS) {
-        menu.appendChild(cr.ui.MenuItem.createSeparator());
+      if (!cr.isChromeOS) {
+        this.createShortcutSeparator_ =
+            menu.appendChild(cr.ui.MenuItem.createSeparator());
         this.createShortcut_ = this.appendMenuItem_('appcreateshortcut');
         this.createShortcut_.addEventListener(
             'activate', this.onCreateShortcut_.bind(this));
@@ -148,6 +149,13 @@ cr.define('ntp', function() {
       if (typeof notificationsDisabled != 'undefined') {
         this.disableNotifications_.hidden = false;
         this.disableNotifications_.checked = notificationsDisabled;
+      }
+      if (cr.isMac) {
+        // On Windows and Linux, these should always be visible. On ChromeOS,
+        // they are never created. On Mac, shortcuts can only be created for
+        // new-style packaged apps, so hide the menu item.
+        this.createShortcutSeparator_.hidden = this.createShortcut_.hidden =
+            !app.appData.packagedApp;
       }
     },
 

@@ -12,6 +12,7 @@
 #include "base/message_loop.h"
 #include "chrome/browser/managed_mode/managed_mode.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/test/base/test_browser_window.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/test/test_browser_thread.h"
@@ -72,7 +73,7 @@ class BrowserFixture {
  public:
   BrowserFixture(FakeManagedMode* managed_mode,
                  TestingProfile* profile) {
-    Browser::CreateParams params(profile);
+    Browser::CreateParams params(profile, chrome::HOST_DESKTOP_TYPE_NATIVE);
     params.window = &window_;
     browser_.reset(new Browser(params));
   }
@@ -231,35 +232,4 @@ TEST_F(ManagedModeTest, Cancelled) {
   managed_mode_.set_should_cancel_enter(true);
   managed_mode_.EnterManagedModeForTesting(&managed_mode_profile_,
                                            CreateExpectedCallback(false));
-}
-
-TEST_F(ManagedModeTest, ExtensionManagementPolicyProvider) {
-  BrowserFixture managed_mode_browser(&managed_mode_, &managed_mode_profile_);
-
-  {
-    string16 error;
-    EXPECT_TRUE(managed_mode_.UserMayLoad(NULL, &error));
-    EXPECT_EQ(string16(), error);
-  }
-  {
-    string16 error;
-    EXPECT_TRUE(managed_mode_.UserMayModifySettings(NULL, &error));
-    EXPECT_EQ(string16(), error);
-  }
-
-  managed_mode_.SetInManagedMode(&managed_mode_profile_);
-  {
-    string16 error;
-    EXPECT_FALSE(managed_mode_.UserMayLoad(NULL, &error));
-    EXPECT_FALSE(error.empty());
-  }
-  {
-    string16 error;
-    EXPECT_FALSE(managed_mode_.UserMayModifySettings(NULL, &error));
-    EXPECT_FALSE(error.empty());
-  }
-
-#ifndef NDEBUG
-  EXPECT_FALSE(managed_mode_.GetDebugPolicyProviderName().empty());
-#endif
 }

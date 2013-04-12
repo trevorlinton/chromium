@@ -5,12 +5,14 @@
 package org.chromium.android_webview;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 
 import org.chromium.base.PathUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.content.app.LibraryLoader;
 import org.chromium.content.browser.AndroidBrowserProcess;
 import org.chromium.content.browser.ResourceExtractor;
+import org.chromium.content.common.ProcessInitException;
 
 /**
  * Wrapper for the steps needed to initialize the java and native sides of webview chromium.
@@ -23,6 +25,8 @@ public abstract class AwBrowserProcess {
 
     private static final String PRIVATE_DATA_DIRECTORY_SUFFIX = "webview";
 
+    private static AwBrowserContext sDefaultBrowserContext;
+
     /**
      * Loads the native library, and performs basic static construction of objects needed
      * to run webview in this process. Does not create threads; safe to call from zygote.
@@ -34,22 +38,41 @@ public abstract class AwBrowserProcess {
         LibraryLoader.loadNow();
     }
 
+    // TODO(joth): remove when downstream is using new version below.
+    @Deprecated
+        public static void start(Context c) {
+        start(c, null);
+    }
+
     /**
      * Starts the chromium browser process running within this process. Creates threads
      * and performs other per-app resource allocations; must not be called from zygote.
      * Note: it is up to the caller to ensure this is only called once.
+     * @param context The Android application context
+     * @param defaultContextPreferences SharedPreferences that will be used for the default
+     * browsing context.
      */
-    public static void start(final Context context) {
+    public static void start(final Context context,
+            final SharedPreferences defaultContextPreferences) {
         // We must post to the UI thread to cover the case that the user
         // has invoked Chromium startup by using the (thread-safe)
         // CookieManager rather than creating a WebView.
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
-                LibraryLoader.ensureInitialized();
-                AndroidBrowserProcess.initContentViewProcess(context,
-                        AndroidBrowserProcess.MAX_RENDERERS_SINGLE_PROCESS);
+                try {
+                    LibraryLoader.ensureInitialized();
+                    AndroidBrowserProcess.init(context,
+                            AndroidBrowserProcess.MAX_RENDERERS_SINGLE_PROCESS);
+                } catch (ProcessInitException e) {
+                    throw new RuntimeException("Cannot initialize WebView", e);
+                }
+                sDefaultBrowserContext = new AwBrowserContext(defaultContextPreferences);
             }
         });
+    }
+
+    public static AwBrowserContext getDefaultBrowserContext() {
+        return sDefaultBrowserContext;
     }
 }

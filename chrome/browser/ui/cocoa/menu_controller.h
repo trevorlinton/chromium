@@ -56,6 +56,9 @@ class MenuModel;
 // default initializer was used, then this will create the menu on first call.
 - (NSMenu*)menu;
 
+// Whether the menu is currently open.
+- (BOOL)isMenuOpen;
+
 // NSMenuDelegate methods this class implements. Subclasses should call super
 // if extending the behavior.
 - (void)menuWillOpen:(NSMenu*)menu;
@@ -72,8 +75,7 @@ class MenuModel;
 @interface MenuController (Protected)
 - (void)addItemToMenu:(NSMenu*)menu
               atIndex:(NSInteger)index
-            fromModel:(ui::MenuModel*)model
-           modelIndex:(int)modelIndex;
+            fromModel:(ui::MenuModel*)model;
 - (NSMenu*)menuFromModel:(ui::MenuModel*)model;
 // Returns the maximum width for the menu item. Returns -1 to indicate
 // that there's no maximum width.

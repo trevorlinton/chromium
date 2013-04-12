@@ -1,19 +1,13 @@
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
-from telemetry import multi_page_benchmark
-from telemetry import multi_page_benchmark_unittest_base
-from telemetry import page
 from perf_tools import smoothness_benchmark
-
-from telemetry import browser_finder
-from telemetry import options_for_unittests
-
-import os
-import urlparse
+from telemetry.page import page_benchmark_unittest_base
+from telemetry.page import page
+from telemetry.page.page_benchmark_results import PageBenchmarkResults
 
 class SmoothnessBenchmarkUnitTest(
-  multi_page_benchmark_unittest_base.MultiPageBenchmarkUnitTestBase):
+  page_benchmark_unittest_base.PageBenchmarkUnitTestBase):
 
   def testFirstPaintTimeMeasurement(self):
     ps = self.CreatePageSetFromFileInUnittestDataDir('scrollable_page.html')
@@ -48,12 +42,14 @@ class SmoothnessBenchmarkUnitTest(
                        'totalTimeInSeconds': 1,
                        'numAnimationFrames': 10,
                        'numFramesSentToScreen': 10}
-    res = multi_page_benchmark.BenchmarkResults()
-    res.WillMeasurePage(page.Page('http://foo.com/'))
+    res = PageBenchmarkResults()
+    res.WillMeasurePage(page.Page('http://foo.com/', None))
     smoothness_benchmark.CalcScrollResults(rendering_stats, res)
     res.DidMeasurePage()
-    self.assertEquals(50, res.page_results[0]['dropped_percent'])
-    self.assertAlmostEquals(100, res.page_results[0]['mean_frame_time'], 2)
+    self.assertEquals(50, res.page_results[0]['dropped_percent'].value)
+    self.assertAlmostEquals(
+      100,
+      res.page_results[0]['mean_frame_time'].value, 2)
 
   def testCalcResultsRealRenderStats(self):
     rendering_stats = {'numFramesSentToScreen': 60,
@@ -68,57 +64,14 @@ class SmoothnessBenchmarkUnitTest(
                        'totalTextureUploadTimeInSeconds': 0,
                        'totalRasterizeTimeInSeconds': 0,
                        'totalTimeInSeconds': 1.0}
-    res = multi_page_benchmark.BenchmarkResults()
-    res.WillMeasurePage(page.Page('http://foo.com/'))
+    res = PageBenchmarkResults()
+    res.WillMeasurePage(page.Page('http://foo.com/', None))
     smoothness_benchmark.CalcScrollResults(rendering_stats, res)
     res.DidMeasurePage()
-    self.assertEquals(0, res.page_results[0]['dropped_percent'])
-    self.assertAlmostEquals(1000/60., res.page_results[0]['mean_frame_time'], 2)
-
-  def testBoundingClientRect(self):
-    options = options_for_unittests.GetCopy()
-    browser_to_create = browser_finder.FindBrowser(options)
-    if not browser_to_create:
-      raise Exception('No browser found, cannot continue test.')
-
-    with browser_to_create.Create() as browser:
-      tab = browser.tabs[0]
-      ps = self.CreatePageSetFromFileInUnittestDataDir('blank.html')
-      parsed_url = urlparse.urlparse(ps.pages[0].url)
-      path = os.path.join(parsed_url.netloc, parsed_url.path)
-      dirname, filename = os.path.split(path)
-      dirname = os.path.join(ps.base_dir, dirname[1:])
-      browser.SetHTTPServerDirectory(dirname)
-      target_side_url = browser.http_server.UrlOf(filename)
-      tab.page.Navigate(target_side_url)
-
-      # Verify that the rect returned by getBoundingVisibleRect() in
-      # scroll.js is completely contained within the viewport. Scroll
-      # events dispatched by the benchmarks use the center of this rect
-      # as their location, and this location needs to be within the
-      # viewport bounds to correctly decide between main-thread and
-      # impl-thread scrolling. If the scrollable area were not clipped
-      # to the viewport bounds, then the instance used here (the scrollable
-      # area being more than twice as tall as the viewport) would
-      # result in a scroll location outside of the viewport bounds.
-      tab.runtime.Execute("""document.body.style.height =
-                             (2 * window.innerHeight + 1) + 'px';""")
-      scroll_js_path = os.path.join(os.path.dirname(__file__), '..', '..',
-                                    'telemetry', 'telemetry', 'scroll.js')
-      scroll_js = open(scroll_js_path, 'r').read()
-      tab.runtime.Evaluate(scroll_js)
-
-      rect_bottom = int(tab.runtime.Evaluate("""
-                __ScrollTest_GetBoundingVisibleRect(document.body).top +
-                __ScrollTest_GetBoundingVisibleRect(document.body).height"""))
-      rect_right = int(tab.runtime.Evaluate("""
-                __ScrollTest_GetBoundingVisibleRect(document.body).left +
-                __ScrollTest_GetBoundingVisibleRect(document.body).width"""))
-      viewport_width = int(tab.runtime.Evaluate('window.innerWidth'))
-      viewport_height = int(tab.runtime.Evaluate('window.innerHeight'))
-
-      self.assertTrue(rect_bottom <= viewport_height)
-      self.assertTrue(rect_right <= viewport_width)
+    self.assertEquals(0, res.page_results[0]['dropped_percent'].value)
+    self.assertAlmostEquals(
+      1000/60.,
+      res.page_results[0]['mean_frame_time'].value, 2)
 
   def testDoesImplThreadScroll(self):
     ps = self.CreatePageSetFromFileInUnittestDataDir('scrollable_page.html')
@@ -128,7 +81,7 @@ class SmoothnessBenchmarkUnitTest(
     all_results = self.RunBenchmark(benchmark, ps)
 
     results0 = all_results.page_results[0]
-    self.assertTrue(results0['percent_impl_scrolled'] > 0)
+    self.assertTrue(results0['percent_impl_scrolled'].value > 0)
 
   def testScrollingWithoutGpuBenchmarkingExtension(self):
     ps = self.CreatePageSetFromFileInUnittestDataDir('scrollable_page.html')

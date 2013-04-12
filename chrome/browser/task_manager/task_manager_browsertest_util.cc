@@ -96,14 +96,6 @@ void TaskManagerBrowserTestUtil::WaitForWebResourceChange(int target_count) {
 // static
 void TaskManagerBrowserTestUtil::ShowTaskManagerAndWaitForReady(
     Browser* browser) {
-#if defined(USE_AURA)
-  content::WindowedNotificationObserver observer(
-      chrome::NOTIFICATION_TASK_MANAGER_WINDOW_READY,
-      content::Source<TaskManagerModel>(TaskManager::GetInstance()->model()));
-  browser->window()->ShowTaskManager(chrome::HOST_DESKTOP_TYPE_NATIVE);
-  observer.Wait();
-#else
-  browser->window()->ShowTaskManager(chrome::HOST_DESKTOP_TYPE_NATIVE);
-#endif  // defined(USE_AURA)
+  browser->window()->ShowTaskManager();
 }
 

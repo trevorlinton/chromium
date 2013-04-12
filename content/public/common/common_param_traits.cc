@@ -58,13 +58,8 @@ void ParamTraits<GURL>::Write(Message* m, const GURL& p) {
   // type as GURL. See https://crbug.com/166486 for additional work in
   // this area.
   if (!p.is_valid()) {
-    GURL reconstructed_url(p.possibly_invalid_spec());
-    if (reconstructed_url.is_valid()) {
-      DLOG(WARNING) << "GURL string " << p.possibly_invalid_spec()
-                    << " (marked invalid) but parsed as valid.";
-      m->WriteString(std::string());
-      return;
-    }
+    m->WriteString(std::string());
+    return;
   }
 
   m->WriteString(p.possibly_invalid_spec());
@@ -78,6 +73,10 @@ bool ParamTraits<GURL>::Read(const Message* m, PickleIterator* iter, GURL* p) {
     return false;
   }
   *p = GURL(s);
+  if (!s.empty() && !p->is_valid()) {
+    *p = GURL();
+    return false;
+  }
   return true;
 }
 
@@ -169,6 +168,8 @@ void ParamTraits<gfx::PointF>::Log(const gfx::PointF& v, std::string* l) {
 }
 
 void ParamTraits<gfx::Size>::Write(Message* m, const gfx::Size& p) {
+  DCHECK_GE(p.width(), 0);
+  DCHECK_GE(p.height(), 0);
   m->WriteInt(p.width());
   m->WriteInt(p.height());
 }
@@ -177,8 +178,8 @@ bool ParamTraits<gfx::Size>::Read(const Message* m,
                                   PickleIterator* iter,
                                   gfx::Size* r) {
   int w, h;
-  if (!m->ReadInt(iter, &w) ||
-      !m->ReadInt(iter, &h))
+  if (!m->ReadInt(iter, &w) || w < 0 ||
+      !m->ReadInt(iter, &h) || h < 0)
     return false;
   r->set_width(w);
   r->set_height(h);
@@ -253,25 +254,20 @@ void ParamTraits<gfx::Vector2dF>::Log(const gfx::Vector2dF& v, std::string* l) {
 }
 
 void ParamTraits<gfx::Rect>::Write(Message* m, const gfx::Rect& p) {
-  m->WriteInt(p.x());
-  m->WriteInt(p.y());
-  m->WriteInt(p.width());
-  m->WriteInt(p.height());
+  WriteParam(m, p.origin());
+  WriteParam(m, p.size());
 }
 
 bool ParamTraits<gfx::Rect>::Read(const Message* m,
                                   PickleIterator* iter,
                                   gfx::Rect* r) {
-  int x, y, w, h;
-  if (!m->ReadInt(iter, &x) ||
-      !m->ReadInt(iter, &y) ||
-      !m->ReadInt(iter, &w) ||
-      !m->ReadInt(iter, &h))
+  gfx::Point origin;
+  gfx::Size size;
+  if (!ReadParam(m, iter, &origin) ||
+      !ReadParam(m, iter, &size))
     return false;
-  r->set_x(x);
-  r->set_y(y);
-  r->set_width(w);
-  r->set_height(h);
+  r->set_origin(origin);
+  r->set_size(size);
   return true;
 }
 

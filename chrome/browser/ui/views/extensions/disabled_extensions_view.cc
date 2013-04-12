@@ -5,11 +5,11 @@
 #include "chrome/browser/ui/views/extensions/disabled_extensions_view.h"
 
 #include "base/metrics/histogram.h"
-#include "base/string_number_conversions.h"
+#include "base/prefs/pref_service.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_system.h"
-#include "chrome/browser/prefs/pref_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/singleton_tabs.h"
@@ -25,8 +25,8 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/views/bubble/bubble_border.h"
 #include "ui/views/controls/button/text_button.h"
-#include "ui/views/controls/label.h"
 #include "ui/views/controls/image_view.h"
+#include "ui/views/controls/label.h"
 #include "ui/views/controls/link.h"
 #include "ui/views/layout/grid_layout.h"
 #include "ui/views/layout/layout_constants.h"
@@ -86,10 +86,6 @@ DisabledExtensionsView::DisabledExtensionsView(
   set_move_with_anchor(true);
   set_close_on_esc(true);
 
-  // TODO(finnur): Until http://crbug.com/165808 is fixed, we need to turn off
-  // the shadow because it causes the bubble to overlap the window border.
-  set_shadow(views::BubbleBorder::NO_SHADOW);
-
   // Compensate for built-in vertical padding in the anchor view's image.
   set_anchor_insets(gfx::Insets(5, 0, 5, 0));
 
@@ -103,17 +99,18 @@ void DisabledExtensionsView::MaybeShow(Browser* browser,
   if (!extensions::FeatureSwitch::sideload_wipeout()->IsEnabled())
     return;
 
-  static bool done_showing_ui = false;
-  if (done_showing_ui)
+  static bool done_checking = false;
+  if (done_checking)
     return;  // Only show the bubble once per launch.
 
-  // A pref that counts how often the bubble has been shown.
-  IntegerPrefMember sideload_wipeout_bubble_shown;
-  sideload_wipeout_bubble_shown.Init(
-      prefs::kExtensionsSideloadWipeoutBubbleShown,
-          browser->profile()->GetPrefs());
-  if (sideload_wipeout_bubble_shown.GetValue() >= kShowSideloadWipeoutBubbleMax)
+  // A pref that counts how often the Sideload Wipeout bubble has been shown.
+  IntegerPrefMember bubble_shown;
+  bubble_shown.Init(prefs::kExtensionsSideloadWipeoutBubbleShown,
+                    browser->profile()->GetPrefs());
+  if (bubble_shown.GetValue() >= kShowSideloadWipeoutBubbleMax) {
+    done_checking = true;
     return;
+  }
 
   // Fetch all disabled extensions.
   ExtensionService* extension_service =
@@ -121,17 +118,15 @@ void DisabledExtensionsView::MaybeShow(Browser* browser,
           browser->profile())->extension_service();
   scoped_ptr<const ExtensionSet> wiped_out(
       extension_service->GetWipedOutExtensions());
-  UMA_HISTOGRAM_BOOLEAN("DisabledExtension.SideloadWipeoutNeeded",
-                        wiped_out->size() > 0);
   if (wiped_out->size()) {
     DisabledExtensionsView* bubble_delegate =
         new DisabledExtensionsView(
             anchor_view, browser, wiped_out.release());
     views::BubbleDelegateView::CreateBubble(bubble_delegate);
     bubble_delegate->ShowWhenReady();
-
-    done_showing_ui = true;
   }
+
+  done_checking = true;
 }
 
 void DisabledExtensionsView::ShowWhenReady() {

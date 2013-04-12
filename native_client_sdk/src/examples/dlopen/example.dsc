@@ -5,7 +5,7 @@
       'NAME': 'dlopen',
       'TYPE': 'main',
       'SOURCES': ['dlopen.cc'],
-      'LIBS': ['dl', 'ppapi_cpp', 'ppapi', 'pthread']
+      'LIBS': ['nacl_io', 'dl', 'ppapi_cpp', 'ppapi', 'pthread']
     },
     {
       'NAME' : 'libeightball',
@@ -13,9 +13,18 @@
       'SOURCES' : ['eightball.cc', 'eightball.h'],
       'CXXFLAGS': ['-fPIC'],
       'LIBS' : ['ppapi_cpp', 'ppapi', 'pthread']
+    },
+    {
+      'NAME' : 'libreverse',
+      'TYPE' : 'so',
+      'SOURCES' : ['reverse.cc', 'reverse.h'],
+      'CXXFLAGS': ['-fPIC'],
+      'LIBS' : ['ppapi_cpp', 'ppapi', 'pthread']
     }
   ],
-  'DATA': ['example.js'],
+  'DATA': [
+    'example.js',
+  ],
   'DEST': 'examples',
   'NAME': 'dlopen',
   'TITLE': 'Dynamic Library Open',

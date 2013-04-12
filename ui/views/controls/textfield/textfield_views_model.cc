@@ -418,10 +418,6 @@ void TextfieldViewsModel::SelectRange(const ui::Range& range) {
   render_text_->SelectRange(range);
 }
 
-void TextfieldViewsModel::GetSelectionModel(gfx::SelectionModel* sel) const {
-  *sel = render_text_->selection_model();
-}
-
 void TextfieldViewsModel::SelectSelectionModel(const gfx::SelectionModel& sel) {
   if (HasCompositionText())
     ConfirmCompositionText();
@@ -581,17 +577,7 @@ void TextfieldViewsModel::SetCompositionText(
   render_text_->SetText(new_text.insert(cursor, composition.text));
   ui::Range range(cursor, cursor + composition.text.length());
   render_text_->SetCompositionRange(range);
-  // TODO(msw): Support multiple composition underline ranges.
-
-  if (composition.selection.IsValid()) {
-    size_t start =
-        std::min(range.start() + composition.selection.start(), range.end());
-    size_t end =
-        std::min(range.start() + composition.selection.end(), range.end());
-    render_text_->SelectRange(ui::Range(start, end));
-  } else {
-    render_text_->SetCursorPosition(range.end());
-  }
+  render_text_->SetCursorPosition(cursor + composition.selection.end());
 }
 
 void TextfieldViewsModel::ConfirmCompositionText() {

@@ -24,7 +24,6 @@
 #include "ash/magnifier/partial_magnification_controller.h"
 #include "ash/root_window_controller.h"
 #include "ash/rotator/screen_rotation.h"
-#include "ash/screen_ash.h"
 #include "ash/screenshot_delegate.h"
 #include "ash/shell.h"
 #include "ash/shell_delegate.h"
@@ -34,6 +33,8 @@
 #include "ash/system/status_area_widget.h"
 #include "ash/system/tray/system_tray.h"
 #include "ash/system/tray/system_tray_delegate.h"
+#include "ash/system/web_notification/web_notification_tray.h"
+#include "ash/touch/touch_observer_hud.h"
 #include "ash/volume_control_delegate.h"
 #include "ash/wm/partial_screenshot_view.h"
 #include "ash/wm/power_button_controller.h"
@@ -60,11 +61,8 @@
 #include "ui/views/widget/widget.h"
 
 #if defined(OS_CHROMEOS)
-#include "ash/display/output_configurator_animation.h"
 #include "ash/system/chromeos/keyboard_brightness_controller.h"
 #include "base/chromeos/chromeos_version.h"
-#include "base/time.h"
-#include "chromeos/display/output_configurator.h"
 #endif  // defined(OS_CHROMEOS)
 
 namespace ash {
@@ -102,8 +100,8 @@ bool HandleLock() {
   return true;
 }
 
-bool HandleFileManager() {
-  Shell::GetInstance()->delegate()->OpenFileManager();
+bool HandleFileManager(bool as_dialog) {
+  Shell::GetInstance()->delegate()->OpenFileManager(as_dialog);
   return true;
 }
 
@@ -116,26 +114,6 @@ bool HandleToggleSpokenFeedback() {
   Shell::GetInstance()->delegate()->
       ToggleSpokenFeedback(A11Y_NOTIFICATION_SHOW);
   return true;
-}
-
-void HandleCycleDisplayMode() {
-  Shell* shell = Shell::GetInstance();
-  if (!base::chromeos::IsRunningOnChromeOS()) {
-    internal::DisplayManager::CycleDisplay();
-  } else if (shell->output_configurator()->connected_output_count() > 1) {
-    internal::OutputConfiguratorAnimation* animation =
-        shell->output_configurator_animation();
-    animation->StartFadeOutAnimation(base::Bind(
-        base::IgnoreResult(&chromeos::OutputConfigurator::CycleDisplayMode),
-        base::Unretained(shell->output_configurator())));
-  }
-}
-
-void HandleSwapPrimaryDisplay() {
-  if (Shell::GetScreen()->GetNumDisplays() > 1) {
-    Shell::GetInstance()->display_controller()->SetPrimaryDisplay(
-        ScreenAsh::GetSecondaryDisplay());
-  }
 }
 
 #endif  // defined(OS_CHROMEOS)
@@ -156,23 +134,19 @@ bool HandleRotatePaneFocus(Shell::Direction direction) {
   return true;
 }
 
-// Rotates the default window container.
-bool HandleRotateWindows() {
-  Shell::RootWindowControllerList controllers =
-      Shell::GetAllRootWindowControllers();
-  for (size_t i = 0; i < controllers.size(); ++i) {
-    aura::Window* target = controllers[i]->GetContainer(
-        internal::kShellWindowId_DefaultContainer);
+// Rotate the active window.
+bool HandleRotateActiveWindow() {
+  aura::Window* active_window = wm::GetActiveWindow();
+  if (active_window) {
     // The rotation animation bases its target transform on the current
     // rotation and position. Since there could be an animation in progress
     // right now, queue this animation so when it starts it picks up a neutral
     // rotation and position. Use replace so we only enqueue one at a time.
-    target->layer()->GetAnimator()->
+    active_window->layer()->GetAnimator()->
         set_preemption_strategy(ui::LayerAnimator::REPLACE_QUEUED_ANIMATIONS);
-    scoped_ptr<ui::LayerAnimationSequence> screen_rotation(
-        new ui::LayerAnimationSequence(new ash::ScreenRotation(360)));
-    target->layer()->GetAnimator()->StartAnimation(
-        screen_rotation.release());
+    active_window->layer()->GetAnimator()->StartAnimation(
+        new ui::LayerAnimationSequence(
+            new ash::ScreenRotation(360, active_window->layer())));
   }
   return true;
 }
@@ -204,7 +178,8 @@ bool HandleRotateScreen() {
     root_window->layer()->GetAnimator()->
         set_preemption_strategy(ui::LayerAnimator::REPLACE_QUEUED_ANIMATIONS);
     scoped_ptr<ui::LayerAnimationSequence> screen_rotation(
-        new ui::LayerAnimationSequence(new ash::ScreenRotation(delta)));
+        new ui::LayerAnimationSequence(
+            new ash::ScreenRotation(delta, root_window->layer())));
     screen_rotation->AddObserver(root_window);
     root_window->layer()->GetAnimator()->
         StartAnimation(screen_rotation.release());
@@ -486,22 +461,36 @@ bool AcceleratorController::PerformAction(int action,
       return true;
 #if defined(OS_CHROMEOS)
     case CYCLE_DISPLAY_MODE:
-      HandleCycleDisplayMode();
+      Shell::GetInstance()->display_controller()->CycleDisplayMode();
       return true;
     case LOCK_SCREEN:
       return HandleLock();
-    case OPEN_FILE_MANAGER_DIALOG:
-      return HandleFileManager();
+    case OPEN_FILE_DIALOG:
+      return HandleFileManager(true /* as_dialog */);
+    case OPEN_FILE_MANAGER:
+      return HandleFileManager(false /* as_dialog */);
     case OPEN_CROSH:
       return HandleCrosh();
     case SWAP_PRIMARY_DISPLAY:
-      HandleSwapPrimaryDisplay();
+      Shell::GetInstance()->display_controller()->SwapPrimaryDisplay();
       return true;
     case TOGGLE_SPOKEN_FEEDBACK:
       return HandleToggleSpokenFeedback();
     case TOGGLE_WIFI:
       Shell::GetInstance()->system_tray_delegate()->ToggleWifi();
       return true;
+    case TOUCH_HUD_CLEAR:
+      if (Shell::GetInstance()->touch_observer_hud()) {
+        Shell::GetInstance()->touch_observer_hud()->Clear();
+        return true;
+      }
+      return false;
+    case TOUCH_HUD_MODE_CHANGE:
+      if (Shell::GetInstance()->touch_observer_hud()) {
+        Shell::GetInstance()->touch_observer_hud()->ChangeToNextMode();
+        return true;
+      }
+      return false;
     case DISABLE_GPU_WATCHDOG:
       content::GpuDataManager::GetInstance()->DisableGpuWatchdog();
       return true;
@@ -629,7 +618,7 @@ bool AcceleratorController::PerformAction(int action,
     case SHOW_OAK:
       if (CommandLine::ForCurrentProcess()->HasSwitch(
               switches::kAshEnableOak)) {
-        oak::ShowOakWindow();
+        oak::ShowOakWindowWithContext(Shell::GetPrimaryRootWindow());
         return true;
       }
       break;
@@ -640,6 +629,21 @@ bool AcceleratorController::PerformAction(int action,
           Shell::GetPrimaryRootWindowController();
       if (!controller->GetSystemTray()->HasSystemBubble())
         controller->GetSystemTray()->ShowDefaultView(BUBBLE_CREATE_NEW);
+      break;
+    }
+    case SHOW_MESSAGE_CENTER_BUBBLE: {
+      internal::RootWindowController* controller =
+          Shell::IsLauncherPerDisplayEnabled() ?
+          internal::RootWindowController::ForActiveRootWindow() :
+          Shell::GetPrimaryRootWindowController();
+      internal::StatusAreaWidget* status_area_widget =
+          controller->status_area_widget();
+      if (status_area_widget) {
+        WebNotificationTray* notification_tray =
+            status_area_widget->web_notification_tray();
+        if (notification_tray->visible())
+          notification_tray->ShowMessageCenterBubble();
+      }
       break;
     }
     case SHOW_TASK_MANAGER:
@@ -726,7 +730,7 @@ bool AcceleratorController::PerformAction(int action,
       // Disable the shortcut for minimizing full screen window due to
       // crbug.com/131709, which is a crashing issue related to minimizing
       // full screen pepper window.
-      if (!wm::IsWindowFullscreen(window)) {
+      if (!wm::IsWindowFullscreen(window) && wm::CanMinimizeWindow(window)) {
         wm::MinimizeWindow(window);
         return true;
       }
@@ -748,8 +752,8 @@ bool AcceleratorController::PerformAction(int action,
       }
       break;
     }
-    case ROTATE_WINDOWS:
-      return HandleRotateWindows();
+    case ROTATE_WINDOW:
+      return HandleRotateActiveWindow();
     case ROTATE_SCREEN:
       return HandleRotateScreen();
     case TOGGLE_DESKTOP_BACKGROUND_MODE:
@@ -807,18 +811,21 @@ void AcceleratorController::SetBrightnessControlDelegate(
     scoped_ptr<BrightnessControlDelegate> brightness_control_delegate) {
   // Install brightness control delegate only when internal
   // display exists.
-  if (Shell::GetInstance()->display_manager()->HasInternalDisplay())
-    brightness_control_delegate_.swap(brightness_control_delegate);
+  if (Shell::GetInstance()->display_manager()->HasInternalDisplay() ||
+      CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kAshEnableBrightnessControl)) {
+    brightness_control_delegate_ = brightness_control_delegate.Pass();
+  }
 }
 
 void AcceleratorController::SetImeControlDelegate(
     scoped_ptr<ImeControlDelegate> ime_control_delegate) {
-  ime_control_delegate_.swap(ime_control_delegate);
+  ime_control_delegate_ = ime_control_delegate.Pass();
 }
 
 void AcceleratorController::SetScreenshotDelegate(
     scoped_ptr<ScreenshotDelegate> screenshot_delegate) {
-  screenshot_delegate_.swap(screenshot_delegate);
+  screenshot_delegate_ = screenshot_delegate.Pass();
 }
 
 ////////////////////////////////////////////////////////////////////////////////

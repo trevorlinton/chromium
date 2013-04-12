@@ -15,9 +15,9 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/string_split.h"
 #include "base/synchronization/lock.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebFrame.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebView.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebString.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_bindings_skia_in_process.h"
 #include "ui/gl/gl_context.h"
@@ -1797,7 +1797,11 @@ bool WebGraphicsContext3DInProcessImpl::AngleValidateShaderSource(
 
   char* source = entry->source.get();
   if (!ShCompile(compiler, &source, 1, SH_OBJECT_CODE)) {
+#if !defined(ANGLE_SH_VERSION) || ANGLE_SH_VERSION < 108
     int logSize = 0;
+#else
+    size_t logSize = 0;
+#endif
     ShGetInfo(compiler, SH_INFO_LOG_LENGTH, &logSize);
     if (logSize > 1) {
       entry->log.reset(new char[logSize]);
@@ -1806,7 +1810,11 @@ bool WebGraphicsContext3DInProcessImpl::AngleValidateShaderSource(
     return false;
   }
 
+#if !defined(ANGLE_SH_VERSION) || ANGLE_SH_VERSION < 108
   int length = 0;
+#else
+  size_t length = 0;
+#endif
   ShGetInfo(compiler, SH_OBJECT_CODE_LENGTH, &length);
   if (length > 1) {
     entry->translated_source.reset(new char[length]);

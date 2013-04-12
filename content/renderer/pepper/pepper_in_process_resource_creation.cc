@@ -5,16 +5,18 @@
 #include "content/renderer/pepper/pepper_in_process_resource_creation.h"
 
 #include "base/bind.h"
+#include "base/logging.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop.h"
-#include "content/renderer/render_view_impl.h"
 #include "content/renderer/pepper/pepper_in_process_router.h"
 #include "content/renderer/pepper/renderer_ppapi_host_impl.h"
+#include "content/renderer/render_view_impl.h"
 #include "ipc/ipc_message.h"
 #include "ipc/ipc_message_macros.h"
 #include "ppapi/host/ppapi_host.h"
 #include "ppapi/proxy/browser_font_resource_trusted.h"
 #include "ppapi/proxy/file_chooser_resource.h"
+#include "ppapi/proxy/file_io_resource.h"
 #include "ppapi/proxy/graphics_2d_resource.h"
 #include "ppapi/proxy/ppapi_messages.h"
 #include "ppapi/proxy/printing_resource.h"
@@ -66,6 +68,13 @@ PP_Resource PepperInProcessResourceCreation::CreateFileChooser(
   return (new ppapi::proxy::FileChooserResource(
       host_impl_->in_process_router()->GetPluginConnection(),
       instance, mode, accept_types))->GetReference();
+}
+
+PP_Resource PepperInProcessResourceCreation::CreateFileIO(
+    PP_Instance instance) {
+  return (new ppapi::proxy::FileIOResource(
+      host_impl_->in_process_router()->GetPluginConnection(),
+      instance))->GetReference();
 }
 
 PP_Resource PepperInProcessResourceCreation::CreateGraphics2D(

@@ -5,27 +5,27 @@
 #ifndef WebNinePatchLayerImpl_h
 #define WebNinePatchLayerImpl_h
 
-#include "web_layer_impl.h"
 #include "base/memory/scoped_ptr.h"
-#include "SkBitmap.h"
+#include "third_party/skia/include/core/SkBitmap.h"
+#include "webkit/compositor_bindings/web_layer_impl.h"
 
 namespace WebKit {
 
 class WebLayerImpl;
 
 class WebNinePatchLayerImpl {
-public:
-    WebNinePatchLayerImpl();
-    virtual ~WebNinePatchLayerImpl();
+ public:
+  WebNinePatchLayerImpl();
+  virtual ~WebNinePatchLayerImpl();
 
-    WebLayer* layer();
+  WebLayer* layer();
 
-    void setBitmap(const SkBitmap& bitmap, const WebRect& aperture);
+  void setBitmap(const SkBitmap& bitmap, const WebRect& aperture);
 
-private:
-    scoped_ptr<WebLayerImpl> m_layer;
+ private:
+  scoped_ptr<WebLayerImpl> layer_;
 };
 
-} // namespace WebKit
+}  // namespace WebKit
 
 #endif

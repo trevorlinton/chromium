@@ -30,7 +30,7 @@
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/posix/eintr_wrapper.h"
-#include "base/string_number_conversions.h"
+#include "base/strings/string_number_conversions.h"
 
 #if defined(USE_SYMBOLIZE)
 #include "base/third_party/symbolize/symbolize.h"
@@ -114,7 +114,8 @@ class BacktraceOutputHandler {
 void OutputPointer(void* pointer, BacktraceOutputHandler* handler) {
   char buf[1024] = { '\0' };
   handler->HandleOutput(" [0x");
-  internal::itoa_r(reinterpret_cast<intptr_t>(pointer), buf, sizeof(buf), 16);
+  internal::itoa_r(reinterpret_cast<intptr_t>(pointer),
+                   buf, sizeof(buf), 16, 12);
   handler->HandleOutput(buf);
   handler->HandleOutput("]");
 }
@@ -127,7 +128,8 @@ void ProcessBacktrace(void *const *trace,
 
 #if defined(USE_SYMBOLIZE)
   for (int i = 0; i < size; ++i) {
-    handler->HandleOutput("\t");
+    OutputPointer(trace[i], handler);
+    handler->HandleOutput(" ");
 
     char buf[1024] = { '\0' };
 
@@ -139,7 +141,6 @@ void ProcessBacktrace(void *const *trace,
     else
       handler->HandleOutput("<unknown>");
 
-    OutputPointer(trace[i], handler);
     handler->HandleOutput("\n");
   }
 #else
@@ -170,7 +171,13 @@ void ProcessBacktrace(void *const *trace,
 #endif  // defined(USE_SYMBOLIZE)
 }
 
-void StackDumpSignalHandler(int signal, siginfo_t* info, ucontext_t* context) {
+void PrintToStderr(const char* output) {
+  // NOTE: This code MUST be async-signal safe (it's used by in-process
+  // stack dumping signal handler). NO malloc or stdio is allowed here.
+  ignore_result(HANDLE_EINTR(write(STDERR_FILENO, output, strlen(output))));
+}
+
+void StackDumpSignalHandler(int signal, siginfo_t* info, void* void_context) {
   // NOTE: This code MUST be async-signal safe.
   // NO malloc or stdio is allowed here.
 
@@ -181,17 +188,148 @@ void StackDumpSignalHandler(int signal, siginfo_t* info, ucontext_t* context) {
   if (BeingDebugged())
     BreakDebugger();
 
-  char buf[1024] = "Received signal ";
-  size_t buf_len = strlen(buf);
-  internal::itoa_r(signal, buf + buf_len, sizeof(buf) - buf_len, 10);
-  RAW_LOG(ERROR, buf);
+  PrintToStderr("Received signal ");
+  char buf[1024] = { 0 };
+  internal::itoa_r(signal, buf, sizeof(buf), 10, 0);
+  PrintToStderr(buf);
+  if (signal == SIGBUS) {
+    if (info->si_code == BUS_ADRALN)
+      PrintToStderr(" BUS_ADRALN ");
+    else if (info->si_code == BUS_ADRERR)
+      PrintToStderr(" BUS_ADRERR ");
+    else if (info->si_code == BUS_OBJERR)
+      PrintToStderr(" BUS_OBJERR ");
+    else
+      PrintToStderr(" <unknown> ");
+  } else if (signal == SIGFPE) {
+    if (info->si_code == FPE_FLTDIV)
+      PrintToStderr(" FPE_FLTDIV ");
+    else if (info->si_code == FPE_FLTINV)
+      PrintToStderr(" FPE_FLTINV ");
+    else if (info->si_code == FPE_FLTOVF)
+      PrintToStderr(" FPE_FLTOVF ");
+    else if (info->si_code == FPE_FLTRES)
+      PrintToStderr(" FPE_FLTRES ");
+    else if (info->si_code == FPE_FLTSUB)
+      PrintToStderr(" FPE_FLTSUB ");
+    else if (info->si_code == FPE_FLTUND)
+      PrintToStderr(" FPE_FLTUND ");
+    else if (info->si_code == FPE_INTDIV)
+      PrintToStderr(" FPE_INTDIV ");
+    else if (info->si_code == FPE_INTOVF)
+      PrintToStderr(" FPE_INTOVF ");
+    else
+      PrintToStderr(" <unknown> ");
+  } else if (signal == SIGILL) {
+    if (info->si_code == ILL_BADSTK)
+      PrintToStderr(" ILL_BADSTK ");
+    else if (info->si_code == ILL_COPROC)
+      PrintToStderr(" ILL_COPROC ");
+    else if (info->si_code == ILL_ILLOPN)
+      PrintToStderr(" ILL_ILLOPN ");
+    else if (info->si_code == ILL_ILLADR)
+      PrintToStderr(" ILL_ILLADR ");
+    else if (info->si_code == ILL_ILLTRP)
+      PrintToStderr(" ILL_ILLTRP ");
+    else if (info->si_code == ILL_PRVOPC)
+      PrintToStderr(" ILL_PRVOPC ");
+    else if (info->si_code == ILL_PRVREG)
+      PrintToStderr(" ILL_PRVREG ");
+    else
+      PrintToStderr(" <unknown> ");
+  } else if (signal == SIGSEGV) {
+    if (info->si_code == SEGV_MAPERR)
+      PrintToStderr(" SEGV_MAPERR ");
+    else if (info->si_code == SEGV_ACCERR)
+      PrintToStderr(" SEGV_ACCERR ");
+    else
+      PrintToStderr(" <unknown> ");
+  }
+  if (signal == SIGBUS || signal == SIGFPE ||
+      signal == SIGILL || signal == SIGSEGV) {
+    internal::itoa_r(reinterpret_cast<intptr_t>(info->si_addr),
+                     buf, sizeof(buf), 16, 12);
+    PrintToStderr(buf);
+  }
+  PrintToStderr("\n");
 
   debug::StackTrace().PrintBacktrace();
 
-  // TODO(shess): Port to Linux.
-#if defined(OS_MACOSX)
+#if defined(OS_LINUX)
+#if ARCH_CPU_X86_FAMILY
+  ucontext_t* context = reinterpret_cast<ucontext_t*>(void_context);
+  const struct {
+    const char* label;
+    greg_t value;
+  } registers[] = {
+#if ARCH_CPU_32_BITS
+    { "  gs: ", context->uc_mcontext.gregs[REG_GS] },
+    { "  fs: ", context->uc_mcontext.gregs[REG_FS] },
+    { "  es: ", context->uc_mcontext.gregs[REG_ES] },
+    { "  ds: ", context->uc_mcontext.gregs[REG_DS] },
+    { " edi: ", context->uc_mcontext.gregs[REG_EDI] },
+    { " esi: ", context->uc_mcontext.gregs[REG_ESI] },
+    { " ebp: ", context->uc_mcontext.gregs[REG_EBP] },
+    { " esp: ", context->uc_mcontext.gregs[REG_ESP] },
+    { " ebx: ", context->uc_mcontext.gregs[REG_EBX] },
+    { " edx: ", context->uc_mcontext.gregs[REG_EDX] },
+    { " ecx: ", context->uc_mcontext.gregs[REG_ECX] },
+    { " eax: ", context->uc_mcontext.gregs[REG_EAX] },
+    { " trp: ", context->uc_mcontext.gregs[REG_TRAPNO] },
+    { " err: ", context->uc_mcontext.gregs[REG_ERR] },
+    { "  ip: ", context->uc_mcontext.gregs[REG_EIP] },
+    { "  cs: ", context->uc_mcontext.gregs[REG_CS] },
+    { " efl: ", context->uc_mcontext.gregs[REG_EFL] },
+    { " usp: ", context->uc_mcontext.gregs[REG_UESP] },
+    { "  ss: ", context->uc_mcontext.gregs[REG_SS] },
+#elif ARCH_CPU_64_BITS
+    { "  r8: ", context->uc_mcontext.gregs[REG_R8] },
+    { "  r9: ", context->uc_mcontext.gregs[REG_R9] },
+    { " r10: ", context->uc_mcontext.gregs[REG_R10] },
+    { " r11: ", context->uc_mcontext.gregs[REG_R11] },
+    { " r12: ", context->uc_mcontext.gregs[REG_R12] },
+    { " r13: ", context->uc_mcontext.gregs[REG_R13] },
+    { " r14: ", context->uc_mcontext.gregs[REG_R14] },
+    { " r15: ", context->uc_mcontext.gregs[REG_R15] },
+    { "  di: ", context->uc_mcontext.gregs[REG_RDI] },
+    { "  si: ", context->uc_mcontext.gregs[REG_RSI] },
+    { "  bp: ", context->uc_mcontext.gregs[REG_RBP] },
+    { "  bx: ", context->uc_mcontext.gregs[REG_RBX] },
+    { "  dx: ", context->uc_mcontext.gregs[REG_RDX] },
+    { "  ax: ", context->uc_mcontext.gregs[REG_RAX] },
+    { "  cx: ", context->uc_mcontext.gregs[REG_RCX] },
+    { "  sp: ", context->uc_mcontext.gregs[REG_RSP] },
+    { "  ip: ", context->uc_mcontext.gregs[REG_RIP] },
+    { " efl: ", context->uc_mcontext.gregs[REG_EFL] },
+    { " cgf: ", context->uc_mcontext.gregs[REG_CSGSFS] },
+    { " erf: ", context->uc_mcontext.gregs[REG_ERR] },
+    { " trp: ", context->uc_mcontext.gregs[REG_TRAPNO] },
+    { " msk: ", context->uc_mcontext.gregs[REG_OLDMASK] },
+    { " cr2: ", context->uc_mcontext.gregs[REG_CR2] },
+#endif
+  };
+
+#if ARCH_CPU_32_BITS
+  const int kRegisterPadding = 8;
+#elif ARCH_CPU_64_BITS
+  const int kRegisterPadding = 16;
+#endif
+
+  for (size_t i = 0; i < ARRAYSIZE_UNSAFE(registers); i++) {
+    PrintToStderr(registers[i].label);
+    internal::itoa_r(registers[i].value, buf, sizeof(buf),
+                     16, kRegisterPadding);
+    PrintToStderr(buf);
+
+    if ((i + 1) % 4 == 0)
+      PrintToStderr("\n");
+  }
+  PrintToStderr("\n");
+#endif
+#elif defined(OS_MACOSX)
   // TODO(shess): Port to 64-bit.
 #if ARCH_CPU_X86_FAMILY && ARCH_CPU_32_BITS
+  ucontext_t* context = reinterpret_cast<ucontext_t*>(void_context);
   size_t len;
 
   // NOTE: Even |snprintf()| is not on the approved list for signal
@@ -236,10 +374,10 @@ class PrintBacktraceOutputHandler : public BacktraceOutputHandler {
  public:
   PrintBacktraceOutputHandler() {}
 
-  virtual void HandleOutput(const char* output) {
+  virtual void HandleOutput(const char* output) OVERRIDE {
     // NOTE: This code MUST be async-signal safe (it's used by in-process
     // stack dumping signal handler). NO malloc or stdio is allowed here.
-    ignore_result(HANDLE_EINTR(write(STDERR_FILENO, output, strlen(output))));
+    PrintToStderr(output);
   }
 
  private:
@@ -248,10 +386,10 @@ class PrintBacktraceOutputHandler : public BacktraceOutputHandler {
 
 class StreamBacktraceOutputHandler : public BacktraceOutputHandler {
  public:
-  StreamBacktraceOutputHandler(std::ostream* os) : os_(os) {
+  explicit StreamBacktraceOutputHandler(std::ostream* os) : os_(os) {
   }
 
-  virtual void HandleOutput(const char* output) {
+  virtual void HandleOutput(const char* output) OVERRIDE {
     (*os_) << output;
   }
 
@@ -301,22 +439,27 @@ bool EnableInProcessStackDumping() {
   // When running in an application, our code typically expects SIGPIPE
   // to be ignored.  Therefore, when testing that same code, it should run
   // with SIGPIPE ignored as well.
-  struct sigaction action;
-  memset(&action, 0, sizeof(action));
-  action.sa_handler = SIG_IGN;
-  sigemptyset(&action.sa_mask);
-  bool success = (sigaction(SIGPIPE, &action, NULL) == 0);
+  struct sigaction sigpipe_action;
+  memset(&sigpipe_action, 0, sizeof(sigpipe_action));
+  sigpipe_action.sa_handler = SIG_IGN;
+  sigemptyset(&sigpipe_action.sa_mask);
+  bool success = (sigaction(SIGPIPE, &sigpipe_action, NULL) == 0);
 
   // Avoid hangs during backtrace initialization, see above.
   WarmUpBacktrace();
 
-  sig_t handler = reinterpret_cast<sig_t>(&StackDumpSignalHandler);
-  success &= (signal(SIGILL, handler) != SIG_ERR);
-  success &= (signal(SIGABRT, handler) != SIG_ERR);
-  success &= (signal(SIGFPE, handler) != SIG_ERR);
-  success &= (signal(SIGBUS, handler) != SIG_ERR);
-  success &= (signal(SIGSEGV, handler) != SIG_ERR);
-  success &= (signal(SIGSYS, handler) != SIG_ERR);
+  struct sigaction action;
+  memset(&action, 0, sizeof(action));
+  action.sa_flags = SA_RESETHAND | SA_SIGINFO;
+  action.sa_sigaction = &StackDumpSignalHandler;
+  sigemptyset(&action.sa_mask);
+
+  success &= (sigaction(SIGILL, &action, NULL) == 0);
+  success &= (sigaction(SIGABRT, &action, NULL) == 0);
+  success &= (sigaction(SIGFPE, &action, NULL) == 0);
+  success &= (sigaction(SIGBUS, &action, NULL) == 0);
+  success &= (sigaction(SIGSEGV, &action, NULL) == 0);
+  success &= (sigaction(SIGSYS, &action, NULL) == 0);
 
   return success;
 }
@@ -347,7 +490,7 @@ void StackTrace::OutputToStream(std::ostream* os) const {
 namespace internal {
 
 // NOTE: code from sandbox/linux/seccomp-bpf/demo.cc.
-char *itoa_r(intptr_t i, char *buf, size_t sz, int base) {
+char *itoa_r(intptr_t i, char *buf, size_t sz, int base, size_t padding) {
   // Make sure we can write at least one NUL byte.
   size_t n = 1;
   if (n > sz)
@@ -387,7 +530,10 @@ char *itoa_r(intptr_t i, char *buf, size_t sz, int base) {
     // Output the next digit.
     *ptr++ = "0123456789abcdef"[j % base];
     j /= base;
-  } while (j);
+
+    if (padding > 0)
+      padding--;
+  } while (j > 0 || padding > 0);
 
   // Terminate the output with a NUL character.
   *ptr = '\000';

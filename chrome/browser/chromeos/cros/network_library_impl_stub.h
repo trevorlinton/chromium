@@ -64,10 +64,9 @@ class NetworkLibraryImplStub : public NetworkLibraryImplBase {
   virtual void SetCellularDataRoamingAllowed(bool new_value) OVERRIDE;
   virtual void SetCarrier(const std::string& carrier,
                           const NetworkOperationCallback& completed) OVERRIDE;
+  virtual void ResetModem() OVERRIDE;
   virtual bool IsCellularAlwaysInRoaming() OVERRIDE;
   virtual void RequestNetworkScan() OVERRIDE;
-
-  virtual bool GetWifiAccessPoints(WifiAccessPointVector* result) OVERRIDE;
 
   virtual void RefreshIPConfig(Network* network) OVERRIDE;
 
@@ -93,7 +92,15 @@ class NetworkLibraryImplStub : public NetworkLibraryImplBase {
       const std::string& service_path,
       const NetworkServicePropertiesCallback& callback) OVERRIDE;
 
+  // For testing only:
+  // Returns the configurations applied in LoadOncNetworks. The key is the
+  // network's service path which is mapped to the Shill dictionary.
+  const std::map<std::string, base::DictionaryValue*>& GetConfigurations();
+
  private:
+  void CompleteWifiInit();
+  void CompleteCellularInit();
+  void CompleteCellularActivate();
   void AddStubNetwork(Network* network, NetworkProfileType profile_type);
   void AddStubRememberedNetwork(Network* network);
   void ConnectToNetwork(Network* network);
@@ -108,11 +115,12 @@ class NetworkLibraryImplStub : public NetworkLibraryImplBase {
   std::string pin_;
   bool pin_required_;
   bool pin_entered_;
-  int64 connect_delay_ms_;
   int network_priority_order_;
   WifiNetworkVector disabled_wifi_networks_;
   CellularNetworkVector disabled_cellular_networks_;
   WimaxNetworkVector disabled_wimax_networks_;
+  std::map<std::string, base::DictionaryValue*> service_configurations_;
+  base::WeakPtrFactory<NetworkLibraryImplStub> weak_pointer_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(NetworkLibraryImplStub);
 };

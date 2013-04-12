@@ -4,9 +4,12 @@
 
 #include "ash/system/chromeos/enterprise/tray_enterprise.h"
 
+#include "ash/system/tray/hover_highlight_view.h"
 #include "ash/system/tray/system_tray_notifier.h"
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_views.h"
+#include "ash/system/user/login_status.h"
+#include "base/logging.h"
 #include "grit/ash_resources.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/font.h"
@@ -60,17 +63,17 @@ views::View* EnterpriseDefaultView::CreateChildView(
       rb.GetImageSkiaNamed(IDR_AURA_UBER_TRAY_ENTERPRISE_DARK);
   HoverHighlightView* child = new HoverHighlightView(click_listener_);
   child->AddIconAndLabel(*icon, message, gfx::Font::NORMAL);
-  child->text_label()->SetElideBehavior(views::Label::ELIDE_AT_END);
-  child->text_label()->SetFont(rb.GetFont(ui::ResourceBundle::SmallFont));
-  child->set_fixed_height(kTrayPopupItemHeight);
+  child->text_label()->SetMultiLine(true);
+  child->text_label()->SetAllowCharacterBreak(true);
   child->set_border(views::Border::CreateEmptyBorder(0,
       kTrayPopupPaddingHorizontal, 0, kTrayPopupPaddingHorizontal));
+  child->SetExpandable(true);
   child->SetVisible(true);
   return child;
 }
 
 TrayEnterprise::TrayEnterprise(SystemTray* system_tray)
-    : TrayImageItem(system_tray, IDR_AURA_UBER_TRAY_ENTERPRISE_LIGHT),
+    : SystemTrayItem(system_tray),
       default_view_(NULL) {
   Shell::GetInstance()->system_tray_notifier()->
       AddEnterpriseDomainObserver(this);
@@ -88,7 +91,12 @@ void TrayEnterprise::UpdateEnterpriseMessage() {
     default_view_->SetMessage(message);
 }
 
-views::View* TrayEnterprise::CreateDefaultView(user::LoginStatus /*status*/) {
+views::View* TrayEnterprise::CreateDefaultView(user::LoginStatus status) {
+  CHECK(default_view_ == NULL);
+  // For public accounts, enterprise ownership is indicated in the user details
+  // instead.
+  if (status == ash::user::LOGGED_IN_PUBLIC)
+    return NULL;
   default_view_ = new EnterpriseDefaultView(this);
   UpdateEnterpriseMessage();
   return default_view_;
@@ -98,18 +106,11 @@ void TrayEnterprise::DestroyDefaultView() {
   default_view_ = NULL;
 }
 
-bool TrayEnterprise::GetInitialVisibility() {
-  return !Shell::GetInstance()->system_tray_delegate()->
-      GetEnterpriseMessage().empty();
-}
-
 void TrayEnterprise::OnEnterpriseDomainChanged() {
   UpdateEnterpriseMessage();
-  if (tray_view())
-    tray_view()->SetVisible(GetInitialVisibility());
 }
 
-void TrayEnterprise::ClickedOn(views::View* sender) {
+void TrayEnterprise::OnViewClicked(views::View* sender) {
   Shell::GetInstance()->system_tray_delegate()->ShowEnterpriseInfo();
 }
 

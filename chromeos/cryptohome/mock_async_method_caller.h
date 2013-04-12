@@ -16,6 +16,10 @@ namespace cryptohome {
 
 class MockAsyncMethodCaller : public AsyncMethodCaller {
  public:
+  static const char kFakeAttestationEnrollRequest[];
+  static const char kFakeAttestationCertRequest[];
+  static const char kFakeAttestationCert[];
+
   MockAsyncMethodCaller();
   virtual ~MockAsyncMethodCaller();
 
@@ -35,12 +39,25 @@ class MockAsyncMethodCaller : public AsyncMethodCaller {
   MOCK_METHOD1(AsyncMountGuest, void(Callback callback));
   MOCK_METHOD2(AsyncRemove, void(const std::string& user_email,
                                  Callback callback));
+  MOCK_METHOD1(AsyncTpmAttestationCreateEnrollRequest,
+               void(const DataCallback& callback));
+  MOCK_METHOD2(AsyncTpmAttestationEnroll,
+               void(const std::string& pca_response, const Callback& callback));
+  MOCK_METHOD2(AsyncTpmAttestationCreateCertRequest,
+               void(bool is_cert_for_owner, const DataCallback& callback));
+  MOCK_METHOD2(AsyncTpmAttestationFinishCertRequest,
+               void(const std::string& pca_response,
+                    const DataCallback& callback));
 
  private:
   bool success_;
   MountError return_code_;
 
   void DoCallback(Callback callback);
+  // Default fakes for attestation calls.
+  void FakeCreateEnrollRequest(const DataCallback& callback);
+  void FakeCreateCertRequest(const DataCallback& callback);
+  void FakeFinishCertRequest(const DataCallback& callback);
 
   DISALLOW_COPY_AND_ASSIGN(MockAsyncMethodCaller);
 };

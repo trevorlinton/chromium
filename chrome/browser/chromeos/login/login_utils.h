@@ -8,16 +8,12 @@
 #include <string>
 
 #include "base/memory/ref_counted.h"
-#include "google_apis/gaia/gaia_auth_consumer.h"
 
 class CommandLine;
 class GURL;
 class Profile;
+class PrefRegistrySimple;
 class PrefService;
-
-namespace {
-class BrowserGuestSessionNavigatorTest;
-}  // namespace
 
 namespace chromeos {
 
@@ -29,18 +25,19 @@ class LoginUtils {
  public:
   class Delegate {
    public:
-   // Called after profile is loaded and prepared for the session.
+    // Called after profile is loaded and prepared for the session.
     virtual void OnProfilePrepared(Profile* profile) = 0;
 
 #if defined(ENABLE_RLZ)
     // Called after post-profile RLZ initialization.
     virtual void OnRlzInitialized(Profile* profile) {}
 #endif
-
-    // Called immediately after profile is created, should be used as a test
-    // se
-    virtual void OnProfileCreated(Profile* profile) {}
+   protected:
+    virtual ~Delegate() {}
   };
+
+  // Registers log-in related preferences.
+  static void RegisterPrefs(PrefRegistrySimple* registry);
 
   // Get LoginUtils singleton object. If it was not set before, new default
   // instance will be created.
@@ -70,7 +67,6 @@ class LoginUtils {
       const std::string& username,
       const std::string& display_email,
       const std::string& password,
-      bool pending_requests,
       bool using_oauth,
       bool has_cookies,
       Delegate* delegate) = 0;
@@ -105,33 +101,11 @@ class LoginUtils {
   // Restores authentication session after crash.
   virtual void RestoreAuthenticationSession(Profile* profile) = 0;
 
-  // Starts process of fetching OAuth2 tokens (based on OAuth1 tokens found
-  // in |user_profile|) and kicks off internal services that depend on them.
-  virtual void StartTokenServices(Profile* user_profile) = 0;
-
-  // Supply credentials for sync and others to use.
-  virtual void StartSignedInServices(
-      Profile* profile,
-      const GaiaAuthConsumer::ClientLoginResult& credentials) = 0;
-
   // Stops background fetchers.
   virtual void StopBackgroundFetchers() = 0;
 
   // Initialize RLZ.
   virtual void InitRlzDelayed(Profile* user_profile) = 0;
-
-  // Completed profile creation process.
-  virtual void CompleteProfileCreate(Profile* user_profile) {}
-
- protected:
-  friend class ::BrowserGuestSessionNavigatorTest;
-
-  // Returns command line string to be used for the OTR process. Also modifies
-  // given command line.
-  virtual std::string GetOffTheRecordCommandLine(
-      const GURL& start_url,
-      const CommandLine& base_command_line,
-      CommandLine* command_line) = 0;
 };
 
 }  // namespace chromeos

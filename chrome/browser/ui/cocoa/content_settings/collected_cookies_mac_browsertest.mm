@@ -4,7 +4,8 @@
 
 #import "chrome/browser/ui/cocoa/content_settings/collected_cookies_mac.h"
 
-#include "chrome/browser/ui/browser_tabstrip.h"
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/web_contents_modal_dialog_manager.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/test/test_utils.h"
@@ -12,25 +13,26 @@
 typedef InProcessBrowserTest CollectedCookiesMacTest;
 
 IN_PROC_BROWSER_TEST_F(CollectedCookiesMacTest, Close) {
-  content::WebContents* web_contents = chrome::GetActiveWebContents(browser());
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
   WebContentsModalDialogManager* web_contents_modal_dialog_manager =
       WebContentsModalDialogManager::FromWebContents(web_contents);
-  EXPECT_EQ(0u, web_contents_modal_dialog_manager->dialog_count());
+  EXPECT_FALSE(web_contents_modal_dialog_manager->IsShowingDialog());
 
   // Deletes itself.
-  CollectedCookiesMac* dialog =
-      new CollectedCookiesMac(chrome::GetActiveWebContents(browser()));
-  EXPECT_EQ(1u, web_contents_modal_dialog_manager->dialog_count());
+  CollectedCookiesMac* dialog = new CollectedCookiesMac(
+      browser()->tab_strip_model()->GetActiveWebContents());
+  EXPECT_TRUE(web_contents_modal_dialog_manager->IsShowingDialog());
 
   dialog->PerformClose();
   content::RunAllPendingInMessageLoop();
-  EXPECT_EQ(0u, web_contents_modal_dialog_manager->dialog_count());
+  EXPECT_FALSE(web_contents_modal_dialog_manager->IsShowingDialog());
 }
 
 IN_PROC_BROWSER_TEST_F(CollectedCookiesMacTest, Outlets) {
   // Deletes itself.
-  CollectedCookiesMac* dialog =
-      new CollectedCookiesMac(chrome::GetActiveWebContents(browser()));
+  CollectedCookiesMac* dialog = new CollectedCookiesMac(
+      browser()->tab_strip_model()->GetActiveWebContents());
   CollectedCookiesWindowController* sheet_controller =
       dialog->sheet_controller();
 

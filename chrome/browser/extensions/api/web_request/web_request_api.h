@@ -245,6 +245,8 @@ class ExtensionWebRequestEventRouter
       const std::string& sub_event_name,
       const RequestFilter& filter,
       int extra_info_spec,
+      int target_process_id,
+      int target_route_id,
       base::WeakPtr<IPC::Sender> ipc_sender);
 
   // Removes the listener for the given sub-event.
@@ -309,6 +311,8 @@ class ExtensionWebRequestEventRouter
       const GURL& url,
       int tab_id,
       int window_id,
+      int render_process_host_id,
+      int routing_id,
       ResourceType::Type resource_type,
       bool is_async_request,
       bool is_request_from_extension,
@@ -413,7 +417,8 @@ class ExtensionWebRequestEventRouter
 
 class WebRequestAddEventListener : public SyncIOThreadExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("webRequestInternal.addEventListener");
+  DECLARE_EXTENSION_FUNCTION("webRequestInternal.addEventListener",
+                             WEBREQUESTINTERNAL_ADDEVENTLISTENER)
 
  protected:
   virtual ~WebRequestAddEventListener() {}
@@ -424,7 +429,8 @@ class WebRequestAddEventListener : public SyncIOThreadExtensionFunction {
 
 class WebRequestEventHandled : public SyncIOThreadExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("webRequestInternal.eventHandled");
+  DECLARE_EXTENSION_FUNCTION("webRequestInternal.eventHandled",
+                             WEBREQUESTINTERNAL_EVENTHANDLED)
 
  protected:
   virtual ~WebRequestEventHandled() {}
@@ -433,12 +439,14 @@ class WebRequestEventHandled : public SyncIOThreadExtensionFunction {
   virtual bool RunImpl() OVERRIDE;
 };
 
-class WebRequestHandlerBehaviorChanged : public SyncIOThreadExtensionFunction {
+class WebRequestHandlerBehaviorChangedFunction
+    : public SyncIOThreadExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("webRequest.handlerBehaviorChanged");
+  DECLARE_EXTENSION_FUNCTION("webRequest.handlerBehaviorChanged",
+                             WEBREQUEST_HANDLERBEHAVIORCHANGED)
 
  protected:
-  virtual ~WebRequestHandlerBehaviorChanged() {}
+  virtual ~WebRequestHandlerBehaviorChangedFunction() {}
 
   // ExtensionFunction:
   virtual void GetQuotaLimitHeuristics(

@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "base/base64.h"
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/sha1.h"
 #include "base/string_piece.h"
 #include "crypto/sha2.h"
@@ -44,406 +44,25 @@ class TransportSecurityStateTest : public testing::Test {
     crypto::EnsureNSSInit();
 #endif
   }
+
+ protected:
+  std::string CanonicalizeHost(const std::string& host) {
+    return TransportSecurityState::CanonicalizeHost(host);
+  }
+
+  bool GetStaticDomainState(TransportSecurityState* state,
+                            const std::string& host,
+                            bool sni_enabled,
+                            TransportSecurityState::DomainState* result) {
+    return state->GetStaticDomainState(host, sni_enabled, result);
+  }
+
+  void EnableHost(TransportSecurityState* state,
+                  const std::string& host,
+                  const TransportSecurityState::DomainState& domain_state) {
+    return state->EnableHost(host, domain_state);
+  }
 };
-
-TEST_F(TransportSecurityStateTest, BogusHeaders) {
-  TransportSecurityState::DomainState state;
-  base::Time now = base::Time::Now();
-
-  EXPECT_FALSE(state.ParseSTSHeader(now, ""));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "    "));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "abc"));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "  abc"));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "  abc   "));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "max-age"));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "  max-age"));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "  max-age  "));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "max-age="));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "   max-age="));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "   max-age  ="));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "   max-age=   "));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "   max-age  =     "));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "   max-age  =     xy"));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "   max-age  =     3488a923"));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "max-age=3488a923  "));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "max-ag=3488923"));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "max-aged=3488923"));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "max-age==3488923"));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "amax-age=3488923"));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "max-age=-3488923"));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "max-age=3488923;"));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "max-age=3488923     e"));
-  EXPECT_FALSE(state.ParseSTSHeader(
-      now, "max-age=3488923     includesubdomain"));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "max-age=3488923includesubdomains"));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "max-age=3488923=includesubdomains"));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "max-age=3488923 includesubdomainx"));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "max-age=3488923 includesubdomain="));
-  EXPECT_FALSE(state.ParseSTSHeader(
-      now, "max-age=3488923 includesubdomain=true"));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "max-age=3488923 includesubdomainsx"));
-  EXPECT_FALSE(state.ParseSTSHeader(
-      now, "max-age=3488923 includesubdomains x"));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "max-age=34889.23 includesubdomains"));
-  EXPECT_FALSE(state.ParseSTSHeader(now, "max-age=34889 includesubdomains"));
-
-  // Check that |state| was not updated by expecting the default
-  // values for its predictable fields.
-  EXPECT_EQ(state.upgrade_mode,
-            TransportSecurityState::DomainState::MODE_FORCE_HTTPS);
-  EXPECT_FALSE(state.include_subdomains);
-}
-
-static bool GetPublicKeyHash(const net::X509Certificate::OSCertHandle& cert,
-                             HashValue* hash) {
-  std::string der_bytes;
-  if (!net::X509Certificate::GetDEREncoded(cert, &der_bytes))
-    return false;
-
-  base::StringPiece spki;
-  if (!asn1::ExtractSPKIFromDERCert(der_bytes, &spki))
-    return false;
-
-  switch (hash->tag) {
-    case HASH_VALUE_SHA1:
-      base::SHA1HashBytes(reinterpret_cast<const unsigned char*>(spki.data()),
-                          spki.size(), hash->data());
-      break;
-    case HASH_VALUE_SHA256:
-      crypto::SHA256HashString(spki, hash->data(), crypto::kSHA256Length);
-      break;
-    default:
-      NOTREACHED() << "Unknown HashValueTag " << hash->tag;
-  }
-
-  return true;
-}
-
-static std::string GetPinFromCert(X509Certificate* cert, HashValueTag tag) {
-  HashValue spki_hash(tag);
-  EXPECT_TRUE(GetPublicKeyHash(cert->os_cert_handle(), &spki_hash));
-
-  std::string base64;
-  base::Base64Encode(base::StringPiece(
-      reinterpret_cast<char*>(spki_hash.data()), spki_hash.size()), &base64);
-
-  std::string label;
-  switch (tag) {
-    case HASH_VALUE_SHA1:
-      label = "pin-sha1=";
-      break;
-    case HASH_VALUE_SHA256:
-      label = "pin-sha256=";
-      break;
-    default:
-      NOTREACHED() << "Unknown HashValueTag " << tag;
-  }
-
-  return label + HttpUtil::Quote(base64);
-}
-
-static void TestBogusPinsHeaders(HashValueTag tag) {
-  TransportSecurityState::DomainState state;
-  SSLInfo ssl_info;
-  ssl_info.cert =
-      ImportCertFromFile(GetTestCertsDirectory(), "test_mail_google_com.pem");
-  std::string good_pin = GetPinFromCert(ssl_info.cert, tag);
-  base::Time now = base::Time::Now();
-
-  // The backup pin is fake --- it just has to not be in the chain.
-  std::string backup_pin = "pin-sha1=" +
-      HttpUtil::Quote("6dcfXufJLW3J6S/9rRe4vUlBj5g=");
-
-  EXPECT_FALSE(state.ParsePinsHeader(now, "", ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "    ", ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "abc", ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "  abc", ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "  abc   ", ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "max-age", ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "  max-age", ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "  max-age  ", ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "max-age=", ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "   max-age=", ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "   max-age  =", ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "   max-age=   ", ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "   max-age  =     ", ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "   max-age  =     xy", ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(
-      now,
-      "   max-age  =     3488a923",
-      ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "max-age=3488a923  ", ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now,
-      "max-ag=3488923pins=" + good_pin + "," + backup_pin,
-      ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "max-aged=3488923" + backup_pin,
-                                     ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "max-aged=3488923; " + backup_pin,
-                                     ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now,
-      "max-aged=3488923; " + backup_pin + ";" + backup_pin,
-      ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now,
-      "max-aged=3488923; " + good_pin + ";" + good_pin,
-      ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "max-aged=3488923; " + good_pin,
-                                     ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "max-age==3488923", ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "amax-age=3488923", ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "max-age=-3488923", ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "max-age=3488923;", ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "max-age=3488923     e", ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(
-      now,
-      "max-age=3488923     includesubdomain",
-      ssl_info));
-  EXPECT_FALSE(state.ParsePinsHeader(now, "max-age=34889.23", ssl_info));
-
-  // Check that |state| was not updated by expecting the default
-  // values for its predictable fields.
-  EXPECT_EQ(state.upgrade_mode,
-            TransportSecurityState::DomainState::MODE_FORCE_HTTPS);
-  EXPECT_FALSE(state.include_subdomains);
-}
-
-TEST_F(TransportSecurityStateTest, BogusPinsHeadersSHA1) {
-  TestBogusPinsHeaders(HASH_VALUE_SHA1);
-}
-
-TEST_F(TransportSecurityStateTest, BogusPinsHeadersSHA256) {
-  TestBogusPinsHeaders(HASH_VALUE_SHA256);
-}
-
-TEST_F(TransportSecurityStateTest, ValidSTSHeaders) {
-  TransportSecurityState::DomainState state;
-  base::Time expiry;
-  base::Time now = base::Time::Now();
-
-  EXPECT_TRUE(state.ParseSTSHeader(now, "max-age=243"));
-  expiry = now + base::TimeDelta::FromSeconds(243);
-  EXPECT_EQ(expiry, state.upgrade_expiry);
-  EXPECT_FALSE(state.include_subdomains);
-
-  EXPECT_TRUE(state.ParseSTSHeader(now, "  Max-agE    = 567"));
-  expiry = now + base::TimeDelta::FromSeconds(567);
-  EXPECT_EQ(expiry, state.upgrade_expiry);
-  EXPECT_FALSE(state.include_subdomains);
-
-  EXPECT_TRUE(state.ParseSTSHeader(now, "  mAx-aGe    = 890      "));
-  expiry = now + base::TimeDelta::FromSeconds(890);
-  EXPECT_EQ(expiry, state.upgrade_expiry);
-  EXPECT_FALSE(state.include_subdomains);
-
-  EXPECT_TRUE(state.ParseSTSHeader(now, "max-age=123;incLudesUbdOmains"));
-  expiry = now + base::TimeDelta::FromSeconds(123);
-  EXPECT_EQ(expiry, state.upgrade_expiry);
-  EXPECT_TRUE(state.include_subdomains);
-
-  EXPECT_TRUE(state.ParseSTSHeader(now, "incLudesUbdOmains; max-age=123"));
-  expiry = now + base::TimeDelta::FromSeconds(123);
-  EXPECT_EQ(expiry, state.upgrade_expiry);
-  EXPECT_TRUE(state.include_subdomains);
-
-  EXPECT_TRUE(state.ParseSTSHeader(now, "   incLudesUbdOmains; max-age=123"));
-  expiry = now + base::TimeDelta::FromSeconds(123);
-  EXPECT_EQ(expiry, state.upgrade_expiry);
-  EXPECT_TRUE(state.include_subdomains);
-
-  EXPECT_TRUE(state.ParseSTSHeader(now,
-      "   incLudesUbdOmains; max-age=123; pumpkin=kitten"));
-  expiry = now + base::TimeDelta::FromSeconds(123);
-  EXPECT_EQ(expiry, state.upgrade_expiry);
-  EXPECT_TRUE(state.include_subdomains);
-
-  EXPECT_TRUE(state.ParseSTSHeader(now,
-      "   pumpkin=894; incLudesUbdOmains; max-age=123  "));
-  expiry = now + base::TimeDelta::FromSeconds(123);
-  EXPECT_EQ(expiry, state.upgrade_expiry);
-  EXPECT_TRUE(state.include_subdomains);
-
-  EXPECT_TRUE(state.ParseSTSHeader(now,
-      "   pumpkin; incLudesUbdOmains; max-age=123  "));
-  expiry = now + base::TimeDelta::FromSeconds(123);
-  EXPECT_EQ(expiry, state.upgrade_expiry);
-  EXPECT_TRUE(state.include_subdomains);
-
-  EXPECT_TRUE(state.ParseSTSHeader(now,
-      "   pumpkin; incLudesUbdOmains; max-age=\"123\"  "));
-  expiry = now + base::TimeDelta::FromSeconds(123);
-  EXPECT_EQ(expiry, state.upgrade_expiry);
-  EXPECT_TRUE(state.include_subdomains);
-
-  EXPECT_TRUE(state.ParseSTSHeader(now,
-      "animal=\"squirrel; distinguished\"; incLudesUbdOmains; max-age=123"));
-  expiry = now + base::TimeDelta::FromSeconds(123);
-  EXPECT_EQ(expiry, state.upgrade_expiry);
-  EXPECT_TRUE(state.include_subdomains);
-
-  EXPECT_TRUE(state.ParseSTSHeader(now, "max-age=394082;  incLudesUbdOmains"));
-  expiry = now + base::TimeDelta::FromSeconds(394082);
-  EXPECT_EQ(expiry, state.upgrade_expiry);
-  EXPECT_TRUE(state.include_subdomains);
-
-  EXPECT_TRUE(state.ParseSTSHeader(
-      now, "max-age=39408299  ;incLudesUbdOmains"));
-  expiry = now + base::TimeDelta::FromSeconds(
-      std::min(TransportSecurityState::kMaxHSTSAgeSecs, 39408299l));
-  EXPECT_EQ(expiry, state.upgrade_expiry);
-  EXPECT_TRUE(state.include_subdomains);
-
-  EXPECT_TRUE(state.ParseSTSHeader(
-      now, "max-age=394082038  ; incLudesUbdOmains"));
-  expiry = now + base::TimeDelta::FromSeconds(
-      std::min(TransportSecurityState::kMaxHSTSAgeSecs, 394082038l));
-  EXPECT_EQ(expiry, state.upgrade_expiry);
-  EXPECT_TRUE(state.include_subdomains);
-
-  EXPECT_TRUE(state.ParseSTSHeader(
-      now, "  max-age=0  ;  incLudesUbdOmains   "));
-  expiry = now + base::TimeDelta::FromSeconds(0);
-  EXPECT_EQ(expiry, state.upgrade_expiry);
-  EXPECT_TRUE(state.include_subdomains);
-  // When max-age == 0, we downgrade to MODE_DEFAULT rather than deleting
-  // the entire DomainState. (That is because we currently overload
-  // DomainState to also include pins, and we don't want to invalidate any
-  // opportunistic pins that may be in place.)
-  EXPECT_EQ(TransportSecurityState::DomainState::MODE_DEFAULT,
-            state.upgrade_mode);
-
-  EXPECT_TRUE(state.ParseSTSHeader(
-      now,
-      "  max-age=999999999999999999999999999999999999999999999  ;"
-      "  incLudesUbdOmains   "));
-  expiry = now + base::TimeDelta::FromSeconds(
-      TransportSecurityState::kMaxHSTSAgeSecs);
-  EXPECT_EQ(expiry, state.upgrade_expiry);
-  EXPECT_TRUE(state.include_subdomains);
-}
-
-static void TestValidPinsHeaders(HashValueTag tag) {
-  TransportSecurityState::DomainState state;
-  base::Time expiry;
-  base::Time now = base::Time::Now();
-
-  // Set up a realistic SSLInfo with a realistic cert chain.
-  FilePath certs_dir = GetTestCertsDirectory();
-  scoped_refptr<X509Certificate> ee_cert =
-      ImportCertFromFile(certs_dir, "2048-rsa-ee-by-2048-rsa-intermediate.pem");
-  ASSERT_NE(static_cast<X509Certificate*>(NULL), ee_cert);
-  scoped_refptr<X509Certificate> intermediate =
-      ImportCertFromFile(certs_dir, "2048-rsa-intermediate.pem");
-  ASSERT_NE(static_cast<X509Certificate*>(NULL), intermediate);
-  X509Certificate::OSCertHandles intermediates;
-  intermediates.push_back(intermediate->os_cert_handle());
-  SSLInfo ssl_info;
-  ssl_info.cert = X509Certificate::CreateFromHandle(ee_cert->os_cert_handle(),
-                                                    intermediates);
-
-  // Add the root that signed the intermediate for this test.
-  scoped_refptr<X509Certificate> root_cert =
-      ImportCertFromFile(certs_dir, "2048-rsa-root.pem");
-  ASSERT_NE(static_cast<X509Certificate*>(NULL), root_cert);
-  ScopedTestRoot scoped_root(root_cert);
-
-  // Verify has the side-effect of populating public_key_hashes, which
-  // ParsePinsHeader needs. (It wants to check pins against the validated
-  // chain, not just the presented chain.)
-  int rv = ERR_FAILED;
-  CertVerifyResult result;
-  scoped_ptr<CertVerifier> verifier(CertVerifier::CreateDefault());
-  TestCompletionCallback callback;
-  CertVerifier::RequestHandle handle = NULL;
-  rv = verifier->Verify(ssl_info.cert, "127.0.0.1", 0, NULL, &result,
-                        callback.callback(), &handle, BoundNetLog());
-  rv = callback.GetResult(rv);
-  ASSERT_EQ(OK, rv);
-  // Normally, ssl_client_socket_nss would do this, but for a unit test we
-  // fake it.
-  ssl_info.public_key_hashes = result.public_key_hashes;
-  std::string good_pin = GetPinFromCert(ssl_info.cert, /*tag*/HASH_VALUE_SHA1);
-  DLOG(WARNING) << "good pin: " << good_pin;
-
-  // The backup pin is fake --- we just need an SPKI hash that does not match
-  // the hash of any SPKI in the certificate chain.
-  std::string backup_pin = "pin-sha1=" +
-      HttpUtil::Quote("6dcfXufJLW3J6S/9rRe4vUlBj5g=");
-
-  EXPECT_TRUE(state.ParsePinsHeader(
-      now,
-      "max-age=243; " + good_pin + ";" + backup_pin,
-      ssl_info));
-  expiry = now + base::TimeDelta::FromSeconds(243);
-  EXPECT_EQ(expiry, state.dynamic_spki_hashes_expiry);
-
-  EXPECT_TRUE(state.ParsePinsHeader(
-      now,
-      "   " + good_pin + "; " + backup_pin + "  ; Max-agE    = 567",
-      ssl_info));
-  expiry = now + base::TimeDelta::FromSeconds(567);
-  EXPECT_EQ(expiry, state.dynamic_spki_hashes_expiry);
-
-  EXPECT_TRUE(state.ParsePinsHeader(
-      now,
-      good_pin + ";" + backup_pin + "  ; mAx-aGe    = 890      ",
-      ssl_info));
-  expiry = now + base::TimeDelta::FromSeconds(890);
-  EXPECT_EQ(expiry, state.dynamic_spki_hashes_expiry);
-
-  EXPECT_TRUE(state.ParsePinsHeader(
-      now,
-      good_pin + ";" + backup_pin + "; max-age=123;IGNORED;",
-      ssl_info));
-  expiry = now + base::TimeDelta::FromSeconds(123);
-  EXPECT_EQ(expiry, state.dynamic_spki_hashes_expiry);
-
-  EXPECT_TRUE(state.ParsePinsHeader(
-      now,
-      "max-age=394082;" + backup_pin + ";" + good_pin + ";  ",
-      ssl_info));
-  expiry = now + base::TimeDelta::FromSeconds(394082);
-  EXPECT_EQ(expiry, state.dynamic_spki_hashes_expiry);
-
-  EXPECT_TRUE(state.ParsePinsHeader(
-      now,
-      "max-age=39408299  ;" + backup_pin + ";" + good_pin + ";  ",
-      ssl_info));
-  expiry = now + base::TimeDelta::FromSeconds(
-      std::min(TransportSecurityState::kMaxHSTSAgeSecs, 39408299l));
-  EXPECT_EQ(expiry, state.dynamic_spki_hashes_expiry);
-
-  EXPECT_TRUE(state.ParsePinsHeader(
-      now,
-      "max-age=39408038  ;    cybers=39408038  ;  " +
-          good_pin + ";" + backup_pin + ";   ",
-      ssl_info));
-  expiry = now + base::TimeDelta::FromSeconds(
-      std::min(TransportSecurityState::kMaxHSTSAgeSecs, 394082038l));
-  EXPECT_EQ(expiry, state.dynamic_spki_hashes_expiry);
-
-  EXPECT_TRUE(state.ParsePinsHeader(
-      now,
-      "  max-age=0  ;  " + good_pin + ";" + backup_pin,
-      ssl_info));
-  expiry = now + base::TimeDelta::FromSeconds(0);
-  EXPECT_EQ(expiry, state.dynamic_spki_hashes_expiry);
-
-  EXPECT_TRUE(state.ParsePinsHeader(
-      now,
-      "  max-age=999999999999999999999999999999999999999999999  ;  " +
-          backup_pin + ";" + good_pin + ";   ",
-      ssl_info));
-  expiry = now +
-      base::TimeDelta::FromSeconds(TransportSecurityState::kMaxHSTSAgeSecs);
-  EXPECT_EQ(expiry, state.dynamic_spki_hashes_expiry);
-}
-
-TEST_F(TransportSecurityStateTest, ValidPinsHeadersSHA1) {
-  TestValidPinsHeaders(HASH_VALUE_SHA1);
-}
-
-TEST_F(TransportSecurityStateTest, ValidPinsHeadersSHA256) {
-  TestValidPinsHeaders(HASH_VALUE_SHA256);
-}
 
 TEST_F(TransportSecurityStateTest, SimpleMatches) {
   TransportSecurityState state;
@@ -452,8 +71,8 @@ TEST_F(TransportSecurityStateTest, SimpleMatches) {
   const base::Time expiry = current_time + base::TimeDelta::FromSeconds(1000);
 
   EXPECT_FALSE(state.GetDomainState("yahoo.com", true, &domain_state));
-  domain_state.upgrade_expiry = expiry;
-  state.EnableHost("yahoo.com", domain_state);
+  bool include_subdomains = false;
+  state.AddHSTS("yahoo.com", expiry, include_subdomains);
   EXPECT_TRUE(state.GetDomainState("yahoo.com", true, &domain_state));
 }
 
@@ -464,8 +83,8 @@ TEST_F(TransportSecurityStateTest, MatchesCase1) {
   const base::Time expiry = current_time + base::TimeDelta::FromSeconds(1000);
 
   EXPECT_FALSE(state.GetDomainState("yahoo.com", true, &domain_state));
-  domain_state.upgrade_expiry = expiry;
-  state.EnableHost("YAhoo.coM", domain_state);
+  bool include_subdomains = false;
+  state.AddHSTS("YAhoo.coM", expiry, include_subdomains);
   EXPECT_TRUE(state.GetDomainState("yahoo.com", true, &domain_state));
 }
 
@@ -476,8 +95,8 @@ TEST_F(TransportSecurityStateTest, MatchesCase2) {
   const base::Time expiry = current_time + base::TimeDelta::FromSeconds(1000);
 
   EXPECT_FALSE(state.GetDomainState("YAhoo.coM", true, &domain_state));
-  domain_state.upgrade_expiry = expiry;
-  state.EnableHost("yahoo.com", domain_state);
+  bool include_subdomains = false;
+  state.AddHSTS("yahoo.com", expiry, include_subdomains);
   EXPECT_TRUE(state.GetDomainState("YAhoo.coM", true, &domain_state));
 }
 
@@ -488,9 +107,8 @@ TEST_F(TransportSecurityStateTest, SubdomainMatches) {
   const base::Time expiry = current_time + base::TimeDelta::FromSeconds(1000);
 
   EXPECT_FALSE(state.GetDomainState("yahoo.com", true, &domain_state));
-  domain_state.upgrade_expiry = expiry;
-  domain_state.include_subdomains = true;
-  state.EnableHost("yahoo.com", domain_state);
+  bool include_subdomains = true;
+  state.AddHSTS("yahoo.com", expiry, include_subdomains);
   EXPECT_TRUE(state.GetDomainState("yahoo.com", true, &domain_state));
   EXPECT_TRUE(state.GetDomainState("foo.yahoo.com", true, &domain_state));
   EXPECT_TRUE(state.GetDomainState("foo.bar.yahoo.com", true, &domain_state));
@@ -499,7 +117,7 @@ TEST_F(TransportSecurityStateTest, SubdomainMatches) {
   EXPECT_FALSE(state.GetDomainState("com", true, &domain_state));
 }
 
-TEST_F(TransportSecurityStateTest, DeleteSince) {
+TEST_F(TransportSecurityStateTest, DeleteAllDynamicDataSince) {
   TransportSecurityState state;
   TransportSecurityState::DomainState domain_state;
   const base::Time current_time(base::Time::Now());
@@ -507,57 +125,53 @@ TEST_F(TransportSecurityStateTest, DeleteSince) {
   const base::Time older = current_time - base::TimeDelta::FromSeconds(1000);
 
   EXPECT_FALSE(state.GetDomainState("yahoo.com", true, &domain_state));
-  domain_state.upgrade_mode =
-      TransportSecurityState::DomainState::MODE_FORCE_HTTPS;
-  domain_state.upgrade_expiry = expiry;
-  state.EnableHost("yahoo.com", domain_state);
+  bool include_subdomains = false;
+  state.AddHSTS("yahoo.com", expiry, include_subdomains);
 
-  state.DeleteSince(expiry);
+  state.DeleteAllDynamicDataSince(expiry);
   EXPECT_TRUE(state.GetDomainState("yahoo.com", true, &domain_state));
-  state.DeleteSince(older);
+  state.DeleteAllDynamicDataSince(older);
   EXPECT_FALSE(state.GetDomainState("yahoo.com", true, &domain_state));
 }
 
-TEST_F(TransportSecurityStateTest, DeleteHost) {
+TEST_F(TransportSecurityStateTest, DeleteDynamicDataForHost) {
   TransportSecurityState state;
   TransportSecurityState::DomainState domain_state;
   const base::Time current_time(base::Time::Now());
   const base::Time expiry = current_time + base::TimeDelta::FromSeconds(1000);
-  domain_state.upgrade_mode =
-      TransportSecurityState::DomainState::MODE_FORCE_HTTPS;
-  domain_state.upgrade_expiry = expiry;
-  state.EnableHost("yahoo.com", domain_state);
+  bool include_subdomains = false;
+  state.AddHSTS("yahoo.com", expiry, include_subdomains);
 
   EXPECT_TRUE(state.GetDomainState("yahoo.com", true, &domain_state));
   EXPECT_FALSE(state.GetDomainState("example.com", true, &domain_state));
-  EXPECT_TRUE(state.DeleteHost("yahoo.com"));
+  EXPECT_TRUE(state.DeleteDynamicDataForHost("yahoo.com"));
   EXPECT_FALSE(state.GetDomainState("yahoo.com", true, &domain_state));
 }
 
 TEST_F(TransportSecurityStateTest, IsPreloaded) {
   const std::string paypal =
-      TransportSecurityState::CanonicalizeHost("paypal.com");
+      CanonicalizeHost("paypal.com");
   const std::string www_paypal =
-      TransportSecurityState::CanonicalizeHost("www.paypal.com");
+      CanonicalizeHost("www.paypal.com");
   const std::string a_www_paypal =
-      TransportSecurityState::CanonicalizeHost("a.www.paypal.com");
+      CanonicalizeHost("a.www.paypal.com");
   const std::string abc_paypal =
-      TransportSecurityState::CanonicalizeHost("a.b.c.paypal.com");
+      CanonicalizeHost("a.b.c.paypal.com");
   const std::string example =
-      TransportSecurityState::CanonicalizeHost("example.com");
+      CanonicalizeHost("example.com");
   const std::string aypal =
-      TransportSecurityState::CanonicalizeHost("aypal.com");
+      CanonicalizeHost("aypal.com");
 
   TransportSecurityState state;
   TransportSecurityState::DomainState domain_state;
 
-  EXPECT_FALSE(state.GetStaticDomainState(paypal, true, &domain_state));
-  EXPECT_TRUE(state.GetStaticDomainState(www_paypal, true, &domain_state));
+  EXPECT_FALSE(GetStaticDomainState(&state, paypal, true, &domain_state));
+  EXPECT_TRUE(GetStaticDomainState(&state, www_paypal, true, &domain_state));
   EXPECT_FALSE(domain_state.include_subdomains);
-  EXPECT_FALSE(state.GetStaticDomainState(a_www_paypal, true, &domain_state));
-  EXPECT_FALSE(state.GetStaticDomainState(abc_paypal, true, &domain_state));
-  EXPECT_FALSE(state.GetStaticDomainState(example, true, &domain_state));
-  EXPECT_FALSE(state.GetStaticDomainState(aypal, true, &domain_state));
+  EXPECT_FALSE(GetStaticDomainState(&state, a_www_paypal, true, &domain_state));
+  EXPECT_FALSE(GetStaticDomainState(&state, abc_paypal, true, &domain_state));
+  EXPECT_FALSE(GetStaticDomainState(&state, example, true, &domain_state));
+  EXPECT_FALSE(GetStaticDomainState(&state, aypal, true, &domain_state));
 }
 
 TEST_F(TransportSecurityStateTest, PreloadedDomainSet) {
@@ -577,7 +191,7 @@ static bool ShouldRedirect(const char* hostname) {
   TransportSecurityState state;
   TransportSecurityState::DomainState domain_state;
   return state.GetDomainState(hostname, true /* SNI ok */, &domain_state) &&
-         domain_state.ShouldRedirectHTTPToHTTPS();
+         domain_state.ShouldUpgradeToSSL();
 }
 
 static bool HasState(const char* hostname) {
@@ -586,17 +200,17 @@ static bool HasState(const char* hostname) {
   return state.GetDomainState(hostname, true /* SNI ok */, &domain_state);
 }
 
-static bool HasPins(const char* hostname, bool sni_enabled) {
+static bool HasPublicKeyPins(const char* hostname, bool sni_enabled) {
   TransportSecurityState state;
   TransportSecurityState::DomainState domain_state;
   if (!state.GetDomainState(hostname, sni_enabled, &domain_state))
     return false;
 
-  return domain_state.HasPins();
+  return domain_state.HasPublicKeyPins();
 }
 
-static bool HasPins(const char* hostname) {
-  return HasPins(hostname, true);
+static bool HasPublicKeyPins(const char* hostname) {
+  return HasPublicKeyPins(hostname, true);
 }
 
 static bool OnlyPinning(const char *hostname) {
@@ -608,7 +222,7 @@ static bool OnlyPinning(const char *hostname) {
   return (domain_state.static_spki_hashes.size() > 0 ||
           domain_state.bad_static_spki_hashes.size() > 0 ||
           domain_state.dynamic_spki_hashes.size() > 0) &&
-         !domain_state.ShouldRedirectHTTPToHTTPS();
+         !domain_state.ShouldUpgradeToSSL();
 }
 
 TEST_F(TransportSecurityStateTest, Preloaded) {
@@ -794,10 +408,10 @@ TEST_F(TransportSecurityStateTest, Preloaded) {
   EXPECT_TRUE(ShouldRedirect("epoxate.com"));
   EXPECT_FALSE(HasState("foo.epoxate.com"));
 
-  EXPECT_TRUE(HasPins("torproject.org"));
-  EXPECT_TRUE(HasPins("www.torproject.org"));
-  EXPECT_TRUE(HasPins("check.torproject.org"));
-  EXPECT_TRUE(HasPins("blog.torproject.org"));
+  EXPECT_TRUE(HasPublicKeyPins("torproject.org"));
+  EXPECT_TRUE(HasPublicKeyPins("www.torproject.org"));
+  EXPECT_TRUE(HasPublicKeyPins("check.torproject.org"));
+  EXPECT_TRUE(HasPublicKeyPins("blog.torproject.org"));
   EXPECT_FALSE(HasState("foo.torproject.org"));
 
   EXPECT_TRUE(ShouldRedirect("www.moneybookers.com"));
@@ -844,7 +458,7 @@ TEST_F(TransportSecurityStateTest, Preloaded) {
   EXPECT_FALSE(ShouldRedirect("foo.www.sandbox.mydigipass.com"));
 
   EXPECT_TRUE(ShouldRedirect("crypto.cat"));
-  EXPECT_TRUE(ShouldRedirect("foo.crypto.cat"));
+  EXPECT_FALSE(ShouldRedirect("foo.crypto.cat"));
 
   EXPECT_TRUE(ShouldRedirect("bigshinylock.minazo.net"));
   EXPECT_TRUE(ShouldRedirect("foo.bigshinylock.minazo.net"));
@@ -852,7 +466,7 @@ TEST_F(TransportSecurityStateTest, Preloaded) {
   EXPECT_TRUE(ShouldRedirect("crate.io"));
   EXPECT_TRUE(ShouldRedirect("foo.crate.io"));
 
-  EXPECT_TRUE(HasPins("www.twitter.com"));
+  EXPECT_TRUE(HasPublicKeyPins("www.twitter.com"));
 }
 
 TEST_F(TransportSecurityStateTest, LongNames) {
@@ -870,58 +484,57 @@ TEST_F(TransportSecurityStateTest, BuiltinCertPins) {
   TransportSecurityState::DomainState domain_state;
 
   EXPECT_TRUE(state.GetDomainState("chrome.google.com", true, &domain_state));
-  EXPECT_TRUE(HasPins("chrome.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("chrome.google.com"));
 
   HashValueVector hashes;
   // Checks that a built-in list does exist.
-  EXPECT_FALSE(domain_state.IsChainOfPublicKeysPermitted(hashes));
-  EXPECT_FALSE(HasPins("www.paypal.com"));
+  EXPECT_FALSE(domain_state.CheckPublicKeyPins(hashes));
+  EXPECT_FALSE(HasPublicKeyPins("www.paypal.com"));
 
-  EXPECT_TRUE(HasPins("docs.google.com"));
-  EXPECT_TRUE(HasPins("1.docs.google.com"));
-  EXPECT_TRUE(HasPins("sites.google.com"));
-  EXPECT_TRUE(HasPins("drive.google.com"));
-  EXPECT_TRUE(HasPins("spreadsheets.google.com"));
-  EXPECT_TRUE(HasPins("health.google.com"));
-  EXPECT_TRUE(HasPins("checkout.google.com"));
-  EXPECT_TRUE(HasPins("appengine.google.com"));
-  EXPECT_TRUE(HasPins("market.android.com"));
-  EXPECT_TRUE(HasPins("encrypted.google.com"));
-  EXPECT_TRUE(HasPins("accounts.google.com"));
-  EXPECT_TRUE(HasPins("profiles.google.com"));
-  EXPECT_TRUE(HasPins("mail.google.com"));
-  EXPECT_TRUE(HasPins("chatenabled.mail.google.com"));
-  EXPECT_TRUE(HasPins("talkgadget.google.com"));
-  EXPECT_TRUE(HasPins("hostedtalkgadget.google.com"));
-  EXPECT_TRUE(HasPins("talk.google.com"));
-  EXPECT_TRUE(HasPins("plus.google.com"));
-  EXPECT_TRUE(HasPins("groups.google.com"));
-  EXPECT_TRUE(HasPins("apis.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("docs.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("1.docs.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("sites.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("drive.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("spreadsheets.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("health.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("checkout.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("appengine.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("market.android.com"));
+  EXPECT_TRUE(HasPublicKeyPins("encrypted.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("accounts.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("profiles.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("mail.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("chatenabled.mail.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("talkgadget.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("hostedtalkgadget.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("talk.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("plus.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("groups.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("apis.google.com"));
 
-  EXPECT_TRUE(HasPins("ssl.gstatic.com"));
-  EXPECT_FALSE(HasPins("www.gstatic.com"));
-  EXPECT_TRUE(HasPins("ssl.google-analytics.com"));
-  EXPECT_TRUE(HasPins("www.googleplex.com"));
+  EXPECT_TRUE(HasPublicKeyPins("ssl.gstatic.com"));
+  EXPECT_FALSE(HasPublicKeyPins("www.gstatic.com"));
+  EXPECT_TRUE(HasPublicKeyPins("ssl.google-analytics.com"));
+  EXPECT_TRUE(HasPublicKeyPins("www.googleplex.com"));
 
   // Disabled in order to help track down pinning failures --agl
-  EXPECT_TRUE(HasPins("twitter.com"));
-  EXPECT_FALSE(HasPins("foo.twitter.com"));
-  EXPECT_TRUE(HasPins("www.twitter.com"));
-  EXPECT_TRUE(HasPins("api.twitter.com"));
-  EXPECT_TRUE(HasPins("oauth.twitter.com"));
-  EXPECT_TRUE(HasPins("mobile.twitter.com"));
-  EXPECT_TRUE(HasPins("dev.twitter.com"));
-  EXPECT_TRUE(HasPins("business.twitter.com"));
-  EXPECT_TRUE(HasPins("platform.twitter.com"));
-  EXPECT_TRUE(HasPins("si0.twimg.com"));
-  EXPECT_TRUE(HasPins("twimg0-a.akamaihd.net"));
+  EXPECT_TRUE(HasPublicKeyPins("twitter.com"));
+  EXPECT_FALSE(HasPublicKeyPins("foo.twitter.com"));
+  EXPECT_TRUE(HasPublicKeyPins("www.twitter.com"));
+  EXPECT_TRUE(HasPublicKeyPins("api.twitter.com"));
+  EXPECT_TRUE(HasPublicKeyPins("oauth.twitter.com"));
+  EXPECT_TRUE(HasPublicKeyPins("mobile.twitter.com"));
+  EXPECT_TRUE(HasPublicKeyPins("dev.twitter.com"));
+  EXPECT_TRUE(HasPublicKeyPins("business.twitter.com"));
+  EXPECT_TRUE(HasPublicKeyPins("platform.twitter.com"));
+  EXPECT_TRUE(HasPublicKeyPins("si0.twimg.com"));
+  EXPECT_TRUE(HasPublicKeyPins("twimg0-a.akamaihd.net"));
 }
 
 static bool AddHash(const std::string& type_and_base64,
                     HashValueVector* out) {
   HashValue hash;
-
-  if (!TransportSecurityState::ParsePin(type_and_base64, &hash))
+  if (!hash.FromString(type_and_base64))
     return false;
 
   out->push_back(hash);
@@ -959,10 +572,10 @@ TEST_F(TransportSecurityStateTest, PinValidationWithRejectedCerts) {
   TransportSecurityState state;
   TransportSecurityState::DomainState domain_state;
   EXPECT_TRUE(state.GetDomainState("plus.google.com", true, &domain_state));
-  EXPECT_TRUE(domain_state.HasPins());
+  EXPECT_TRUE(domain_state.HasPublicKeyPins());
 
-  EXPECT_TRUE(domain_state.IsChainOfPublicKeysPermitted(good_hashes));
-  EXPECT_FALSE(domain_state.IsChainOfPublicKeysPermitted(bad_hashes));
+  EXPECT_TRUE(domain_state.CheckPublicKeyPins(good_hashes));
+  EXPECT_FALSE(domain_state.CheckPublicKeyPins(bad_hashes));
 }
 
 TEST_F(TransportSecurityStateTest, PinValidationWithoutRejectedCerts) {
@@ -995,10 +608,10 @@ TEST_F(TransportSecurityStateTest, PinValidationWithoutRejectedCerts) {
   TransportSecurityState state;
   TransportSecurityState::DomainState domain_state;
   EXPECT_TRUE(state.GetDomainState("blog.torproject.org", true, &domain_state));
-  EXPECT_TRUE(domain_state.HasPins());
+  EXPECT_TRUE(domain_state.HasPublicKeyPins());
 
-  EXPECT_TRUE(domain_state.IsChainOfPublicKeysPermitted(good_hashes));
-  EXPECT_FALSE(domain_state.IsChainOfPublicKeysPermitted(bad_hashes));
+  EXPECT_TRUE(domain_state.CheckPublicKeyPins(good_hashes));
+  EXPECT_FALSE(domain_state.CheckPublicKeyPins(bad_hashes));
 }
 
 TEST_F(TransportSecurityStateTest, PinValidationWithRejectedCertsMixedHashes) {
@@ -1024,7 +637,7 @@ TEST_F(TransportSecurityStateTest, PinValidationWithRejectedCertsMixedHashes) {
   TransportSecurityState state;
   TransportSecurityState::DomainState domain_state;
   EXPECT_TRUE(state.GetDomainState("plus.google.com", true, &domain_state));
-  EXPECT_TRUE(domain_state.HasPins());
+  EXPECT_TRUE(domain_state.HasPublicKeyPins());
 
   // The statically-defined pins are all SHA-1, so we add some SHA-256 pins
   // manually:
@@ -1037,42 +650,42 @@ TEST_F(TransportSecurityStateTest, PinValidationWithRejectedCertsMixedHashes) {
   EXPECT_TRUE(AddHash(ee_sha1, &validated_chain));
   EXPECT_TRUE(AddHash(google_1024_sha1, &validated_chain));
   EXPECT_TRUE(AddHash(equifax_sha1, &validated_chain));
-  EXPECT_TRUE(domain_state.IsChainOfPublicKeysPermitted(validated_chain));
+  EXPECT_TRUE(domain_state.CheckPublicKeyPins(validated_chain));
 
   // Try an all-bad SHA1 chain.
   validated_chain.clear();
   EXPECT_TRUE(AddHash(ee_sha1, &validated_chain));
   EXPECT_TRUE(AddHash(trustcenter_sha1, &validated_chain));
   EXPECT_TRUE(AddHash(equifax_sha1, &validated_chain));
-  EXPECT_FALSE(domain_state.IsChainOfPublicKeysPermitted(validated_chain));
+  EXPECT_FALSE(domain_state.CheckPublicKeyPins(validated_chain));
 
   // Try an all-good SHA-256 chain.
   validated_chain.clear();
   EXPECT_TRUE(AddHash(ee_sha256, &validated_chain));
   EXPECT_TRUE(AddHash(google_1024_sha256, &validated_chain));
   EXPECT_TRUE(AddHash(equifax_sha256, &validated_chain));
-  EXPECT_TRUE(domain_state.IsChainOfPublicKeysPermitted(validated_chain));
+  EXPECT_TRUE(domain_state.CheckPublicKeyPins(validated_chain));
 
   // Try an all-bad SHA-256 chain.
   validated_chain.clear();
   EXPECT_TRUE(AddHash(ee_sha256, &validated_chain));
   EXPECT_TRUE(AddHash(trustcenter_sha256, &validated_chain));
   EXPECT_TRUE(AddHash(equifax_sha256, &validated_chain));
-  EXPECT_FALSE(domain_state.IsChainOfPublicKeysPermitted(validated_chain));
+  EXPECT_FALSE(domain_state.CheckPublicKeyPins(validated_chain));
 
   // Try a mixed-hash good chain.
   validated_chain.clear();
   EXPECT_TRUE(AddHash(ee_sha256, &validated_chain));
   EXPECT_TRUE(AddHash(google_1024_sha1, &validated_chain));
   EXPECT_TRUE(AddHash(equifax_sha256, &validated_chain));
-  EXPECT_TRUE(domain_state.IsChainOfPublicKeysPermitted(validated_chain));
+  EXPECT_TRUE(domain_state.CheckPublicKeyPins(validated_chain));
 
   // Try a mixed-hash bad chain.
   validated_chain.clear();
   EXPECT_TRUE(AddHash(ee_sha1, &validated_chain));
   EXPECT_TRUE(AddHash(trustcenter_sha256, &validated_chain));
   EXPECT_TRUE(AddHash(equifax_sha1, &validated_chain));
-  EXPECT_FALSE(domain_state.IsChainOfPublicKeysPermitted(validated_chain));
+  EXPECT_FALSE(domain_state.CheckPublicKeyPins(validated_chain));
 
   // Try a chain with all good hashes.
   validated_chain.clear();
@@ -1082,7 +695,7 @@ TEST_F(TransportSecurityStateTest, PinValidationWithRejectedCertsMixedHashes) {
   EXPECT_TRUE(AddHash(ee_sha256, &validated_chain));
   EXPECT_TRUE(AddHash(google_1024_sha256, &validated_chain));
   EXPECT_TRUE(AddHash(equifax_sha256, &validated_chain));
-  EXPECT_TRUE(domain_state.IsChainOfPublicKeysPermitted(validated_chain));
+  EXPECT_TRUE(domain_state.CheckPublicKeyPins(validated_chain));
 
   // Try a chain with all bad hashes.
   validated_chain.clear();
@@ -1092,7 +705,7 @@ TEST_F(TransportSecurityStateTest, PinValidationWithRejectedCertsMixedHashes) {
   EXPECT_TRUE(AddHash(ee_sha256, &validated_chain));
   EXPECT_TRUE(AddHash(trustcenter_sha256, &validated_chain));
   EXPECT_TRUE(AddHash(equifax_sha256, &validated_chain));
-  EXPECT_FALSE(domain_state.IsChainOfPublicKeysPermitted(validated_chain));
+  EXPECT_FALSE(domain_state.CheckPublicKeyPins(validated_chain));
 }
 
 TEST_F(TransportSecurityStateTest, OptionalHSTSCertPins) {
@@ -1101,30 +714,30 @@ TEST_F(TransportSecurityStateTest, OptionalHSTSCertPins) {
 
   EXPECT_FALSE(ShouldRedirect("www.google-analytics.com"));
 
-  EXPECT_FALSE(HasPins("www.google-analytics.com", false));
-  EXPECT_TRUE(HasPins("www.google-analytics.com"));
-  EXPECT_TRUE(HasPins("google.com"));
-  EXPECT_TRUE(HasPins("www.google.com"));
-  EXPECT_TRUE(HasPins("mail-attachment.googleusercontent.com"));
-  EXPECT_TRUE(HasPins("www.youtube.com"));
-  EXPECT_TRUE(HasPins("i.ytimg.com"));
-  EXPECT_TRUE(HasPins("googleapis.com"));
-  EXPECT_TRUE(HasPins("ajax.googleapis.com"));
-  EXPECT_TRUE(HasPins("googleadservices.com"));
-  EXPECT_TRUE(HasPins("pagead2.googleadservices.com"));
-  EXPECT_TRUE(HasPins("googlecode.com"));
-  EXPECT_TRUE(HasPins("kibbles.googlecode.com"));
-  EXPECT_TRUE(HasPins("appspot.com"));
-  EXPECT_TRUE(HasPins("googlesyndication.com"));
-  EXPECT_TRUE(HasPins("doubleclick.net"));
-  EXPECT_TRUE(HasPins("ad.doubleclick.net"));
-  EXPECT_FALSE(HasPins("learn.doubleclick.net"));
-  EXPECT_TRUE(HasPins("a.googlegroups.com"));
-  EXPECT_FALSE(HasPins("a.googlegroups.com", false));
+  EXPECT_FALSE(HasPublicKeyPins("www.google-analytics.com", false));
+  EXPECT_TRUE(HasPublicKeyPins("www.google-analytics.com"));
+  EXPECT_TRUE(HasPublicKeyPins("google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("www.google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("mail-attachment.googleusercontent.com"));
+  EXPECT_TRUE(HasPublicKeyPins("www.youtube.com"));
+  EXPECT_TRUE(HasPublicKeyPins("i.ytimg.com"));
+  EXPECT_TRUE(HasPublicKeyPins("googleapis.com"));
+  EXPECT_TRUE(HasPublicKeyPins("ajax.googleapis.com"));
+  EXPECT_TRUE(HasPublicKeyPins("googleadservices.com"));
+  EXPECT_TRUE(HasPublicKeyPins("pagead2.googleadservices.com"));
+  EXPECT_TRUE(HasPublicKeyPins("googlecode.com"));
+  EXPECT_TRUE(HasPublicKeyPins("kibbles.googlecode.com"));
+  EXPECT_TRUE(HasPublicKeyPins("appspot.com"));
+  EXPECT_TRUE(HasPublicKeyPins("googlesyndication.com"));
+  EXPECT_TRUE(HasPublicKeyPins("doubleclick.net"));
+  EXPECT_TRUE(HasPublicKeyPins("ad.doubleclick.net"));
+  EXPECT_FALSE(HasPublicKeyPins("learn.doubleclick.net"));
+  EXPECT_TRUE(HasPublicKeyPins("a.googlegroups.com"));
+  EXPECT_FALSE(HasPublicKeyPins("a.googlegroups.com", false));
 }
 
 TEST_F(TransportSecurityStateTest, OverrideBuiltins) {
-  EXPECT_TRUE(HasPins("google.com"));
+  EXPECT_TRUE(HasPublicKeyPins("google.com"));
   EXPECT_FALSE(ShouldRedirect("google.com"));
   EXPECT_FALSE(ShouldRedirect("www.google.com"));
 
@@ -1133,7 +746,7 @@ TEST_F(TransportSecurityStateTest, OverrideBuiltins) {
   const base::Time current_time(base::Time::Now());
   const base::Time expiry = current_time + base::TimeDelta::FromSeconds(1000);
   domain_state.upgrade_expiry = expiry;
-  state.EnableHost("www.google.com", domain_state);
+  EnableHost(&state, "www.google.com", domain_state);
 
   EXPECT_TRUE(state.GetDomainState("www.google.com", true, &domain_state));
 }

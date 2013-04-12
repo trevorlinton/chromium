@@ -11,8 +11,17 @@
 
 namespace net {
 
+// Structure containing timing information for a request.
+// It addresses the needs of
+// http://groups.google.com/group/http-archive-specification/web/har-1-1-spec,
+// http://dev.w3.org/2006/webapi/WebTiming/, and
+// http://www.w3.org/TR/resource-timing/.
+//
 // All events that do not apply to a request have null times.  For non-HTTP
 // requests, all times other than the request_start times are null.
+//
+// Requests with connection errors generally only have request start times as
+// well, since they never received an established socket.
 //
 // The general order for events is:
 // request_start
@@ -33,6 +42,14 @@ namespace net {
 // by the connection attempt itself.  Since the connection attempt may be
 // started before a URLRequest, the starred times may occur before, during, or
 // after the request_start and proxy events.
+//
+// DNS and SSL times are both times for the host, not the proxy, so DNS times
+// when using proxies are null, and only requests to HTTPS hosts (Not proxies)
+// have SSL times.  One exception to this is when a proxy server itself returns
+// a redirect response.  In this case, the connect times treat the proxy as the
+// host.  The send and receive times will all be null, however.
+// See HttpNetworkTransaction::OnHttpsProxyTunnelResponse.
+// TODO(mmenke):  Is this worth fixing?
 struct NET_EXPORT LoadTimingInfo {
   // Contains the LoadTimingInfo events related to establishing a connection.
   // These are all set by ConnectJobs.
@@ -76,11 +93,22 @@ struct NET_EXPORT LoadTimingInfo {
   // True if the socket was reused.  When true, DNS, connect, and SSL times
   // will all be null.  When false, those times may be null, too, for non-HTTP
   // requests, or when they don't apply to a request.
+  //
+  // For requests that are sent again after an AUTH challenge, this will be true
+  // if the original socket is reused, and false if a new socket is used.
+  // Responding to a proxy AUTH challenge is never considered to be reusing a
+  // socket, since a connection to the host wasn't established when the
+  // challenge was received.
   bool socket_reused;
 
   // Unique socket ID, can be used to identify requests served by the same
-  // socket.
-  // TODO(mmenke):  Do something reasonable for SPDY proxies.
+  // socket.  For connections tunnelled over SPDY proxies, this is the ID of
+  // the virtual connection (The SpdyProxyClientSocket), not the ID of the
+  // actual socket.  HTTP requests handled by the SPDY proxy itself all use the
+  // actual socket's ID.
+  //
+  // 0 when there is no socket associated with the request, or it's not an HTTP
+  // request.
   uint32 socket_log_id;
 
   // Start time as a base::Time, so times can be coverted into actual times.

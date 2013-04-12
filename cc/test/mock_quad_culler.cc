@@ -4,6 +4,8 @@
 
 #include "cc/test/mock_quad_culler.h"
 
+#include "cc/draw_quad.h"
+
 namespace cc {
 
 MockQuadCuller::MockQuadCuller()
@@ -25,7 +27,7 @@ MockQuadCuller::~MockQuadCuller()
 bool MockQuadCuller::append(scoped_ptr<DrawQuad> drawQuad, AppendQuadsData&)
 {
     if (!drawQuad->rect.IsEmpty()) {
-        m_activeQuadList.append(drawQuad.Pass());
+        m_activeQuadList.push_back(drawQuad.Pass());
         return true;
     }
     return false;
@@ -34,7 +36,7 @@ bool MockQuadCuller::append(scoped_ptr<DrawQuad> drawQuad, AppendQuadsData&)
 SharedQuadState* MockQuadCuller::useSharedQuadState(scoped_ptr<SharedQuadState> sharedQuadState)
 {
     SharedQuadState* rawPtr = sharedQuadState.get();
-    m_activeSharedQuadStateList.append(sharedQuadState.Pass());
+    m_activeSharedQuadStateList.push_back(sharedQuadState.Pass());
     return rawPtr;
 }
 

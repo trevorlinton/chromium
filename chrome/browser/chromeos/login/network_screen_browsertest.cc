@@ -8,7 +8,6 @@
 #include "chrome/browser/chromeos/cros/network_library.h"
 #include "chrome/browser/chromeos/login/mock_screen_observer.h"
 #include "chrome/browser/chromeos/login/network_screen.h"
-#include "chrome/browser/chromeos/login/view_screen.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/chromeos/login/wizard_in_process_browser_test.h"
 #include "chrome/browser/chromeos/login/wizard_screen.h"
@@ -31,7 +30,7 @@ namespace chromeos {
 class DummyButtonListener : public views::ButtonListener {
  public:
   virtual void ButtonPressed(views::Button* sender,
-                             const ui::Event& event) {}
+                             const ui::Event& event) OVERRIDE {}
 };
 
 class NetworkScreenTest : public WizardInProcessBrowserTest {
@@ -41,7 +40,7 @@ class NetworkScreenTest : public WizardInProcessBrowserTest {
   }
 
  protected:
-  virtual void SetUpInProcessBrowserTestFixture() {
+  virtual void SetUpInProcessBrowserTestFixture() OVERRIDE {
     MockDBusThreadManager* mock_dbus_thread_manager =
         new MockDBusThreadManager;
     EXPECT_CALL(*mock_dbus_thread_manager, GetSystemBus())
@@ -120,7 +119,7 @@ class NetworkScreenTest : public WizardInProcessBrowserTest {
         .WillRepeatedly((Return(cellular_.get())));
   }
 
-  virtual void SetUpOnMainThread() {
+  virtual void SetUpOnMainThread() OVERRIDE {
     WizardInProcessBrowserTest::SetUpOnMainThread();
     mock_screen_observer_.reset(new MockScreenObserver());
     ASSERT_TRUE(WizardController::default_controller() != NULL);
@@ -133,7 +132,7 @@ class NetworkScreenTest : public WizardInProcessBrowserTest {
     ASSERT_TRUE(network_screen_->actor() != NULL);
   }
 
-  virtual void TearDownInProcessBrowserTestFixture() {
+  virtual void TearDownInProcessBrowserTestFixture() OVERRIDE {
     CrosInProcessBrowserTest::TearDownInProcessBrowserTestFixture();
     DBusThreadManager::Shutdown();
   }
@@ -233,7 +232,7 @@ IN_PROC_BROWSER_TEST_F(NetworkScreenTest, Cellular) {
       .WillOnce((Return(true)));
   scoped_ptr<CellularNetwork> cellular(new CellularNetwork("cellular"));
   EXPECT_CALL(*mock_network_library_, cellular_network())
-      .WillOnce(Return(cellular.get()));
+      .WillRepeatedly(Return(cellular.get()));
   // EXPECT_FALSE(actor_->IsContinueEnabled());
   network_screen_->OnNetworkManagerChanged(mock_network_library_);
 
@@ -264,7 +263,7 @@ IN_PROC_BROWSER_TEST_F(NetworkScreenTest, Timeout) {
       .WillOnce((Return(true)));
   scoped_ptr<WifiNetwork> wifi(new WifiNetwork("wifi"));
   EXPECT_CALL(*mock_network_library_, wifi_network())
-      .WillOnce(Return(wifi.get()));
+      .WillRepeatedly(Return(wifi.get()));
   // EXPECT_FALSE(actor_->IsContinueEnabled());
   network_screen_->OnNetworkManagerChanged(mock_network_library_);
 

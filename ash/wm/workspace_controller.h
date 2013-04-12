@@ -20,7 +20,6 @@ namespace internal {
 
 class ShelfLayoutManager;
 class WorkspaceControllerTestHelper;
-class WorkspaceCycler;
 class WorkspaceEventHandler;
 class WorkspaceManager;
 
@@ -40,7 +39,10 @@ class ASH_EXPORT WorkspaceController
   // Sets the active workspace based on |window|.
   void SetActiveWorkspaceByWindow(aura::Window* window);
 
-  // See description in BaseWorkspaceManager::GetParentForNewWindow().
+  // Returns the container window for the active workspace, never NULL.
+  aura::Window* GetActiveWorkspaceWindow();
+
+  // See description in WorkspaceManager::GetParentForNewWindow().
   aura::Window* GetParentForNewWindow(aura::Window* window);
 
   // Starts the animation that occurs on first login.
@@ -56,10 +58,6 @@ class ASH_EXPORT WorkspaceController
   aura::Window* viewport_;
 
   scoped_ptr<WorkspaceManager> workspace_manager_;
-
-  // Cycles through the WorkspaceManager's workspaces in response to a three
-  // finger vertical scroll.
-  scoped_ptr<WorkspaceCycler> workspace_cycler_;
 
   DISALLOW_COPY_AND_ASSIGN(WorkspaceController);
 };

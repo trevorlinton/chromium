@@ -119,12 +119,12 @@
   </p>
 
   <p>
-    GUIDs are meant to be stable and unique. When they refer to the same entity,
-    they should be the same between ONC files. No two different networks or
-    certificates should have the same GUID, similarly a network and certificate
-    should not have the same GUID. A single ONC file should not contain the same
-    entity twice (with the same GUID). Failing any of these tests indicates the
-    ONC file is not valid.
+    GUIDs are non-empty strings that are meant to be stable and unique. When
+    they refer to the same entity, they should be the same between ONC files. No
+    two different networks or certificates should have the same GUID, similarly
+    a network and certificate should not have the same GUID. A single ONC file
+    should not contain the same entity twice (with the same GUID). Failing any
+    of these tests indicates the ONC file is not valid.
   </p>
 
   <p>
@@ -214,7 +214,8 @@
     </dd>
   </dl>
 
-  <p>
+  <p class="rule">
+    <span class="rule_id"></span>
     At least one array (either <span class="field">NetworkConfigurations</span>
     and/or <span class="field">Certificates</span>) must be present.
   </p>
@@ -232,8 +233,8 @@
     <dt class="field">Ethernet</dt>
     <dd>
       <span class="field_meta">
-        (required if <span class="field">Type</span>
-        is <span class="value">Ethernet</span>)
+        (required if <span class="field">Type</span> is
+        <span class="value">Ethernet</span>, otherwise ignored)
         <span class="type">Ethernet</span>
       </span>
       Ethernet settings.
@@ -245,14 +246,16 @@
         (required)
         <span class="type">string</span>
       </span>
-      a unique identifier for this network connection, which exists to make it
-      possible to update previously imported configurations
+      A unique identifier for this network connection, which exists to make it
+      possible to update previously imported configurations. Must be a non-empty
+      string.
     </dd>
 
     <dt class="field">IPConfigs</dt>
     <dd>
       <span class="field_meta">
-        (optional)
+        (optional if <span class="field">Remove</span> is
+        <span class="value">false</span>, otherwise ignored)
         <span class="type">array of IPConfig</span>
       </span>
       Static IPv4 or IPv6 parameters to associate with this connection.
@@ -262,7 +265,7 @@
     <dd>
       <span class="field_meta">
         (required if <span class="field">Remove</span> is
-        <span class="value">false</span>)
+        <span class="value">false</span>, otherwise ignored)
         <span class="type">string</span>
       </span>
       A user-friendly description of this connection. This name will not be used
@@ -282,7 +285,9 @@
     <dt class="field">ProxySettings</dt>
     <dd>
       <span class="field_meta">
-        (optional) <span class="type">ProxySettings</span>
+        (optional if <span class="field">Remove</span> is
+        <span class="value">false</span>, otherwise ignored)
+        <span class="type">ProxySettings</span>
       </span>
       Proxy settings for this network
     </dd>
@@ -290,7 +295,8 @@
     <dt class="field">NameServers</dt>
     <dd>
       <span class="field_meta">
-        (optional)
+        (optional if <span class="field">Remove</span> is
+        <span class="value">false</span>, otherwise ignored)
         <span class="type">array of string</span>
       </span>
       Array of addresses to use for name servers. If not specified, DHCP values
@@ -300,20 +306,21 @@
     <dt class="field">SearchDomains</dt>
     <dd>
       <span class="field_meta">
-        (optional)
+        (optional if <span class="field">Remove</span> is
+        <span class="value">false</span>, otherwise ignored)
         <span class="type">array of string</span>
       </span>
       Array of strings to append to names for resolution. Items in this array
-      should not start with a
-      dot. Example: <span class="snippet">["corp.acme.org", "acme.org"]</span>. If
-      not specified, DHCP values will be used.
+      should not start with a dot. Example:
+      <span class="snippet">["corp.acme.org", "acme.org"]</span>. If not
+      specified, DHCP values will be used.
     </dd>
 
     <dt class="field">VPN</dt>
     <dd>
       <span class="field_meta">
         (required if <span class="field">Type</span> is
-        VPN)
+        <span class="value">VPN</span>, otherwise ignored)
         <span class="type">VPN</span>
       </span>
       VPN settings.
@@ -322,7 +329,8 @@
     <dt class="field">WiFi</dt>
     <dd>
       <span class="field_meta">
-        (required if <span class="field">Type</span> is WiFi)
+        (required if <span class="field">Type</span> is
+        <span class="value">WiFi</span>, otherwise ignored)
         <span class="type">WiFi</span>
       </span>
       Wi-Fi settings.
@@ -331,17 +339,17 @@
     <dt class="field">Type</dt>
     <dd>
       <span class="field_meta">
-        (required if <span class="field">Remove</span>
-        is <span class="value">false</span>)
+        (required if <span class="field">Remove</span> is
+        <span class="value">false</span>, otherwise ignored)
         <span class="type">string</span>
       </span>
-      Indicates which kind of connection this is. Must be one
-      of <span class="value">Cellular</span>, <span class="value">Ethernet</span>,
-      <span class="value">WiFi</span>, or <span class="value">VPN</span>.
-      If <span class="field">Remove</span> is <span class="value">true</span>,
-      this field should not be present nor should any that depends on it
-      (<span class="value">Ethernet</span>, <span class="value">VPN</span>,
-      <span class="value">WiFi</span>, etc).
+      <span class="rule">
+        <span class="rule_id"></span>
+        Allowed values are <span class="value">Cellular</span>,
+        <span class="value">Ethernet</span>, <span class="value">WiFi</span>,
+        and <span class="value">VPN</span>.
+      </span>
+      Indicates which kind of connection this is.
     </dd>
   </dl>
 
@@ -361,15 +369,18 @@
         (optional)
         <span class="type">string</span>
       </span>
-      Either <span class="value">None</span>
-      or <span class="value">8021X</span>.
+      <span class="rule">
+        <span class="rule_id"></span>
+        Allowed values are <span class="value">None</span> and
+        <span class="value">8021X</span>.
+      </span>
     </dd>
 
     <dt class="field">EAP</dt>
     <dd>
       <span class="field_meta">
-        (required if <span class="field">Authentication</span>
-        is <span class="value">8021X</span>)
+        (required if <span class="field">Authentication</span> is
+        <span class="value">8021X</span>, otherwise ignored)
         <span class="type">EAP</span>
       </span>
       EAP settings.
@@ -393,9 +404,12 @@
         (required)
         <span class="type">string</span>
       </span>
-      Must be either <span class="value">IPv4</span>
-      or <span class="value">IPv6</span>, describing the type of configuration
-      this is.
+      <span class="rule">
+        <span class="rule_id"></span>
+        Allowed values are <span class="value">IPv4</span>
+        and <span class="value">IPv6</span>
+      </span>
+      Describes the type of configuration this is.
     </dd>
 
     <dt class="field">IPAddress</dt>
@@ -415,8 +429,12 @@
         (required)
         <span class="type">integer</span>
       </span>
-      Describes the routing prefix. This is a number in the range [1, 32] for
-      IPv4 and [1, 128] for IPv6 addresses.
+      <span class="rule">
+        <span class="rule_id"></span>
+        Must be a number in the range [1, 32] for IPv4 and [1, 128] for IPv6
+        addresses.
+      </span>
+      Describes the routing prefix.
     </dd>
 
     <dt class="field">Gateway</dt>
@@ -426,9 +444,9 @@
         <span class="type">string</span>
       </span>
       Describes the gateway address to use for the configuration. Must match
-      address type specified in
-      <span class="field">Type</span> field. If not specified, DHCP values will
-      be used. </dd>
+      address type specified in <span class="field">Type</span> field. If not
+      specified, DHCP values will be used.
+    </dd>
 
     <dt class="field">NameServers</dt>
     <dd>
@@ -473,15 +491,16 @@
         (optional, defaults to <span class="value">false</span>)
         <span class="type">boolean</span>
       </span>
-      Indicating network should be connected when in range.
+      Indicating that the network should be connected to automatically when in
+      range.
     </dd>
 
     <dt class="field">EAP</dt>
     <dd>
       <span class="field_meta">
-        (required if <span class="field">Security</span>
-        is <span class="value">WEP-8021X</span>
-        or <span class="value">WPA-EAP</span>)
+        (required if <span class="field">Security</span> is
+        <span class="value">WEP-8021X</span> or
+        <span class="value">WPA-EAP</span>, otherwise ignored)
         <span class="type">EAP</span>
       </span>
       EAP settings.
@@ -499,9 +518,9 @@
     <dt class="field">Passphrase</dt>
     <dd>
       <span class="field_meta">
-        (required if <span class="field">Security</span>
-        is <span class="value">WEP-PSK</span>
-        or <span class="value">WPA-PSK</span>)
+        (required if <span class="field">Security</span> is
+        <span class="value">WEP-PSK</span> or
+        <span class="value">WPA-PSK</span>, otherwise ignored)
         <span class="type">string</span>
       </span>
       Describes the passphrase for WEP/WPA/WPA2
@@ -516,9 +535,14 @@
         (required)
         <span class="type">string</span>
       </span>
-      One of <span class="value">None</span>, <span class="value">WEP-PSK</span>,
-      <span class="value">WEP-8021X</span>, <span class="value">WPA-PSK</span>,
-      <span class="value">WPA-EAP</span>.
+      <span class="rule">
+        <span class="rule_id"></span>
+        Allowed values are <span class="value">None</span>,
+        <span class="value">WEP-PSK</span>,
+        <span class="value">WEP-8021X</span>,
+        <span class="value">WPA-PSK</span>, and
+        <span class="value">WPA-EAP</span>.
+      </span>
     </dd>
 
     <dt class="field">SSID</dt>
@@ -549,6 +573,15 @@
   </p>
 
   <dl class="field_list">
+    <dt class="field">AutoConnect</dt>
+    <dd>
+      <span class="field_meta">
+        (optional, defaults to <span class="value">false</span>)
+        <span class="type">boolean</span>
+      </span>
+      Indicating that the network should be connected to automatically.
+    </dd>
+
     <dt class="field">Host</dt>
     <dd>
       <span class="field_meta">
@@ -565,9 +598,9 @@
     <dt class="field">IPsec</dt>
     <dd>
       <span class="field_meta">
-        (required if <span class="field">Type</span>
-        is <span class="value">IPsec</span>
-        or <span class="value">L2TP-IPsec</span>)
+        (required if <span class="field">Type</span> is
+        <span class="value">IPsec</span> or
+        <span class="value">L2TP-IPsec</span>, otherwise ignored)
         <span class="type">IPsec</span>
       </span>
       IPsec layer settings.
@@ -577,7 +610,7 @@
     <dd>
       <span class="field_meta">
         (required if <span class="field">Type</span> is
-        L2TP-IPsec)
+        <span class="value">L2TP-IPsec</span>, otherwise ignored)
         <span class="type">L2TP</span>
       </span>
       L2TP layer settings.
@@ -587,7 +620,7 @@
     <dd>
       <span class="field_meta">
         (required if <span class="field">Type</span> is
-        OpenVPN)
+        <span class="value">OpenVPN</span>, otherwise ignored)
         <span class="type">OpenVPN</span>
       </span>
       OpenVPN settings.
@@ -599,9 +632,13 @@
         (required)
         <span class="type">string</span>
       </span>
-      Type of the VPN, one
-      of <span class="value">IPsec</span>, <span class="value">L2TP-IPsec</span>,
-      or <span class="value">OpenVPN</span>.
+      <span class="rule">
+        <span class="rule_id"></span>
+        Allowed values are <span class="value">IPsec</span>,
+        <span class="value">L2TP-IPsec</span>, and
+        <span class="value">OpenVPN</span>.
+      </span>
+      Type of the VPN.
     </dd>
   </dl>
 
@@ -618,7 +655,11 @@
           (required)
           <span class="type">string</span>
         </span>
-        Either <span class="value">PSK</span> or <span class="value">Cert</span>
+        <span class="rule">
+          <span class="rule_id"></span>
+          Allowed values are <span class="value">PSK</span> and
+          <span class="value">Cert</span>
+        </span>
       </dd>
 
       <dt class="field">ClientCertPattern</dt>
@@ -648,8 +689,11 @@
           is <span class="value">Cert</span>, otherwise ignored)
           <span class="type">string</span>
         </span>
-        Either <span class="value">Ref</span>
-        or <span class="value">Pattern</span>
+        <span class="rule">
+          <span class="rule_id"></span>
+          Allowed values are <span class="value">Ref</span> and
+          <span class="value">Pattern</span>
+        </span>
       </dd>
 
       <dt class="field">EAP</dt>
@@ -849,8 +893,8 @@
 <section>
   <h1>OpenVPN connections and types</h1>
   <p>
-    <span class="field">VPN.Type</span> must
-    be <span class="value">OpenVPN</span>.
+    <span class="field">VPN.Type</span> must be
+    <span class="value">OpenVPN</span>.
   </p>
 
   <p>
@@ -872,11 +916,17 @@
         (optional, defaults to <span class="value">none</span>)
         <span class="type">string</span>
       </span>
+      <span class="rule">
+        <span class="rule_id"></span>
+        Allowed values are <span class="value">none</span>,
+        <span class="value">nointeract</span>, and
+        <span class="value">interact</span>.
+      </span>
       Controls how OpenVPN responds to username/password verification
-      errors. Allowed values are <span class="value">none</span> (fail with
-      error on retry), <span class="value">nointeract</span> (retry without
-      asking for authentication), and <span class="value">interact</span> (ask
-      again for authentication each time).
+      errors:<br> Either fail with error on retry
+      (<span class="value">none</span>), retry without asking for authentication
+      (<span class="value">nointeract</span>), or ask again for authentication
+      each time (<span class="value">interact</span>).
     </dd>
 
     <dt class="field">AuthNoCache</dt>
@@ -900,8 +950,8 @@
     <dt class="field">ClientCertRef</dt>
     <dd>
       <span class="field_meta">
-        (required if <span class="field">ClientCertType</span>
-        is <span class="value">Ref</span>)
+        (required if <span class="field">ClientCertType</span> is
+        <span class="value">Ref</span>, otherwise ignored)
         <span class="type">string</span>
       </span>
       Reference to client certificate stored in certificate section.
@@ -910,8 +960,8 @@
     <dt class="field">ClientCertPattern</dt>
     <dd>
       <span class="field_meta">
-        (required if <span class="field">ClientCertType</span>
-        is <span class="value">Pattern</span>)
+        (required if <span class="field">ClientCertType</span> is
+        <span class="value">Pattern</span>, otherwise ignored)
         <span class="type">CertificatePattern</span>
       </span>
       Pattern to use to find the client certificate.
@@ -923,9 +973,13 @@
         (required)
         <span class="type">string</span>
       </span>
-      Either <span class="value">Ref</span>, <span class="value">Pattern</span>,
-      or <span class="value">None</span>. <span class="value">None</span>
-      implies that the server is configured to not require client certificates.
+      <span class="rule">
+        <span class="rule_id"></span>
+        Allowed values are <span class="value">Ref</span>,
+        <span class="value">Pattern</span>, and <span class="value">None</span>.
+      </span>
+      <span class="value">None</span> implies that the server is configured to
+      not require client certificates.
     </dd>
 
     <dt class="field">CompLZO</dt>
@@ -972,8 +1026,7 @@
         (optional)
         <span class="type">string</span>
       </span>
-      XAUTH password. If not specified, user is prompted at time of
-      connection. If not specified, user is prompted at time of connection.
+      XAUTH password. If not specified, user is prompted at time of connection.
     </dd>
 
     <dt class="field">Port</dt>
@@ -1028,8 +1081,12 @@
         (optional, defaults to <span class="value">server</span>)
         <span class="type">string</span>
       </span>
-      Require peer certificate signing based on RFC3280 TLS rules. May
-      be <span class="value">none</span> or <span class="value">server</span>.
+      <span class="rule">
+        <span class="rule_id"></span>
+        Allowed values are <span class="value">none</span> and
+        <span class="value">server</span>.
+      </span>
+      Require peer certificate signing based on RFC3280 TLS rules.
     </dd>
 
     <dt class="field">RenegSec</dt>
@@ -1147,9 +1204,8 @@
   <p>
     In order to allow clients to securely key their private keys and request
     certificates through PKCS#10 format or through a web flow, we provide
-    alternative CertificatePattern
-    types. The <span class="type">CertificatePattern</span> type contains the
-    following:
+    alternative CertificatePattern types. The
+    <span class="type">CertificatePattern</span> type contains the following:
   </p>
 
   <dl class="field_list">
@@ -1170,9 +1226,9 @@
         <span class="type">IssuerSubjectPattern</span>
       </span>
       Pattern to match the issuer X.509 settings against. If not specified, the
-      only checks done will be a signature check against the IssuerCARef
-      field. Issuer of the certificate must match this field exactly to match
-      the pattern.
+      only checks done will be a signature check against
+      the <span class="field">IssuerCARef</span> field. Issuer of the
+      certificate must match this field exactly to match the pattern.
     </dd>
 
     <dt class="field">Subject</dt>
@@ -1248,15 +1304,19 @@
     </dd>
   </dl>
 
+  <p class="rule">
+    <span class="rule_id"></span>
+    One field in <span class="field">Subject</span>,
+    <span class="field">Issuer</span>, or <span class="field">IssuerCARef</span>
+    must be given for a <span class="type">CertificatePattern</span> typed field
+    to be valid.
+  </p>
+
   <p>
-    One field
-    in <span class="field">Subject</span>, <span class="field">Issuer</span>,
-    or <span class="field">IssuerCARef</span> must be given for a
-    <span class="type">CertificatePattern</span> typed field to be valid. For a
-    certificate to be considered matching, it must match all the fields in the
-    certificate pattern. If multiple certificates match, the certificate with
-    the latest issue date that is still in the past, and hence valid, will be
-    used.
+    For a certificate to be considered matching, it must match all
+    the fields in the certificate pattern. If multiple certificates match, the
+    certificate with the latest issue date that is still in the past, and hence
+    valid, will be used.
   </p>
 
   <p>
@@ -1280,12 +1340,14 @@
         (required)
         <span class="type">string</span>
       </span>
-      One
-      of <span class="value">Direct</span>, <span class="value">Manual</span>,
-      <span class="value">PAC</span>, or <span class="value">WPAD</span>.
+      <span class="rule">
+        <span class="rule_id"></span>
+        Allowed values are <span class="value">Direct</span>,
+        <span class="value">Manual</span>, <span class="value">PAC</span>, and
+        <span class="value">WPAD</span>.
+      </span>
       <span class="value">PAC</span> indicates Proxy Auto-Configuration.
-      <span class="value">WPAD</span> indicates Web Proxy Autodiscovery. If
-      <span class="value">WPAD</span> is specified, all other fields are ignored.
+      <span class="value">WPAD</span> indicates Web Proxy Autodiscovery.
     </dd>
 
     <dt class="field">Manual</dt>
@@ -1312,7 +1374,7 @@
     <dd>
       <span class="field_meta">
         (required if <span class="field">Type</span> is
-        <span class="value">PAC</span>)
+        <span class="value">PAC</span>, otherwise ignored)
         <span class="type">string</span>
       </span>
       URL of proxy auto-config file.
@@ -1400,20 +1462,21 @@
     <dt class="field">AnonymousIdentity</dt>
     <dd>
       <span class="field_meta">
-        (optional)
+        (optional if <span class="field">Outer</span> is
+        <span class="value">PEAP</span> or <span class="value">EAP-TTLS</span>,
+        otherwise ignored)
         <span class="type">string</span>
       </span>
-      For tunnelling protocols (<span class="value">PEAP</span>
-      and <span class="value">EAP-TTLS</span>) only, this indicates the identity
-      of the user presented to the outer protocol. This value is subject to
-      string expansions. If not specified, use empty string.
+      For tunnelling protocols only, this indicates the identity of the user
+      presented to the outer protocol. This value is subject to string
+      expansions. If not specified, use empty string.
     </dd>
 
     <dt class="field">ClientCertPattern</dt>
     <dd>
       <span class="field_meta">
-        (required if <span class="field">ClientCertType</span>
-        is <span class="value">Pattern</span>)
+        (required if <span class="field">ClientCertType</span> is
+        <span class="value">Pattern</span>, otherwise ignored)
         <span class="type">CertificatePattern</span>
       </span>
       Pattern to use to find the client certificate.
@@ -1422,8 +1485,8 @@
     <dt class="field">ClientCertRef</dt>
     <dd>
       <span class="field_meta">
-        (required if <span class="field">ClientCertType</span>
-        is <span class="value">Ref</span>)
+        (required if <span class="field">ClientCertType</span> is
+        <span class="value">Ref</span>, otherwise ignored)
         <span class="type">string</span>
       </span>
       Reference to client certificate stored in certificate section.
@@ -1434,8 +1497,11 @@
       <span class="field_meta">
         (optional) <span class="type">string</span>
       </span>
-      Must be either <span class="value">Ref</span>
-      or <span class="value">Pattern</span>.
+      <span class="rule">
+        <span class="rule_id"></span>
+        Allowed values are <span class="value">Ref</span>, and
+        <span class="value">Pattern</span>.
+      </span>
     </dd>
 
     <dt class="field">Identity</dt>
@@ -1449,22 +1515,27 @@
       <span class="value">EAP-FAST</span>), this is used to authenticate inside
       the tunnel, and <span class="field">AnonymousIdentity</span> is used for
       the EAP identity outside the tunnel. For non-tunneling outer protocols,
-      this is used for the EAP identity. This string may include string
-      expansions. See below.
+      this is used for the EAP identity. This value is subject to string
+      expansions.
     </dd>
 
     <dt class="field">Inner</dt>
     <dd>
       <span class="field_meta">
-        (optional, defaults to <span class="value">Automatic</span>)
+        (optional if <span class="field">Outer</span> is
+        <span class="value">EAP-FAST</span>, <span class="value">EAP-TTLS</span>
+        or <span class="value">PEAP</span>, otherwise ignored, defaults to
+        <span class="value">Automatic</span>)
         <span class="type">string</span>
       </span>
-      Must be one of <span class="value">Automatic</span>,
-      <span class="value">MD5</span>, <span class="value">MSCHAPv2</span>,
-      <span class="value">EAP-MSCHAPv2</span>, <span class="value">PAP</span>. Only
-      valid for outer protocols that are tunnelling protocols
-      (<span class="value">EAP-TTLS</span>, <span class="value">PEAP</span>
-      and <span class="value">EAP-FAST</span>).
+      <span class="rule">
+        <span class="rule_id"></span>
+        Allowed values are <span class="value">Automatic</span>,
+        <span class="value">MD5</span>, <span class="value">MSCHAPv2</span>,
+        <span class="value">EAP-MSCHAPv2</span>, and
+        <span class="value">PAP</span>.
+      </span>
+      For tunneling outer protocols.
     </dd>
 
     <dt class="field">Outer</dt>
@@ -1473,10 +1544,13 @@
         (required)
         <span class="type">string</span>
       </span>
-      Must be one of <span class="value">PEAP</span>,
-      <span class="value">EAP-TLS</span>, <span class="value">EAP-TTLS</span>,
-      <span class="value">LEAP</span>, <span class="value">EAP-SIM</span>,
-      <span class="value">EAP-FAST</span> or <span class="value">EAP-AKA</span>.
+      <span class="rule">
+        <span class="rule_id"></span>
+        Allowed values are <span class="value">LEAP</span>,
+        <span class="value">EAP-AKA</span>, <span class="value">EAP-FAST</span>,
+        <span class="value">EAP-TLS</span>, <span class="value">EAP-TTLS</span>,
+        <span class="value">EAP-SIM</span> and <span class="value">PEAP</span>.
+      </span>
     </dd>
 
     <dt class="field">Password</dt>
@@ -1495,9 +1569,10 @@
         <span class="type">boolean</span>
       </span>
       If <span class="value">false</span>, require user to enter credentials
-      each time they connect. Specifying Identity and/or Password
-      when <span class="field">SaveCredentials</span>
-      is <span class="value">false</span> is not allowed.
+      each time they connect. Specifying <span class="field">Identity</span>
+      and/or <span class="field">Password</span> when
+      <span class="field">SaveCredentials</span> is
+      <span class="value">false</span> is not allowed.
     </dd>
 
     <dt class="field">ServerCARef</dt>
@@ -1572,15 +1647,14 @@
         (required)
         <span class="type">string</span>
       </span>
-      unique identification for certificate
+      A unique identifier for this certificate. Must be a non-empty string.
     </dd>
 
     <dt class="field">PKCS12</dt>
     <dd>
       <span class="field_meta">
-        (required when <span class="field">Remove</span>
-        is <span class="value">false</span> and <span class="field">Type</span>
-        is Client)
+        (required if <span class="field">Type</span> is
+        <span class="value">Client</span>, otherwise ignored)
         <span class="type">string</span>
       </span> For certificates with
       private keys, this is the base64 encoding of the a PKCS#12 file.
@@ -1618,28 +1692,32 @@
     <dd>
       <span class="field_meta">
         (required if <span class="field">Remove</span> is
-        <span class="value">false</span>)
+        <span class="value">false</span>, otherwise ignored)
         <span class="type">string</span>
       </span>
-      One
-      of <span class="value">Client</span>, <span class="value">Server</span>,
-      or <span class="value">Authority</span>. <span class="value">Client</span>
-      indicates the certificate is for identifying the user or device over HTTPS
-      or for VPN/802.1X. <span class="value">Server</span> indicates the
-      certificate identifies an HTTPS or VPN/802.1X
-      peer. <span class="value">Authority</span> indicates the certificate is a
+      <span class="rule">
+        <span class="rule_id"></span>
+        Allowed values are <span class="value">Client</span>,
+        <span class="value">Server</span>, and
+        <span class="value">Authority</span>.
+      </span>
+      <span class="value">Client</span> indicates the certificate is for
+      identifying the user or device over HTTPS or for
+      VPN/802.1X. <span class="value">Server</span> indicates the certificate
+      identifies an HTTPS or VPN/802.1X peer.
+      <span class="value">Authority</span> indicates the certificate is a
       certificate authority and any certificates it issues should be
       trusted. Note that if <span class="field">Type</span> disagrees with the
-      x509 v3 basic constraints or key usage attributes,
-      the <span class="field">Type</span> field should be honored.
+      x509 v3 basic constraints or key usage attributes, the
+      <span class="field">Type</span> field should be honored.
     </dd>
 
     <dt class="field">X509</dt>
     <dd>
       <span class="field_meta">
-        (required if <span class="field">Remove</span>
-        is <span class="value">false</span> and <span class="field">Type</span>
-        is <span class="value">Server</span> or Authority)
+        (required if <span class="field">Type</span> is
+        <span class="value">Server</span> or
+        <span class="value">Authority</span>, otherwise ignored)
         <span class="type">string</span>
       </span> For certificate
       without private keys, this is the X509 certificate in PEM format.
@@ -1775,7 +1853,8 @@
     </dd>
   </dl>
 
-  <p>
+  <p class="rule">
+    <span class="rule_id"></span>
     When decrypted, the ciphertext must contain a JSON object of
     type <span class="type">UnencryptedConfiguration</span>.
   </p>

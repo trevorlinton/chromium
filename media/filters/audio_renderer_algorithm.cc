@@ -10,12 +10,12 @@
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "media/audio/audio_util.h"
-#include "media/base/buffers.h"
+#include "media/base/data_buffer.h"
 
 namespace media {
 
 // The starting size in bytes for |audio_buffer_|.
-// Previous usage maintained a deque of 16 Buffers, each of size 4Kb. This
+// Previous usage maintained a deque of 16 DataBuffers, each of size 4Kb. This
 // worked well, so we maintain this number of bytes (16 * 4096).
 static const int kStartingBufferSizeInBytes = 65536;
 
@@ -46,23 +46,19 @@ AudioRendererAlgorithm::AudioRendererAlgorithm()
       index_into_window_(0),
       crossfade_frame_number_(0),
       muted_(false),
-      needs_more_data_(false),
       window_size_(0) {
 }
 
 AudioRendererAlgorithm::~AudioRendererAlgorithm() {}
 
 void AudioRendererAlgorithm::Initialize(float initial_playback_rate,
-                                        const AudioParameters& params,
-                                        const base::Closure& callback) {
+                                        const AudioParameters& params) {
   CHECK(params.IsValid());
-  DCHECK(!callback.is_null());
 
   channels_ = params.channels();
   samples_per_second_ = params.sample_rate();
   bytes_per_channel_ = params.bits_per_sample() / 8;
   bytes_per_frame_ = params.GetBytesPerFrame();
-  request_read_cb_ = callback;
   SetPlaybackRate(initial_playback_rate);
 
   window_size_ =
@@ -105,10 +101,8 @@ int AudioRendererAlgorithm::FillBuffer(
       rendered_frame = OutputNormalPlayback(output_ptr);
     }
 
-    if (!rendered_frame) {
-      needs_more_data_ = true;
+    if (!rendered_frame)
       break;
-    }
 
     output_ptr += bytes_per_frame_;
     total_frames_rendered++;
@@ -322,9 +316,6 @@ void AudioRendererAlgorithm::CopyWithoutAdvance(
 
 void AudioRendererAlgorithm::DropFrame() {
   audio_buffer_.Seek(bytes_per_frame_);
-
-  if (!IsQueueFull())
-    request_read_cb_.Run();
 }
 
 void AudioRendererAlgorithm::OutputCrossfadedFrame(
@@ -381,25 +372,16 @@ void AudioRendererAlgorithm::FlushBuffers() {
 
   // Clear the queue of decoded packets (releasing the buffers).
   audio_buffer_.Clear();
-  request_read_cb_.Run();
 }
 
 base::TimeDelta AudioRendererAlgorithm::GetTime() {
   return audio_buffer_.current_time();
 }
 
-void AudioRendererAlgorithm::EnqueueBuffer(Buffer* buffer_in) {
+void AudioRendererAlgorithm::EnqueueBuffer(
+    const scoped_refptr<DataBuffer>& buffer_in) {
   DCHECK(!buffer_in->IsEndOfStream());
   audio_buffer_.Append(buffer_in);
-  needs_more_data_ = false;
-
-  // If we still don't have enough data, request more.
-  if (!IsQueueFull())
-    request_read_cb_.Run();
-}
-
-bool AudioRendererAlgorithm::CanFillBuffer() {
-  return audio_buffer_.forward_bytes() > 0 && !needs_more_data_;
 }
 
 bool AudioRendererAlgorithm::IsQueueFull() {

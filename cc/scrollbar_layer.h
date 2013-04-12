@@ -6,15 +6,15 @@
 #ifndef CC_SCROLLBAR_LAYER_H_
 #define CC_SCROLLBAR_LAYER_H_
 
-#include "cc/caching_bitmap_content_layer_updater.h"
 #include "cc/cc_export.h"
 #include "cc/contents_scaling_layer.h"
+#include "cc/layer_updater.h"
 #include "cc/scrollbar_theme_painter.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebScrollbar.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebScrollbarThemeGeometry.h"
 
 namespace cc {
-
+class CachingBitmapContentLayerUpdater;
 class ResourceUpdateQueue;
 class Scrollbar;
 class ScrollbarThemeComposite;
@@ -32,13 +32,16 @@ public:
     int scrollLayerId() const { return m_scrollLayerId; }
     void setScrollLayerId(int id);
 
+    WebKit::WebScrollbar::Orientation orientation() const;
+
     // Layer interface
     virtual void setTexturePriorities(const PriorityCalculator&) OVERRIDE;
-    virtual void update(ResourceUpdateQueue&, const OcclusionTracker*, RenderingStats&) OVERRIDE;
+    virtual void update(ResourceUpdateQueue&, const OcclusionTracker*, RenderingStats*) OVERRIDE;
     virtual void setLayerTreeHost(LayerTreeHost*) OVERRIDE;
     virtual void pushPropertiesTo(LayerImpl*) OVERRIDE;
     virtual void calculateContentsScale(
         float idealContentsScale,
+        bool animatingTransformToScreen,
         float* contentsScaleX,
         float* contentsScaleY,
         gfx::Size* contentBounds) OVERRIDE;
@@ -54,7 +57,7 @@ protected:
     virtual ~ScrollbarLayer();
 
 private:
-    void updatePart(CachingBitmapContentLayerUpdater*, LayerUpdater::Resource*, const gfx::Rect&, ResourceUpdateQueue&, RenderingStats&);
+    void updatePart(CachingBitmapContentLayerUpdater*, LayerUpdater::Resource*, const gfx::Rect&, ResourceUpdateQueue&, RenderingStats*);
     void createUpdaterIfNeeded();
     gfx::Rect scrollbarLayerRectToContentRect(const gfx::Rect& layerRect) const;
 
@@ -66,9 +69,10 @@ private:
     scoped_ptr<WebKit::WebScrollbar> m_scrollbar;
     scoped_ptr<ScrollbarThemePainter> m_painter;
     scoped_ptr<WebKit::WebScrollbarThemeGeometry> m_geometry;
+    gfx::Size m_thumbSize;
     int m_scrollLayerId;
 
-    GLenum m_textureFormat;
+    unsigned m_textureFormat;
 
     gfx::RectF m_dirtyRect;
 

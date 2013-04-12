@@ -7,53 +7,51 @@
 
 #include "base/json/json_reader.h"
 #include "base/message_loop.h"
-#include "base/string_number_conversions.h"
+#include "base/prefs/pref_service.h"
 #include "base/string_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/time.h"
 #include "base/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/prefs/browser_prefs.h"
-#include "chrome/browser/prefs/pref_service.h"
 #include "chrome/browser/web_resource/notification_promo.h"
 #include "chrome/browser/web_resource/promo_resource_service.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
-#include "chrome/test/base/testing_pref_service.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_service.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "unicode/smpdtfmt.h"
+#include "third_party/icu/public/i18n/unicode/smpdtfmt.h"
 
 namespace {
 
 const char kDateFormat[] = "dd MMM yyyy HH:mm:ss zzz";
 
-std::pair<double, std::string> YearFromNow() {
+bool YearFromNow(double* date_epoch, std::string* date_string) {
+  *date_epoch = (base::Time::Now() + base::TimeDelta::FromDays(365)).ToTimeT();
+
   UErrorCode status = U_ZERO_ERROR;
   icu::SimpleDateFormat simple_formatter(icu::UnicodeString(kDateFormat),
                                          icu::Locale("en_US"),
                                          status);
-  DCHECK(U_SUCCESS(status));
-
-  const double year_from_now =
-      (base::Time::Now() + base::TimeDelta::FromDays(365)).ToTimeT();
+  if (!U_SUCCESS(status))
+    return false;
 
   icu::UnicodeString date_unicode_string;
-  simple_formatter.format(static_cast<UDate>(year_from_now * 1000),
+  simple_formatter.format(static_cast<UDate>(*date_epoch * 1000),
                           date_unicode_string,
                           status);
-  DCHECK(U_SUCCESS(status));
+  if (!U_SUCCESS(status))
+    return false;
 
-  std::string date_string;
-  UTF16ToUTF8(date_unicode_string.getBuffer(),
-              static_cast<size_t>(date_unicode_string.length()),
-              &date_string);
-
-  return std::make_pair(year_from_now, date_string);
+  return UTF16ToUTF8(date_unicode_string.getBuffer(),
+                     static_cast<size_t>(date_unicode_string.length()),
+                     date_string);
 }
 
 }  // namespace
@@ -90,13 +88,16 @@ class NotificationPromoTest {
             double start,
             int num_groups, int initial_segment, int increment,
             int time_slice, int max_group, int max_views) {
-    std::pair<double, std::string> year_from_now = YearFromNow();
-    std::vector<std::string> replacements;
-    replacements.push_back(year_from_now.second);
+    double year_from_now_epoch;
+    std::string year_from_now_string;
+    ASSERT_TRUE(YearFromNow(&year_from_now_epoch, &year_from_now_string));
 
-    std::string json_with_year(
+    std::vector<std::string> replacements;
+    replacements.push_back(year_from_now_string);
+
+    std::string json_with_end_date(
         ReplaceStringPlaceholders(json, replacements, NULL));
-    Value* value(base::JSONReader::Read(json_with_year));
+    Value* value(base::JSONReader::Read(json_with_end_date));
     ASSERT_TRUE(value);
 
     DictionaryValue* dict = NULL;
@@ -108,7 +109,7 @@ class NotificationPromoTest {
     promo_text_ = promo_text;
 
     start_ = start;
-    end_ = year_from_now.first;
+    end_ = year_from_now_epoch;
 
     num_groups_ = num_groups;
     initial_segment_ = initial_segment;

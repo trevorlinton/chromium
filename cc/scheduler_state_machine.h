@@ -9,6 +9,7 @@
 
 #include "base/basictypes.h"
 #include "cc/cc_export.h"
+#include "cc/scheduler_settings.h"
 
 namespace cc {
 
@@ -24,7 +25,8 @@ namespace cc {
 // make testing cleaner.
 class CC_EXPORT SchedulerStateMachine {
 public:
-    SchedulerStateMachine();
+    // settings must be valid for the lifetime of this class.
+    SchedulerStateMachine(const SchedulerSettings& settings);
 
     enum CommitState {
         COMMIT_STATE_IDLE,
@@ -58,6 +60,8 @@ public:
         ACTION_NONE,
         ACTION_BEGIN_FRAME,
         ACTION_COMMIT,
+        ACTION_CHECK_FOR_COMPLETED_TILE_UPLOADS,
+        ACTION_ACTIVATE_PENDING_TREE_IF_NEEDED,
         ACTION_DRAW_IF_POSSIBLE,
         ACTION_DRAW_FORCED,
         ACTION_BEGIN_OUTPUT_SURFACE_RECREATION,
@@ -85,6 +89,10 @@ public:
     // As setNeedsRedraw(), but ensures the draw will definitely happen even if
     // we are not visible.
     void setNeedsForcedRedraw();
+
+    // Indicates that a redraw is required because we are currently rendering
+    // with a low resolution or checkerboarded tile.
+    void didSwapUseIncompleteTile();
 
     // Indicates whether ACTION_DRAW_IF_POSSIBLE drew to the screen or not.
     void didDrawIfPossibleCompleted(bool success);
@@ -143,16 +151,25 @@ protected:
     bool drawSuspendedUntilCommit() const;
     bool scheduledToDraw() const;
     bool shouldDraw() const;
+    bool shouldAttemptTreeActivation() const;
     bool shouldAcquireLayerTexturesForMainThread() const;
+    bool shouldCheckForCompletedTileUploads() const;
     bool hasDrawnThisFrame() const;
+    bool hasAttemptedTreeActivationThisFrame() const;
+    bool hasCheckedForCompletedTileUploadsThisFrame() const;
+
+    const SchedulerSettings m_settings;
 
     CommitState m_commitState;
 
     int m_currentFrameNumber;
     int m_lastFrameNumberWhereDrawWasCalled;
+    int m_lastFrameNumberWhereTreeActivationAttempted;
+    int m_lastFrameNumberWhereCheckForCompletedTileUploadsCalled;
     int m_consecutiveFailedDraws;
     int m_maximumNumberOfFailedDrawsBeforeDrawIsForced;
     bool m_needsRedraw;
+    bool m_swapUsedIncompleteTile;
     bool m_needsForcedRedraw;
     bool m_needsForcedRedrawAfterNextCommit;
     bool m_needsCommit;

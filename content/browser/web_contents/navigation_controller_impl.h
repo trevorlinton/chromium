@@ -15,14 +15,12 @@
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_type.h"
 
+class SkBitmap;
 struct ViewHostMsg_FrameNavigate_Params;
-
-namespace skia {
-class PlatformBitmap;
-}
 
 namespace content {
 class NavigationEntryImpl;
+class RenderViewHost;
 class WebContentsImpl;
 class SiteInstance;
 struct LoadCommittedDetails;
@@ -57,6 +55,7 @@ class CONTENT_EXPORT NavigationControllerImpl
   virtual NavigationEntry* GetPendingEntry() const OVERRIDE;
   virtual int GetPendingEntryIndex() const OVERRIDE;
   virtual NavigationEntry* GetTransientEntry() const OVERRIDE;
+  virtual void SetTransientEntry(NavigationEntry* entry) OVERRIDE;
   virtual void LoadURL(const GURL& url,
                        const Referrer& referrer,
                        PageTransition type,
@@ -92,6 +91,7 @@ class CONTENT_EXPORT NavigationControllerImpl
   virtual void CopyStateFromAndPrune(
       NavigationController* source) OVERRIDE;
   virtual void PruneAllButActive() OVERRIDE;
+  virtual void ClearAllScreenshots() OVERRIDE;
 
   // The session storage namespace that all child RenderViews belonging to
   // |instance| should use.
@@ -112,17 +112,6 @@ class CONTENT_EXPORT NavigationControllerImpl
   NavigationEntryImpl* GetEntryWithPageID(
       SiteInstance* instance,
       int32 page_id) const;
-
-  // Transient entry -----------------------------------------------------------
-
-  // Adds an entry that is returned by GetActiveEntry().  The entry is
-  // transient: any navigation causes it to be removed and discarded.
-  // The NavigationController becomes the owner of |entry| and deletes it when
-  // it discards it.  This is useful with interstitial page that need to be
-  // represented as an entry, but should go away when the user navigates away
-  // from them.
-  // Note that adding a transient entry does not change the active contents.
-  void AddTransientEntry(NavigationEntryImpl* entry);
 
   // WebContentsImpl -----------------------------------------------------------
 
@@ -200,10 +189,18 @@ class CONTENT_EXPORT NavigationControllerImpl
   void SetGetTimestampCallbackForTest(
       const base::Callback<base::Time()>& get_timestamp_callback);
 
+  // Takes a screenshot of the page at the current state.
+  void TakeScreenshot();
+
+  void SetTakeScreenshotCallbackForTest(
+      const base::Callback<void(RenderViewHost*)>& take_screenshot_callback);
+
  private:
   friend class RestoreHelper;
   friend class WebContentsImpl;  // For invoking OnReservedPageIDRange.
 
+  FRIEND_TEST_ALL_PREFIXES(NavigationControllerTest,
+                           PurgeScreenshot);
   FRIEND_TEST_ALL_PREFIXES(TimeSmoother, Basic);
   FRIEND_TEST_ALL_PREFIXES(TimeSmoother, SingleDuplicate);
   FRIEND_TEST_ALL_PREFIXES(TimeSmoother, ManyDuplicates);
@@ -297,6 +294,11 @@ class CONTENT_EXPORT NavigationControllerImpl
   // preparation to add another.
   void PruneOldestEntryIfFull();
 
+  // Removes all the entries except the active entry. If there is a new pending
+  // navigation it is preserved. In contrast to PruneAllButActive() this does
+  // not update the session history of the RenderView.
+  void PruneAllButActiveInternal();
+
   // Returns true if the navigation is redirect.
   bool IsRedirect(const ViewHostMsg_FrameNavigate_Params& params);
 
@@ -314,14 +316,23 @@ class CONTENT_EXPORT NavigationControllerImpl
   // specified |offset|.  The index returned is not guaranteed to be valid.
   int GetIndexForOffset(int offset) const;
 
-  // Takes a screenshot of the page at the current state.
-  void TakeScreenshot();
-
   // The callback invoked when taking the screenshot of the page is complete.
   // This sets the screenshot on the navigation entry.
   void OnScreenshotTaken(int unique_id,
-                         skia::PlatformBitmap* bitmap,
-                         bool success);
+                         bool success,
+                         const SkBitmap& bitmap);
+
+  // Removes the screenshot for the entry, returning true if the entry had a
+  // screenshot.
+  bool ClearScreenshot(NavigationEntryImpl* entry);
+
+  // The screenshots in the NavigationEntryImpls can accumulate and consume a
+  // large amount of memory. This function makes sure that the memory
+  // consumption is within a certain limit.
+  void PurgeScreenshotsIfNecessary();
+
+  // Returns the number of entries with screenshots.
+  int GetScreenshotCount() const;
 
   // ---------------------------------------------------------------------------
 
@@ -392,6 +403,15 @@ class CONTENT_EXPORT NavigationControllerImpl
 
   // Used to get timestamps for newly-created navigation entries.
   base::Callback<base::Time()> get_timestamp_callback_;
+
+  // A callback that gets called before taking the screenshot of the page. This
+  // is used only for testing.
+  base::Callback<void(RenderViewHost*)> take_screenshot_callback_;
+
+  // Taking a screenshot can be async. So use a weakptr for the callback to make
+  // sure that the screenshot completion callback does not trigger on a
+  // destroyed NavigationControllerImpl.
+  base::WeakPtrFactory<NavigationControllerImpl> take_screenshot_factory_;
 
   // Used to smooth out timestamps from |get_timestamp_callback_|.
   // Without this, whenever there is a run of redirects or

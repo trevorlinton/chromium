@@ -5,7 +5,7 @@
 #include "chrome/browser/ui/toolbar/recent_tabs_sub_menu_model.h"
 
 #include "base/bind.h"
-#include "base/string_number_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
@@ -20,7 +20,6 @@
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/time_format.h"
@@ -191,7 +190,7 @@ void RecentTabsSubMenuModel::ExecuteCommand(int command_id) {
 void RecentTabsSubMenuModel::ExecuteCommand(int command_id, int event_flags) {
   if (command_id == IDC_RESTORE_TAB) {
     chrome::ExecuteCommandWithDisposition(browser_, command_id,
-        chrome::DispositionFromEventFlags(event_flags));
+        ui::DispositionFromEventFlags(event_flags));
     return;
   }
 
@@ -204,7 +203,7 @@ void RecentTabsSubMenuModel::ExecuteCommand(int command_id, int event_flags) {
   DCHECK(item.tab_id > -1 && item.url.is_valid());
 
   WindowOpenDisposition disposition =
-      chrome::DispositionFromEventFlags(event_flags);
+      ui::DispositionFromEventFlags(event_flags);
   if (disposition == CURRENT_TAB)  // Force to open a new foreground tab.
     disposition = NEW_FOREGROUND_TAB;
 
@@ -215,10 +214,11 @@ void RecentTabsSubMenuModel::ExecuteCommand(int command_id, int event_flags) {
       return;
     TabRestoreServiceDelegate* delegate =
         TabRestoreServiceDelegate::FindDelegateForWebContents(
-            chrome::GetActiveWebContents(browser_));
+            browser_->tab_strip_model()->GetActiveWebContents());
     if (!delegate)
       return;
-    service->RestoreEntryById(delegate, item.tab_id, disposition);
+    service->RestoreEntryById(delegate, item.tab_id,
+                              browser_->host_desktop_type(), disposition);
   } else {  // Restore tab of foreign session.
     browser_sync::SessionModelAssociator* associator = GetModelAssociator();
     if (!associator)
@@ -228,12 +228,8 @@ void RecentTabsSubMenuModel::ExecuteCommand(int command_id, int event_flags) {
       return;
     if (tab->navigations.empty())
       return;
-    int prev_num_tabs = browser_->tab_strip_model()->count();
     SessionRestore::RestoreForeignSessionTab(
-        chrome::GetActiveWebContents(browser_), *tab, disposition);
-    // If tab is successfully added (i.e. there's 1 more tab), select it.
-    if (browser_->tab_strip_model()->count() == prev_num_tabs + 1)
-      chrome::SelectNextTab(browser_);
+        browser_->tab_strip_model()->GetActiveWebContents(), *tab, disposition);
   }
 }
 
@@ -254,17 +250,13 @@ void RecentTabsSubMenuModel::Build() {
   // ...
   // |model_| only contains navigatable (and hence executable) tab items for
   // other devices.
-  BuildLastClosed();
+  AddItem(IDC_RESTORE_TAB, GetLabelForCommandId(IDC_RESTORE_TAB));
   BuildDevices();
   if (model_.empty()) {
+    AddSeparator(ui::NORMAL_SEPARATOR);
     AddItemWithStringId(IDC_RECENT_TABS_NO_DEVICE_TABS,
                         IDS_RECENT_TABS_NO_DEVICE_TABS);
   }
-}
-
-void RecentTabsSubMenuModel::BuildLastClosed() {
-  AddItem(IDC_RESTORE_TAB, GetLabelForCommandId(IDC_RESTORE_TAB));
-  AddSeparator(ui::NORMAL_SEPARATOR);
 }
 
 void RecentTabsSubMenuModel::BuildDevices() {
@@ -281,7 +273,6 @@ void RecentTabsSubMenuModel::BuildDevices() {
 
   const size_t kMaxSessionsToShow = 3;
   size_t num_sessions_added = 0;
-  bool need_separator = false;
   for (size_t i = 0;
        i < sessions.size() && num_sessions_added < kMaxSessionsToShow;
        ++i) {
@@ -319,37 +310,27 @@ void RecentTabsSubMenuModel::BuildDevices() {
     std::sort(tabs_in_session.begin(), tabs_in_session.end(),
               SortTabsByRecency);
 
+    // Add the header for the device session.
+    DCHECK(!session->session_name.empty());
+    AddSeparator(ui::NORMAL_SEPARATOR);
+    AddItem(kDisabledCommandId, UTF8ToUTF16(session->session_name));
+    AddDeviceFavicon(GetItemCount() - 1, session->device_type);
+
     // Build tab menu items from sorted session tabs.
     const size_t kMaxTabsPerSessionToShow = 4;
     for (size_t k = 0;
          k < std::min(tabs_in_session.size(), kMaxTabsPerSessionToShow);
          ++k) {
-      BuildForeignTabItem(session_tag, *tabs_in_session[k],
-          // Only need |session_name| for the first tab of the session.
-          !k ? session->session_name : std::string(), session->device_type,
-          need_separator);
-      need_separator = false;
+      BuildForeignTabItem(session_tag, *tabs_in_session[k]);
     }  // for all tabs in one session
 
     ++num_sessions_added;
-    need_separator = true;
   }  // for all sessions
 }
 
 void RecentTabsSubMenuModel::BuildForeignTabItem(
     const std::string& session_tag,
-    const SessionTab& tab,
-    const std::string& session_name,
-    browser_sync::SyncedSession::DeviceType device_type,
-    bool need_separator) {
-  if (need_separator)
-    AddSeparator(ui::NORMAL_SEPARATOR);
-
-  if (!session_name.empty()) {
-    AddItem(kDisabledCommandId, UTF8ToUTF16(session_name));
-    AddDeviceFavicon(GetItemCount() - 1, device_type);
-  }
-
+    const SessionTab& tab) {
   const TabNavigation& current_navigation =
       tab.navigations.at(tab.normalized_navigation_index());
   NavigationItem item(session_tag, tab.tab_id.id(),

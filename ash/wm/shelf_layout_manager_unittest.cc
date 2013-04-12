@@ -36,6 +36,10 @@
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 
+#if defined(OS_WIN)
+#include "base/win/windows_version.h"
+#endif
+
 namespace ash {
 namespace internal {
 
@@ -172,6 +176,23 @@ class ShelfLayoutManagerTest : public ash::test::AshTestBase {
     return window;
   }
 
+  views::Widget* CreateTestWidgetWithParams(
+      const views::Widget::InitParams& params) {
+    views::Widget* out = new views::Widget;
+    out->Init(params);
+    out->Show();
+    return out;
+  }
+
+  // Create a simple widget attached to the current context (will
+  // delete on TearDown).
+  views::Widget* CreateTestWidget() {
+    views::Widget::InitParams params(views::Widget::InitParams::TYPE_WINDOW);
+    params.bounds = gfx::Rect(0, 0, 200, 200);
+    params.context = CurrentContext();
+    return CreateTestWidgetWithParams(params);
+  }
+
   // Overridden from AshTestBase:
   virtual void SetUp() OVERRIDE {
     CommandLine::ForCurrentProcess()->AppendSwitch(
@@ -183,7 +204,7 @@ class ShelfLayoutManagerTest : public ash::test::AshTestBase {
 };
 
 // Fails on Mac only.  Need to be implemented.  http://crbug.com/111279.
-#if defined(OS_MACOSX)
+#if defined(OS_MACOSX) || defined(OS_WIN)
 #define MAYBE_SetVisible DISABLED_SetVisible
 #else
 #define MAYBE_SetVisible SetVisible
@@ -305,8 +326,15 @@ TEST_F(ShelfLayoutManagerTest, DontReferenceLauncherAfterDeletion) {
   widget->SetFullscreen(true);
 }
 
+#if defined(OS_WIN)
+// RootWindow and Display can't resize on Windows Ash. http://crbug.com/165962
+#define MAYBE_AutoHide DISABLED_AutoHide
+#else
+#define MAYBE_AutoHide AutoHide
+#endif
+
 // Various assertions around auto-hide.
-TEST_F(ShelfLayoutManagerTest, AutoHide) {
+TEST_F(ShelfLayoutManagerTest, MAYBE_AutoHide) {
   aura::RootWindow* root = Shell::GetPrimaryRootWindow();
   aura::test::EventGenerator generator(root, root);
   generator.MoveMouseTo(0, 0);
@@ -602,8 +630,15 @@ TEST_F(ShelfLayoutManagerTest, OpenAppListWithShelfHiddenState) {
   EXPECT_EQ(SHELF_HIDDEN, shelf->visibility_state());
 }
 
-// Tests SHELF_ALIGNMENT_LEFT and SHELF_ALIGNMENT_RIGHT.
-TEST_F(ShelfLayoutManagerTest, SetAlignment) {
+#if defined(OS_WIN)
+// RootWindow and Display can't resize on Windows Ash. http://crbug.com/165962
+#define MAYBE_SetAlignment DISABLED_SetAlignment
+#else
+#define MAYBE_SetAlignment SetAlignment
+#endif
+
+// Tests SHELF_ALIGNMENT_(LEFT, RIGHT, TOP).
+TEST_F(ShelfLayoutManagerTest, MAYBE_SetAlignment) {
   ShelfLayoutManager* shelf = GetShelfLayoutManager();
   // Force an initial layout.
   shelf->SetAutoHideBehavior(SHELF_AUTO_HIDE_BEHAVIOR_NEVER);
@@ -670,9 +705,45 @@ TEST_F(ShelfLayoutManagerTest, SetAlignment) {
       display.GetWorkAreaInsets().right());
   EXPECT_EQ(ShelfLayoutManager::kAutoHideSize,
       display.bounds().right() - display.work_area().right());
+
+  shelf->SetAutoHideBehavior(SHELF_AUTO_HIDE_BEHAVIOR_NEVER);
+  shelf->SetAlignment(SHELF_ALIGNMENT_TOP);
+  display = manager->GetDisplayNearestWindow(Shell::GetPrimaryRootWindow());
+  launcher_bounds = shelf->launcher_widget()->GetWindowBoundsInScreen();
+  display = manager->GetDisplayNearestWindow(Shell::GetPrimaryRootWindow());
+  ASSERT_NE(-1, display.id());
+  EXPECT_EQ(shelf->GetIdealBounds().height(),
+            display.GetWorkAreaInsets().top());
+  EXPECT_GE(launcher_bounds.height(),
+      shelf->launcher_widget()->GetContentsView()->GetPreferredSize().height());
+  EXPECT_EQ(SHELF_ALIGNMENT_TOP, GetSystemTray()->shelf_alignment());
+  status_bounds = gfx::Rect(status_area_widget->GetWindowBoundsInScreen());
+  EXPECT_GE(status_bounds.height(),
+            status_area_widget->GetContentsView()->GetPreferredSize().height());
+  EXPECT_EQ(shelf->GetIdealBounds().height(),
+            display.GetWorkAreaInsets().top());
+  EXPECT_EQ(0, display.GetWorkAreaInsets().right());
+  EXPECT_EQ(0, display.GetWorkAreaInsets().bottom());
+  EXPECT_EQ(0, display.GetWorkAreaInsets().left());
+  EXPECT_EQ(display.work_area().y(), launcher_bounds.bottom());
+  EXPECT_EQ(display.bounds().x(), launcher_bounds.x());
+  EXPECT_EQ(display.bounds().width(), launcher_bounds.width());
+  shelf->SetAutoHideBehavior(SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS);
+  display = manager->GetDisplayNearestWindow(Shell::GetPrimaryRootWindow());
+  EXPECT_EQ(ShelfLayoutManager::kAutoHideSize,
+      display.GetWorkAreaInsets().top());
+  EXPECT_EQ(ShelfLayoutManager::kAutoHideSize,
+            display.work_area().y() - display.bounds().y());
 }
 
-TEST_F(ShelfLayoutManagerTest, GestureDrag) {
+#if defined(OS_WIN)
+// RootWindow and Display can't resize on Windows Ash. http://crbug.com/165962
+#define MAYBE_GestureDrag DISABLED_GestureDrag
+#else
+#define MAYBE_GestureDrag GestureDrag
+#endif
+
+TEST_F(ShelfLayoutManagerTest, MAYBE_GestureDrag) {
   ShelfLayoutManager* shelf = GetShelfLayoutManager();
   internal::RootWindowController* controller =
       Shell::GetPrimaryRootWindowController();
@@ -759,6 +830,26 @@ TEST_F(ShelfLayoutManagerTest, GestureDrag) {
   EXPECT_EQ(shelf_hidden.ToString(),
             shelf->launcher_widget()->GetWindowBoundsInScreen().ToString());
 
+  // Swipe up yet again to show it.
+  end.set_y(start.y() + 100);
+  generator.GestureScrollSequence(end, start,
+      base::TimeDelta::FromMilliseconds(10), 1);
+  EXPECT_EQ(SHELF_VISIBLE, shelf->visibility_state());
+  EXPECT_EQ(SHELF_AUTO_HIDE_BEHAVIOR_NEVER, shelf->auto_hide_behavior());
+
+  // Tap on the shelf itself. This should not change anything.
+  generator.GestureTapAt(start);
+  EXPECT_EQ(SHELF_VISIBLE, shelf->visibility_state());
+  EXPECT_EQ(SHELF_AUTO_HIDE_BEHAVIOR_NEVER, shelf->auto_hide_behavior());
+
+  // Now, tap on the desktop region (above the shelf). This should hide the
+  // shelf.
+  gfx::Point tap = start + gfx::Vector2d(0, -90);
+  generator.GestureTapAt(tap);
+  EXPECT_EQ(SHELF_AUTO_HIDE, shelf->visibility_state());
+  EXPECT_EQ(SHELF_AUTO_HIDE_HIDDEN, shelf->auto_hide_state());
+  EXPECT_EQ(SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS, shelf->auto_hide_behavior());
+
   // Make the window fullscreen.
   widget->SetFullscreen(true);
   gfx::Rect bounds_fullscreen = window->bounds();
@@ -774,9 +865,64 @@ TEST_F(ShelfLayoutManagerTest, GestureDrag) {
   EXPECT_EQ(bounds_fullscreen.ToString(), window->bounds().ToString());
 }
 
-TEST_F(ShelfLayoutManagerTest, GestureRevealsTrayBubble) {
+TEST_F(ShelfLayoutManagerTest, WindowVisibilityDisablesAutoHide) {
   ShelfLayoutManager* shelf = GetShelfLayoutManager();
   shelf->LayoutShelf();
+  shelf->SetAutoHideBehavior(SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS);
+
+  // Create a visible window so auto-hide behavior is enforced
+  views::Widget* dummy = CreateTestWidget();
+
+  // Window visible => auto hide behaves normally.
+  shelf->UpdateVisibilityState();
+  EXPECT_EQ(SHELF_AUTO_HIDE_HIDDEN, shelf->auto_hide_state());
+
+  // Window minimized => auto hide disabled.
+  dummy->Minimize();
+  shelf->UpdateVisibilityState();
+  EXPECT_EQ(SHELF_AUTO_HIDE_SHOWN, shelf->auto_hide_state());
+
+  // Window closed => auto hide disabled.
+  dummy->CloseNow();
+  shelf->UpdateVisibilityState();
+  EXPECT_EQ(SHELF_AUTO_HIDE_SHOWN, shelf->auto_hide_state());
+
+  // Multiple window test
+  views::Widget* window1 = CreateTestWidget();
+  views::Widget* window2 = CreateTestWidget();
+
+  // both visible => normal autohide
+  shelf->UpdateVisibilityState();
+  EXPECT_EQ(SHELF_AUTO_HIDE_HIDDEN, shelf->auto_hide_state());
+
+  // either minimzed => normal autohide
+  window2->Minimize();
+  shelf->UpdateVisibilityState();
+  EXPECT_EQ(SHELF_AUTO_HIDE_HIDDEN, shelf->auto_hide_state());
+  window2->Restore();
+  window1->Minimize();
+  shelf->UpdateVisibilityState();
+  EXPECT_EQ(SHELF_AUTO_HIDE_HIDDEN, shelf->auto_hide_state());
+
+  // both minimzed => disable auto hide
+  window2->Minimize();
+  shelf->UpdateVisibilityState();
+  EXPECT_EQ(SHELF_AUTO_HIDE_SHOWN, shelf->auto_hide_state());
+}
+
+#if defined(OS_WIN)
+// RootWindow and Display can't resize on Windows Ash. http://crbug.com/165962
+#define MAYBE_GestureRevealsTrayBubble DISABLED_GestureRevealsTrayBubble
+#else
+#define MAYBE_GestureRevealsTrayBubble GestureRevealsTrayBubble
+#endif
+
+TEST_F(ShelfLayoutManagerTest, MAYBE_GestureRevealsTrayBubble) {
+  ShelfLayoutManager* shelf = GetShelfLayoutManager();
+  shelf->LayoutShelf();
+
+  // Create a visible window so auto-hide behavior is enforced.
+  CreateTestWidget();
 
   aura::test::EventGenerator generator(Shell::GetPrimaryRootWindow());
   SystemTray* tray = GetSystemTray();
@@ -819,6 +965,9 @@ TEST_F(ShelfLayoutManagerTest, GestureRevealsTrayBubble) {
 TEST_F(ShelfLayoutManagerTest, ShelfFlickerOnTrayActivation) {
   ShelfLayoutManager* shelf = GetShelfLayoutManager();
 
+  // Create a visible window so auto-hide behavior is enforced.
+  CreateTestWidget();
+
   // Turn on auto-hide for the shelf.
   shelf->SetAutoHideBehavior(SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS);
   EXPECT_EQ(SHELF_AUTO_HIDE, shelf->visibility_state());
@@ -854,17 +1003,13 @@ TEST_F(ShelfLayoutManagerTest, WorkAreaChangeWorkspace) {
   shelf->SetAutoHideBehavior(SHELF_AUTO_HIDE_BEHAVIOR_NEVER);
   shelf->LayoutShelf();
 
-  views::Widget* widget_one = new views::Widget;
   views::Widget::InitParams params(views::Widget::InitParams::TYPE_WINDOW);
   params.bounds = gfx::Rect(0, 0, 200, 200);
   params.context = CurrentContext();
-  widget_one->Init(params);
-  widget_one->Show();
+  views::Widget* widget_one = CreateTestWidgetWithParams(params);
   widget_one->Maximize();
 
-  views::Widget* widget_two = new views::Widget;
-  widget_two->Init(params);
-  widget_two->Show();
+  views::Widget* widget_two = CreateTestWidgetWithParams(params);
   widget_two->Maximize();
   widget_two->Activate();
 
@@ -938,6 +1083,9 @@ TEST_F(ShelfLayoutManagerTest, BubbleEnlargesShelfMouseHitArea) {
   StatusAreaWidget* status_area_widget =
       Shell::GetPrimaryRootWindowController()->status_area_widget();
   SystemTray* tray = GetSystemTray();
+
+  // Create a visible window so auto-hide behavior is enforced.
+  CreateTestWidget();
 
   shelf->LayoutShelf();
   aura::test::EventGenerator generator(Shell::GetPrimaryRootWindow());

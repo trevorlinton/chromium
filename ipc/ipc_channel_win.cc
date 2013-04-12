@@ -437,7 +437,7 @@ void Channel::ChannelImpl::OnIOCompleted(MessageLoopForIO::IOContext* context,
       input_state_.is_pending = false;
       if (!bytes_transfered)
         ok = false;
-      else
+      else if (pipe_ != INVALID_HANDLE_VALUE)
         ok = AsyncReadComplete(bytes_transfered);
     } else {
       DCHECK(!bytes_transfered);
@@ -475,10 +475,6 @@ bool Channel::Connect() {
 void Channel::Close() {
   if (channel_impl_)
     channel_impl_->Close();
-}
-
-void Channel::set_listener(Listener* listener) {
-  channel_impl_->set_listener(listener);
 }
 
 base::ProcessId Channel::peer_pid() const {

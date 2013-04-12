@@ -103,6 +103,7 @@ class SyncEncryptionHandlerImplTest : public ::testing::Test {
     syncable::WriteTransaction wtrans(FROM_HERE, syncable::UNITTEST, directory);
     syncable::MutableEntry node(&wtrans,
                                 syncable::CREATE,
+                                model_type,
                                 wtrans.root_id(),
                                 tag_name);
     node.Put(syncable::UNIQUE_SERVER_TAG, tag_name);
@@ -370,8 +371,6 @@ TEST_F(SyncEncryptionHandlerImplTest, NigoriEncryptionTypes) {
   Mock::VerifyAndClearExpectations(&observer2);
 
   ModelTypeSet encrypted_user_types = EncryptableUserTypes();
-  // We never encrypt history delete directives.
-  encrypted_user_types.Remove(HISTORY_DELETE_DIRECTIVES);
 
   EXPECT_CALL(*observer(),
               OnEncryptedTypesChanged(
@@ -394,7 +393,7 @@ TEST_F(SyncEncryptionHandlerImplTest, NigoriEncryptionTypes) {
   }
   EXPECT_TRUE(encrypted_types.Equals(
       encryption_handler()->GetEncryptedTypesUnsafe()));
-  //EXPECT_TRUE(encrypted_types.Equals(handler2.GetEncryptedTypesUnsafe()));
+  EXPECT_TRUE(encrypted_types.Equals(handler2.GetEncryptedTypesUnsafe()));
 
   // Receiving an empty nigori should not reset any encrypted types or trigger
   // an observer notification.

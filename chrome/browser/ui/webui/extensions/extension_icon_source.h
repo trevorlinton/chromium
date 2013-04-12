@@ -9,11 +9,12 @@
 #include <string>
 
 #include "base/basictypes.h"
+#include "base/memory/weak_ptr.h"
 #include "chrome/browser/favicon/favicon_service.h"
-#include "chrome/browser/ui/webui/chrome_url_data_manager.h"
 #include "chrome/common/cancelable_task_tracker.h"
 #include "chrome/common/extensions/extension_icon_set.h"
 #include "chrome/common/extensions/extension_resource.h"
+#include "content/public/browser/url_data_source.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
 class ExtensionIconSet;
@@ -49,7 +50,8 @@ class Extension;
 //  2) If a 16px icon was requested, the favicon for extension's launch URL.
 //  3) The default extension / application icon if there are still no matches.
 //
-class ExtensionIconSource : public ChromeURLDataManager::DataSource {
+class ExtensionIconSource : public content::URLDataSource,
+                            public base::SupportsWeakPtr<ExtensionIconSource> {
  public:
   explicit ExtensionIconSource(Profile* profile);
 
@@ -68,13 +70,13 @@ class ExtensionIconSource : public ChromeURLDataManager::DataSource {
   // by |resource_id|.
   static SkBitmap* LoadImageByResourceId(int resource_id);
 
-  // ChromeURLDataManager::DataSource
-
+  // content::URLDataSource implementation.
+  virtual std::string GetSource() OVERRIDE;
   virtual std::string GetMimeType(const std::string&) const OVERRIDE;
-
-  virtual void StartDataRequest(const std::string& path,
-                                bool is_incognito,
-                                int request_id) OVERRIDE;
+  virtual void StartDataRequest(
+      const std::string& path,
+      bool is_incognito,
+      const content::URLDataSource::GotDataCallback& callback) OVERRIDE;
 
  private:
   // Encapsulates the request parameters for |request_id|.
@@ -122,14 +124,14 @@ class ExtensionIconSource : public ChromeURLDataManager::DataSource {
 
   // Parses and savse an ExtensionIconRequest for the URL |path| for the
   // specified |request_id|.
-  bool ParseData(const std::string& path, int request_id);
-
-  // Sends the default response to |request_id|, used for invalid requests.
-  void SendDefaultResponse(int request_id);
+  bool ParseData(const std::string& path,
+                 int request_id,
+                 const content::URLDataSource::GotDataCallback& callback);
 
   // Stores the parameters associated with the |request_id|, making them
   // as an ExtensionIconRequest via GetData.
   void SetData(int request_id,
+               const content::URLDataSource::GotDataCallback& callback,
                const extensions::Extension* extension,
                bool grayscale,
                int size,

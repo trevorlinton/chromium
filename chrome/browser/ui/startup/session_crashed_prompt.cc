@@ -9,7 +9,6 @@
 #include "chrome/browser/sessions/session_restore.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/url_constants.h"
@@ -87,15 +86,16 @@ string16 SessionCrashedInfoBarDelegate::GetButtonLabel(
 
 bool SessionCrashedInfoBarDelegate::Accept() {
   uint32 behavior = 0;
-  if (browser_->tab_count() == 1 &&
-      chrome::GetWebContentsAt(browser_, 0)->GetURL() ==
+  if (browser_->tab_strip_model()->count() == 1 &&
+      browser_->tab_strip_model()->GetWebContentsAt(0)->GetURL() ==
           GURL(chrome::kChromeUINewTabURL)) {
     // There is only one tab and its the new tab page, make session restore
     // clobber it.
     behavior = SessionRestore::CLOBBER_CURRENT_TAB;
   }
   SessionRestore::RestoreSession(
-      browser_->profile(), browser_, behavior, std::vector<GURL>());
+      browser_->profile(), browser_, browser_->host_desktop_type(), behavior,
+      std::vector<GURL>());
   accepted_ = true;
   return true;
 }

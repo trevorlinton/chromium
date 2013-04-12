@@ -34,7 +34,7 @@ int ppapi_main(int argc, const char *argv[]) {
   int index = 1;
 
   // Use PostMessage to send "Hello World" to JavaScript.
-  printf("Hello World STDIO.\n");
+  printf("Hello World STDOUT.\n");
 
   // Use PPAPI Console interface to send "Hello World" to the
   // JavaScript Console.

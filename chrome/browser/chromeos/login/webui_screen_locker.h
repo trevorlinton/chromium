@@ -17,7 +17,6 @@
 #include "chrome/browser/chromeos/login/screen_locker_delegate.h"
 #include "chrome/browser/chromeos/login/webui_login_view.h"
 #include "chromeos/dbus/power_manager_client.h"
-#include "chromeos/dbus/root_power_manager_observer.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "ui/views/widget/widget.h"
@@ -44,8 +43,7 @@ class WebUIScreenLocker : public WebUILoginView,
                           public LockWindow::Observer,
                           public ash::SessionStateObserver,
                           public views::WidgetObserver,
-                          public PowerManagerClient::Observer,
-                          public RootPowerManagerObserver {
+                          public PowerManagerClient::Observer {
  public:
   explicit WebUIScreenLocker(ScreenLocker* screen_locker);
 
@@ -65,6 +63,9 @@ class WebUIScreenLocker : public WebUILoginView,
   // LoginDisplay::Delegate: implementation
   virtual void CancelPasswordChangedFlow() OVERRIDE;
   virtual void CreateAccount() OVERRIDE;
+  virtual void CreateLocallyManagedUser(const string16& display_name,
+                                        const std::string& password) OVERRIDE;
+
   virtual void CompleteLogin(const std::string& username,
                              const std::string& password) OVERRIDE;
   virtual string16 GetConnectedNetworkName() OVERRIDE;
@@ -77,6 +78,7 @@ class WebUIScreenLocker : public WebUILoginView,
   virtual void OnUserSelected(const std::string& username) OVERRIDE;
   virtual void OnStartEnterpriseEnrollment() OVERRIDE;
   virtual void OnStartDeviceReset() OVERRIDE;
+  virtual void ShowWrongHWIDScreen() OVERRIDE;
   virtual void ResyncUserData() OVERRIDE;
   virtual void SetDisplayEmail(const std::string& email) OVERRIDE;
   virtual void Signout() OVERRIDE;
@@ -94,17 +96,12 @@ class WebUIScreenLocker : public WebUILoginView,
       OVERRIDE;
 
   // WidgetObserver override.
-  virtual void OnWidgetClosing(views::Widget* widget) OVERRIDE;
+  virtual void OnWidgetDestroying(views::Widget* widget) OVERRIDE;
 
   // PowerManagerClient::Observer overrides:
   virtual void SystemResumed(const base::TimeDelta& sleep_duration) OVERRIDE;
   virtual void LidEventReceived(bool open,
                                 const base::TimeTicks& time) OVERRIDE;
-
-  // RootPowerManagerObserver overrides:
-  // TODO(derat): Remove these once notifications are sent by powerd.
-  virtual void OnResume(const base::TimeDelta& sleep_duration) OVERRIDE;
-  virtual void OnLidEvent(bool open, const base::TimeTicks& time) OVERRIDE;
 
  private:
   friend class test::WebUIScreenLockerTester;

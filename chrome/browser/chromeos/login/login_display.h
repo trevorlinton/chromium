@@ -37,6 +37,10 @@ class LoginDisplay : public RemoveUserDelegate {
     // Create new Google account.
     virtual void CreateAccount() = 0;
 
+    // Create a new locally managed user.
+    virtual void CreateLocallyManagedUser(const string16& display_name,
+                                          const std::string& password) = 0;
+
     // Complete sign process with specified |username| and |password|.
     // Used for new users authenticated through an extension.
     virtual void CompleteLogin(const std::string& username,
@@ -71,6 +75,9 @@ class LoginDisplay : public RemoveUserDelegate {
 
     // Called when the user requests device reset.
     virtual void OnStartDeviceReset() = 0;
+
+    // Shows wrong HWID screen.
+    virtual void ShowWrongHWIDScreen() = 0;
 
     // Ignore password change, remove existing cryptohome and
     // force full sync of user data.
@@ -137,6 +144,9 @@ class LoginDisplay : public RemoveUserDelegate {
   // Show password changed dialog. If |show_password_error| is not null
   // user already tried to enter old password but it turned out to be incorrect.
   virtual void ShowPasswordChangedDialog(bool show_password_error) = 0;
+
+  // Shows signin UI with specified email.
+  virtual void ShowSigninUI(const std::string& email) = 0;
 
   gfx::Rect background_bounds() const { return background_bounds_; }
   void set_background_bounds(const gfx::Rect background_bounds){

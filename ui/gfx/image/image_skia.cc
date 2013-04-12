@@ -204,12 +204,6 @@ ImageSkia::ImageSkia(ImageSkiaSource* source, ui::ScaleFactor scale_factor)
   DetachStorageFromThread();
 }
 
-ImageSkia::ImageSkia(const SkBitmap& bitmap) {
-  Init(ImageSkiaRep(bitmap, ui::SCALE_FACTOR_100P));
-  // No other thread has reference to this, so it's safe to detach the thread.
-  DetachStorageFromThread();
-}
-
 ImageSkia::ImageSkia(const ImageSkiaRep& image_rep) {
   Init(image_rep);
   // No other thread has reference to this, so it's safe to detach the thread.
@@ -225,6 +219,11 @@ ImageSkia& ImageSkia::operator=(const ImageSkia& other) {
 }
 
 ImageSkia::~ImageSkia() {
+}
+
+// static
+ImageSkia ImageSkia::CreateFrom1xBitmap(const SkBitmap& bitmap) {
+  return ImageSkia(ImageSkiaRep(bitmap, ui::SCALE_FACTOR_100P));
 }
 
 scoped_ptr<ImageSkia> ImageSkia::DeepCopy() const {
@@ -257,7 +256,7 @@ void ImageSkia::AddRepresentation(const ImageSkiaRep& image_rep) {
   // and replace the existing rep if there is already one with the
   // same scale factor so that we can guarantee that a ImageSkia
   // instance contians only one image rep per scale factor. This is
-  // not possible now as ImageLoadingTracker currently stores need
+  // not possible now as ImageLoader currently stores need
   // this feature, but this needs to be fixed.
   if (isNull()) {
     Init(image_rep);

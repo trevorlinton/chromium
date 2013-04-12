@@ -5,8 +5,9 @@
 #include "chrome/browser/speech/chrome_speech_recognition_preferences.h"
 
 #include "base/bind.h"
+#include "base/prefs/pref_service.h"
 #include "base/values.h"
-#include "chrome/browser/prefs/pref_service.h"
+#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_dependency_manager.h"
 #include "chrome/common/chrome_notification_types.h"
@@ -65,15 +66,15 @@ ChromeSpeechRecognitionPreferences::Factory::BuildServiceInstanceFor(
 }
 
 void ChromeSpeechRecognitionPreferences::Factory::RegisterUserPrefs(
-    PrefServiceSyncable* prefs) {
+    PrefRegistrySyncable* prefs) {
   prefs->RegisterBooleanPref(
       prefs::kSpeechRecognitionFilterProfanities,
       kDefaultFilterProfanities,
-      PrefServiceSyncable::UNSYNCABLE_PREF);
+      PrefRegistrySyncable::UNSYNCABLE_PREF);
 
   prefs->RegisterListPref(
       prefs::kSpeechRecognitionTrayNotificationShownContexts,
-      PrefServiceSyncable::UNSYNCABLE_PREF);
+      PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
 bool ChromeSpeechRecognitionPreferences::Factory::

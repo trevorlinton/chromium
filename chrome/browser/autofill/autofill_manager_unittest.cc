@@ -8,10 +8,10 @@
 #include "base/command_line.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
-#include "base/prefs/public/pref_service_base.h"
+#include "base/prefs/pref_service.h"
 #include "base/string16.h"
-#include "base/string_number_conversions.h"
 #include "base/stringprintf.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/time.h"
 #include "base/tuple.h"
 #include "base/utf_string_conversions.h"
@@ -48,6 +48,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebAutofillClient.h"
+#include "third_party/WebKit/Source/WebKit/chromium/public/WebFormElement.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/rect.h"
 
@@ -55,6 +56,7 @@ typedef PersonalDataManager::GUIDPair GUIDPair;
 using content::BrowserThread;
 using content::WebContents;
 using testing::_;
+using WebKit::WebFormElement;
 
 namespace {
 
@@ -461,10 +463,10 @@ class TestAutofillManager : public AutofillManager {
       : AutofillManager(web_contents, delegate, personal_data),
         personal_data_(personal_data),
         autofill_enabled_(true),
-        request_autocomplete_error_count_(0),
         did_finish_async_form_submit_(false),
         message_loop_is_running_(false) {
   }
+  virtual ~TestAutofillManager() {}
 
   virtual bool IsAutofillEnabled() const OVERRIDE { return autofill_enabled_; }
 
@@ -472,9 +474,11 @@ class TestAutofillManager : public AutofillManager {
     autofill_enabled_ = autofill_enabled;
   }
 
-  int request_autocomplete_error_count() const {
-    return request_autocomplete_error_count_;
+  const std::vector<std::pair<WebFormElement::AutocompleteResult, FormData> >&
+      request_autocomplete_results() const {
+    return request_autocomplete_results_;
   }
+
 
   void set_expected_submitted_field_types(
       const std::vector<FieldTypeSet>& expected_types) {
@@ -580,19 +584,19 @@ class TestAutofillManager : public AutofillManager {
     form_structures()->push_back(form);
   }
 
-  virtual void ReturnAutocompleteError() OVERRIDE {
-    ++request_autocomplete_error_count_;
+  virtual void ReturnAutocompleteResult(
+      WebFormElement::AutocompleteResult result,
+      const FormData& form_data) OVERRIDE {
+    request_autocomplete_results_.push_back(std::make_pair(result, form_data));
   }
 
  private:
-  // AutofillManager is ref counted.
-  virtual ~TestAutofillManager() {}
-
   // Weak reference.
   TestPersonalDataManager* personal_data_;
 
   bool autofill_enabled_;
-  int request_autocomplete_error_count_;
+  std::vector<std::pair<WebFormElement::AutocompleteResult, FormData> >
+      request_autocomplete_results_;
 
   bool did_finish_async_form_submit_;
   bool message_loop_is_running_;
@@ -611,25 +615,28 @@ class AutofillManagerTest : public ChromeRenderViewHostTestHarness {
   AutofillManagerTest()
       : ChromeRenderViewHostTestHarness(),
         ui_thread_(BrowserThread::UI, &message_loop_),
-        file_thread_(BrowserThread::FILE) {
+        file_thread_(BrowserThread::FILE),
+        io_thread_(BrowserThread::IO) {
   }
 
   virtual ~AutofillManagerTest() {
   }
 
   virtual void SetUp() OVERRIDE {
-    Profile* profile = new TestingProfile();
+    TestingProfile* profile = CreateProfile();
+    profile->CreateRequestContext();
     browser_context_.reset(profile);
     PersonalDataManagerFactory::GetInstance()->SetTestingFactory(
         profile, TestPersonalDataManager::Build);
 
     ChromeRenderViewHostTestHarness::SetUp();
-    TabAutofillManagerDelegate::CreateForWebContents(web_contents());
+    io_thread_.StartIOThread();
+    autofill::TabAutofillManagerDelegate::CreateForWebContents(web_contents());
     personal_data_.SetBrowserContext(profile);
-    autofill_manager_ = new TestAutofillManager(
+    autofill_manager_.reset(new TestAutofillManager(
         web_contents(),
-        TabAutofillManagerDelegate::FromWebContents(web_contents()),
-        &personal_data_);
+        autofill::TabAutofillManagerDelegate::FromWebContents(web_contents()),
+        &personal_data_));
 
     file_thread_.Start();
   }
@@ -639,9 +646,14 @@ class AutofillManagerTest : public ChromeRenderViewHostTestHarness {
     // PersonalDataManager to be around when it gets destroyed. Also, a real
     // AutofillManager is tied to the lifetime of the WebContents, so it must
     // be destroyed at the destruction of the WebContents.
-    autofill_manager_ = NULL;
+    autofill_manager_.reset();
     file_thread_.Stop();
     ChromeRenderViewHostTestHarness::TearDown();
+    io_thread_.Stop();
+  }
+
+  virtual TestingProfile* CreateProfile() {
+    return new TestingProfile();
   }
 
   void UpdatePasswordGenerationState(bool new_renderer) {
@@ -736,8 +748,9 @@ class AutofillManagerTest : public ChromeRenderViewHostTestHarness {
  protected:
   content::TestBrowserThread ui_thread_;
   content::TestBrowserThread file_thread_;
+  content::TestBrowserThread io_thread_;
 
-  scoped_refptr<TestAutofillManager> autofill_manager_;
+  scoped_ptr<TestAutofillManager> autofill_manager_;
   TestPersonalDataManager personal_data_;
 
   // Used when we want an off the record profile. This will store the original
@@ -748,9 +761,24 @@ class AutofillManagerTest : public ChromeRenderViewHostTestHarness {
   DISALLOW_COPY_AND_ASSIGN(AutofillManagerTest);
 };
 
+class IncognitoAutofillManagerTest : public AutofillManagerTest {
+ public:
+  IncognitoAutofillManagerTest() {}
+  virtual ~IncognitoAutofillManagerTest() {}
+
+  virtual TestingProfile* CreateProfile() OVERRIDE {
+    // Create an incognito profile.
+    TestingProfile::Builder builder;
+    scoped_ptr<TestingProfile> profile = builder.Build();
+    profile->set_incognito(true);
+    return profile.release();
+  }
+};
+
 class TestFormStructure : public FormStructure {
  public:
-  explicit TestFormStructure(const FormData& form) : FormStructure(form) {}
+  explicit TestFormStructure(const FormData& form)
+      : FormStructure(form, std::string()) {}
   virtual ~TestFormStructure() {}
 
   void SetFieldTypes(const std::vector<AutofillFieldType>& heuristic_types,
@@ -1780,7 +1808,7 @@ TEST_F(AutofillManagerTest, FillAddressForm) {
 // Test that we correctly fill an address form from an auxiliary profile.
 TEST_F(AutofillManagerTest, FillAddressFormFromAuxiliaryProfile) {
   personal_data_.ClearAutofillProfiles();
-  PrefServiceBase* prefs = PrefServiceBase::FromBrowserContext(profile());
+  PrefService* prefs = PrefServiceFromBrowserContext(profile());
   prefs->SetBoolean(prefs::kAutofillAuxiliaryProfilesEnabled, true);
   personal_data_.CreateTestAuxiliaryProfiles();
 
@@ -2615,7 +2643,7 @@ TEST_F(AutofillManagerTest, FormSubmittedWithDifferentFields) {
   FormsSeen(forms);
 
   // Cache the expected form signature.
-  std::string signature = FormStructure(form).FormSignature();
+  std::string signature = FormStructure(form, std::string()).FormSignature();
 
   // Change the structure of the form prior to submission.
   // Websites would typically invoke JavaScript either on page load or on form
@@ -2674,7 +2702,7 @@ TEST_F(AutofillManagerTest, FormSubmittedWithDefaultValues) {
 // Checks that resetting the auxiliary profile enabled preference does the right
 // thing on all platforms.
 TEST_F(AutofillManagerTest, AuxiliaryProfilesReset) {
-  PrefServiceBase* prefs = PrefServiceBase::FromBrowserContext(profile());
+  PrefService* prefs = PrefServiceFromBrowserContext(profile());
 #if defined(OS_MACOSX)
   // Auxiliary profiles is implemented on Mac only.  It enables Mac Address
   // Book integration.
@@ -2975,7 +3003,7 @@ TEST_F(AutofillManagerTest, UpdatePasswordSyncState) {
       web_contents(),
       PasswordManagerDelegateImpl::FromWebContents(web_contents()));
 
-  PrefServiceBase* prefs = PrefServiceBase::FromBrowserContext(profile());
+  PrefService* prefs = PrefServiceFromBrowserContext(profile());
 
   // Allow this test to control what should get synced.
   prefs->SetBoolean(prefs::kSyncKeepEverythingSynced, false);
@@ -3017,13 +3045,6 @@ TEST_F(AutofillManagerTest, UpdatePasswordSyncState) {
   EXPECT_FALSE(autofill_manager_->GetSentStates()[0]);
   autofill_manager_->ClearSentStates();
 
-  // Disable password manager by going incognito, and re-enable syncing. The
-  // feature should still be disabled, and nothing will be sent.
-  sync_service->SetSyncSetupCompleted();
-  profile()->set_incognito(true);
-  UpdatePasswordGenerationState(false);
-  EXPECT_EQ(0u, autofill_manager_->GetSentStates().size());
-
   // When a new render_view is created, we send the state even if it's the
   // same.
   UpdatePasswordGenerationState(true);
@@ -3032,13 +3053,35 @@ TEST_F(AutofillManagerTest, UpdatePasswordSyncState) {
   autofill_manager_->ClearSentStates();
 }
 
+TEST_F(IncognitoAutofillManagerTest, UpdatePasswordSyncStateIncognito) {
+  // Disable password manager by going incognito, and enable syncing. The
+  // feature should still be disabled, and nothing will be sent.
+  PasswordManagerDelegateImpl::CreateForWebContents(web_contents());
+  PasswordManager::CreateForWebContentsAndDelegate(
+      web_contents(),
+      PasswordManagerDelegateImpl::FromWebContents(web_contents()));
+
+  PrefService* prefs = PrefServiceFromBrowserContext(profile());
+
+  // Allow this test to control what should get synced.
+  prefs->SetBoolean(prefs::kSyncKeepEverythingSynced, false);
+  // Always set password generation enabled check box so we can test the
+  // behavior of password sync.
+  prefs->SetBoolean(prefs::kPasswordGenerationEnabled, true);
+
+  browser_sync::SyncPrefs sync_prefs(profile()->GetPrefs());
+  sync_prefs.SetSyncSetupCompleted();
+  UpdatePasswordGenerationState(false);
+  EXPECT_EQ(0u, autofill_manager_->GetSentStates().size());
+}
+
 TEST_F(AutofillManagerTest, UpdatePasswordGenerationState) {
   PasswordManagerDelegateImpl::CreateForWebContents(web_contents());
   PasswordManager::CreateForWebContentsAndDelegate(
       web_contents(),
       PasswordManagerDelegateImpl::FromWebContents(web_contents()));
 
-  PrefServiceBase* prefs = PrefServiceBase::FromBrowserContext(profile());
+  PrefService* prefs = PrefServiceFromBrowserContext(profile());
 
   // Always set password sync enabled so we can test the behavior of password
   // generation.
@@ -3134,30 +3177,31 @@ TEST_F(AutofillManagerTest, RemoveProfileVariant) {
 }
 
 TEST_F(AutofillManagerTest, DisabledAutofillDispatchesError) {
-  ASSERT_EQ(0, autofill_manager_->request_autocomplete_error_count());
+  EXPECT_TRUE(autofill_manager_->request_autocomplete_results().empty());
 
   autofill_manager_->set_autofill_enabled(false);
   autofill_manager_->OnRequestAutocomplete(FormData(),
                                            GURL(),
                                            content::SSLStatus());
 
-  EXPECT_EQ(1, autofill_manager_->request_autocomplete_error_count());
+  EXPECT_EQ(1U, autofill_manager_->request_autocomplete_results().size());
+  EXPECT_EQ(WebFormElement::AutocompleteResultErrorDisabled,
+            autofill_manager_->request_autocomplete_results()[0].first);
 }
 
 namespace {
 
-class MockAutofillExternalDelegate :
-      public autofill::TestAutofillExternalDelegate {
+class MockAutofillExternalDelegate : public AutofillExternalDelegate {
  public:
   explicit MockAutofillExternalDelegate(content::WebContents* web_contents,
                                         AutofillManager* autofill_manager)
-      : TestAutofillExternalDelegate(web_contents, autofill_manager) {}
+      : AutofillExternalDelegate(web_contents, autofill_manager) {}
   virtual ~MockAutofillExternalDelegate() {}
 
   MOCK_METHOD5(OnQuery, void(int query_id,
                              const FormData& form,
                              const FormFieldData& field,
-                             const gfx::Rect& bounds,
+                             const gfx::RectF& bounds,
                              bool display_warning));
 
  private:
@@ -3169,7 +3213,7 @@ class MockAutofillExternalDelegate :
 // Test our external delegate is called at the right time.
 TEST_F(AutofillManagerTest, TestExternalDelegate) {
   MockAutofillExternalDelegate external_delegate(web_contents(),
-                                                 autofill_manager_);
+                                                 autofill_manager_.get());
   EXPECT_CALL(external_delegate, OnQuery(_, _, _, _, _));
   autofill_manager_->SetExternalDelegate(&external_delegate);
 

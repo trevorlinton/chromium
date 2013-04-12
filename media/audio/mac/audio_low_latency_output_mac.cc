@@ -29,23 +29,6 @@ static std::ostream& operator<<(std::ostream& os,
   return os;
 }
 
-// Reorder PCM from AAC layout to Core Audio 5.1 layout.
-// TODO(fbarchard): Switch layout when ffmpeg is updated.
-template<class Format>
-static void SwizzleCoreAudioLayout5_1(Format* b, uint32 filled) {
-  static const int kNumSurroundChannels = 6;
-  Format aac[kNumSurroundChannels];
-  for (uint32 i = 0; i < filled; i += sizeof(aac), b += kNumSurroundChannels) {
-    memcpy(aac, b, sizeof(aac));
-    b[0] = aac[1];  // L
-    b[1] = aac[2];  // R
-    b[2] = aac[0];  // C
-    b[3] = aac[5];  // LFE
-    b[4] = aac[3];  // Ls
-    b[5] = aac[4];  // Rs
-  }
-}
-
 static AudioObjectPropertyAddress kDefaultOutputDeviceAddress = {
   kAudioHardwarePropertyDefaultOutputDevice,
   kAudioObjectPropertyScopeGlobal,
@@ -220,19 +203,21 @@ void AUAudioOutputStream::Start(AudioSourceCallback* callback) {
   }
 
   stopped_ = false;
-  source_ = callback;
+  {
+    base::AutoLock auto_lock(source_lock_);
+    source_ = callback;
+  }
 
   AudioOutputUnitStart(output_unit_);
 }
 
 void AUAudioOutputStream::Stop() {
-  // We request a synchronous stop, so the next call can take some time. In
-  // the windows implementation we block here as well.
   if (stopped_)
     return;
 
   AudioOutputUnitStop(output_unit_);
 
+  base::AutoLock auto_lock(source_lock_);
   source_ = NULL;
   stopped_ = true;
 }
@@ -271,14 +256,27 @@ OSStatus AUAudioOutputStream::Render(UInt32 number_of_frames,
   // or smaller than the value set during Configure().  In this case either
   // audio input or audio output will be broken, so just output silence.
   // TODO(crogers): Figure out what can trigger a change in |number_of_frames|.
-  // See http://crbug.com/1543 for details.
-   if (number_of_frames != static_cast<UInt32>(audio_bus_->frames())) {
-     memset(audio_data, 0, number_of_frames * format_.mBytesPerFrame);
-     return noErr;
-   }
+  // See http://crbug.com/154352 for details.
+  if (number_of_frames != static_cast<UInt32>(audio_bus_->frames())) {
+    memset(audio_data, 0, number_of_frames * format_.mBytesPerFrame);
+    return noErr;
+  }
 
-  int frames_filled = source_->OnMoreData(
-      audio_bus_.get(), AudioBuffersState(0, hardware_pending_bytes));
+  int frames_filled = 0;
+  {
+    // Render() shouldn't be called except between AudioOutputUnitStart() and
+    // AudioOutputUnitStop() calls, but crash reports have shown otherwise:
+    // http://crbug.com/178765.  We use |source_lock_| to prevent races and
+    // crashes in Render() when |source_| is cleared.
+    base::AutoLock auto_lock(source_lock_);
+    if (!source_) {
+      memset(audio_data, 0, number_of_frames * format_.mBytesPerFrame);
+      return noErr;
+    }
+
+    frames_filled = source_->OnMoreData(
+        audio_bus_.get(), AudioBuffersState(0, hardware_pending_bytes));
+  }
 
   // Note: If this ever changes to output raw float the data must be clipped and
   // sanitized since it may come from an untrusted source such as NaCl.
@@ -292,19 +290,6 @@ OSStatus AUAudioOutputStream::Render(UInt32 number_of_frames,
                       audio_bus_->channels(),
                       format_.mBitsPerChannel / 8,
                       volume_);
-
-  // Handle channel order for 5.1 audio.
-  // TODO(dalecurtis): Channel downmixing, upmixing, should be done in mixer;
-  // volume adjust should use SSE optimized vector_fmul() prior to interleave.
-  if (format_.mChannelsPerFrame == 6) {
-    if (format_.mBitsPerChannel == 8) {
-      SwizzleCoreAudioLayout5_1(reinterpret_cast<uint8*>(audio_data), filled);
-    } else if (format_.mBitsPerChannel == 16) {
-      SwizzleCoreAudioLayout5_1(reinterpret_cast<int16*>(audio_data), filled);
-    } else if (format_.mBitsPerChannel == 32) {
-      SwizzleCoreAudioLayout5_1(reinterpret_cast<int32*>(audio_data), filled);
-    }
-  }
 
   return noErr;
 }

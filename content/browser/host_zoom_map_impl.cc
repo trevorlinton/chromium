@@ -58,6 +58,7 @@ void HostZoomMapImpl::CopyFrom(HostZoomMap* copy_interface) {
        i != copy->host_zoom_levels_.end(); ++i) {
     host_zoom_levels_[i->first] = i->second;
   }
+  default_zoom_level_ = copy->default_zoom_level_;
 }
 
 double HostZoomMapImpl::GetZoomLevel(const std::string& host) const {
@@ -89,10 +90,8 @@ void HostZoomMapImpl::SetZoomLevel(const std::string& host, double level) {
     }
   }
 
-  NotificationService::current()->Notify(
-      NOTIFICATION_ZOOM_LEVEL_CHANGED,
-      Source<HostZoomMap>(this),
-      Details<const std::string>(&host));
+  for (size_t i = 0; i < zoom_level_changed_callbacks_.size(); i++)
+    zoom_level_changed_callbacks_[i].Run(host);
 }
 
 double HostZoomMapImpl::GetDefaultZoomLevel() const {
@@ -101,6 +100,22 @@ double HostZoomMapImpl::GetDefaultZoomLevel() const {
 
 void HostZoomMapImpl::SetDefaultZoomLevel(double level) {
   default_zoom_level_ = level;
+}
+
+void HostZoomMapImpl::AddZoomLevelChangedCallback(
+    const ZoomLevelChangedCallback& callback) {
+  zoom_level_changed_callbacks_.push_back(callback);
+}
+
+void HostZoomMapImpl::RemoveZoomLevelChangedCallback(
+    const ZoomLevelChangedCallback& callback) {
+  for (size_t i = 0; i < zoom_level_changed_callbacks_.size(); i++) {
+    if (zoom_level_changed_callbacks_[i].Equals(callback)) {
+      zoom_level_changed_callbacks_.erase(
+          zoom_level_changed_callbacks_.begin() + i);
+      return;
+    }
+  }
 }
 
 double HostZoomMapImpl::GetTemporaryZoomLevel(int render_process_id,
@@ -144,11 +159,8 @@ void HostZoomMapImpl::SetTemporaryZoomLevel(int render_process_id,
     }
   }
 
-  std::string host;
-  NotificationService::current()->Notify(
-      NOTIFICATION_ZOOM_LEVEL_CHANGED,
-      Source<HostZoomMap>(this),
-      Details<const std::string>(&host));
+  for (size_t i = 0; i < zoom_level_changed_callbacks_.size(); i++)
+    zoom_level_changed_callbacks_[i].Run(std::string());
 }
 
 void HostZoomMapImpl::Observe(int type,

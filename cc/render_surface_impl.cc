@@ -150,27 +150,6 @@ void RenderSurfaceImpl::clearLayerLists()
     m_contributingDelegatedRenderPassLayerList.clear();
 }
 
-static inline gfx::Rect computeClippedRectInTarget(const LayerImpl* owningLayer)
-{
-    DCHECK(owningLayer->parent());
-
-    const LayerImpl* renderTarget = owningLayer->parent()->renderTarget();
-    const RenderSurfaceImpl* self = owningLayer->renderSurface();
-
-    gfx::Rect clippedRectInTarget = self->clipRect();
-    if (owningLayer->backgroundFilters().hasFilterThatMovesPixels()) {
-        // If the layer has background filters that move pixels, we cannot scissor as tightly.
-        // FIXME: this should be able to be a tighter scissor, perhaps expanded by the filter outsets?
-        clippedRectInTarget = renderTarget->renderSurface()->contentRect();
-    } else if (clippedRectInTarget.IsEmpty()) {
-        // For surfaces, empty clipRect means that the surface does not clip anything.
-        clippedRectInTarget = renderTarget->renderSurface()->contentRect();
-        clippedRectInTarget.Intersect(gfx::ToEnclosingRect(self->drawableContentRect()));
-    } else
-        clippedRectInTarget.Intersect(gfx::ToEnclosingRect(self->drawableContentRect()));
-    return clippedRectInTarget;
-}
-
 RenderPass::Id RenderSurfaceImpl::renderPassId()
 {
     int layerId = m_owningLayer->id();
@@ -182,7 +161,7 @@ RenderPass::Id RenderSurfaceImpl::renderPassId()
 void RenderSurfaceImpl::appendRenderPasses(RenderPassSink& passSink)
 {
     for (size_t i = 0; i < m_contributingDelegatedRenderPassLayerList.size(); ++i)
-        m_contributingDelegatedRenderPassLayerList[i]->appendContributingRenderPasses(passSink);
+        m_contributingDelegatedRenderPassLayerList[i]->AppendContributingRenderPasses(&passSink);
 
     scoped_ptr<RenderPass> pass = RenderPass::Create();
     pass->SetNew(renderPassId(), m_contentRect, m_damageTracker->currentDamageRect(), m_screenSpaceTransform);
@@ -193,10 +172,9 @@ void RenderSurfaceImpl::appendQuads(QuadSink& quadSink, AppendQuadsData& appendQ
 {
     DCHECK(!forReplica || m_owningLayer->hasReplica());
 
-    gfx::Rect clippedRectInTarget = computeClippedRectInTarget(m_owningLayer);
     const gfx::Transform& drawTransform = forReplica ? m_replicaDrawTransform : m_drawTransform;
     SharedQuadState* sharedQuadState = quadSink.useSharedQuadState(SharedQuadState::Create());
-    sharedQuadState->SetAll(drawTransform, m_contentRect, clippedRectInTarget, m_clipRect, m_isClipped, m_drawOpacity);
+    sharedQuadState->SetAll(drawTransform, m_contentRect.size(), m_contentRect, m_clipRect, m_isClipped, m_drawOpacity);
 
     if (m_owningLayer->showDebugBorders()) {
         SkColor color = forReplica ? DebugColors::SurfaceReplicaBorderColor() : DebugColors::SurfaceBorderColor();
@@ -224,13 +202,23 @@ void RenderSurfaceImpl::appendQuads(QuadSink& quadSink, AppendQuadsData& appendQ
 
     gfx::RectF maskUVRect(0.0f, 0.0f, 1.0f, 1.0f);
     if (maskLayer) {
-        float scaleX = contentRect().width() / maskLayer->contentsScaleX() / maskLayer->bounds().width();
-        float scaleY = contentRect().height() / maskLayer->contentsScaleY() / maskLayer->bounds().height();
+        gfx::Vector2dF owningLayerDrawScale = MathUtil::computeTransform2dScaleComponents(m_owningLayer->drawTransform(), 1.f);
+        gfx::SizeF unclippedSurfaceSize = gfx::ScaleSize(
+            m_owningLayer->contentBounds(),
+            owningLayerDrawScale.x(),
+            owningLayerDrawScale.y());
+        // This assumes that the owning layer clips its subtree when a mask is
+        // present.
+        DCHECK(gfx::RectF(unclippedSurfaceSize).Contains(contentRect()));
 
-        maskUVRect = gfx::RectF(static_cast<float>(contentRect().x()) / contentRect().width() * scaleX,
-                                static_cast<float>(contentRect().y()) / contentRect().height() * scaleY,
-                                scaleX,
-                                scaleY);
+        float uvScaleX = contentRect().width() / unclippedSurfaceSize.width();
+        float uvScaleY = contentRect().height() / unclippedSurfaceSize.height();
+
+        maskUVRect = gfx::RectF(
+            static_cast<float>(contentRect().x()) / contentRect().width() * uvScaleX,
+            static_cast<float>(contentRect().y()) / contentRect().height() * uvScaleY,
+            uvScaleX,
+            uvScaleY);
     }
 
     ResourceProvider::ResourceId maskResourceId = maskLayer ? maskLayer->contentsResourceId() : 0;

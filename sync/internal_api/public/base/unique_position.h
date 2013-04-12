@@ -8,6 +8,11 @@
 #include <string>
 
 #include "base/basictypes.h"
+#include "sync/base/sync_export.h"
+
+namespace sync_pb {
+class UniquePosition;
+}
 
 namespace syncer {
 
@@ -33,7 +38,7 @@ namespace syncer {
 //
 // This class currently has several bookmarks-related assumptions built in,
 // though it could be adapted to be more generally useful.
-class UniquePosition {
+class SYNC_EXPORT_PRIVATE UniquePosition {
  public:
   static const size_t kSuffixLength;
 
@@ -43,8 +48,8 @@ class UniquePosition {
   // Returns an invalid position.
   static UniquePosition CreateInvalid();
 
-  // Converts bytes from 'ToInternalValue()' back into a UniquePosition.
-  static UniquePosition FromBytes(const std::string& bytes);
+  // Converts from a 'sync_pb::UniquePosition' protobuf to a UniquePosition.
+  static UniquePosition FromProto(const sync_pb::UniquePosition& proto);
 
   // Creates a position with the given suffix.  Ordering among positions created
   // from this function is the same as that of the integer parameters that were
@@ -70,11 +75,14 @@ class UniquePosition {
   bool LessThan(const UniquePosition& other) const;
   bool Equals(const UniquePosition& other) const;
 
-  // Serializes the position's internal state.  To be used with FromBytes().
-  const std::string& ToInternalValue() const;
+  // Serializes the position's internal state to a protobuf.
+  void ToProto(sync_pb::UniquePosition* proto) const;
 
   // Returns a human-readable representation of this item's internal state.
   std::string ToDebugString() const;
+
+  // Returns the suffix.
+  std::string GetSuffixForTest() const;
 
   // Performs a lossy conversion to an int64 position.  Positions converted to
   // and from int64s using this and the FromInt64 function should maintain their

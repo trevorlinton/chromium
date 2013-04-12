@@ -88,10 +88,6 @@ bool GLSurface::DeferDraws() {
   return false;
 }
 
-bool GLSurface::DeferSwapBuffers() {
-  return false;
-}
-
 std::string GLSurface::GetExtensions() {
   // Use of GLSurfaceAdapter class means that we can't compare
   // GetCurrent() and this directly.
@@ -122,7 +118,8 @@ bool GLSurface::OnMakeCurrent(GLContext* context) {
   return true;
 }
 
-void GLSurface::SetBackbufferAllocation(bool allocated) {
+bool GLSurface::SetBackbufferAllocation(bool allocated) {
+  return true;
 }
 
 void GLSurface::SetFrontbufferAllocation(bool allocated) {
@@ -148,7 +145,8 @@ unsigned GLSurface::GetFormat() {
   return 0;
 }
 
-void GLSurface::GetVSyncParameters(const UpdateVSyncCallback& callback) {
+VSyncProvider* GLSurface::GetVSyncProvider() {
+  return NULL;
 }
 
 GLSurface* GLSurface::GetCurrent() {
@@ -195,10 +193,6 @@ bool GLSurfaceAdapter::DeferDraws() {
   return surface_->DeferDraws();
 }
 
-bool GLSurfaceAdapter::DeferSwapBuffers() {
-  return surface_->DeferSwapBuffers();
-}
-
 bool GLSurfaceAdapter::IsOffscreen() {
   return surface_->IsOffscreen();
 }
@@ -231,8 +225,8 @@ bool GLSurfaceAdapter::OnMakeCurrent(GLContext* context) {
   return surface_->OnMakeCurrent(context);
 }
 
-void GLSurfaceAdapter::SetBackbufferAllocation(bool allocated) {
-  surface_->SetBackbufferAllocation(allocated);
+bool GLSurfaceAdapter::SetBackbufferAllocation(bool allocated) {
+  return surface_->SetBackbufferAllocation(allocated);
 }
 
 void GLSurfaceAdapter::SetFrontbufferAllocation(bool allocated) {
@@ -255,8 +249,8 @@ unsigned GLSurfaceAdapter::GetFormat() {
   return surface_->GetFormat();
 }
 
-void GLSurfaceAdapter::GetVSyncParameters(const UpdateVSyncCallback& callback) {
-  surface_->GetVSyncParameters(callback);
+VSyncProvider* GLSurfaceAdapter::GetVSyncProvider() {
+  return surface_->GetVSyncProvider();
 }
 
 GLSurfaceAdapter::~GLSurfaceAdapter() {}

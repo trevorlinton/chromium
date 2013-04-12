@@ -23,7 +23,6 @@ ui::TableColumn TestTableColumn(int id, const std::string& title) {
   ui::TableColumn column;
   column.id = id;
   column.title = ASCIIToUTF16(title.c_str());
-  column.width = 100;
   column.sortable = true;
   return column;
 }
@@ -62,11 +61,16 @@ void TableExample::CreateExampleView(View* container) {
 
   std::vector<ui::TableColumn> columns;
   columns.push_back(TestTableColumn(0, "Fruit"));
+  columns[0].percent = 1;
   columns.push_back(TestTableColumn(1, "Color"));
   columns.push_back(TestTableColumn(2, "Origin"));
   columns.push_back(TestTableColumn(3, "Price"));
   columns.back().alignment = ui::TableColumn::RIGHT;
   table_ = new TableView(this, columns, ICON_AND_TEXT, true, true, true);
+  // TODO(sky): remove ifdef once we get rid of win32 table.
+#if defined(USE_AURA)
+  table_->SetGrouper(this);
+#endif
   table_->SetObserver(this);
   icon1_.setConfig(SkBitmap::kARGB_8888_Config, 16, 16);
   icon1_.allocPixels();
@@ -118,10 +122,24 @@ string16 TableExample::GetText(int row, int column_id) {
 }
 
 gfx::ImageSkia TableExample::GetIcon(int row) {
-  return row % 2 ? gfx::ImageSkia(icon1_) : gfx::ImageSkia(icon2_);
+  SkBitmap row_icon = row % 2 ? icon1_ : icon2_;
+  return gfx::ImageSkia::CreateFrom1xBitmap(row_icon);
 }
 
 void TableExample::SetObserver(ui::TableModelObserver* observer) {}
+
+void TableExample::GetGroupRange(int model_index, GroupRange* range) {
+  if (model_index < 2) {
+    range->start = 0;
+    range->length = 2;
+  } else if (model_index > 6) {
+    range->start = 7;
+    range->length = 3;
+  } else {
+    range->start = model_index;
+    range->length = 1;
+  }
+}
 
 void TableExample::OnSelectionChanged() {
   PrintStatus("Selected: %s",

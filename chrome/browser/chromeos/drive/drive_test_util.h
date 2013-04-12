@@ -7,12 +7,12 @@
 
 #include "base/memory/scoped_ptr.h"
 #include "chrome/browser/chromeos/drive/drive_resource_metadata.h"
+#include "chrome/browser/chromeos/drive/search_metadata.h"
 #include "chrome/browser/google_apis/gdata_errorcode.h"
 #include "chrome/browser/google_apis/test_util.h"
 
-class FilePath;
-
 namespace base {
+class FilePath;
 class Value;
 }
 
@@ -20,7 +20,7 @@ namespace drive {
 
 class DriveCacheEntry;
 class DriveEntryProto;
-class DriveFileSystem;
+class ChangeListLoader;
 
 typedef std::vector<DriveEntryProto> DriveEntryProtoVector;
 
@@ -51,9 +51,9 @@ void CopyErrorCodeFromFileOperationCallback(DriveFileError* output,
 // Copies |error| and |moved_file_path| to |out_error| and |out_file_path|.
 // Used to run asynchronous functions that take FileMoveCallback from tests.
 void CopyResultsFromFileMoveCallback(DriveFileError* out_error,
-                                     FilePath* out_file_path,
+                                     base::FilePath* out_file_path,
                                      DriveFileError error,
-                                     const FilePath& moved_file_path);
+                                     const base::FilePath& moved_file_path);
 
 // Copies |error| and |entry_proto| to |out_error| and |out_entry_proto|
 // respectively. Used to run asynchronous functions that take
@@ -66,23 +66,33 @@ void CopyResultsFromGetEntryInfoCallback(
 
 // Copies |error| and |entries| to |out_error| and |out_entries|
 // respectively. Used to run asynchronous functions that take
-// GetEntryInfoCallback from tests.
+// ReadDirectoryCallback from tests.
 void CopyResultsFromReadDirectoryCallback(
     DriveFileError* out_error,
     scoped_ptr<DriveEntryProtoVector>* out_entries,
     DriveFileError error,
     scoped_ptr<DriveEntryProtoVector> entries);
 
+// Copies |error| and |entries| to |out_error| and |out_entries|
+// respectively. Used to run asynchronous functions that take
+// ReadDirectoryCallback from tests.
+void CopyResultsFromReadDirectoryByPathCallback(
+    DriveFileError* out_error,
+    scoped_ptr<DriveEntryProtoVector>* out_entries,
+    DriveFileError error,
+    bool /* hide_hosted_documents */,
+    scoped_ptr<DriveEntryProtoVector> entries);
+
 // Copies |error|, |drive_file_path|, and |entry_proto| to |out_error|,
 // |out_drive_file_path|, and |out_entry_proto| respectively. Used to run
-// asynchronous functions that take GetEntryInfoWithFilePathCallback from
+// asynchronous functions that take GetEntryInfoWithbase::FilePathCallback from
 // tests.
 void CopyResultsFromGetEntryInfoWithFilePathCallback(
     DriveFileError* out_error,
-    FilePath* out_drive_file_path,
+    base::FilePath* out_drive_file_path,
     scoped_ptr<DriveEntryProto>* out_entry_proto,
     DriveFileError error,
-    const FilePath& drive_file_path,
+    const base::FilePath& drive_file_path,
     scoped_ptr<DriveEntryProto> entry_proto);
 
 // Copies |result| to |out_result|. Used to run asynchronous functions
@@ -98,10 +108,11 @@ void CopyResultFromInitializeCacheCallback(bool* out_success,
 
 // Copies results from DriveCache methods. Used to run asynchronous functions
 // that take GetFileFromCacheCallback from tests.
-void CopyResultsFromGetFileFromCacheCallback(DriveFileError* out_error,
-                                             FilePath* out_cache_file_path,
-                                             DriveFileError error,
-                                             const FilePath& cache_file_path);
+void CopyResultsFromGetFileFromCacheCallback(
+    DriveFileError* out_error,
+    base::FilePath* out_cache_file_path,
+    DriveFileError error,
+    const base::FilePath& cache_file_path);
 
 // Copies results from DriveCache methods. Used to run asynchronous functions
 // that take GetCacheEntryCallback from tests.
@@ -110,10 +121,50 @@ void CopyResultsFromGetCacheEntryCallback(bool* out_success,
                                           bool success,
                                           const DriveCacheEntry& cache_entry);
 
+// Copies results from DriveFileSystem methods. Used to run asynchronous
+// functions that take GetFileCallback from tests.
+void CopyResultsFromGetFileCallback(DriveFileError* out_error,
+                                    base::FilePath* out_file_path,
+                                    DriveFileType* out_file_type,
+                                    DriveFileError error,
+                                    const base::FilePath& file_path,
+                                    const std::string& mime_type,
+                                    DriveFileType file_type);
+
+// Copies results from DriveFileSystem methods. Used to run asynchronous
+// functions that take GetAvailableSpaceCallback from tests.
+void CopyResultsFromGetAvailableSpaceCallback(DriveFileError* out_error,
+                                              int64* out_bytes_total,
+                                              int64* out_bytes_used,
+                                              DriveFileError error,
+                                              int64 bytes_total,
+                                              int64 bytes_used);
+
+// Copies results from SearchMetadataCallback.
+void CopyResultsFromSearchMetadataCallback(
+    DriveFileError* out_error,
+    scoped_ptr<MetadataSearchResultVector>* out_result,
+    DriveFileError error,
+    scoped_ptr<MetadataSearchResultVector> result);
+
+// Copies the results from DriveFileSystem methods and stops the message loop
+// of the current thread. Used to run asynchronous function that take
+// OpenFileCallback.
+void CopyResultsFromOpenFileCallbackAndQuit(DriveFileError* out_error,
+                                            base::FilePath* out_file_path,
+                                            DriveFileError error,
+                                            const base::FilePath& file_path);
+
+// Copies the results from DriveFileSystem methods and stops the message loop
+// of the current thread. Used to run asynchronous function that take
+// CloseFileCallback.
+void CopyResultsFromCloseFileCallbackAndQuit(DriveFileError* out_error,
+                                             DriveFileError error);
+
 // Loads a test json file as root ("/drive") element from a test file stored
 // under chrome/test/data/chromeos. Returns true on success.
 bool LoadChangeFeed(const std::string& relative_path,
-                    DriveFileSystem* file_system,
+                    ChangeListLoader* change_list_loader,
                     bool is_delta_feed,
                     int64 root_feed_changestamp);
 

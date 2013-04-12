@@ -6,11 +6,10 @@
 
 #include "base/command_line.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/prefs/pref_service.h"
 #include "base/string_util.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/event_disposition.h"
-#include "chrome/browser/prefs/pref_service.h"
 #include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/views/accessibility/accessibility_event_router_views.h"
@@ -24,9 +23,12 @@
 #include "chrome/browser/app_icon_win.h"
 #endif
 
+#if defined(USE_AURA)
+#include "ui/aura/root_window.h"
+#endif
+
 #if defined(USE_AURA) && !defined(OS_CHROMEOS)
 #include "chrome/browser/ui/host_desktop.h"
-#include "ui/aura/root_window.h"
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
 #include "ui/views/widget/native_widget_aura.h"
 #endif
@@ -165,10 +167,6 @@ void ChromeViewsDelegate::ReleaseRef() {
   g_browser_process->ReleaseModule();
 }
 
-int ChromeViewsDelegate::GetDispositionForEvent(int event_flags) {
-  return chrome::DispositionFromEventFlags(event_flags);
-}
-
 content::WebContents* ChromeViewsDelegate::CreateWebContents(
     content::BrowserContext* browser_context,
     content::SiteInstance* site_instance) {
@@ -178,12 +176,23 @@ content::WebContents* ChromeViewsDelegate::CreateWebContents(
 void ChromeViewsDelegate::OnBeforeWidgetInit(
     views::Widget::InitParams* params,
     views::internal::NativeWidgetDelegate* delegate) {
-#if defined(USE_AURA) && !defined(OS_CHROMEOS)
   // If we already have a native_widget, we don't have to try to come
   // up with one.
   if (params->native_widget)
     return;
 
+#if defined(OS_CHROMEOS)
+  // When we are doing straight chromeos builds, we still need to handle the
+  // toplevel window case.
+  // There may be a few remaining widgets in Chrome OS that are not top level,
+  // but have neither a context nor a parent. Provide a fallback context so
+  // users don't crash. Developers will hit the DCHECK and should provide a
+  // context.
+  DCHECK(params->parent || params->context || params->top_level)
+      << "Please provide a parent or context for this widget.";
+  if (!params->parent && !params->context)
+    params->context = ash::Shell::GetPrimaryRootWindow();
+#elif defined(USE_AURA)
   // While the majority of the time, context wasn't plumbed through due to the
   // existence of a global StackingClient, if this window is a toplevel, it's
   // possible that there is no contextual state that we can use.
@@ -208,7 +217,7 @@ void ChromeViewsDelegate::OnBeforeWidgetInit(
   } else if (params->parent &&
              params->type != views::Widget::InitParams::TYPE_MENU) {
     params->native_widget = new views::NativeWidgetAura(delegate);
-  } else {
+  } else if (params->type != views::Widget::InitParams::TYPE_TOOLTIP) {
     // TODO(erg): Once we've threaded context to everywhere that needs it, we
     // should remove this check here.
     gfx::NativeView to_check =

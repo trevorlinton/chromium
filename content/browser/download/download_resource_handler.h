@@ -30,14 +30,20 @@ class DownloadRequestHandle;
 struct DownloadCreateInfo;
 
 // Forwards data to the download thread.
-class DownloadResourceHandler
+class CONTENT_EXPORT DownloadResourceHandler
     : public ResourceHandler,
       public base::SupportsWeakPtr<DownloadResourceHandler> {
  public:
+  // Size of the buffer used between the DownloadResourceHandler and the
+  // downstream receiver of its output.
+  static const int kDownloadByteStreamSize;
+
   typedef DownloadUrlParameters::OnStartedCallback OnStartedCallback;
 
   // started_cb will be called exactly once on the UI thread.
+  // |id| should be invalid if the id should be automatically assigned.
   DownloadResourceHandler(
+      DownloadId id,
       net::URLRequest* request,
       const OnStartedCallback& started_cb,
       scoped_ptr<DownloadSaveInfo> save_info);
@@ -100,6 +106,7 @@ class DownloadResourceHandler
 
   void SetContentDisposition(const std::string& content_disposition);
 
+  DownloadId download_id_;
   GlobalRequestID global_id_;
   int render_view_id_;
   std::string content_disposition_;

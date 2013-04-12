@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -29,8 +29,14 @@ namespace quota {
 class QuotaManagerProxy;
 }
 
+namespace sync_file_system {
+class CannedSyncableFileSystem;
+class SyncableFileSystemOperation;
+}
+
 namespace fileapi {
 
+class AsyncFileUtilAdapter;
 class LocalFileSystemOperation;
 class ObfuscatedFileUtil;
 class SandboxQuotaObserver;
@@ -44,9 +50,6 @@ class WEBKIT_STORAGE_EXPORT SandboxMountPointProvider
     : public FileSystemMountPointProvider,
       public FileSystemQuotaUtil {
  public:
-  using FileSystemMountPointProvider::ValidateFileSystemCallback;
-  using FileSystemMountPointProvider::DeleteFileSystemCallback;
-
   // Origin enumerator interface.
   // An instance of this interface is assumed to be called on the file thread.
   class OriginEnumerator {
@@ -61,7 +64,7 @@ class WEBKIT_STORAGE_EXPORT SandboxMountPointProvider
   };
 
   // The FileSystem directory name.
-  static const FilePath::CharType kFileSystemDirectory[];
+  static const base::FilePath::CharType kFileSystemDirectory[];
 
   static bool CanHandleType(FileSystemType type);
 
@@ -70,7 +73,7 @@ class WEBKIT_STORAGE_EXPORT SandboxMountPointProvider
   SandboxMountPointProvider(
       quota::QuotaManagerProxy* quota_manager_proxy,
       base::SequencedTaskRunner* file_task_runner,
-      const FilePath& profile_path,
+      const base::FilePath& profile_path,
       const FileSystemOptions& file_system_options);
   virtual ~SandboxMountPointProvider();
 
@@ -80,14 +83,14 @@ class WEBKIT_STORAGE_EXPORT SandboxMountPointProvider
       FileSystemType type,
       bool create,
       const ValidateFileSystemCallback& callback) OVERRIDE;
-  virtual FilePath GetFileSystemRootPathOnFileThread(
+  virtual base::FilePath GetFileSystemRootPathOnFileThread(
       const FileSystemURL& url,
       bool create) OVERRIDE;
-  virtual bool IsAccessAllowed(const FileSystemURL& url) OVERRIDE;
-  virtual bool IsRestrictedFileName(const FilePath& filename) const OVERRIDE;
   virtual FileSystemFileUtil* GetFileUtil(FileSystemType type) OVERRIDE;
-  virtual FilePath GetPathForPermissionsCheck(const FilePath& virtual_path)
-      const OVERRIDE;
+  virtual AsyncFileUtil* GetAsyncFileUtil(FileSystemType type) OVERRIDE;
+  virtual FilePermissionPolicy GetPermissionPolicy(
+      const FileSystemURL& url,
+      int permissions) const OVERRIDE;
   virtual FileSystemOperation* CreateFileSystemOperation(
       const FileSystemURL& url,
       FileSystemContext* context,
@@ -110,7 +113,7 @@ class WEBKIT_STORAGE_EXPORT SandboxMountPointProvider
 
   // Returns an origin enumerator of this provider.
   // This method can only be called on the file thread.
-  OriginEnumerator* CreateOriginEnumerator() const;
+  OriginEnumerator* CreateOriginEnumerator();
 
   // Gets a base directory path of the sandboxed filesystem that is
   // specified by |origin_url| and |type|.
@@ -118,10 +121,10 @@ class WEBKIT_STORAGE_EXPORT SandboxMountPointProvider
   // the 'unique' part.)
   // Returns an empty path if the given type is invalid.
   // This method can only be called on the file thread.
-  FilePath GetBaseDirectoryForOriginAndType(
+  base::FilePath GetBaseDirectoryForOriginAndType(
       const GURL& origin_url,
       FileSystemType type,
-      bool create) const;
+      bool create);
 
   // Deletes the data on the origin and reports the amount of deleted data
   // to the quota manager via |proxy|.
@@ -169,17 +172,17 @@ class WEBKIT_STORAGE_EXPORT SandboxMountPointProvider
   friend class SandboxMountPointProviderOriginEnumeratorTest;
 
   // Temporarily allowing them to access enable_sync_directory_operation_
-  friend class CannedSyncableFileSystem;
   friend class ObfuscatedFileUtil;
-  friend class SyncableFileSystemOperation;
+  friend class sync_file_system::CannedSyncableFileSystem;
+  friend class sync_file_system::SyncableFileSystemOperation;
 
   // Returns a path to the usage cache file.
-  FilePath GetUsageCachePathForOriginAndType(
+  base::FilePath GetUsageCachePathForOriginAndType(
       const GURL& origin_url,
-      FileSystemType type) const;
+      FileSystemType type);
 
   // Returns a path to the usage cache file (static version).
-  static FilePath GetUsageCachePathForOriginAndType(
+  static base::FilePath GetUsageCachePathForOriginAndType(
       ObfuscatedFileUtil* sandbox_file_util,
       const GURL& origin_url,
       FileSystemType type,
@@ -198,13 +201,15 @@ class WEBKIT_STORAGE_EXPORT SandboxMountPointProvider
     return enable_sync_directory_operation_;
   }
 
+  ObfuscatedFileUtil* sandbox_sync_file_util();
+
   scoped_refptr<base::SequencedTaskRunner> file_task_runner_;
 
-  const FilePath profile_path_;
+  const base::FilePath profile_path_;
 
   FileSystemOptions file_system_options_;
 
-  scoped_ptr<ObfuscatedFileUtil> sandbox_file_util_;
+  scoped_ptr<AsyncFileUtilAdapter> sandbox_file_util_;
 
   scoped_ptr<SandboxQuotaObserver> quota_observer_;
 

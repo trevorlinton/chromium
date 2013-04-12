@@ -4,17 +4,38 @@
 
 /**
  * Display error message.
- * @param {string} opt_message Message id.
+ * @param {string} message Message id.
  */
-function onError(opt_message) {
+function showErrorMessage(message) {
   var errorBanner = document.querySelector('#error');
   errorBanner.textContent =
-      loadTimeData.getString(opt_message || 'GALLERY_VIDEO_ERROR');
+      loadTimeData.getString(message);
   errorBanner.setAttribute('visible', 'true');
   if (util.platform.v2()) {
     // The window is hidden if the video has not loaded yet.
     chrome.app.window.current().show();
   }
+}
+
+/**
+ * Handles playback (decoder) errors.
+ */
+function onPlaybackError() {
+  showErrorMessage('GALLERY_VIDEO_DECODING_ERROR');
+  decodeErrorOccured = true;
+
+  // Disable inactivity watcher, and disable the ui, by hiding tools manually.
+  controls.inactivityWatcher.disabled = true;
+  document.querySelector('#video-player').setAttribute('disabled', 'true');
+
+  // Detach the video element, since it may be unreliable and reset stored
+  // current playback time.
+  controls.cleanup();
+  controls.clearState();
+
+  // Avoid reusing a video element.
+  video.parentNode.removeChild(video);
+  video = null;
 }
 
 /**
@@ -27,9 +48,11 @@ function FullWindowVideoControls(
     playerContainer, videoContainer, controlsContainer) {
   VideoControls.call(this,
       controlsContainer,
-      onError.bind(null, null),
+      onPlaybackError,
       function() { chrome.fileBrowserPrivate.toggleFullscreen() },
       videoContainer);
+
+  this.playerContainer_ = playerContainer;
 
   this.updateStyle();
   window.addEventListener('resize', this.updateStyle.bind(this));
@@ -41,11 +64,17 @@ function FullWindowVideoControls(
     }
   }.bind(this));
 
+  util.disableBrowserShortcutKeys(document);
+
   videoContainer.addEventListener('click',
       this.togglePlayStateWithFeedback.bind(this));
 
-  var inactivityWatcher = new MouseInactivityWatcher(playerContainer);
-  inactivityWatcher.check();
+  this.inactivityWatcher_ = new MouseInactivityWatcher(playerContainer);
+  this.__defineGetter__('inactivityWatcher', function() {
+    return this.inactivityWatcher_;
+  });
+
+  this.inactivityWatcher_.check();
 }
 
 FullWindowVideoControls.prototype = { __proto__: VideoControls.prototype };
@@ -67,9 +96,13 @@ FullWindowVideoControls.prototype.restorePlayState = function() {
   }
 };
 
+// TODO(mtomasz): Convert it to class members: crbug.com/171191.
+var decodeErrorOccured;
+var video;
 var controls;
-
 var metadataCache;
+var volumeManager;
+var selectedItemFilesystemPath;
 
 /**
  * Initialize the video player window.
@@ -85,18 +118,41 @@ function loadVideoPlayer() {
        document.querySelector('#video-container'),
        document.querySelector('#controls'));
 
-    var video = document.querySelector('video');
-    controls.attachMedia(video);
-
     if (!util.platform.v2())
       window.addEventListener('unload', unload);
 
     metadataCache = MetadataCache.createFull();
+    volumeManager = VolumeManager.getInstance();
 
     // If the video player is starting before the first instance of the File
     // Manager then it does not have access to filesystem URLs. Request it now.
     chrome.fileBrowserPrivate.requestLocalFileSystem(reload);
+
+    volumeManager.addEventListener('externally-unmounted',
+                                   onExternallyUnmounted);
+
+    var reloadVideo = function(e) {
+      if (decodeErrorOccured) {
+        reload();
+        e.preventDefault();
+      }
+    };
+
+    document.addEventListener('keydown', reloadVideo, true);
+    document.addEventListener('click', reloadVideo, true);
+
   });
+}
+
+/**
+ * Closes video player when a volume containing the played item is unmounted.
+ * @param {Event} event The unmount event.
+ */
+function onExternallyUnmounted(event) {
+  if (!selectedItemFilesystemPath)
+    return;
+  if (selectedItemFilesystemPath.indexOf(event.mountPath) == 0)
+    util.platform.closeWindow();
 }
 
 /**
@@ -111,6 +167,12 @@ function unload() {
  * Reload the player.
  */
 function reload() {
+  // Re-enable ui and hide error message if already displayed.
+  document.querySelector('#video-player').removeAttribute('disabled');
+  document.querySelector('#error').removeAttribute('visible');
+  controls.inactivityWatcher.disabled = false;
+  decodeErrorOccured = false;
+
   var src;
   if (window.appState) {
     util.saveAppState();
@@ -119,7 +181,7 @@ function reload() {
     src = document.location.search.substr(1);
   }
   if (!src) {
-    onError();
+    showErrorMessage('GALLERY_VIDEO_ERROR');
     return;
   }
 
@@ -128,7 +190,7 @@ function reload() {
   metadataCache.get(src, 'streaming', function(streaming) {
     if (streaming && streaming.url) {
       if (!navigator.onLine) {
-        onError('GALLERY_VIDEO_OFFLINE');
+        showErrorMessage('GALLERY_VIDEO_OFFLINE');
         return;
       }
       src = streaming.url;
@@ -137,7 +199,15 @@ function reload() {
       console.log('Playing local file: ' + src);
     }
 
-    var video = document.querySelector('video');
+    // Detach the previous video element, if exists.
+    if (video) {
+      video.parentNode.removeChild(video);
+    }
+
+    video = document.createElement('video');
+    document.querySelector('#video-container').appendChild(video);
+    controls.attachMedia(video);
+
     video.src = src;
     video.load();
     if (util.platform.v2()) {
@@ -179,6 +249,15 @@ function reload() {
         appWindow.show();
       });
     }
+
+    // Resolve real filesystem path of the current video.
+    selectedItemFilesystemPath = null;
+    webkitResolveLocalFileSystemURL(src,
+      function(entry) {
+        var video = document.querySelector('video');
+        if (video.src != src) return;
+        selectedItemFilesystemPath = entry.fullPath;
+      });
   });
 }
 

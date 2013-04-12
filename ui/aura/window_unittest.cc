@@ -23,6 +23,7 @@
 #include "ui/aura/test/event_generator.h"
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/test/test_windows.h"
+#include "ui/aura/test/window_test_api.h"
 #include "ui/aura/window_delegate.h"
 #include "ui/aura/window_observer.h"
 #include "ui/aura/window_property.h"
@@ -374,7 +375,7 @@ TEST_F(WindowTest, ContainsMouse) {
       CreateTestWindow(SK_ColorWHITE, 1, gfx::Rect(10, 10, 500, 500),
                        root_window()));
   w->Show();
-  Window::TestApi w_test_api(w.get());
+  WindowTestApi w_test_api(w.get());
   RootWindow* root = root_window();
   root->MoveCursorTo(gfx::Point(10, 10));
   EXPECT_TRUE(w_test_api.ContainsMouse());
@@ -1148,7 +1149,26 @@ TEST_F(WindowTest, MouseEnterExit) {
   EXPECT_FALSE(d2.exited());
 }
 
-#if !defined(OS_WIN)
+// Verifies that the WindowDelegate receives MouseExit from ET_MOUSE_EXITED.
+TEST_F(WindowTest, RootWindowHostExit) {
+  MouseEnterExitWindowDelegate d1;
+  scoped_ptr<Window> w1(
+      CreateTestWindowWithDelegate(&d1, 1, gfx::Rect(10, 10, 50, 50),
+                                   root_window()));
+
+  test::EventGenerator generator(root_window());
+  generator.MoveMouseToCenterOf(w1.get());
+  EXPECT_TRUE(d1.entered());
+  EXPECT_FALSE(d1.exited());
+  d1.ResetExpectations();
+
+  ui::MouseEvent exit_event(
+      ui::ET_MOUSE_EXITED, gfx::Point(), gfx::Point(), 0);
+  root_window()->AsRootWindowHostDelegate()->OnHostMouseEvent(&exit_event);
+  EXPECT_FALSE(d1.entered());
+  EXPECT_TRUE(d1.exited());
+}
+
 // Verifies that the WindowDelegate receives MouseExit and MouseEnter events for
 // mouse transitions from window to window, even if the entered window sets
 // and releases capture.
@@ -1182,7 +1202,6 @@ TEST_F(WindowTest, MouseEnterExitWithClick) {
   EXPECT_FALSE(d2.exited());
 }
 
-// Temporarily disabled for windows. See crbug.com/112222.
 // Verifies that enter / exits are sent if windows appear and are deleted
 // under the current mouse position..
 TEST_F(WindowTest, MouseEnterExitWithDelete) {
@@ -1244,7 +1263,6 @@ TEST_F(WindowTest, MouseEnterExitWithHide) {
   RunAllPendingInMessageLoop();
   EXPECT_TRUE(d1.entered());
 }
-#endif
 
 // Creates a window with a delegate (w111) that can handle events at a lower
 // z-index than a window without a delegate (w12). w12 is sized to fill the
@@ -1845,8 +1863,8 @@ TEST_F(WindowTest, AcquireLayer) {
   ui::Layer* parent = window1->parent()->layer();
   EXPECT_EQ(2U, parent->children().size());
 
-  Window::TestApi window1_test_api(window1.get());
-  Window::TestApi window2_test_api(window2.get());
+  WindowTestApi window1_test_api(window1.get());
+  WindowTestApi window2_test_api(window2.get());
 
   EXPECT_TRUE(window1_test_api.OwnsLayer());
   EXPECT_TRUE(window2_test_api.OwnsLayer());
@@ -1996,9 +2014,6 @@ TEST_F(WindowTest, VisibilityClientIsVisible) {
   EXPECT_TRUE(window->layer()->visible());
 }
 
-#if !defined(OS_WIN)
-// Temporarily disabled for windows. See crbug.com/112222.
-
 // Tests mouse events on window change.
 TEST_F(WindowTest, MouseEventsOnWindowChange) {
   gfx::Size size = root_window()->GetHostSize();
@@ -2074,7 +2089,6 @@ TEST_F(WindowTest, MouseEventsOnWindowChange) {
   RunAllPendingInMessageLoop();
   EXPECT_EQ("1 1 0", d1.GetMouseMotionCountsAndReset());
 }
-#endif
 
 class StackingMadrigalLayoutManager : public LayoutManager {
  public:
@@ -2624,6 +2638,207 @@ TEST_F(WindowTest, DelegateDestroysSelfOnWindowDestroy) {
       0,
       gfx::Rect(10, 20, 30, 40),
       root_window()));
+}
+
+class HierarchyObserver : public WindowObserver {
+ public:
+  HierarchyObserver(Window* target) : target_(target) {
+    target_->AddObserver(this);
+  }
+  virtual ~HierarchyObserver() {
+    target_->RemoveObserver(this);
+  }
+
+  void ValidateState(
+      int index,
+      const WindowObserver::HierarchyChangeParams& params) const {
+    ParamsMatch(params_[index], params);
+  }
+
+  void Reset() {
+    params_.clear();
+  }
+
+ private:
+  // Overridden from WindowObserver:
+  virtual void OnWindowHierarchyChanging(
+      const HierarchyChangeParams& params) OVERRIDE {
+    params_.push_back(params);
+  }
+  virtual void OnWindowHierarchyChanged(
+      const HierarchyChangeParams& params) OVERRIDE {
+    params_.push_back(params);
+  }
+
+  void ParamsMatch(const WindowObserver::HierarchyChangeParams& p1,
+                   const WindowObserver::HierarchyChangeParams& p2) const {
+    EXPECT_EQ(p1.phase, p2.phase);
+    EXPECT_EQ(p1.target, p2.target);
+    EXPECT_EQ(p1.new_parent, p2.new_parent);
+    EXPECT_EQ(p1.old_parent, p2.old_parent);
+    EXPECT_EQ(p1.receiver, p2.receiver);
+  }
+
+  Window* target_;
+  std::vector<WindowObserver::HierarchyChangeParams> params_;
+
+  DISALLOW_COPY_AND_ASSIGN(HierarchyObserver);
+};
+
+// Tests hierarchy change notifications.
+TEST_F(WindowTest, OnWindowHierarchyChange) {
+  {
+    // Simple add & remove.
+    HierarchyObserver oroot(root_window());
+
+    scoped_ptr<Window> w1(CreateTestWindowWithId(1, NULL));
+    HierarchyObserver o1(w1.get());
+
+    // Add.
+    root_window()->AddChild(w1.get());
+
+    WindowObserver::HierarchyChangeParams params;
+    params.phase = WindowObserver::HierarchyChangeParams::HIERARCHY_CHANGING;
+    params.target = w1.get();
+    params.old_parent = NULL;
+    params.new_parent = root_window();
+    params.receiver = w1.get();
+    o1.ValidateState(0, params);
+
+    params.phase = WindowObserver::HierarchyChangeParams::HIERARCHY_CHANGED;
+    params.receiver = w1.get();
+    o1.ValidateState(1, params);
+
+    params.receiver = root_window();
+    oroot.ValidateState(0, params);
+
+    // Remove.
+    o1.Reset();
+    oroot.Reset();
+
+    root_window()->RemoveChild(w1.get());
+
+    params.phase = WindowObserver::HierarchyChangeParams::HIERARCHY_CHANGING;
+    params.old_parent = root_window();
+    params.new_parent = NULL;
+    params.receiver = w1.get();
+
+    o1.ValidateState(0, params);
+
+    params.receiver = root_window();
+    oroot.ValidateState(0, params);
+
+    params.phase = WindowObserver::HierarchyChangeParams::HIERARCHY_CHANGED;
+    params.receiver = w1.get();
+    o1.ValidateState(1, params);
+  }
+
+  {
+    // Add & remove of hierarchy. Tests notification order per documentation in
+    // WindowObserver.
+    HierarchyObserver o(root_window());
+    scoped_ptr<Window> w1(CreateTestWindowWithId(1, NULL));
+    Window* w11 = CreateTestWindowWithId(11, w1.get());
+    w1->AddObserver(&o);
+    w11->AddObserver(&o);
+
+    // Add.
+    root_window()->AddChild(w1.get());
+
+    // Dispatched to target first.
+    int index = 0;
+    WindowObserver::HierarchyChangeParams params;
+    params.phase = WindowObserver::HierarchyChangeParams::HIERARCHY_CHANGING;
+    params.target = w1.get();
+    params.old_parent = NULL;
+    params.new_parent = root_window();
+    params.receiver = w1.get();
+    o.ValidateState(index++, params);
+
+    // Dispatched to target's children.
+    params.receiver = w11;
+    o.ValidateState(index++, params);
+
+    params.phase = WindowObserver::HierarchyChangeParams::HIERARCHY_CHANGED;
+
+    // Now process the "changed" phase.
+    params.receiver = w1.get();
+    o.ValidateState(index++, params);
+    params.receiver = w11;
+    o.ValidateState(index++, params);
+    params.receiver = root_window();
+    o.ValidateState(index++, params);
+
+    // Remove.
+    root_window()->RemoveChild(w1.get());
+    params.phase = WindowObserver::HierarchyChangeParams::HIERARCHY_CHANGING;
+    params.old_parent = root_window();
+    params.new_parent = NULL;
+    params.receiver = w1.get();
+    o.ValidateState(index++, params);
+    params.receiver = w11;
+    o.ValidateState(index++, params);
+    params.receiver = root_window();
+    o.ValidateState(index++, params);
+    params.phase = WindowObserver::HierarchyChangeParams::HIERARCHY_CHANGED;
+    params.receiver = w1.get();
+    o.ValidateState(index++, params);
+    params.receiver = w11;
+    o.ValidateState(index++, params);
+
+    w1.reset();
+  }
+
+  {
+    // Reparent. Tests notification order per documentation in WindowObserver.
+    scoped_ptr<Window> w1(CreateTestWindowWithId(1, root_window()));
+    Window* w11 = CreateTestWindowWithId(11, w1.get());
+    Window* w111 = CreateTestWindowWithId(111, w11);
+    scoped_ptr<Window> w2(CreateTestWindowWithId(2, root_window()));
+
+    HierarchyObserver o(root_window());
+    w1->AddObserver(&o);
+    w11->AddObserver(&o);
+    w111->AddObserver(&o);
+    w2->AddObserver(&o);
+
+    w2->AddChild(w11);
+
+    // Dispatched to target first.
+    int index = 0;
+    WindowObserver::HierarchyChangeParams params;
+    params.phase = WindowObserver::HierarchyChangeParams::HIERARCHY_CHANGING;
+    params.target = w11;
+    params.old_parent = w1.get();
+    params.new_parent = w2.get();
+    params.receiver = w11;
+    o.ValidateState(index++, params);
+
+    // Then to target's children.
+    params.receiver = w111;
+    o.ValidateState(index++, params);
+
+    // Then to target's old parent chain.
+    params.receiver = w1.get();
+    o.ValidateState(index++, params);
+    params.receiver = root_window();
+    o.ValidateState(index++, params);
+
+    // "Changed" phase.
+    params.phase = WindowObserver::HierarchyChangeParams::HIERARCHY_CHANGED;
+    params.receiver = w11;
+    o.ValidateState(index++, params);
+    params.receiver = w111;
+    o.ValidateState(index++, params);
+    params.receiver = w2.get();
+    o.ValidateState(index++, params);
+    params.receiver = root_window();
+    o.ValidateState(index++, params);
+
+    w1.reset();
+    w2.reset();
+  }
+
 }
 
 }  // namespace test

@@ -8,12 +8,13 @@
 #include <vector>
 
 #include "base/string16.h"
+#include "ui/base/window_open_disposition.h"
 #include "ui/gfx/native_widget_types.h"
-#include "webkit/glue/window_open_disposition.h"
 
 class BookmarkNode;
 class Browser;
 class GURL;
+class PrefService;
 
 namespace content {
 class BrowserContext;
@@ -54,8 +55,15 @@ bool ConfirmDeleteBookmarkNode(const BookmarkNode* node,
 // Shows the bookmark all tabs dialog.
 void ShowBookmarkAllTabsDialog(Browser* browser);
 
-// Returns true if |selection| has at least one bookmark of type url.
+// Returns true if OpenAll() can open at least one bookmark of type url
+// in |selection|.
 bool HasBookmarkURLs(const std::vector<const BookmarkNode*>& selection);
+
+// Returns true if OpenAll() can open at least one bookmark of type url
+// in |selection| with incognito mode.
+bool HasBookmarkURLsAllowedInIncognitoMode(
+    const std::vector<const BookmarkNode*>& selection,
+    content::BrowserContext* browser_context);
 
 // Fills in the URL and title for a bookmark of |web_contents|.
 void GetURLAndTitleToBookmark(content::WebContents* web_contents,
@@ -65,6 +73,12 @@ void GetURLAndTitleToBookmark(content::WebContents* web_contents,
 // Toggles whether the bookmark bar is shown only on the new tab page or on
 // all tabs. This is a preference modifier, not a visual modifier.
 void ToggleBookmarkBarWhenVisible(content::BrowserContext* browser_context);
+
+// Returns a formatted version of |url| appropriate to display to a user with
+// the given |prefs|, which may be NULL.  When re-parsing this URL, clients
+// should call URLFixerUpper::FixupURL().
+string16 FormatBookmarkURLForDisplay(const GURL& url,
+                                     const PrefService* prefs);
 
 }  // namespace chrome
 

@@ -8,19 +8,20 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/time.h"
 #include "cc/cc_export.h"
-#include "cc/font_atlas.h"
 #include "cc/layer_impl.h"
 #include "cc/scoped_resource.h"
 
 class SkCanvas;
 class SkPaint;
+class SkTypeface;
 struct SkRect;
 
 namespace cc {
 
 class DebugRectHistory;
-class FontAtlas;
 class FrameRateCounter;
+class MemoryHistory;
+class PaintTimeCounter;
 
 class CC_EXPORT HeadsUpDisplayLayerImpl : public LayerImpl {
 public:
@@ -30,7 +31,7 @@ public:
     }
     virtual ~HeadsUpDisplayLayerImpl();
 
-    void setFontAtlas(scoped_ptr<FontAtlas>);
+    virtual scoped_ptr<LayerImpl> createLayerImpl(LayerTreeImpl* treeImpl) OVERRIDE;
 
     virtual void willDraw(ResourceProvider*) OVERRIDE;
     virtual void appendQuads(QuadSink&, AppendQuadsData&) OVERRIDE;
@@ -42,25 +43,49 @@ public:
     virtual bool layerIsAlwaysDamaged() const OVERRIDE;
 
 private:
+    struct Graph {
+        Graph(double indicatorValue, double startUpperBound);
+
+        // Eases the upper bound, which limits what is currently visible in the graph,
+        // so that the graph always scales to either it's max or defaultUpperBound.
+        static double updateUpperBound(Graph*);
+
+        double value;
+        double min;
+        double max;
+
+        double currentUpperBound;
+        const double defaultUpperBound;
+        const double indicator;
+    };
+
     HeadsUpDisplayLayerImpl(LayerTreeImpl* treeImpl, int id);
 
     virtual const char* layerTypeAsString() const OVERRIDE;
 
     void drawHudContents(SkCanvas*);
-    int drawFPSCounter(SkCanvas*, FrameRateCounter*);
-    void drawFPSCounterText(SkCanvas*, SkPaint&, FrameRateCounter*, SkRect);
-    void drawFPSCounterGraphAndHistogram(SkCanvas* canvas, SkPaint& paint, FrameRateCounter* fpsCounter, SkRect graphBounds, SkRect histogramBounds);
+
+    void drawText(SkCanvas*, SkPaint*, const std::string&, const SkPaint::Align&, const int& size, const int& x, const int& y);
+    void drawText(SkCanvas*, SkPaint*, const std::string&, const SkPaint::Align&, const int& size, const SkPoint& pos);
+    void drawGraphBackground(SkCanvas*, SkPaint*, const SkRect& bounds);
+    void drawGraphLines(SkCanvas*, SkPaint*, const SkRect& bounds, const Graph&);
+
+    void drawPlaformLayerTree(SkCanvas*);
+    int drawFPSDisplay(SkCanvas*, FrameRateCounter*, const int& top);
+    int drawMemoryDisplay(SkCanvas*, MemoryHistory*, const int& top);
+    int drawPaintTimeDisplay(SkCanvas*, PaintTimeCounter*, const int& top);
+
     void drawDebugRects(SkCanvas*, DebugRectHistory*);
 
-    scoped_ptr<FontAtlas> m_fontAtlas;
     scoped_ptr<ScopedResource> m_hudTexture;
     scoped_ptr<SkCanvas> m_hudCanvas;
 
-    double m_averageFPS;
-    double m_minFPS;
-    double m_maxFPS;
+    skia::RefPtr<SkTypeface> m_typeface;
 
-    base::TimeTicks textUpdateTime;
+    Graph m_fpsGraph;
+    Graph m_paintTimeGraph;
+
+    base::TimeTicks m_timeOfLastGraphUpdate;
 };
 
 }  // namespace cc

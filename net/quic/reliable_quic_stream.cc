@@ -14,7 +14,6 @@ ReliableQuicStream::ReliableQuicStream(QuicStreamId id,
                                        QuicSession* session)
     : sequencer_(this),
       id_(id),
-      offset_(0),
       session_(session),
       visitor_(NULL),
       stream_bytes_read_(0),
@@ -48,21 +47,21 @@ bool ReliableQuicStream::OnStreamFrame(const QuicStreamFrame& frame) {
     // We don't want to be reading: blackhole the data.
     return true;
   }
+  // Note: This count include duplicate data received.
+  stream_bytes_read_ += frame.data.length();
 
   bool accepted = sequencer_.OnStreamFrame(frame);
 
   if (frame.fin) {
-    sequencer_.CloseStreamAtOffset(frame.offset + frame.data.size(),
-                                   true);
+    sequencer_.CloseStreamAtOffset(frame.offset + frame.data.size(), true);
   }
 
   return accepted;
 }
 
-void ReliableQuicStream::OnStreamReset(QuicErrorCode error,
-                                       QuicStreamOffset offset) {
+void ReliableQuicStream::OnStreamReset(QuicErrorCode error) {
   error_ = error;
-  sequencer_.CloseStreamAtOffset(offset, false);  // Full close.
+  TerminateFromPeer(false);  // Full close.
 }
 
 void ReliableQuicStream::ConnectionClose(QuicErrorCode error, bool from_peer) {
@@ -84,7 +83,7 @@ void ReliableQuicStream::TerminateFromPeer(bool half_close) {
 
 void ReliableQuicStream::Close(QuicErrorCode error) {
   error_ = error;
-  session()->SendRstStream(id(), error, offset_);
+  session()->SendRstStream(id(), error);
 }
 
 bool ReliableQuicStream::IsHalfClosed() const {
@@ -99,24 +98,30 @@ const IPEndPoint& ReliableQuicStream::GetPeerAddress() const {
   return session_->peer_address();
 }
 
-int ReliableQuicStream::WriteData(StringPiece data, bool fin) {
+QuicConsumedData ReliableQuicStream::WriteData(StringPiece data, bool fin) {
   return WriteOrBuffer(data, fin);
 }
 
-int ReliableQuicStream::WriteOrBuffer(StringPiece data, bool fin) {
+QuicConsumedData ReliableQuicStream::WriteOrBuffer(StringPiece data, bool fin) {
   DCHECK(!fin_buffered_);
 
-  size_t bytes_written = 0;
+  QuicConsumedData consumed_data(0, false);
   fin_buffered_ = fin;
 
   if (queued_data_.empty()) {
-    bytes_written = WriteDataInternal(string(data.data(), data.length()), fin);
+    consumed_data = WriteDataInternal(string(data.data(), data.length()), fin);
+    DCHECK_LE(consumed_data.bytes_consumed, data.length());
   }
-  if (bytes_written != data.length()) {
-    queued_data_.push_back(string(data.data() + bytes_written,
-                                  data.length() - bytes_written));
+
+  // If there's unconsumed data or an unconsumed fin, queue it.
+  if (consumed_data.bytes_consumed < data.length() ||
+      (fin && !consumed_data.fin_consumed)) {
+    queued_data_.push_back(
+        string(data.data() + consumed_data.bytes_consumed,
+               data.length() - consumed_data.bytes_consumed));
   }
-  return data.size();
+
+  return QuicConsumedData(data.size(), true);
 }
 
 void ReliableQuicStream::OnCanWrite() {
@@ -126,35 +131,36 @@ void ReliableQuicStream::OnCanWrite() {
     if (queued_data_.size() == 1 && fin_buffered_) {
       fin = true;
     }
-    int bytes_written = WriteDataInternal(data, fin);
-    if (bytes_written == static_cast<int>(data.size())) {
+    QuicConsumedData consumed_data = WriteDataInternal(data, fin);
+    if (consumed_data.bytes_consumed == data.size() &&
+        fin == consumed_data.fin_consumed) {
       queued_data_.pop_front();
     } else {
-      queued_data_.front() = string(data.data() + bytes_written,
-                                    data.length() - bytes_written);
+      queued_data_.front().erase(0, consumed_data.bytes_consumed);
       break;
     }
   }
 }
 
-int ReliableQuicStream::WriteDataInternal(StringPiece data, bool fin) {
+QuicConsumedData ReliableQuicStream::WriteDataInternal(
+    StringPiece data, bool fin) {
   if (write_side_closed_) {
     DLOG(ERROR) << "Attempt to write when the write side is closed";
-    return 0;
+    return QuicConsumedData(0, false);
   }
 
-  int bytes_consumed = session()->WriteData(id(), data, offset_, fin);
-  offset_ += bytes_consumed;
-  stream_bytes_written_ += bytes_consumed;
-  if (bytes_consumed == static_cast<int>(data.length())) {
-    if (fin) {
+  QuicConsumedData consumed_data =
+      session()->WriteData(id(), data, stream_bytes_written_, fin);
+  stream_bytes_written_ += consumed_data.bytes_consumed;
+  if (consumed_data.bytes_consumed == data.length()) {
+    if (fin && consumed_data.fin_consumed) {
       fin_sent_ = true;
       CloseWriteSide();
     }
   } else {
     session_->MarkWriteBlocked(id());
   }
-  return bytes_consumed;
+  return consumed_data;
 }
 
 void ReliableQuicStream::CloseReadSide() {

@@ -52,6 +52,12 @@ class FaviconTabHelper : public content::WebContentsObserver,
   // space is provided for the favicon, and the favicon is never displayed.
   virtual bool ShouldDisplayFavicon();
 
+  // Allows the client to determine if they want to fetch the Favicons as
+  // they are discovered.
+  void set_should_fetch_icons(bool fetch) {
+    should_fetch_icons_ = fetch;
+  }
+
   // content::WebContentsObserver override. Must be public, because also
   // called from PrerenderContents.
   virtual void DidUpdateFaviconURL(
@@ -82,11 +88,11 @@ class FaviconTabHelper : public content::WebContentsObserver,
   void DidDownloadFavicon(
       int id,
       const GURL& image_url,
-      bool errored,
       int requested_size,
       const std::vector<SkBitmap>& bitmaps);
 
   Profile* profile_;
+  bool should_fetch_icons_;
 
   scoped_ptr<FaviconHandler> favicon_handler_;
 

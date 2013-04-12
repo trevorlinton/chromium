@@ -2,17 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/extensions/api/tabs/tabs.h"
-
 #include "base/values.h"
+#include "chrome/browser/extensions/api/tabs/tabs_api.h"
 #include "chrome/browser/extensions/api/tabs/tabs_constants.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
 
 namespace keys = extensions::tabs_constants;
@@ -20,7 +19,9 @@ namespace utils = extension_function_test_utils;
 
 typedef InProcessBrowserTest ExtensionTabsTest;
 
-#if defined(OS_WIN) && defined(USE_AURA)  // http://crbug.com/154081
+// http://crbug.com/154081 for Aura specific
+// http://crbug.com/179063 for other general failures on try bots.
+#if defined(OS_WIN)
 #define MAYBE_GetLastFocusedWindow DISABLED_GetLastFocusedWindow
 #else
 #define MAYBE_GetLastFocusedWindow GetLastFocusedWindow
@@ -32,8 +33,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionTabsTest, MAYBE_GetLastFocusedWindow) {
   Browser* new_browser = CreateBrowser(browser()->profile());
   int focused_window_id = ExtensionTabUtil::GetWindowId(new_browser);
 
-  scoped_refptr<GetLastFocusedWindowFunction> function =
-      new GetLastFocusedWindowFunction();
+  scoped_refptr<WindowsGetLastFocusedFunction> function =
+      new WindowsGetLastFocusedFunction();
   scoped_refptr<extensions::Extension> extension(utils::CreateEmptyExtension());
   function->set_extension(extension.get());
   scoped_ptr<base::DictionaryValue> result(utils::ToDictionary(
@@ -47,7 +48,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionTabsTest, MAYBE_GetLastFocusedWindow) {
   ListValue* tabs = NULL;
   EXPECT_FALSE(result.get()->GetList(keys::kTabsKey, &tabs));
 
-  function = new GetLastFocusedWindowFunction();
+  function = new WindowsGetLastFocusedFunction();
   function->set_extension(extension.get());
   result.reset(utils::ToDictionary(
       utils::RunFunctionAndReturnSingleResult(function.get(),
@@ -83,7 +84,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionTabsTest, DISABLED_QueryLastFocusedWindowTabs) {
   int focused_window_id = ExtensionTabUtil::GetWindowId(focused_window);
 
   // Get tabs in the 'last focused' window called from non-focused browser.
-  scoped_refptr<QueryTabsFunction> function = new QueryTabsFunction();
+  scoped_refptr<TabsQueryFunction> function = new TabsQueryFunction();
   scoped_ptr<base::ListValue> result(utils::ToList(
       utils::RunFunctionAndReturnSingleResult(function.get(),
                                               "[{\"lastFocusedWindow\":true}]",
@@ -100,7 +101,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionTabsTest, DISABLED_QueryLastFocusedWindowTabs) {
   }
 
   // Get tabs NOT in the 'last focused' window called from the focused browser.
-  function = new QueryTabsFunction();
+  function = new TabsQueryFunction();
   result.reset(utils::ToList(
       utils::RunFunctionAndReturnSingleResult(function.get(),
                                               "[{\"lastFocusedWindow\":false}]",
@@ -117,7 +118,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionTabsTest, DISABLED_QueryLastFocusedWindowTabs) {
   }
 }
 
-#if defined(OS_WIN) && defined(USE_AURA)  // http://crbug.com/154081
+#if defined(OS_WIN)  // http://crbug.com/154081 && http://crbug.com/171080
 #define MAYBE_TabCurrentWindow DISABLED_TabCurrentWindow
 #else
 #define MAYBE_TabCurrentWindow TabCurrentWindow

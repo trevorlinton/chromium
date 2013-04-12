@@ -17,8 +17,6 @@ class MessageReader;
 }  // namespace dbus
 
 namespace chromeos {
-// TODO(nona): Remove ibus namespace after complete libibus removal.
-namespace ibus {
 
 // The IBusLookupTable is one of IBusObjects. IBusLookupTable contains IBusTexts
 // but all of them are used as plain string. The overview of each data
@@ -82,8 +80,8 @@ void CHROMEOS_EXPORT AppendIBusLookupTable(const IBusLookupTable& table,
 class CHROMEOS_EXPORT IBusLookupTable {
  public:
   enum Orientation {
-    IBUS_LOOKUP_TABLE_ORIENTATION_HORIZONTAL = 0,
-    IBUS_LOOKUP_TABLE_ORIENTATION_VERTICAL = 1,
+    HORIZONTAL = 0,
+    VERTICAL = 1,
   };
 
   // Represents a candidate entry. In dbus communication, each
@@ -101,6 +99,12 @@ class CHROMEOS_EXPORT IBusLookupTable {
 
   IBusLookupTable();
   virtual ~IBusLookupTable();
+
+  // Returns true if the given |table| is equal to myself.
+  bool IsEqual(const IBusLookupTable& table) const;
+
+  // Copies |table| to myself.
+  void CopyFrom(const IBusLookupTable& table);
 
   // Returns the number of candidates in one page.
   uint32 page_size() const { return page_size_; }
@@ -145,7 +149,6 @@ class CHROMEOS_EXPORT IBusLookupTable {
   DISALLOW_COPY_AND_ASSIGN(IBusLookupTable);
 };
 
-}  // namespace ibus
 }  // namespace chromeos
 
 #endif  // CHROMEOS_DBUS_IBUS_IBUS_LOOKUP_TABLE_H_

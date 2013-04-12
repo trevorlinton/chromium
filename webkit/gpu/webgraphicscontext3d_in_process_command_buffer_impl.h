@@ -11,8 +11,8 @@
 
 #include "base/compiler_specific.h"
 #include "base/memory/scoped_ptr.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebGraphicsContext3D.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebString.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebGraphicsContext3D.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
 #include "ui/gfx/native_widget_types.h"
 #include "webkit/gpu/webkit_gpu_export.h"
 
@@ -533,7 +533,7 @@ class WEBKIT_GPU_EXPORT WebGraphicsContext3DInProcessCommandBufferImpl
   std::vector<WGC3Denum> synthetic_errors_;
 
 #ifdef FLIP_FRAMEBUFFER_VERTICALLY
-  scoped_array<uint8> scanline_;
+  std::vector<uint8> scanline_;
   void FlipVertically(uint8* framebuffer,
                       unsigned int width,
                       unsigned int height);

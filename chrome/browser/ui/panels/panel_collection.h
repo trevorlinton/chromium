@@ -29,18 +29,31 @@ class PanelCollection {
     DEFAULT_POSITION = 0x0,
     // The panel is being added based on its current known position.
     KNOWN_POSITION = 0x1,
+    // The panel is added and placed at top position (currently only used by
+    // stacked collection)
+    TOP_POSITION = 0x2,
     // Do not update panel bounds. Only valid with DEFAULT_POSIITON.
-    DO_NOT_UPDATE_BOUNDS = 0x2,
+    DO_NOT_UPDATE_BOUNDS = 0x4,
     // Wait for a brief delay before refreshing layout of the collection after
     // adding panel to the collection. If not set, the collection will refresh
     // its layout immediately.
-    DELAY_LAYOUT_REFRESH = 0x4,
+    DELAY_LAYOUT_REFRESH = 0x8,
+    // Do not refresh layout. Used by stacking.
+    NO_LAYOUT_REFRESH = 0x10,
+    // Collapse other inactive stacked panels such the tha new panel can fit
+    // within the working area. Used by stacking.
+    COLLAPSE_TO_FIT = 0x20
+  };
+
+  enum RemovalReason {
+    PANEL_CLOSED,
+    PANEL_CHANGED_COLLECTION
   };
 
   Type type() const { return type_; }
 
   // Called when the display area is changed.
-  virtual void OnDisplayAreaChanged(const gfx::Rect& old_display_area) = 0;
+  virtual void OnDisplayChanged() = 0;
 
   // Updates the positioning of all panels in the collection, usually as
   // a result of removing or resizing a panel in collection.
@@ -52,7 +65,8 @@ class PanelCollection {
 
   // Removes |panel| from the collection of panels. Invoked asynchronously
   // after a panel has been closed.
-  virtual void RemovePanel(Panel* panel) = 0;
+  // |reason| denotes why the panel is removed from the collection.
+  virtual void RemovePanel(Panel* panel, RemovalReason reason) = 0;
 
   // Closes all panels in the collection. Panels will be removed after closing.
   virtual void CloseAll() = 0;
@@ -87,6 +101,9 @@ class PanelCollection {
   virtual void OnPanelTitlebarClicked(Panel* panel,
                                       panel::ClickModifier modifier) = 0;
 
+  // Called when a panel's expansion state changes.
+  virtual void OnPanelExpansionStateChanged(Panel* panel) = 0;
+
   // Called when a panel in the collection becomes active or inactive.
   virtual void OnPanelActiveStateChanged(Panel* panel) = 0;
 
@@ -97,12 +114,18 @@ class PanelCollection {
   virtual void MinimizePanel(Panel* panel) = 0;
   virtual void RestorePanel(Panel* panel) = 0;
 
-  // Updates the display to show all panels in the collection as
-  // minimized/restored.
-  virtual void MinimizeAll() = 0;
-  virtual void RestoreAll() = 0;
+  // Called when a panel's minimize/restore button is clicked.
+  // The behavior might be modified as indicated by |modifier|.
+  virtual void OnMinimizeButtonClicked(Panel* panel,
+                                       panel::ClickModifier modifier) = 0;
+  virtual void OnRestoreButtonClicked(Panel* panel,
+                                      panel::ClickModifier modifier) = 0;
 
-  virtual bool CanMinimizePanel(const Panel* panel) const = 0;
+  // Returns true if minimize or restore button can be shown on the panel's
+  // titlebar.
+  virtual bool CanShowMinimizeButton(const Panel* panel) const = 0;
+  virtual bool CanShowRestoreButton(const Panel* panel) const = 0;
+
   virtual bool IsPanelMinimized(const Panel* panel) const = 0;
 
   // Saves/restores/discards the placement information of |panel|. This is

@@ -42,8 +42,17 @@ INSTANTIATE_TEST_CASE_P(
     ONCTranslatorOncToShillTest,
     ::testing::Values(
         std::make_pair("managed_ethernet.onc", "shill_ethernet.json"),
+        std::make_pair("valid_wifi_psk.onc", "shill_wifi_psk.json"),
+        std::make_pair("valid_wifi_clientcert.onc",
+                       "shill_wifi_clientcert.json"),
+        std::make_pair("valid_wifi_clientref.onc",
+                       "shill_wifi_clientref.json"),
         std::make_pair("valid_l2tpipsec.onc", "shill_l2tpipsec.json"),
-        std::make_pair("valid_openvpn.onc", "shill_openvpn.json")));
+        std::make_pair("valid_l2tpipsec_clientcert.onc",
+                       "shill_l2tpipsec_clientcert.json"),
+        std::make_pair("valid_openvpn.onc", "shill_openvpn.json"),
+        std::make_pair("valid_openvpn_clientcert.onc",
+                       "shill_openvpn_clientcert.json")));
 
 // Test the translation from Shill json to ONC.
 //
@@ -75,6 +84,20 @@ TEST(ONCTranslatorShillToOncTest, OpenVPN) {
 
   scoped_ptr<const base::DictionaryValue> shill_network(
       test_utils::ReadTestDictionary("shill_openvpn.json"));
+
+  scoped_ptr<base::DictionaryValue> translation(TranslateShillServiceToONCPart(
+      *shill_network, &kNetworkConfigurationSignature));
+
+  EXPECT_TRUE(test_utils::Equals(onc_network.get(), translation.get()));
+}
+
+TEST(ONCTranslatorShillToOncTest, OpenVPN_with_errors) {
+  scoped_ptr<const base::DictionaryValue> onc_network(
+      test_utils::ReadTestDictionary(
+          "translation_of_shill_openvpn_with_errors.onc"));
+
+  scoped_ptr<const base::DictionaryValue> shill_network(
+      test_utils::ReadTestDictionary("shill_openvpn_with_errors.json"));
 
   scoped_ptr<base::DictionaryValue> translation(TranslateShillServiceToONCPart(
       *shill_network, &kNetworkConfigurationSignature));

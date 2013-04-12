@@ -38,6 +38,7 @@ class ExtensionAction;
 class GURL;
 class InstantController;
 class KeywordHintView;
+class LocationBarSeparatorView;
 class LocationIconView;
 class OpenPDFInReaderView;
 class PageActionWithBadgeView;
@@ -47,7 +48,6 @@ class ScriptBubbleIconView;
 class SelectedKeywordView;
 class StarView;
 class TemplateURLService;
-class WebIntentsButtonView;
 class ZoomView;
 
 namespace views {
@@ -104,11 +104,11 @@ class LocationBarView : public LocationBar,
     virtual ContentSettingBubbleModelDelegate*
         GetContentSettingBubbleModelDelegate() = 0;
 
-    // Shows page information in the given web contents.
-    virtual void ShowPageInfo(content::WebContents* web_contents,
-                              const GURL& url,
-                              const content::SSLStatus& ssl,
-                              bool show_history) = 0;
+    // Shows permissions and settings for the given web contents.
+    virtual void ShowWebsiteSettings(content::WebContents* web_contents,
+                                     const GURL& url,
+                                     const content::SSLStatus& ssl,
+                                     bool show_history) = 0;
 
     // Called by the location bar view when the user starts typing in the edit.
     // This forces our security style to be UNKNOWN for the duration of the
@@ -299,7 +299,6 @@ class LocationBarView : public LocationBar,
   virtual void UpdateContentSettingsIcons() OVERRIDE;
   virtual void UpdatePageActions() OVERRIDE;
   virtual void InvalidatePageActions() OVERRIDE;
-  virtual void UpdateWebIntentsButton() OVERRIDE;
   virtual void UpdateOpenPDFInReaderPrompt() OVERRIDE;
   virtual void SaveStateToContents(content::WebContents* contents) OVERRIDE;
   virtual void Revert() OVERRIDE;
@@ -455,6 +454,12 @@ class LocationBarView : public LocationBar,
   // Shown if the selected url has a corresponding keyword.
   KeywordHintView* keyword_hint_view_;
 
+  // View responsible for showing text "<Search provider> Search", which appears
+  // when omnibox replaces the URL with its query terms and there's enough space
+  // in omnibox.
+  views::Label* search_token_view_;
+  LocationBarSeparatorView* search_token_separator_view_;
+
   // The content setting views.
   ContentSettingViews content_setting_views_;
 
@@ -475,9 +480,6 @@ class LocationBarView : public LocationBar,
 
   // The star.
   StarView* star_view_;
-
-  // The web intents choose-another-service button
-  WebIntentsButtonView* web_intents_button_view_;
 
   // The action box button (plus).
   ActionBoxButtonView* action_box_button_view_;

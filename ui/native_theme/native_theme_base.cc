@@ -159,6 +159,9 @@ void NativeThemeBase::Paint(SkCanvas* canvas,
                             State state,
                             const gfx::Rect& rect,
                             const ExtraParams& extra) const {
+  if (rect.IsEmpty())
+    return;
+
   switch (part) {
     // Please keep these in the order of NativeTheme::Part.
     case kCheckbox:
@@ -176,7 +179,7 @@ void NativeThemeBase::Paint(SkCanvas* canvas,
       NOTIMPLEMENTED();
       break;
     case kMenuPopupBackground:
-      PaintMenuPopupBackground(canvas, rect.size());
+      PaintMenuPopupBackground(canvas, rect.size(), extra.menu_background);
       break;
     case kMenuPopupGutter:
     case kMenuPopupSeparator:
@@ -210,7 +213,8 @@ void NativeThemeBase::Paint(SkCanvas* canvas,
       break;
     case kScrollbarHorizontalGripper:
     case kScrollbarVerticalGripper:
-      NOTIMPLEMENTED();
+      // Invoked by views scrollbar code, don't care about for non-win
+      // implementations, so no NOTIMPLEMENTED.
       break;
     case kSliderTrack:
       PaintSliderTrack(canvas, state, rect, extra.slider);
@@ -866,8 +870,10 @@ void NativeThemeBase::PaintMenuList(
   canvas->drawPath(path, paint);
 }
 
-void NativeThemeBase::PaintMenuPopupBackground(SkCanvas* canvas,
-                                               const gfx::Size& size) const {
+void NativeThemeBase::PaintMenuPopupBackground(
+    SkCanvas* canvas,
+    const gfx::Size& size,
+    const MenuBackgroundExtraParams& menu_background) const {
   canvas->drawColor(kMenuPopupBackgroundColor, SkXfermode::kSrc_Mode);
 }
 

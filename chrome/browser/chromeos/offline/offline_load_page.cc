@@ -21,10 +21,10 @@
 #include "chrome/browser/renderer_preferences_util.h"
 #include "chrome/browser/tab_contents/tab_util.h"
 #include "chrome/common/chrome_notification_types.h"
+#include "chrome/common/extensions/api/icons/icons_handler.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_icon_set.h"
-#include "chrome/common/jstemplate_builder.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/interstitial_page.h"
@@ -35,6 +35,7 @@
 #include "net/base/escape.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/webui/jstemplate_builder.h"
 
 using content::BrowserThread;
 using content::InterstitialPage;
@@ -115,7 +116,7 @@ std::string OfflineLoadPage::GetHTMLContents() {
   base::StringPiece html(
       ResourceBundle::GetSharedInstance().GetRawDataResource(
           IDR_OFFLINE_LOAD_HTML));
-  return jstemplate_builder::GetI18nTemplateHtml(html, &strings);
+  return webui::GetI18nTemplateHtml(html, &strings);
 }
 
  void OfflineLoadPage::OverrideRendererPrefs(
@@ -123,7 +124,7 @@ std::string OfflineLoadPage::GetHTMLContents() {
   Profile* profile = Profile::FromBrowserContext(
       web_contents_->GetBrowserContext());
   renderer_preferences_util::UpdateFromSystemSettings(prefs, profile);
- }
+}
 
 void OfflineLoadPage::OnProceed() {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
@@ -145,8 +146,10 @@ void OfflineLoadPage::GetAppOfflineStrings(
     DictionaryValue* strings) const {
   strings->SetString("title", app->name());
 
-  GURL icon_url = app->GetIconURL(extension_misc::EXTENSION_ICON_LARGE,
-                                  ExtensionIconSet::MATCH_BIGGER);
+  GURL icon_url = extensions::IconsInfo::GetIconURL(
+      app,
+      extension_misc::EXTENSION_ICON_LARGE,
+      ExtensionIconSet::MATCH_BIGGER);
   if (icon_url.is_empty()) {
     strings->SetString("display_icon", "none");
     strings->SetString("icon", string16());

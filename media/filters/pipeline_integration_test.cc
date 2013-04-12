@@ -5,6 +5,7 @@
 #include "media/filters/pipeline_integration_test_base.h"
 
 #include "base/bind.h"
+#include "base/memory/scoped_ptr.h"
 #include "base/string_util.h"
 #include "build/build_config.h"
 #include "media/base/decoder_buffer.h"
@@ -23,18 +24,67 @@ static const char kWebM[] = "video/webm; codecs=\"vp8,vorbis\"";
 static const char kAudioOnlyWebM[] = "video/webm; codecs=\"vorbis\"";
 static const char kVideoOnlyWebM[] = "video/webm; codecs=\"vp8\"";
 static const char kMP4[] = "video/mp4; codecs=\"avc1.4D4041,mp4a.40.2\"";
+static const char kMP4Video[] = "video/mp4; codecs=\"avc1.4D4041\"";
+static const char kMP4Audio[] = "audio/mp4; codecs=\"mp4a.40.2\"";
+static const char kMP4AudioType[] = "audio/mp4";
+static const char kMP4VideoType[] = "video/mp4";
 
-// Key used to encrypt video track in test file "bear-320x240-encrypted.webm".
+// Key used to encrypt test files.
 static const uint8 kSecretKey[] = {
   0xeb, 0xdd, 0x62, 0xf1, 0x68, 0x14, 0xd2, 0x7b,
   0x68, 0xef, 0x12, 0x2a, 0xfc, 0xe4, 0xae, 0x3c
 };
 
+// The key ID for all encrypted files.
+static const uint8 kKeyId[] = {
+  0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+  0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35
+};
+
 static const int kAppendWholeFile = -1;
 
+// Constants for the Media Source config change tests.
+static const int kAppendTimeSec = 1;
+static const int kAppendTimeMs = kAppendTimeSec * 1000;
+static const int k320WebMFileDurationMs = 2737;
+static const int k640WebMFileDurationMs = 2763;
+static const int k640IsoFileDurationMs = 2737;
+static const int k640IsoCencFileDurationMs = 2736;
+static const int k1280IsoFileDurationMs = 2736;
+
+// Note: Tests using this class only exercise the DecryptingDemuxerStream path.
+// They do not exercise the Decrypting{Audio|Video}Decoder path.
 class FakeEncryptedMedia {
  public:
-  FakeEncryptedMedia()
+  // Defines the behavior of the "app" that responds to EME events.
+  class AppBase {
+   public:
+    virtual ~AppBase() {}
+
+    virtual void KeyAdded(const std::string& key_system,
+                          const std::string& session_id) = 0;
+
+    // Errors are not expected unless overridden.
+    virtual void KeyError(const std::string& key_system,
+                          const std::string& session_id,
+                          AesDecryptor::KeyError error_code,
+                          int system_code) {
+      FAIL() << "Unexpected Key Error";
+    }
+
+    virtual void KeyMessage(const std::string& key_system,
+                            const std::string& session_id,
+                            const std::string& message,
+                            const std::string& default_url) = 0;
+
+    virtual void NeedKey(const std::string& key_system,
+                         const std::string& session_id,
+                         const std::string& type,
+                         scoped_array<uint8> init_data, int init_data_length,
+                         AesDecryptor* decryptor) = 0;
+  };
+
+  FakeEncryptedMedia(AppBase* app)
       : decryptor_(base::Bind(&FakeEncryptedMedia::KeyAdded,
                               base::Unretained(this)),
                    base::Bind(&FakeEncryptedMedia::KeyError,
@@ -42,30 +92,59 @@ class FakeEncryptedMedia {
                    base::Bind(&FakeEncryptedMedia::KeyMessage,
                               base::Unretained(this)),
                    base::Bind(&FakeEncryptedMedia::NeedKey,
-                              base::Unretained(this))) {
+                              base::Unretained(this))),
+        app_(app) {
   }
 
   AesDecryptor* decryptor() {
     return &decryptor_;
   }
 
-  // Callbacks for firing key events.
+  // Callbacks for firing key events. Delegate to |app_|.
   void KeyAdded(const std::string& key_system, const std::string& session_id) {
-    EXPECT_EQ(kClearKeySystem, key_system);
-    EXPECT_FALSE(session_id.empty());
+    app_->KeyAdded(key_system, session_id);
   }
 
   void KeyError(const std::string& key_system,
                 const std::string& session_id,
                 AesDecryptor::KeyError error_code,
                 int system_code) {
-    FAIL() << "Unexpected Key Error";
+    app_->KeyError(key_system, session_id, error_code, system_code);
   }
 
   void KeyMessage(const std::string& key_system,
                   const std::string& session_id,
                   const std::string& message,
                   const std::string& default_url) {
+    app_->KeyMessage(key_system, session_id, message, default_url);
+  }
+
+  void NeedKey(const std::string& key_system,
+               const std::string& session_id,
+               const std::string& type,
+               scoped_array<uint8> init_data, int init_data_length) {
+    app_->NeedKey(key_system, session_id, type,
+                  init_data.Pass(), init_data_length, &decryptor_);
+  }
+
+ private:
+  AesDecryptor decryptor_;
+  scoped_ptr<AppBase> app_;
+};
+
+// Provides |kSecretKey| in response to needkey.
+class KeyProvidingApp : public FakeEncryptedMedia::AppBase {
+ public:
+  virtual void KeyAdded(const std::string& key_system,
+                        const std::string& session_id) OVERRIDE {
+    EXPECT_EQ(kClearKeySystem, key_system);
+    EXPECT_FALSE(session_id.empty());
+  }
+
+  virtual void KeyMessage(const std::string& key_system,
+                          const std::string& session_id,
+                          const std::string& message,
+                          const std::string& default_url) OVERRIDE {
     EXPECT_EQ(kClearKeySystem, key_system);
     EXPECT_FALSE(session_id.empty());
     EXPECT_FALSE(message.empty());
@@ -74,10 +153,11 @@ class FakeEncryptedMedia {
     current_session_id_ = session_id;
   }
 
-  void NeedKey(const std::string& key_system,
-               const std::string& session_id,
-               const std::string& type,
-               scoped_array<uint8> init_data, int init_data_length) {
+  virtual void NeedKey(const std::string& key_system,
+                       const std::string& session_id,
+                       const std::string& type,
+                       scoped_array<uint8> init_data, int init_data_length,
+                       AesDecryptor* decryptor) OVERRIDE {
     current_key_system_ = key_system;
     current_session_id_ = session_id;
 
@@ -86,20 +166,57 @@ class FakeEncryptedMedia {
     // session (which will call KeyMessage).
     if (current_key_system_.empty()) {
       EXPECT_TRUE(current_session_id_.empty());
-      EXPECT_TRUE(decryptor_.GenerateKeyRequest(
+      EXPECT_TRUE(decryptor->GenerateKeyRequest(
           kClearKeySystem, type, kInitData, arraysize(kInitData)));
     }
 
     EXPECT_FALSE(current_key_system_.empty());
     EXPECT_FALSE(current_session_id_.empty());
-    decryptor_.AddKey(current_key_system_, kSecretKey, arraysize(kSecretKey),
-                      init_data.get(), init_data_length, current_session_id_);
+
+    // Clear Key really needs the key ID in |init_data|. For WebM, they are the
+    // same, but this is not the case for ISO CENC. Therefore, provide the
+    // correct key ID.
+    const uint8* key_id = init_data.get();
+    int key_id_length = init_data_length;
+    if (type == kMP4AudioType || type == kMP4VideoType) {
+      key_id = kKeyId;
+      key_id_length = arraysize(kKeyId);
+    }
+
+    decryptor->AddKey(current_key_system_, kSecretKey, arraysize(kSecretKey),
+                      key_id, key_id_length, current_session_id_);
   }
 
- private:
-  AesDecryptor decryptor_;
   std::string current_key_system_;
   std::string current_session_id_;
+};
+
+// Ignores needkey and does not perform a license request
+class NoResponseApp : public FakeEncryptedMedia::AppBase {
+ public:
+  virtual void KeyAdded(const std::string& key_system,
+                        const std::string& session_id) OVERRIDE {
+    EXPECT_EQ(kClearKeySystem, key_system);
+    EXPECT_FALSE(session_id.empty());
+    FAIL() << "Unexpected KeyAdded";
+  }
+
+  virtual void KeyMessage(const std::string& key_system,
+                          const std::string& session_id,
+                          const std::string& message,
+                          const std::string& default_url) OVERRIDE {
+    EXPECT_EQ(kClearKeySystem, key_system);
+    EXPECT_FALSE(session_id.empty());
+    EXPECT_FALSE(message.empty());
+    FAIL() << "Unexpected KeyMessage";
+  }
+
+  virtual void NeedKey(const std::string& key_system,
+                       const std::string& session_id,
+                       const std::string& type,
+                       scoped_array<uint8> init_data, int init_data_length,
+                       AesDecryptor* decryptor) OVERRIDE {
+  }
 };
 
 // Helper class that emulates calls made on the ChunkDemuxer by the
@@ -200,7 +317,7 @@ class MockMediaSource {
   }
 
  private:
-  FilePath file_path_;
+  base::FilePath file_path_;
   scoped_refptr<DecoderBuffer> file_data_;
   int current_position_;
   int initial_append_size_;
@@ -224,7 +341,8 @@ class PipelineIntegrationTest
         base::Bind(&PipelineIntegrationTest::OnError, base::Unretained(this)),
         QuitOnStatusCB(PIPELINE_OK),
         base::Bind(&PipelineIntegrationTest::OnBufferingState,
-                   base::Unretained(this)));
+                   base::Unretained(this)),
+        base::Closure());
 
     message_loop_.Run();
   }
@@ -242,7 +360,8 @@ class PipelineIntegrationTest
         base::Bind(&PipelineIntegrationTest::OnError, base::Unretained(this)),
         QuitOnStatusCB(PIPELINE_OK),
         base::Bind(&PipelineIntegrationTest::OnBufferingState,
-                   base::Unretained(this)));
+                   base::Unretained(this)),
+        base::Closure());
 
     source->set_need_key_cb(base::Bind(&FakeEncryptedMedia::NeedKey,
                                        base::Unretained(encrypted_media)));
@@ -309,11 +428,11 @@ TEST_F(PipelineIntegrationTest, BasicPlayback_MediaSource) {
   MockMediaSource source("bear-320x240.webm", kWebM, 219229);
   StartPipelineWithMediaSource(&source);
   source.EndOfStream();
-  ASSERT_EQ(pipeline_status_, PIPELINE_OK);
 
-  EXPECT_EQ(pipeline_->GetBufferedTimeRanges().size(), 1u);
-  EXPECT_EQ(pipeline_->GetBufferedTimeRanges().start(0).InMilliseconds(), 0);
-  EXPECT_EQ(pipeline_->GetBufferedTimeRanges().end(0).InMilliseconds(), 2737);
+  EXPECT_EQ(1u, pipeline_->GetBufferedTimeRanges().size());
+  EXPECT_EQ(0, pipeline_->GetBufferedTimeRanges().start(0).InMilliseconds());
+  EXPECT_EQ(k320WebMFileDurationMs,
+            pipeline_->GetBufferedTimeRanges().end(0).InMilliseconds());
 
   Play();
 
@@ -330,47 +449,228 @@ TEST_F(PipelineIntegrationTest, MediaSource_ConfigChange_WebM) {
   scoped_refptr<DecoderBuffer> second_file =
       ReadTestDataFile("bear-640x360.webm");
 
-  source.AppendAtTime(base::TimeDelta::FromSeconds(2),
+  source.AppendAtTime(base::TimeDelta::FromSeconds(kAppendTimeSec),
                       second_file->GetData(), second_file->GetDataSize());
 
   source.EndOfStream();
-  ASSERT_EQ(pipeline_status_, PIPELINE_OK);
 
-  EXPECT_EQ(pipeline_->GetBufferedTimeRanges().size(), 1u);
-  EXPECT_EQ(pipeline_->GetBufferedTimeRanges().start(0).InMilliseconds(), 0);
-  EXPECT_EQ(pipeline_->GetBufferedTimeRanges().end(0).InMilliseconds(), 4763);
+  EXPECT_EQ(1u, pipeline_->GetBufferedTimeRanges().size());
+  EXPECT_EQ(0, pipeline_->GetBufferedTimeRanges().start(0).InMilliseconds());
+  EXPECT_EQ(kAppendTimeMs + k640WebMFileDurationMs,
+            pipeline_->GetBufferedTimeRanges().end(0).InMilliseconds());
 
   Play();
 
-  ASSERT_TRUE(WaitUntilOnEnded());
+  EXPECT_TRUE(WaitUntilOnEnded());
   source.Abort();
   Stop();
+}
+
+TEST_F(PipelineIntegrationTest, MediaSource_ConfigChange_Encrypted_WebM) {
+  MockMediaSource source("bear-320x240-16x9-aspect-av_enc-av.webm", kWebM,
+                         kAppendWholeFile);
+  FakeEncryptedMedia encrypted_media(new KeyProvidingApp());
+  StartPipelineWithEncryptedMedia(&source, &encrypted_media);
+
+  scoped_refptr<DecoderBuffer> second_file =
+      ReadTestDataFile("bear-640x360-av_enc-av.webm");
+
+  source.AppendAtTime(base::TimeDelta::FromSeconds(kAppendTimeSec),
+                      second_file->GetData(), second_file->GetDataSize());
+
+  source.EndOfStream();
+
+  EXPECT_EQ(1u, pipeline_->GetBufferedTimeRanges().size());
+  EXPECT_EQ(0, pipeline_->GetBufferedTimeRanges().start(0).InMilliseconds());
+  EXPECT_EQ(kAppendTimeMs + k640WebMFileDurationMs,
+            pipeline_->GetBufferedTimeRanges().end(0).InMilliseconds());
+
+  Play();
+
+  EXPECT_TRUE(WaitUntilOnEnded());
+  source.Abort();
+  Stop();
+}
+
+// Config changes from encrypted to clear are not currently supported.
+TEST_F(PipelineIntegrationTest,
+       MediaSource_ConfigChange_ClearThenEncrypted_WebM) {
+  MockMediaSource source("bear-320x240-16x9-aspect.webm", kWebM,
+                         kAppendWholeFile);
+  FakeEncryptedMedia encrypted_media(new KeyProvidingApp());
+  StartPipelineWithEncryptedMedia(&source, &encrypted_media);
+
+  scoped_refptr<DecoderBuffer> second_file =
+      ReadTestDataFile("bear-640x360-av_enc-av.webm");
+
+  source.AppendAtTime(base::TimeDelta::FromSeconds(kAppendTimeSec),
+                      second_file->GetData(), second_file->GetDataSize());
+
+  source.EndOfStream();
+
+  message_loop_.Run();
+  EXPECT_EQ(PIPELINE_ERROR_DECODE, pipeline_status_);
+
+  EXPECT_EQ(1u, pipeline_->GetBufferedTimeRanges().size());
+  EXPECT_EQ(0, pipeline_->GetBufferedTimeRanges().start(0).InMilliseconds());
+  // The second video was not added, so its time has not been added.
+  EXPECT_EQ(k320WebMFileDurationMs,
+            pipeline_->GetBufferedTimeRanges().end(0).InMilliseconds());
+
+  Play();
+
+  EXPECT_EQ(PIPELINE_ERROR_DECODE, WaitUntilEndedOrError());
+  source.Abort();
+}
+
+// Config changes from clear to encrypted are not currently supported.
+TEST_F(PipelineIntegrationTest,
+       MediaSource_ConfigChange_EncryptedThenClear_WebM) {
+  MockMediaSource source("bear-320x240-16x9-aspect-av_enc-av.webm", kWebM,
+                         kAppendWholeFile);
+  FakeEncryptedMedia encrypted_media(new KeyProvidingApp());
+  StartPipelineWithEncryptedMedia(&source, &encrypted_media);
+
+  scoped_refptr<DecoderBuffer> second_file =
+      ReadTestDataFile("bear-640x360.webm");
+
+  source.AppendAtTime(base::TimeDelta::FromSeconds(kAppendTimeSec),
+                      second_file->GetData(), second_file->GetDataSize());
+
+  source.EndOfStream();
+
+  EXPECT_EQ(1u, pipeline_->GetBufferedTimeRanges().size());
+  EXPECT_EQ(0, pipeline_->GetBufferedTimeRanges().start(0).InMilliseconds());
+  // The second video was not added, so its time has not been added.
+  EXPECT_EQ(k320WebMFileDurationMs,
+            pipeline_->GetBufferedTimeRanges().end(0).InMilliseconds());
+
+  Play();
+
+  EXPECT_EQ(PIPELINE_ERROR_DECODE, WaitUntilEndedOrError());
+  source.Abort();
 }
 
 #if defined(GOOGLE_CHROME_BUILD) || defined(USE_PROPRIETARY_CODECS)
 TEST_F(PipelineIntegrationTest, MediaSource_ConfigChange_MP4) {
-  MockMediaSource source("bear.640x360_dash.mp4", kMP4, kAppendWholeFile);
+  MockMediaSource source("bear-640x360-av_frag.mp4", kMP4, kAppendWholeFile);
   StartPipelineWithMediaSource(&source);
 
   scoped_refptr<DecoderBuffer> second_file =
-      ReadTestDataFile("bear.1280x720_dash.mp4");
+      ReadTestDataFile("bear-1280x720-av_frag.mp4");
 
-  source.AppendAtTime(base::TimeDelta::FromSeconds(2),
+  source.AppendAtTime(base::TimeDelta::FromSeconds(kAppendTimeSec),
                       second_file->GetData(), second_file->GetDataSize());
 
   source.EndOfStream();
-  ASSERT_EQ(pipeline_status_, PIPELINE_OK);
 
-  EXPECT_EQ(pipeline_->GetBufferedTimeRanges().size(), 1u);
-  EXPECT_EQ(pipeline_->GetBufferedTimeRanges().start(0).InMilliseconds(), 0);
-  EXPECT_EQ(pipeline_->GetBufferedTimeRanges().end(0).InMilliseconds(), 4736);
+  EXPECT_EQ(1u, pipeline_->GetBufferedTimeRanges().size());
+  EXPECT_EQ(0, pipeline_->GetBufferedTimeRanges().start(0).InMilliseconds());
+  EXPECT_EQ(kAppendTimeMs + k1280IsoFileDurationMs,
+            pipeline_->GetBufferedTimeRanges().end(0).InMilliseconds());
 
   Play();
 
-  ASSERT_TRUE(WaitUntilOnEnded());
+  EXPECT_TRUE(WaitUntilOnEnded());
   source.Abort();
   Stop();
 }
+
+TEST_F(PipelineIntegrationTest,
+       MediaSource_ConfigChange_Encrypted_MP4_CENC_VideoOnly) {
+  MockMediaSource source("bear-640x360-v_frag-cenc.mp4",
+                         kMP4Video, kAppendWholeFile);
+  FakeEncryptedMedia encrypted_media(new KeyProvidingApp());
+  StartPipelineWithEncryptedMedia(&source, &encrypted_media);
+
+  scoped_refptr<DecoderBuffer> second_file =
+      ReadTestDataFile("bear-1280x720-v_frag-cenc.mp4");
+
+  source.AppendAtTime(base::TimeDelta::FromSeconds(kAppendTimeSec),
+                      second_file->GetData(), second_file->GetDataSize());
+
+  source.EndOfStream();
+
+  EXPECT_EQ(1u, pipeline_->GetBufferedTimeRanges().size());
+  EXPECT_EQ(0, pipeline_->GetBufferedTimeRanges().start(0).InMilliseconds());
+  EXPECT_EQ(kAppendTimeMs + k1280IsoFileDurationMs,
+            pipeline_->GetBufferedTimeRanges().end(0).InMilliseconds());
+
+  Play();
+
+  EXPECT_TRUE(WaitUntilOnEnded());
+  source.Abort();
+  Stop();
+}
+
+// Config changes from clear to encrypted are not currently supported.
+// TODO(ddorwin): Figure out why this CHECKs in AppendAtTime().
+TEST_F(PipelineIntegrationTest,
+       DISABLED_MediaSource_ConfigChange_ClearThenEncrypted_MP4_CENC) {
+  MockMediaSource source("bear-640x360-av_frag.mp4", kMP4Video,
+                         kAppendWholeFile);
+  FakeEncryptedMedia encrypted_media(new KeyProvidingApp());
+  StartPipelineWithEncryptedMedia(&source, &encrypted_media);
+
+  scoped_refptr<DecoderBuffer> second_file =
+      ReadTestDataFile("bear-1280x720-v_frag-cenc.mp4");
+
+  source.AppendAtTime(base::TimeDelta::FromSeconds(kAppendTimeSec),
+                      second_file->GetData(), second_file->GetDataSize());
+
+  source.EndOfStream();
+
+  message_loop_.Run();
+  EXPECT_EQ(PIPELINE_ERROR_DECODE, pipeline_status_);
+
+  EXPECT_EQ(1u, pipeline_->GetBufferedTimeRanges().size());
+  EXPECT_EQ(0, pipeline_->GetBufferedTimeRanges().start(0).InMilliseconds());
+  // The second video was not added, so its time has not been added.
+  EXPECT_EQ(k640IsoFileDurationMs,
+            pipeline_->GetBufferedTimeRanges().end(0).InMilliseconds());
+
+  Play();
+
+  EXPECT_EQ(PIPELINE_ERROR_DECODE, WaitUntilEndedOrError());
+  source.Abort();
+}
+
+// Config changes from encrypted to clear are not currently supported.
+TEST_F(PipelineIntegrationTest,
+       MediaSource_ConfigChange_EncryptedThenClear_MP4_CENC) {
+  MockMediaSource source("bear-640x360-v_frag-cenc.mp4",
+                         kMP4Video, kAppendWholeFile);
+  FakeEncryptedMedia encrypted_media(new KeyProvidingApp());
+  StartPipelineWithEncryptedMedia(&source, &encrypted_media);
+
+  scoped_refptr<DecoderBuffer> second_file =
+      ReadTestDataFile("bear-1280x720-av_frag.mp4");
+
+  source.AppendAtTime(base::TimeDelta::FromSeconds(kAppendTimeSec),
+                      second_file->GetData(), second_file->GetDataSize());
+
+  source.EndOfStream();
+
+  EXPECT_EQ(1u, pipeline_->GetBufferedTimeRanges().size());
+  EXPECT_EQ(0, pipeline_->GetBufferedTimeRanges().start(0).InMilliseconds());
+  // The second video was not added, so its time has not been added.
+  EXPECT_EQ(k640IsoCencFileDurationMs,
+            pipeline_->GetBufferedTimeRanges().end(0).InMilliseconds());
+
+  Play();
+
+  EXPECT_EQ(PIPELINE_ERROR_DECODE, WaitUntilEndedOrError());
+  source.Abort();
+}
+
+// Verify files which change configuration midstream fail gracefully.
+TEST_F(PipelineIntegrationTest, MidStreamConfigChangesFail) {
+  ASSERT_TRUE(Start(
+      GetTestDataFilePath("midstream_config_change.mp3"), PIPELINE_OK));
+  Play();
+  ASSERT_EQ(WaitUntilEndedOrError(), PIPELINE_ERROR_DECODE);
+}
+
 #endif
 
 TEST_F(PipelineIntegrationTest, BasicPlayback_16x9AspectRatio) {
@@ -380,9 +680,9 @@ TEST_F(PipelineIntegrationTest, BasicPlayback_16x9AspectRatio) {
   ASSERT_TRUE(WaitUntilOnEnded());
 }
 
-TEST_F(PipelineIntegrationTest, EncryptedPlayback) {
-  MockMediaSource source("bear-320x240-encrypted.webm", kWebM, 219816);
-  FakeEncryptedMedia encrypted_media;
+TEST_F(PipelineIntegrationTest, EncryptedPlayback_WebM) {
+  MockMediaSource source("bear-320x240-av_enc-av.webm", kWebM, 219816);
+  FakeEncryptedMedia encrypted_media(new KeyProvidingApp());
   StartPipelineWithEncryptedMedia(&source, &encrypted_media);
 
   source.EndOfStream();
@@ -394,6 +694,106 @@ TEST_F(PipelineIntegrationTest, EncryptedPlayback) {
   source.Abort();
   Stop();
 }
+
+TEST_F(PipelineIntegrationTest, EncryptedPlayback_ClearStart_WebM) {
+  MockMediaSource source("bear-320x240-av_enc-av_clear-1s.webm",
+                         kWebM, kAppendWholeFile);
+  FakeEncryptedMedia encrypted_media(new KeyProvidingApp());
+  StartPipelineWithEncryptedMedia(&source, &encrypted_media);
+
+  source.EndOfStream();
+  ASSERT_EQ(PIPELINE_OK, pipeline_status_);
+
+  Play();
+
+  ASSERT_TRUE(WaitUntilOnEnded());
+  source.Abort();
+  Stop();
+}
+
+TEST_F(PipelineIntegrationTest, EncryptedPlayback_NoEncryptedFrames_WebM) {
+  MockMediaSource source("bear-320x240-av_enc-av_clear-all.webm",
+                         kWebM, kAppendWholeFile);
+  FakeEncryptedMedia encrypted_media(new NoResponseApp());
+  StartPipelineWithEncryptedMedia(&source, &encrypted_media);
+
+  source.EndOfStream();
+  ASSERT_EQ(PIPELINE_OK, pipeline_status_);
+
+  Play();
+
+  ASSERT_TRUE(WaitUntilOnEnded());
+  source.Abort();
+  Stop();
+}
+
+#if defined(GOOGLE_CHROME_BUILD) || defined(USE_PROPRIETARY_CODECS)
+TEST_F(PipelineIntegrationTest, EncryptedPlayback_MP4_CENC_VideoOnly) {
+  MockMediaSource source("bear-1280x720-v_frag-cenc.mp4",
+                         kMP4Video, kAppendWholeFile);
+  FakeEncryptedMedia encrypted_media(new KeyProvidingApp());
+  StartPipelineWithEncryptedMedia(&source, &encrypted_media);
+
+  source.EndOfStream();
+  ASSERT_EQ(PIPELINE_OK, pipeline_status_);
+
+  Play();
+
+  ASSERT_TRUE(WaitUntilOnEnded());
+  source.Abort();
+  Stop();
+}
+
+TEST_F(PipelineIntegrationTest, EncryptedPlayback_MP4_CENC_AudioOnly) {
+  MockMediaSource source("bear-1280x720-a_frag-cenc.mp4",
+                         kMP4Audio, kAppendWholeFile);
+  FakeEncryptedMedia encrypted_media(new KeyProvidingApp());
+  StartPipelineWithEncryptedMedia(&source, &encrypted_media);
+
+  source.EndOfStream();
+  ASSERT_EQ(PIPELINE_OK, pipeline_status_);
+
+  Play();
+
+  ASSERT_TRUE(WaitUntilOnEnded());
+  source.Abort();
+  Stop();
+}
+
+TEST_F(PipelineIntegrationTest,
+       EncryptedPlayback_NoEncryptedFrames_MP4_CENC_VideoOnly) {
+  MockMediaSource source("bear-1280x720-v_frag-cenc_clear-all.mp4",
+                         kMP4Video, kAppendWholeFile);
+  FakeEncryptedMedia encrypted_media(new NoResponseApp());
+  StartPipelineWithEncryptedMedia(&source, &encrypted_media);
+
+  source.EndOfStream();
+  ASSERT_EQ(PIPELINE_OK, pipeline_status_);
+
+  Play();
+
+  ASSERT_TRUE(WaitUntilOnEnded());
+  source.Abort();
+  Stop();
+}
+
+TEST_F(PipelineIntegrationTest,
+       EncryptedPlayback_NoEncryptedFrames_MP4_CENC_AudioOnly) {
+  MockMediaSource source("bear-1280x720-a_frag-cenc_clear-all.mp4",
+                         kMP4Audio, kAppendWholeFile);
+  FakeEncryptedMedia encrypted_media(new NoResponseApp());
+  StartPipelineWithEncryptedMedia(&source, &encrypted_media);
+
+  source.EndOfStream();
+  ASSERT_EQ(PIPELINE_OK, pipeline_status_);
+
+  Play();
+
+  ASSERT_TRUE(WaitUntilOnEnded());
+  source.Abort();
+  Stop();
+}
+#endif
 
 // TODO(acolwell): Fix flakiness http://crbug.com/117921
 TEST_F(PipelineIntegrationTest, DISABLED_SeekWhilePaused) {
@@ -455,6 +855,33 @@ TEST_F(PipelineIntegrationTest, ChunkDemuxerAbortRead_VideoOnly) {
                                  base::TimeDelta::FromMilliseconds(200),
                                  base::TimeDelta::FromMilliseconds(1668),
                                  0x1C896, 65536));
+}
+
+// Verify that Opus audio in WebM containers can be played back.
+TEST_F(PipelineIntegrationTest, BasicPlayback_AudioOnly_Opus_WebM) {
+  ASSERT_TRUE(Start(GetTestDataFilePath("bear-opus.webm"),
+                    PIPELINE_OK));
+  Play();
+  ASSERT_TRUE(WaitUntilOnEnded());
+}
+
+// Verify that VP9 video in WebM containers can be played back.
+// Disabled since it might crash or corrupt heap, see http://crbug.com/173333
+TEST_F(PipelineIntegrationTest, DISABLED_BasicPlayback_VideoOnly_VP9_WebM) {
+  ASSERT_TRUE(Start(GetTestDataFilePath("bear-vp9.webm"),
+                    PIPELINE_OK));
+  Play();
+  ASSERT_TRUE(WaitUntilOnEnded());
+}
+
+// Verify that VP9 video and Opus audio in the same WebM container can be played
+// back.
+// Disabled since it might crash or corrupt heap, see http://crbug.com/173333
+TEST_F(PipelineIntegrationTest, DISABLED_BasicPlayback_VP9_Opus_WebM) {
+  ASSERT_TRUE(Start(GetTestDataFilePath("bear-vp9-opus.webm"),
+                    PIPELINE_OK));
+  Play();
+  ASSERT_TRUE(WaitUntilOnEnded());
 }
 
 }  // namespace media

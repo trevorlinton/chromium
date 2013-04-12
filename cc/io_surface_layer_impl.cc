@@ -10,6 +10,7 @@
 #include "cc/layer_tree_impl.h"
 #include "cc/output_surface.h"
 #include "cc/quad_sink.h"
+#include "gpu/GLES2/gl2extchromium.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebGraphicsContext3D.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "third_party/khronos/GLES2/gl2ext.h"
@@ -31,9 +32,22 @@ IOSurfaceLayerImpl::~IOSurfaceLayerImpl()
 
     OutputSurface* outputSurface = layerTreeImpl()->output_surface();
     // FIXME: Implement this path for software compositing.
-    WebKit::WebGraphicsContext3D* context3d = outputSurface->Context3D();
+    WebKit::WebGraphicsContext3D* context3d = outputSurface->context3d();
     if (context3d)
         context3d->deleteTexture(m_ioSurfaceTextureId);
+}
+
+scoped_ptr<LayerImpl> IOSurfaceLayerImpl::createLayerImpl(LayerTreeImpl* treeImpl)
+{
+    return IOSurfaceLayerImpl::create(treeImpl, id()).PassAs<LayerImpl>();
+}
+
+void IOSurfaceLayerImpl::pushPropertiesTo(LayerImpl* layer)
+{
+    LayerImpl::pushPropertiesTo(layer);
+
+    IOSurfaceLayerImpl* ioSurfaceLayer = static_cast<IOSurfaceLayerImpl*>(layer);
+    ioSurfaceLayer->setIOSurfaceProperties(m_ioSurfaceId, m_ioSurfaceSize);
 }
 
 void IOSurfaceLayerImpl::willDraw(ResourceProvider* resourceProvider)

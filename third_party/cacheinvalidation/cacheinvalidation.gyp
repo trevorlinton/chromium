@@ -36,6 +36,8 @@
           '<(proto_out_dir)',
         ],
       },
+      # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+      'msvs_disabled_warnings': [4267, ],
     },
     # The main cache invalidation library.  External clients should depend
     # only on this.
@@ -65,6 +67,8 @@
         'src/google/cacheinvalidation/impl/digest-store.h',
         'src/google/cacheinvalidation/impl/exponential-backoff-delay-generator.cc',
         'src/google/cacheinvalidation/impl/exponential-backoff-delay-generator.h',
+        'src/google/cacheinvalidation/impl/invalidation-client-core.cc',
+        'src/google/cacheinvalidation/impl/invalidation-client-core.h',
         'src/google/cacheinvalidation/impl/invalidation-client-factory.cc',
         'src/google/cacheinvalidation/impl/invalidation-client-impl.cc',
         'src/google/cacheinvalidation/impl/invalidation-client-impl.h',
@@ -122,6 +126,8 @@
       'export_dependent_settings': [
         '../../base/base.gyp:base',
       ],
+      # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+      'msvs_disabled_warnings': [4267, ],
     },
     # Unittests for the cache invalidation library.
     # TODO(ghc): Write native tests and include them here.
@@ -201,7 +207,6 @@
             'cacheinvalidation_proto_java',
           ],
           'variables': {
-            'package_name': '<(_target_name)',
             'java_in_dir': '../../build/android/empty',
             'additional_src_dirs': [ 'src/java/' ],
           },
@@ -211,7 +216,6 @@
           'target_name': 'cacheinvalidation_aidl_javalib',
           'type': 'none',
           'variables': {
-            'package_name': '<(_target_name)',
             # TODO(shashishekhar): aidl_interface_file should be made optional.
             'aidl_interface_file':'<(android_sdk)/framework.aidl'
           },

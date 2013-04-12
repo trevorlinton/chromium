@@ -81,7 +81,7 @@
               'include_dirs': [
                 'mswin'
               ],
-              'msvs_disabled_warnings': [ 4018, 4722 ],
+              'msvs_disabled_warnings': [ 4018, 4722, 4267 ],
             }]
           ]
         },
@@ -99,6 +99,13 @@
               're2/set.h',
               're2/stringpiece.h',
               're2/variadic_function.h',
+            ],
+            'shim_generator_additional_args': [
+              # Chromium copy of re2 is patched to rename POSIX to POSIX_SYNTAX
+              # because of collision issues that break the build.
+              # Upstream refuses to make changes:
+              # http://code.google.com/p/re2/issues/detail?id=73 .
+              '--define', 'POSIX=POSIX_SYNTAX',
             ],
           },
           'includes': [

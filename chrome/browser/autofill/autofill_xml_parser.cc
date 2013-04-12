@@ -8,11 +8,14 @@
 #include <string.h>
 
 #include "base/logging.h"
+#include "chrome/browser/autofill/autofill_server_field_info.h"
 #include "third_party/libjingle/source/talk/xmllite/qname.h"
 
 AutofillXmlParser::AutofillXmlParser()
     : succeeded_(true) {
 }
+
+AutofillXmlParser::~AutofillXmlParser() {}
 
 void AutofillXmlParser::CharacterData(
     buzz::XmlParseContext* context, const char* text, int len) {
@@ -28,15 +31,19 @@ void AutofillXmlParser::Error(buzz::XmlParseContext* context,
 }
 
 AutofillQueryXmlParser::AutofillQueryXmlParser(
-    std::vector<AutofillFieldType>* field_types,
+    std::vector<AutofillServerFieldInfo>* field_infos,
     UploadRequired* upload_required,
     std::string* experiment_id)
-    : field_types_(field_types),
+    : field_infos_(field_infos),
       upload_required_(upload_required),
+      current_page_number_(-1),
+      total_pages_(-1),
       experiment_id_(experiment_id) {
   DCHECK(upload_required_);
   DCHECK(experiment_id_);
 }
+
+AutofillQueryXmlParser::~AutofillQueryXmlParser() {}
 
 void AutofillQueryXmlParser::StartElement(buzz::XmlParseContext* context,
                                           const char* name,
@@ -52,22 +59,21 @@ void AutofillQueryXmlParser::StartElement(buzz::XmlParseContext* context,
 
     // |attrs| is a NULL-terminated list of (attribute, value) pairs.
     while (*attrs) {
-      buzz::QName attribute_qname = context->ResolveQName(attrs[0], true);
+      buzz::QName attribute_qname = context->ResolveQName(*attrs, true);
+      ++attrs;
       const std::string& attribute_name = attribute_qname.LocalPart();
       if (attribute_name.compare("uploadrequired") == 0) {
-        if (strcmp(attrs[1], "true") == 0)
+        if (strcmp(*attrs, "true") == 0)
           *upload_required_ = UPLOAD_REQUIRED;
-        else if (strcmp(attrs[1], "false") == 0)
+        else if (strcmp(*attrs, "false") == 0)
           *upload_required_ = UPLOAD_NOT_REQUIRED;
       } else if (attribute_name.compare("experimentid") == 0) {
-        *experiment_id_ = attrs[1];
+        *experiment_id_ = *attrs;
       }
-
-      // Advance to the next (attribute, value) pair.
-      attrs += 2;
+      ++attrs;
     }
   } else if (element.compare("field") == 0) {
-    if (!attrs[0]) {
+    if (!*attrs) {
       // Missing the "autofilltype" attribute, abort.
       context->RaiseError(XML_ERROR_ABORTED);
       return;
@@ -75,20 +81,67 @@ void AutofillQueryXmlParser::StartElement(buzz::XmlParseContext* context,
 
     // Determine the field type from the attribute value.  There should be one
     // attribute (autofilltype) with an integer value.
-    AutofillFieldType field_type = UNKNOWN_TYPE;
-    buzz::QName attribute_qname = context->ResolveQName(attrs[0], true);
-    const std::string& attribute_name = attribute_qname.LocalPart();
+    AutofillServerFieldInfo field_info;
+    field_info.field_type = UNKNOWN_TYPE;
 
-    if (attribute_name.compare("autofilltype") == 0) {
-      int value = GetIntValue(context, attrs[1]);
-      field_type = static_cast<AutofillFieldType>(value);
-      if (field_type < 0 || field_type > MAX_VALID_FIELD_TYPE) {
-        field_type = NO_SERVER_DATA;
+    // |attrs| is a NULL-terminated list of (attribute, value) pairs.
+    while (*attrs) {
+      buzz::QName attribute_qname = context->ResolveQName(*attrs, true);
+      ++attrs;
+      const std::string& attribute_name = attribute_qname.LocalPart();
+      if (attribute_name.compare("autofilltype") == 0) {
+        int value = GetIntValue(context, *attrs);
+        if (value >= 0 && value < MAX_VALID_FIELD_TYPE)
+          field_info.field_type = static_cast<AutofillFieldType>(value);
+        else
+          field_info.field_type = NO_SERVER_DATA;
+      } else if (field_info.field_type == FIELD_WITH_DEFAULT_VALUE &&
+                 attribute_name.compare("defaultvalue") == 0) {
+        field_info.default_value = *attrs;
       }
+      ++attrs;
     }
 
-    // Record this field type.
-    field_types_->push_back(field_type);
+    // Record this field type, default value pair.
+    field_infos_->push_back(field_info);
+  } else if (element.compare("autofill_flow") == 0) {
+    // |attrs| is a NULL-terminated list of (attribute, value) pairs.
+    while (*attrs) {
+      buzz::QName attribute_qname = context->ResolveQName(*attrs, true);
+      ++attrs;
+      const std::string& attribute_name = attribute_qname.LocalPart();
+      if (attribute_name.compare("page_no") == 0)
+        current_page_number_ = GetIntValue(context, *attrs);
+      else if (attribute_name.compare("total_pages") == 0)
+        total_pages_ = GetIntValue(context, *attrs);
+      ++attrs;
+    }
+  } else if (element.compare("page_advance_button") == 0) {
+    // |attrs| is a NULL-terminated list of (attribute, value) pairs.
+    // If both id and css_selector are set, the first one to appear will take
+    // precedence.
+    while (*attrs) {
+      buzz::QName attribute_qname = context->ResolveQName(*attrs, true);
+      ++attrs;
+      const std::string& attribute_name = attribute_qname.LocalPart();
+      buzz::QName value_qname = context->ResolveQName(*attrs, true);
+      ++attrs;
+      const std::string& attribute_value = value_qname.LocalPart();
+      if (attribute_name.compare("id") == 0 && !attribute_value.empty()) {
+        proceed_element_descriptor_.reset(new autofill::WebElementDescriptor());
+        proceed_element_descriptor_->retrieval_method =
+            autofill::WebElementDescriptor::ID;
+        proceed_element_descriptor_->descriptor = attribute_value;
+        break;
+      } else if (attribute_name.compare("css_selector") == 0 &&
+                 !attribute_value.empty()) {
+        proceed_element_descriptor_.reset(new autofill::WebElementDescriptor());
+        proceed_element_descriptor_->retrieval_method =
+            autofill::WebElementDescriptor::CSS_SELECTOR;
+        proceed_element_descriptor_->descriptor = attribute_value;
+        break;
+      }
+    }
   }
 }
 

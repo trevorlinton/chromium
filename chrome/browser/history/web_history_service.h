@@ -30,6 +30,7 @@ class WebHistoryService : public ProfileKeyedService {
   class Request {
    public:
     virtual ~Request();
+
    protected:
     Request();
   };
@@ -37,8 +38,11 @@ class WebHistoryService : public ProfileKeyedService {
   // Callback with the result of a call to QueryHistory(). Currently, the
   // DictionaryValue is just the parsed JSON response from the server.
   // TODO(dubroy): Extract the DictionaryValue into a structured results object.
-  typedef base::Callback<void(Request*, const DictionaryValue*)>
+  typedef base::Callback<void(Request*, const base::DictionaryValue*)>
       QueryWebHistoryCallback;
+
+  typedef base::Callback<void(Request*, bool success)>
+      ExpireWebHistoryCallback;
 
   explicit WebHistoryService(Profile* profile);
   virtual ~WebHistoryService();
@@ -53,6 +57,14 @@ class WebHistoryService : public ProfileKeyedService {
       const string16& text_query,
       const QueryOptions& options,
       const QueryWebHistoryCallback& callback);
+
+  // Deletes all visits to the given set of URLs between |begin_time| and
+  // |end_time|.
+  scoped_ptr<Request> ExpireHistoryBetween(
+      const std::set<GURL>& restrict_urls,
+      base::Time begin_time,
+      base::Time end_time,
+      const ExpireWebHistoryCallback& callback);
 
  private:
   Profile* profile_;

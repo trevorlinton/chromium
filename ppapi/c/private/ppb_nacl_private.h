@@ -3,7 +3,7 @@
  * found in the LICENSE file.
  */
 
-/* From private/ppb_nacl_private.idl modified Thu Dec 13 13:40:29 2012. */
+/* From private/ppb_nacl_private.idl modified Thu Jan 10 15:59:03 2013. */
 
 #ifndef PPAPI_C_PRIVATE_PPB_NACL_PRIVATE_H_
 #define PPAPI_C_PRIVATE_PPB_NACL_PRIVATE_H_
@@ -38,9 +38,7 @@ typedef enum {
   /** Error creating the module */
   PP_NACL_ERROR_MODULE = 2,
   /** Error creating and initializing the instance */
-  PP_NACL_ERROR_INSTANCE = 3,
-  /** SRPC proxy should be used instead */
-  PP_NACL_USE_SRPC = 128
+  PP_NACL_ERROR_INSTANCE = 3
 } PP_NaClResult;
 PP_COMPILE_ASSERT_SIZE_IN_BYTES(PP_NaClResult, 4);
 
@@ -62,20 +60,22 @@ typedef enum {
  */
 /* PPB_NaCl_Private */
 struct PPB_NaCl_Private_1_0 {
-  /* Launches NaCl's sel_ldr process.  Returns PP_NACL_OK on success and writes
-   * |socket_count| nacl::Handles to imc_handles. Returns PP_NACL_FAILED on
-   * failure. The |enable_ppapi_dev| parameter controls whether GetInterface
+  /* Launches NaCl's sel_ldr process.  Returns PP_NACL_OK on success and
+   * writes a NaClHandle to imc_handle. Returns PP_NACL_FAILED on failure.
+   * The |enable_ppapi_dev| parameter controls whether GetInterface
    * returns 'Dev' interfaces to the NaCl plugin.  The |uses_ppapi| flag
    * indicates that the nexe run by sel_ldr will use the PPAPI APIs.
    * This implies that LaunchSelLdr is run from the main thread.  If a nexe
    * does not need PPAPI, then it can run off the main thread.
+   * The |uses_irt| flag indicates whether the IRT should be loaded in this
+   * NaCl process.  This is true for ABI stable nexes.
    */
   PP_NaClResult (*LaunchSelLdr)(PP_Instance instance,
                                 const char* alleged_url,
+                                PP_Bool uses_irt,
                                 PP_Bool uses_ppapi,
                                 PP_Bool enable_ppapi_dev,
-                                int32_t socket_count,
-                                void* imc_handles);
+                                void* imc_handle);
   /* This function starts the IPC proxy so the nexe can communicate with the
    * browser. Returns PP_NACL_OK on success, otherwise a result code indicating
    * the failure. PP_NACL_FAILED is returned if LaunchSelLdr wasn't called with

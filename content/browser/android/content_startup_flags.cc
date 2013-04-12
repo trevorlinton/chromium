@@ -15,7 +15,8 @@
 
 namespace content {
 
-void SetContentCommandLineFlags(int max_render_process_count) {
+void SetContentCommandLineFlags(int max_render_process_count,
+                                const std::string& plugin_descriptor) {
   // May be called multiple times, to cover all possible program entry points.
   static bool already_initialized = false;
   if (already_initialized)
@@ -51,9 +52,13 @@ void SetContentCommandLineFlags(int max_render_process_count) {
   parsed_command_line->AppendSwitch(
       switches::kEnableCompositingForFixedPosition);
   parsed_command_line->AppendSwitch(switches::kEnableAcceleratedOverflowScroll);
+  parsed_command_line->AppendSwitch(
+      switches::kEnableAcceleratedScrollableFrames);
+  parsed_command_line->AppendSwitch(
+      switches::kEnableCompositedScrollingForFrames);
 
   parsed_command_line->AppendSwitch(switches::kEnableGestureTapHighlight);
-  parsed_command_line->AppendSwitch(switches::kEnableCssTransformPinch);
+  parsed_command_line->AppendSwitch(switches::kEnablePinch);
 
   // Run the GPU service as a thread in the browser instead of as a
   // standalone process.
@@ -63,9 +68,13 @@ void SetContentCommandLineFlags(int max_render_process_count) {
   parsed_command_line->AppendSwitch(switches::kEnableFixedLayout);
   parsed_command_line->AppendSwitch(switches::kEnableViewport);
 
-  // FIXME(aelias): Commented out due to flaky tests.
-//  parsed_command_line->AppendSwitch(
-//      cc::switches::kEnableCompositorFrameMessage);
+  parsed_command_line->AppendSwitch(
+      cc::switches::kEnableCompositorFrameMessage);
+
+  if (!plugin_descriptor.empty()) {
+    parsed_command_line->AppendSwitchNative(
+      switches::kRegisterPepperPlugins, plugin_descriptor);
+  }
 }
 
 }  // namespace content

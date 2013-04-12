@@ -5,7 +5,9 @@
 #ifndef CC_DRAW_QUAD_H_
 #define CC_DRAW_QUAD_H_
 
+#include "base/callback.h"
 #include "cc/cc_export.h"
+#include "cc/resource_provider.h"
 #include "cc/shared_quad_state.h"
 
 namespace cc {
@@ -37,7 +39,6 @@ class CC_EXPORT DrawQuad {
   // TODO(danakj): Chromify or remove these SharedQuadState helpers.
   const gfx::Transform& quadTransform() const { return shared_quad_state->content_to_target_transform; }
   gfx::Rect visibleContentRect() const { return shared_quad_state->visible_content_rect; }
-  gfx::Rect clippedRectInTarget() const { return shared_quad_state->clipped_rect_in_target; }
   gfx::Rect clipRect() const { return shared_quad_state->clip_rect; }
   bool isClipped() const { return shared_quad_state->is_clipped; }
   float opacity() const { return shared_quad_state->opacity; }
@@ -66,9 +67,40 @@ class CC_EXPORT DrawQuad {
   const SharedQuadState* shared_quad_state;
 
   bool IsDebugQuad() const { return material == DEBUG_BORDER; }
+
   bool ShouldDrawWithBlending() const {
     return needs_blending || shared_quad_state->opacity < 1.0f ||
         !opaque_rect.Contains(visible_rect);
+  }
+
+  typedef base::Callback<ResourceProvider::ResourceId(
+      ResourceProvider::ResourceId)> ResourceIteratorCallback;
+  virtual void IterateResources(const ResourceIteratorCallback& callback) = 0;
+
+  // Is the left edge of this tile aligned with the originating layer's
+  // left edge?
+  bool IsLeftEdge() const { return !rect.x(); }
+
+  // Is the top edge of this tile aligned with the originating layer's
+  // top edge?
+  bool IsTopEdge() const { return !rect.y(); }
+
+  // Is the right edge of this tile aligned with the originating layer's
+  // right edge?
+  bool IsRightEdge() const {
+    return rect.right() == shared_quad_state->content_bounds.width();
+  }
+
+  // Is the bottom edge of this tile aligned with the originating layer's
+  // bottom edge?
+  bool IsBottomEdge() const {
+    return rect.bottom() == shared_quad_state->content_bounds.height();
+  }
+
+  // Is any edge of this tile aligned with the originating layer's
+  // corresponding edge?
+  bool IsEdge() const {
+    return IsLeftEdge() || IsTopEdge() || IsRightEdge() || IsBottomEdge();
   }
 
  protected:

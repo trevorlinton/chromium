@@ -3,8 +3,8 @@
 // found in the LICENSE file.
 
 // This file contains various hacks needed to inform JSCompiler of various
-// WebKit-specific properties and methods. It is used only with JSCompiler
-// to verify the type-correctness of our code.
+// WebKit- and Chrome-specific properties and methods. It is used only with
+// JSCompiler to verify the type-correctness of our code.
 
 /** @type {HTMLElement} */
 Document.prototype.activeElement;
@@ -31,7 +31,7 @@ Element.ALLOW_KEYBOARD_INPUT;
 /** @return {void} Nothing. */
 Element.prototype.webkitRequestFullScreen = function(flags) {};
 
-/** @type {{getRandomValues: function(Uint16Array):void}} */
+/** @type {{getRandomValues: function((Uint16Array|Uint8Array)):void}} */
 Window.prototype.crypto;
 
 /** @constructor
@@ -43,6 +43,9 @@ HTMLEmbedElement.prototype.height;
 
 /** @type {number} */
 HTMLEmbedElement.prototype.width;
+
+/** @type {Window} */
+HTMLIFrameElement.prototype.contentWindow;
 
 /** @constructor */
 var MutationRecord = function() {};
@@ -70,3 +73,74 @@ chrome.storage = {};
 // TODO(jamiewalch): Flesh this out with the correct type when we're a v2 app.
 /** @type {remoting.MockStorage} */
 chrome.storage.local = null;
+
+/** @type {Object} */
+chrome.app.runtime = {
+  /** @type {Object} */
+  onLaunched: {
+    /** @param {function():void} callback */
+    addListener: function(callback) {}
+  }
+};
+
+/** @type {Object} */
+chrome.app.window = {
+  /**
+   * @param {string} name
+   * @param {Object} parameters
+   */
+  create: function(name, parameters) {}
+};
+
+/** @type {Object} */
+chrome.experimental = {};
+
+/** @type {Object} */
+chrome.experimental.identity = {
+  /**
+   * @param {Object.<string>} parameters
+   * @param {function(string):void} callback
+   */
+  getAuthToken: function(parameters, callback) {}
+};
+
+/** @type {Object} */
+chrome.runtime = {
+  /** @type {Object} */
+  lastError: {
+    /** @type {string} */
+    message: ''
+  },
+  /** @return {{version: string}} */
+  getManifest: function() {}
+};
+
+/** @type {Object} */
+chrome.tabs;
+
+/** @param {function(chrome.Tab):void} callback */
+chrome.tabs.getCurrent = function(callback) {}
+
+/** @constructor */
+chrome.Tab = function() {
+  /** @type {boolean} */
+  this.pinned = false;
+  /** @type {number} */
+  this.windowId = 0;
+};
+
+/** @type {Object} */
+chrome.windows;
+
+/** @param {number} id
+ *  @param {Object?} getInfo
+ *  @param {function(chrome.Window):void} callback */
+chrome.windows.get = function(id, getInfo, callback) {}
+
+/** @constructor */
+chrome.Window = function() {
+  /** @type {string} */
+  this.state = '';
+  /** @type {string} */
+  this.type = '';
+};

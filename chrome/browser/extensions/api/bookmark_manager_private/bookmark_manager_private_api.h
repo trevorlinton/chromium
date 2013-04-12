@@ -7,7 +7,7 @@
 
 #include "base/values.h"
 #include "chrome/browser/bookmarks/bookmark_node_data.h"
-#include "chrome/browser/extensions/api/bookmarks/bookmark_api.h"
+#include "chrome/browser/extensions/api/bookmarks/bookmarks_api.h"
 #include "chrome/browser/extensions/extension_function.h"
 #include "chrome/browser/ui/bookmarks/bookmark_tab_helper.h"
 
@@ -62,134 +62,156 @@ class ClipboardBookmarkManagerFunction : public extensions::BookmarksFunction {
   bool CopyOrCut(bool cut);
 };
 
-class CopyBookmarkManagerFunction : public ClipboardBookmarkManagerFunction {
+class BookmarkManagerPrivateCopyFunction
+    : public ClipboardBookmarkManagerFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("bookmarkManagerPrivate.copy");
+  DECLARE_EXTENSION_FUNCTION("bookmarkManagerPrivate.copy",
+                             BOOKMARKMANAGERPRIVATE_COPY)
 
  protected:
-  virtual ~CopyBookmarkManagerFunction() {}
+  virtual ~BookmarkManagerPrivateCopyFunction() {}
 
   // ExtensionFunction:
   virtual bool RunImpl() OVERRIDE;
 };
 
-class CutBookmarkManagerFunction : public ClipboardBookmarkManagerFunction {
+class BookmarkManagerPrivateCutFunction
+    : public ClipboardBookmarkManagerFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("bookmarkManagerPrivate.cut");
+  DECLARE_EXTENSION_FUNCTION("bookmarkManagerPrivate.cut",
+                             BOOKMARKMANAGERPRIVATE_CUT)
 
  protected:
-  virtual ~CutBookmarkManagerFunction() {}
+  virtual ~BookmarkManagerPrivateCutFunction() {}
 
   // ExtensionFunction:
   virtual bool RunImpl() OVERRIDE;
 };
 
-class PasteBookmarkManagerFunction : public extensions::BookmarksFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION_NAME("bookmarkManagerPrivate.paste");
-
- protected:
-  virtual ~PasteBookmarkManagerFunction() {}
-
-  // ExtensionFunction:
-  virtual bool RunImpl() OVERRIDE;
-};
-
-class CanPasteBookmarkManagerFunction : public extensions::BookmarksFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION_NAME("bookmarkManagerPrivate.canPaste");
-
- protected:
-  virtual ~CanPasteBookmarkManagerFunction() {}
-
-  // ExtensionFunction:
-  virtual bool RunImpl() OVERRIDE;
-};
-
-class SortChildrenBookmarkManagerFunction
+class BookmarkManagerPrivatePasteFunction
     : public extensions::BookmarksFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("bookmarkManagerPrivate.sortChildren");
+  DECLARE_EXTENSION_FUNCTION("bookmarkManagerPrivate.paste",
+                             BOOKMARKMANAGERPRIVATE_PASTE)
 
  protected:
-  virtual ~SortChildrenBookmarkManagerFunction() {}
+  virtual ~BookmarkManagerPrivatePasteFunction() {}
 
   // ExtensionFunction:
   virtual bool RunImpl() OVERRIDE;
 };
 
-class BookmarkManagerGetStringsFunction : public AsyncExtensionFunction {
+class BookmarkManagerPrivateCanPasteFunction
+    : public extensions::BookmarksFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("bookmarkManagerPrivate.getStrings");
+  DECLARE_EXTENSION_FUNCTION("bookmarkManagerPrivate.canPaste",
+                             BOOKMARKMANAGERPRIVATE_CANPASTE)
 
  protected:
-  virtual ~BookmarkManagerGetStringsFunction() {}
+  virtual ~BookmarkManagerPrivateCanPasteFunction() {}
 
   // ExtensionFunction:
   virtual bool RunImpl() OVERRIDE;
 };
 
-class StartDragBookmarkManagerFunction : public extensions::BookmarksFunction {
+class BookmarkManagerPrivateSortChildrenFunction
+    : public extensions::BookmarksFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("bookmarkManagerPrivate.startDrag");
+  DECLARE_EXTENSION_FUNCTION("bookmarkManagerPrivate.sortChildren",
+                             BOOKMARKMANAGERPRIVATE_SORTCHILDREN)
 
  protected:
-  virtual ~StartDragBookmarkManagerFunction() {}
+  virtual ~BookmarkManagerPrivateSortChildrenFunction() {}
 
   // ExtensionFunction:
   virtual bool RunImpl() OVERRIDE;
 };
 
-class DropBookmarkManagerFunction : public extensions::BookmarksFunction {
+class BookmarkManagerPrivateGetStringsFunction : public AsyncExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("bookmarkManagerPrivate.drop");
+  DECLARE_EXTENSION_FUNCTION("bookmarkManagerPrivate.getStrings",
+                             BOOKMARKMANAGERPRIVATE_GETSTRINGS)
 
  protected:
-  virtual ~DropBookmarkManagerFunction() {}
+  virtual ~BookmarkManagerPrivateGetStringsFunction() {}
 
   // ExtensionFunction:
   virtual bool RunImpl() OVERRIDE;
 };
 
-class GetSubtreeBookmarkManagerFunction : public extensions::BookmarksFunction {
+class BookmarkManagerPrivateStartDragFunction
+    : public extensions::BookmarksFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("bookmarkManagerPrivate.getSubtree");
+  DECLARE_EXTENSION_FUNCTION("bookmarkManagerPrivate.startDrag",
+                             BOOKMARKMANAGERPRIVATE_STARTDRAG)
 
  protected:
-  virtual ~GetSubtreeBookmarkManagerFunction() {}
+  virtual ~BookmarkManagerPrivateStartDragFunction() {}
 
   // ExtensionFunction:
   virtual bool RunImpl() OVERRIDE;
 };
 
-class CanEditBookmarkManagerFunction : public extensions::BookmarksFunction {
+class BookmarkManagerPrivateDropFunction
+    : public extensions::BookmarksFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("bookmarkManagerPrivate.canEdit");
+  DECLARE_EXTENSION_FUNCTION("bookmarkManagerPrivate.drop",
+                             BOOKMARKMANAGERPRIVATE_DROP)
 
  protected:
-  virtual ~CanEditBookmarkManagerFunction() {}
+  virtual ~BookmarkManagerPrivateDropFunction() {}
 
   // ExtensionFunction:
   virtual bool RunImpl() OVERRIDE;
 };
 
-class RecordLaunchBookmarkFunction : public extensions::BookmarksFunction {
+class BookmarkManagerPrivateGetSubtreeFunction
+    : public extensions::BookmarksFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("bookmarkManagerPrivate.recordLaunch")
+  DECLARE_EXTENSION_FUNCTION("bookmarkManagerPrivate.getSubtree",
+                             BOOKMARKMANAGERPRIVATE_GETSUBTREE)
 
  protected:
-  virtual ~RecordLaunchBookmarkFunction() {}
+  virtual ~BookmarkManagerPrivateGetSubtreeFunction() {}
 
   // ExtensionFunction:
   virtual bool RunImpl() OVERRIDE;
 };
 
-class CanOpenNewWindowsBookmarkFunction : public extensions::BookmarksFunction {
+class BookmarkManagerPrivateCanEditFunction
+    : public extensions::BookmarksFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("bookmarkManagerPrivate.canOpenNewWindows");
+  DECLARE_EXTENSION_FUNCTION("bookmarkManagerPrivate.canEdit",
+                             BOOKMARKMANAGERPRIVATE_CANEDIT)
 
  protected:
-  virtual ~CanOpenNewWindowsBookmarkFunction() {}
+  virtual ~BookmarkManagerPrivateCanEditFunction() {}
+
+  // ExtensionFunction:
+  virtual bool RunImpl() OVERRIDE;
+};
+
+class BookmarkManagerPrivateRecordLaunchFunction
+    : public extensions::BookmarksFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("bookmarkManagerPrivate.recordLaunch",
+                             BOOKMARKMANAGERPRIVATE_RECORDLAUNCH)
+
+ protected:
+  virtual ~BookmarkManagerPrivateRecordLaunchFunction() {}
+
+  // ExtensionFunction:
+  virtual bool RunImpl() OVERRIDE;
+};
+
+class BookmarkManagerPrivateCanOpenNewWindowsFunction
+    : public extensions::BookmarksFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("bookmarkManagerPrivate.canOpenNewWindows",
+                             BOOKMARKMANAGERPRIVATE_CANOPENNEWWINDOWS)
+
+ protected:
+  virtual ~BookmarkManagerPrivateCanOpenNewWindowsFunction() {}
 
   // ExtensionFunction:
   virtual bool RunImpl() OVERRIDE;

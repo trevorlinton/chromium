@@ -180,6 +180,7 @@ enum PropertyIndex {
   PROPERTY_INDEX_TECHNOLOGY_FAMILY,
   PROPERTY_INDEX_TYPE,
   PROPERTY_INDEX_UI_DATA,
+  PROPERTY_INDEX_UNINITIALIZED_TECHNOLOGIES,
   PROPERTY_INDEX_UNKNOWN,
   PROPERTY_INDEX_USAGE_URL,
   PROPERTY_INDEX_VPN_DOMAIN,
@@ -231,6 +232,14 @@ enum ConnectionState {
   STATE_PORTAL             = 9,
   STATE_ONLINE             = 10,
   STATE_CONNECT_REQUESTED  = 11,  // Chrome only state
+};
+
+// Chrome only state set for user initiated connection attempts.
+enum UserConnectState {
+  USER_CONNECT_NONE    = 0,
+  USER_CONNECT_STARTED = 1,
+  USER_CONNECT_CONNECTED = 2,
+  USER_CONNECT_FAILED = 3
 };
 
 // Network enums (see flimflam/include/network.h)
@@ -327,6 +336,9 @@ enum ConnectionError {
   ERROR_IPSEC_PSK_AUTH_FAILED  = 15,
   ERROR_IPSEC_CERT_AUTH_FAILED = 16,
   ERROR_PPP_AUTH_FAILED        = 17,
+  ERROR_EAP_AUTHENTICATION_FAILED = 18,
+  ERROR_EAP_LOCAL_TLS_FAILED   = 19,
+  ERROR_EAP_REMOTE_TLS_FAILED  = 20,
   ERROR_UNKNOWN                = 255
 };
 

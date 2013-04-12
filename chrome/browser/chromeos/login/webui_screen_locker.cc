@@ -12,8 +12,6 @@
 #include "base/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/accessibility/accessibility_util.h"
-#include "chrome/browser/chromeos/cros/cros_library.h"
-#include "chrome/browser/chromeos/cros/network_library.h"
 #include "chrome/browser/chromeos/login/helper.h"
 #include "chrome/browser/chromeos/login/screen_locker.h"
 #include "chrome/browser/chromeos/login/user_manager.h"
@@ -22,7 +20,6 @@
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/url_constants.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/root_power_manager_client.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
@@ -53,7 +50,6 @@ WebUIScreenLocker::WebUIScreenLocker(ScreenLocker* screen_locker)
   set_should_emit_login_prompt_visible(false);
   ash::Shell::GetInstance()->session_state_controller()->AddObserver(this);
   DBusThreadManager::Get()->GetPowerManagerClient()->AddObserver(this);
-  DBusThreadManager::Get()->GetRootPowerManagerClient()->AddObserver(this);
 }
 
 void WebUIScreenLocker::LockScreen(bool unlock_on_input) {
@@ -138,7 +134,6 @@ void WebUIScreenLocker::FocusUserPod() {
 }
 
 WebUIScreenLocker::~WebUIScreenLocker() {
-  DBusThreadManager::Get()->GetRootPowerManagerClient()->RemoveObserver(this);
   DBusThreadManager::Get()->GetPowerManagerClient()->RemoveObserver(this);
   ash::Shell::GetInstance()->session_state_controller()->RemoveObserver(this);
   // In case of shutdown, lock_window_ may be deleted before WebUIScreenLocker.
@@ -196,13 +191,18 @@ void WebUIScreenLocker::CreateAccount() {
   NOTREACHED();
 }
 
+void WebUIScreenLocker::CreateLocallyManagedUser(const string16& display_name,
+                                                 const std::string& password) {
+  NOTREACHED();
+}
+
 void WebUIScreenLocker::CompleteLogin(const std::string& username,
                                       const std::string& password) {
   NOTREACHED();
 }
 
 string16 WebUIScreenLocker::GetConnectedNetworkName() {
-  return GetCurrentNetworkName(CrosLibrary::Get()->GetNetworkLibrary());
+  return GetCurrentNetworkName();
 }
 
 void WebUIScreenLocker::Login(const std::string& username,
@@ -235,6 +235,10 @@ void WebUIScreenLocker::OnStartEnterpriseEnrollment() {
 }
 
 void WebUIScreenLocker::OnStartDeviceReset() {
+  NOTREACHED();
+}
+
+void WebUIScreenLocker::ShowWrongHWIDScreen() {
   NOTREACHED();
 }
 
@@ -272,7 +276,7 @@ void WebUIScreenLocker::OnSessionStateEvent(
 ////////////////////////////////////////////////////////////////////////////////
 // WidgetObserver override.
 
-void WebUIScreenLocker::OnWidgetClosing(views::Widget* widget) {
+void WebUIScreenLocker::OnWidgetDestroying(views::Widget* widget) {
   lock_window_->RemoveObserver(this);
   lock_window_ = NULL;
 }
@@ -293,17 +297,6 @@ void WebUIScreenLocker::SystemResumed(const base::TimeDelta& sleep_duration) {
       content::BrowserThread::UI,
       FROM_HERE,
       base::Bind(&WebUIScreenLocker::FocusUserPod, weak_factory_.GetWeakPtr()));
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// RootPowerManagerObserver overrides.
-
-void WebUIScreenLocker::OnResume(const base::TimeDelta& sleep_duration) {
-  SystemResumed(sleep_duration);
-}
-
-void WebUIScreenLocker::OnLidEvent(bool open, const base::TimeTicks& time) {
-  LidEventReceived(open, time);
 }
 
 }  // namespace chromeos

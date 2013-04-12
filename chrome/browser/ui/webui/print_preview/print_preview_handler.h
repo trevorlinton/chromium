@@ -15,13 +15,13 @@
 #include "chrome/browser/printing/print_view_manager_observer.h"
 #include "content/public/browser/web_ui_message_handler.h"
 #include "printing/print_job_constants.h"
-#include "ui/base/dialogs/select_file_dialog.h"
+#include "ui/shell_dialogs/select_file_dialog.h"
 
-class FilePath;
 class PrintSystemTaskProxy;
 
 namespace base {
 class DictionaryValue;
+class FilePath;
 class RefCountedBytes;
 }
 
@@ -48,7 +48,7 @@ class PrintPreviewHandler : public content::WebUIMessageHandler,
   virtual void RegisterMessages() OVERRIDE;
 
   // SelectFileDialog::Listener implementation.
-  virtual void FileSelected(const FilePath& path,
+  virtual void FileSelected(const base::FilePath& path,
                             int index,
                             void* params) OVERRIDE;
   virtual void FileSelectionCanceled(void* params) OVERRIDE;
@@ -57,7 +57,7 @@ class PrintPreviewHandler : public content::WebUIMessageHandler,
   virtual void OnPrintDialogShown() OVERRIDE;
 
   // Displays a modal dialog, prompting the user to select a file.
-  void SelectFile(const FilePath& default_path);
+  void SelectFile(const base::FilePath& default_path);
 
   // Called when the print preview dialog is destroyed. This is the last time
   // this object has access to the PrintViewManager in order to disconnect the
@@ -88,10 +88,6 @@ class PrintPreviewHandler : public content::WebUIMessageHandler,
   // Gets the job settings from Web UI and initiate printing. First element of
   // |args| is a job settings JSON string.
   void HandlePrint(const base::ListValue* args);
-
-  // Handles printing to PDF. |settings| points to a dictionary containing all
-  // the print request parameters.
-  void HandlePrintToPdf(const base::DictionaryValue& settings);
 
   // Handles the request to hide the preview dialog for printing.
   // |args| is unused.
@@ -142,6 +138,15 @@ class PrintPreviewHandler : public content::WebUIMessageHandler,
   // of two elements: the bucket name, and the bucket event.
   void HandleReportUiEvent(const base::ListValue* args);
 
+  // Forces the opening of a new tab. |args| should consist of one element: the
+  // URL to set the new tab to.
+  //
+  // NOTE: This is needed to open FedEx confirmation window as a new tab.
+  // Javascript's "window.open" opens a new window popup (since initiated from
+  // async HTTP request) and worse yet, on Windows and Chrome OS, the opened
+  // window opens behind the initiator window.
+  void HandleForceOpenNewTab(const base::ListValue* args);
+
   void SendInitialSettings(
       const std::string& default_printer,
       const std::string& cloud_print_data);
@@ -161,13 +166,20 @@ class PrintPreviewHandler : public content::WebUIMessageHandler,
   void SendCloudPrintEnabled();
 
   // Send the PDF data to the cloud to print.
-  void SendCloudPrintJob();
+  void SendCloudPrintJob(const base::RefCountedBytes* data);
+
+  // Handles printing to PDF.
+  void PrintToPdf();
+
+  // Asks the browser to show the cloud print dialog.
+  void PrintWithCloudPrintDialog(const base::RefCountedBytes* data,
+                                 const string16& title);
 
   // Gets the initiator tab for the print preview dialog.
   content::WebContents* GetInitiatorTab() const;
 
-  // Closes the preview dialog and activates the initiator tab.
-  void ClosePreviewDialogAndActivateInitiatorTab();
+  // Closes the preview dialog.
+  void ClosePreviewDialog();
 
   // Adds all the recorded stats taken so far to histogram counts.
   void ReportStats();
@@ -176,12 +188,15 @@ class PrintPreviewHandler : public content::WebUIMessageHandler,
   void ClearInitiatorTabDetails();
 
   // Posts a task to save |data| to pdf at |print_to_pdf_path_|.
-  void PostPrintToPdfTask(base::RefCountedBytes* data);
+  void PostPrintToPdfTask();
 
   // Populates |settings| according to the current locale.
   void GetNumberFormatAndMeasurementSystem(base::DictionaryValue* settings);
 
   static printing::StickySettings* GetStickySettings();
+
+  bool GetPreviewDataAndTitle(scoped_refptr<base::RefCountedBytes>* data,
+                              string16* title) const;
 
   // Pointer to current print system.
   scoped_refptr<printing::PrintBackend> print_backend_;
@@ -205,7 +220,7 @@ class PrintPreviewHandler : public content::WebUIMessageHandler,
 
   // Holds the path to the print to pdf request. It is empty if no such request
   // exists.
-  scoped_ptr<FilePath> print_to_pdf_path_;
+  scoped_ptr<base::FilePath> print_to_pdf_path_;
 
   DISALLOW_COPY_AND_ASSIGN(PrintPreviewHandler);
 };

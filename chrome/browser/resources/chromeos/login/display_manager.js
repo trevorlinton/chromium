@@ -17,6 +17,10 @@
 /** @const */ var SCREEN_USER_IMAGE_PICKER = 'user-image';
 /** @const */ var SCREEN_TPM_ERROR = 'tpm-error-message';
 /** @const */ var SCREEN_PASSWORD_CHANGED = 'password-changed';
+/** @const */ var SCREEN_CREATE_MANAGED_USER_DIALOG =
+    'managed-user-creation-dialog';
+/** @const */ var SCREEN_CREATE_MANAGED_USER_FLOW =
+    'managed-user-creation-flow';
 
 /* Accelerator identifiers. Must be kept in sync with webui_login_view.cc. */
 /** @const */ var ACCELERATOR_CANCEL = 'cancel';
@@ -26,6 +30,16 @@
 
 /* Help topic identifiers. */
 /** @const */ var HELP_TOPIC_ENTERPRISE_REPORTING = 2535613;
+
+/* Signin UI state constants. Used to control header bar UI. */
+/** @const */ var SIGNIN_UI_STATE = {
+  HIDDEN: 0,
+  GAIA_SIGNIN: 1,
+  ACCOUNT_PICKER: 2,
+  WRONG_HWID_WARNING: 3,
+  MANAGED_USER_CREATION_DIALOG: 4,
+  MANAGED_USER_CREATION_FLOW: 5,
+};
 
 cr.define('cr.ui.login', function() {
   var Bubble = cr.ui.Bubble;
@@ -66,6 +80,12 @@ cr.define('cr.ui.login', function() {
      * @type {boolean}
      */
     allowToggleVersion_: false,
+
+    /**
+     * List of parameters to showScreen calls.
+     * @type {array}
+     */
+    screenParametersHistory_: [],
 
     /**
      * Gets current screen element.
@@ -136,11 +156,7 @@ cr.define('cr.ui.login', function() {
      */
     appendButtons_: function(buttons, screenId) {
       if (buttons) {
-        var buttonStrip = null;
-        if (this.isNewOobe())
-          buttonStrip = $(screenId + '-controls');
-        else
-          buttonStrip = $('button-strip');
+        var buttonStrip = $(screenId + '-controls');
         if (buttonStrip) {
           for (var i = 0; i < buttons.length; ++i)
             buttonStrip.appendChild(buttons[i]);
@@ -155,7 +171,7 @@ cr.define('cr.ui.login', function() {
      */
     disableButtons_: function(screen, disabled) {
       var buttons = document.querySelectorAll(
-          '#' + screen.id + '-controls button');
+          '#' + screen.id + '-controls button:not(.preserve-disabled-state)');
       for (var i = 0; i < buttons.length; ++i) {
         buttons[i].disabled = disabled;
       }
@@ -234,7 +250,7 @@ cr.define('cr.ui.login', function() {
       var innerContainer = $('inner-container');
       if (this.currentStep_ != nextStepIndex &&
           !oldStep.classList.contains('hidden')) {
-        if (oldStep.classList.contains('animated') || !this.isNewOobe()) {
+        if (oldStep.classList.contains('animated')) {
           innerContainer.classList.add('animation');
           oldStep.addEventListener('webkitTransitionEnd', function f(e) {
             oldStep.removeEventListener('webkitTransitionEnd', f);
@@ -295,13 +311,21 @@ cr.define('cr.ui.login', function() {
      * @param {Object} screen Screen params dict, e.g. {id: screenId, data: {}}.
      */
     showScreen: function(screen) {
+      var screenId = screen.id;
+
+      // As for now, support "back" only for create managed user screen.
+      if (screenId != SCREEN_CREATE_MANAGED_USER_DIALOG) {
+        this.screenParametersHistory_ = [];
+      }
+
+      this.screenParametersHistory_.push(screen);
+
       // Make sure the screen is decorated.
       this.preloadScreen(screen);
 
       if (screen.data !== undefined && screen.data.disableAddUser)
         DisplayManager.updateAddUserButtonStatus(true);
 
-      var screenId = screen.id;
 
       // Show sign-in screen instead of account picker if pod row is empty.
       if (screenId == SCREEN_ACCOUNT_PICKER && $('pod-row').pods.length == 0) {
@@ -316,6 +340,16 @@ cr.define('cr.ui.login', function() {
       var index = this.getScreenIndex_(screenId);
       if (index >= 0)
         this.toggleStep_(index, data);
+    },
+
+    /**
+     * Shows the previous screen of workflow.
+     */
+    goBack: function() {
+      if (this.screenParametersHistory_.length >= 2) {
+        this.screenParametersHistory_.pop();
+        this.showScreen(this.screenParametersHistory_.pop());
+      }
     },
 
     /**
@@ -342,22 +376,13 @@ cr.define('cr.ui.login', function() {
       var header = document.createElement('span');
       header.id = 'header-' + screenId;
       header.textContent = el.header ? el.header : '';
-      if (this.isNewOobe()) {
-        header.className = 'header-section';
-        $('header-sections').appendChild(header);
-      } else {
-        header.className = 'header-section-old right';
-        $('header-sections-old').appendChild(header);
-      }
+      header.className = 'header-section';
+      $('header-sections').appendChild(header);
 
       var dot = document.createElement('div');
       dot.id = screenId + '-dot';
       dot.className = 'progdot';
-
-      if (this.isNewOobe())
-        $('progress-dots').appendChild(dot);
-      else
-        $('progress').appendChild(dot);
+      $('progress-dots').appendChild(dot);
 
       this.appendButtons_(el.buttons, screenId);
     },
@@ -377,25 +402,21 @@ cr.define('cr.ui.login', function() {
 
       var height = screen.offsetHeight;
       var width = screen.offsetWidth;
-      if (this.isNewOobe()) {
-        for (var i = 0, screenGroup; screenGroup = SCREEN_GROUPS[i]; i++) {
-          if (screenGroup.indexOf(screen.id) != -1) {
-            // Set screen dimensions to maximum dimensions within this group.
-            for (var j = 0, screen2; screen2 = $(screenGroup[j]); j++) {
-              height = Math.max(height, screen2.offsetHeight);
-              width = Math.max(width, screen2.offsetWidth);
-            }
-            break;
+      for (var i = 0, screenGroup; screenGroup = SCREEN_GROUPS[i]; i++) {
+        if (screenGroup.indexOf(screen.id) != -1) {
+          // Set screen dimensions to maximum dimensions within this group.
+          for (var j = 0, screen2; screen2 = $(screenGroup[j]); j++) {
+            height = Math.max(height, screen2.offsetHeight);
+            width = Math.max(width, screen2.offsetWidth);
           }
+          break;
         }
       }
       $('inner-container').style.height = height + 'px';
-      if (this.isNewOobe()) {
-        $('inner-container').style.width = width + 'px';
-        // This requires |screen| to have 'box-sizing: border-box'.
-        screen.style.width = width + 'px';
-        screen.style.height = height + 'px';
-      }
+      $('inner-container').style.width = width + 'px';
+      // This requires |screen| to have 'box-sizing: border-box'.
+      screen.style.width = width + 'px';
+      screen.style.height = height + 'px';
     },
 
     /**
@@ -403,18 +424,12 @@ cr.define('cr.ui.login', function() {
      * Should be executed on language change.
      */
     updateLocalizedContent_: function() {
-      if (!this.isNewOobe())
-        $('button-strip').innerHTML = '';
       for (var i = 0, screenId; screenId = this.screens_[i]; ++i) {
         var screen = $(screenId);
-        if (this.isNewOobe()) {
-          var buttonStrip = $(screenId + '-controls');
-          if (buttonStrip)
-            buttonStrip.innerHTML = '';
-          // TODO(nkostylev): Update screen headers for new OOBE design.
-        } else {
-          $('header-' + screenId).textContent = screen.header;
-        }
+        var buttonStrip = $(screenId + '-controls');
+        if (buttonStrip)
+          buttonStrip.innerHTML = '';
+        // TODO(nkostylev): Update screen headers for new OOBE design.
         this.appendButtons_(screen.buttons, screenId);
         if (screen.updateLocalizedContent)
           screen.updateLocalizedContent();
@@ -454,13 +469,6 @@ cr.define('cr.ui.login', function() {
     },
 
     /**
-     * Returns true if new OOBE design is used.
-     */
-    isNewOobe: function() {
-      return document.documentElement.getAttribute('oobe') == 'new';
-    },
-
-    /**
      * Returns true if the current screen is the lock screen.
      */
     isLockScreen: function() {
@@ -471,7 +479,7 @@ cr.define('cr.ui.login', function() {
      * Returns true if sign in UI should trigger wallpaper load on boot.
      */
     shouldLoadWallpaperOnBoot: function() {
-      return localStrings.getString('bootIntoWallpaper') == 'on';
+      return loadTimeData.getString('bootIntoWallpaper') == 'on';
     },
   };
 
@@ -526,7 +534,14 @@ cr.define('cr.ui.login', function() {
    * @param {string} opt_email An optional email for signin UI.
    */
   DisplayManager.showSigninUI = function(opt_email) {
-    $('login-header-bar').signinUIActive = true;
+    var currentScreenId = Oobe.getInstance().currentScreen.id;
+    if (currentScreenId == SCREEN_GAIA_SIGNIN)
+      $('login-header-bar').signinUIState = SIGNIN_UI_STATE.GAIA_SIGNIN;
+    else if (currentScreenId == SCREEN_ACCOUNT_PICKER)
+      $('login-header-bar').signinUIState = SIGNIN_UI_STATE.ACCOUNT_PICKER;
+    else if (currentScreenId == SCREEN_CREATE_MANAGED_USER_DIALOG)
+      $('login-header-bar').signinUIState =
+          SIGNIN_UI_STATE.MANAGED_USER_CREATION_DIALOG;
     chrome.send('showAddUser', [opt_email]);
   };
 
@@ -556,12 +571,12 @@ cr.define('cr.ui.login', function() {
     var error = document.createElement('div');
 
     var messageDiv = document.createElement('div');
-    messageDiv.className = 'error-message';
+    messageDiv.className = 'error-message-bubble';
     messageDiv.textContent = message;
     error.appendChild(messageDiv);
 
     if (link) {
-      messageDiv.classList.add('error-message-padding');
+      messageDiv.classList.add('error-message-bubble-padding');
 
       var helpLink = document.createElement('a');
       helpLink.href = '#';
@@ -583,6 +598,13 @@ cr.define('cr.ui.login', function() {
    */
   DisplayManager.showPasswordChangedScreen = function(showError) {
     login.PasswordChangedScreen.show(showError);
+  };
+
+  /**
+   * Shows dialog to create managed user.
+   */
+  DisplayManager.showManagedUserCreationScreen = function() {
+    login.ManagedUserCreationScreen.show();
   };
 
   /**
@@ -637,8 +659,15 @@ cr.define('cr.ui.login', function() {
     $('add-user-button').classList[
         disable ? 'add' : 'remove']('button-restricted');
     $('add-user-button').title = disable ?
-        localStrings.getString('disabledAddUserTooltip') : '';
+        loadTimeData.getString('disabledAddUserTooltip') : '';
   }
+
+  /**
+   * Clears password field in user-pod.
+   */
+  DisplayManager.clearUserPodPassword = function() {
+    $('pod-row').clearFocusedPod();
+  };
 
   // Export
   return {

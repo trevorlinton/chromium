@@ -41,6 +41,9 @@ class CC_EXPORT IOSurfaceDrawQuad : public DrawQuad {
   unsigned io_surface_texture_id;
   Orientation orientation;
 
+  virtual void IterateResources(const ResourceIteratorCallback& callback)
+      OVERRIDE;
+
   static const IOSurfaceDrawQuad* MaterialCast(const DrawQuad*);
  private:
   IOSurfaceDrawQuad();

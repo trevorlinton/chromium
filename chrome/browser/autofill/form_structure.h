@@ -9,10 +9,12 @@
 #include <vector>
 
 #include "base/gtest_prod_util.h"
+#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "chrome/browser/autofill/autofill_field.h"
 #include "chrome/browser/autofill/autofill_type.h"
 #include "chrome/browser/autofill/field_types.h"
+#include "chrome/common/autofill/web_element_descriptor.h"
 #include "googleurl/src/gurl.h"
 
 struct FormData;
@@ -31,6 +33,10 @@ enum UploadRequired {
 
 class AutofillMetrics;
 
+namespace autofill {
+struct AutocheckoutPageMetaData;
+}
+
 namespace base {
 class TimeTicks;
 }
@@ -43,7 +49,8 @@ class XmlElement;
 // in the fields along with additional information needed by Autofill.
 class FormStructure {
  public:
-  explicit FormStructure(const FormData& form);
+  FormStructure(const FormData& form,
+                const std::string& autocheckout_url_prefix);
   virtual ~FormStructure();
 
   // Runs several heuristics against the form fields to determine their possible
@@ -66,9 +73,11 @@ class FormStructure {
 
   // Parses the field types from the server query response. |forms| must be the
   // same as the one passed to EncodeQueryRequest when constructing the query.
-  static void ParseQueryResponse(const std::string& response_xml,
-                                 const std::vector<FormStructure*>& forms,
-                                 const AutofillMetrics& metric_logger);
+  static void ParseQueryResponse(
+      const std::string& response_xml,
+      const std::vector<FormStructure*>& forms,
+      autofill::AutocheckoutPageMetaData* page_meta_data,
+      const AutofillMetrics& metric_logger);
 
   // Fills |forms| with the details from the given |form_structures| and their
   // fields' predicted types.
@@ -127,6 +136,7 @@ class FormStructure {
   const AutofillField* field(size_t index) const;
   AutofillField* field(size_t index);
   size_t field_count() const;
+  size_t checkable_field_count() const;
 
   // Returns the number of fields that are able to be autofilled.
   size_t autofill_count() const { return autofill_count_; }
@@ -155,6 +165,7 @@ class FormStructure {
  private:
   friend class FormStructureTest;
   FRIEND_TEST_ALL_PREFIXES(AutofillDownloadTest, QueryAndUploadTest);
+
   // 64-bit hash of the string - used in FormSignature and unit-tests.
   static std::string Hash64Bit(const std::string& str);
 
@@ -177,6 +188,11 @@ class FormStructure {
   // distinguishing credit card sections from non-credit card ones -- is made.
   void IdentifySections(bool has_author_specified_sections);
 
+  bool IsAutocheckoutEnabled() const;
+
+  // Returns the minimal number of fillable fields required to start autofill.
+  size_t RequiredFillableFields() const;
+
   // The name of the form.
   string16 form_name_;
 
@@ -191,6 +207,9 @@ class FormStructure {
 
   // A vector of all the input fields in the form.
   ScopedVector<AutofillField> fields_;
+
+  // The number of fields able to be checked.
+  size_t checkable_field_count_;
 
   // The names of the form input elements, that are part of the form signature.
   // The string starts with "&" and the names are also separated by the "&"
@@ -211,6 +230,10 @@ class FormStructure {
   // Whether the form includes any field types explicitly specified by the site
   // author, via the |autocompletetype| attribute.
   bool has_author_specified_types_;
+
+  // The URL prefix matched in autocheckout whitelist. An empty string implies
+  // autocheckout is not enabled for this form.
+  std::string autocheckout_url_prefix_;
 
   DISALLOW_COPY_AND_ASSIGN(FormStructure);
 };

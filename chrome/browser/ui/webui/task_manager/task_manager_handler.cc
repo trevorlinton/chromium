@@ -9,12 +9,11 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/string_number_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/task_manager/task_manager.h"
 #include "chrome/browser/ui/host_desktop.h"
-#include "chrome/browser/ui/webui/web_ui_util.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
@@ -22,6 +21,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "ui/gfx/image/image_skia.h"
+#include "ui/webui/web_ui_util.h"
 #include "webkit/glue/webpreferences.h"
 
 namespace {
@@ -344,7 +344,7 @@ base::Value* TaskManagerHandler::CreateColumnValue(
     const gfx::ImageSkiaRep image_rep =
         image.GetRepresentation(icon_scale_factor);
     return Value::CreateStringValue(
-        web_ui_util::GetBitmapDataUrl(image_rep.sk_bitmap()));
+        webui::GetBitmapDataUrl(image_rep.sk_bitmap()));
   }
   if (column_name == "title")
     return Value::CreateStringValue(model_->GetResourceTitle(i));

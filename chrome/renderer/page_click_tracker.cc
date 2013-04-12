@@ -6,12 +6,12 @@
 
 #include "chrome/renderer/page_click_listener.h"
 #include "content/public/renderer/render_view.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebDocument.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebDOMMouseEvent.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebFrame.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebInputElement.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebInputEvent.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebString.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebView.h"
 
 using WebKit::WebDOMEvent;
@@ -139,6 +139,10 @@ void PageClickTracker::handleEvent(const WebDOMEvent& event) {
   // We'll get a notification once the mouse event has been processed
   // (DidHandleMouseEvent), we'll notify the listener at that point.
   WebNode node = mouse_event.target();
+  if (node.isNull())
+    // Node may be null if the target was an SVG instance element from a <use>
+    // tree and the tree has been rebuilt due to an earlier event.
+    return;
 
   HandleTextFieldMaybeLosingFocus(node);
 

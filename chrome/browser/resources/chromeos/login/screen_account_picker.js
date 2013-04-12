@@ -75,6 +75,7 @@ cr.define('login', function() {
      */
     onBeforeShow: function(data) {
       chrome.send('loginUIStateChanged', ['account-picker', true]);
+      $('login-header-bar').signinUIState = SIGNIN_UI_STATE.ACCOUNT_PICKER;
       chrome.send('hideCaptivePortal');
       var podRow = $('pod-row');
       podRow.handleBeforeShow();
@@ -109,6 +110,7 @@ cr.define('login', function() {
      */
     onBeforeHide: function() {
       chrome.send('loginUIStateChanged', ['account-picker', false]);
+      $('login-header-bar').signinUIState = SIGNIN_UI_STATE.HIDDEN;
       $('pod-row').handleHide();
     },
 
@@ -125,7 +127,9 @@ cr.define('login', function() {
                                           error);
         return;
       }
-      if (loginAttempts > MAX_LOGIN_ATTEMPTS_IN_POD) {
+      // Show web authentication if this is not a locally managed user.
+      if (loginAttempts > MAX_LOGIN_ATTEMPTS_IN_POD &&
+          !activatedPod.user.locallyManagedUser) {
         activatedPod.showSigninUI();
       } else {
         // We want bubble's arrow to point to the first letter of input.
@@ -181,39 +185,6 @@ cr.define('login', function() {
     var row = $('pod-row');
     if (row.lockedPod)
       row.focusPod(row.lockedPod, true);
-  };
-
-  /**
-   * Sets wallpaper for lock screen.
-   */
-  AccountPickerScreen.setWallpaper = function() {
-    // TODO(antrim): remove whole method once 136853 is accepted.
-    return;
-    var oobe = Oobe.getInstance();
-    if (!oobe.isNewOobe() || !oobe.isLockScreen())
-      return;
-
-    // Load image before starting animation.
-    var image = new Image();
-    image.onload = function() {
-      var background = $('background');
-
-      // Prepare to report metric.
-      background.addEventListener('webkitTransitionEnd', function f(e) {
-        if (e.target == background) {
-          background.removeEventListener('webkitTransitionEnd', f);
-          chrome.send('wallpaperReady');
-        }
-      });
-
-      background.style.backgroundImage = 'url(' + image.src + ')';
-      // Start animation.
-      background.classList.add('background-final');
-      background.classList.remove('background-initial');
-    };
-    // Start image loading.
-    // Add timestamp for wallpapers that are rotated over time.
-    image.src = 'chrome://wallpaper/' + new Date().getTime();
   };
 
   return {

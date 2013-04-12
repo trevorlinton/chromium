@@ -6,7 +6,6 @@
 
 #include "base/build_time.h"
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
 #include "base/rand_util.h"
 #include "base/sha1.h"
 #include "base/stringprintf.h"
@@ -49,7 +48,7 @@ const int FieldTrial::kDefaultGroupNumber = 0;
 bool FieldTrial::enable_benchmarking_ = false;
 
 const char FieldTrialList::kPersistentStringSeparator('/');
-int FieldTrialList::kExpirationYearInFuture = 0;
+int FieldTrialList::kNoExpirationYear = 0;
 
 //------------------------------------------------------------------------------
 // FieldTrial methods and members.
@@ -85,9 +84,6 @@ void FieldTrial::UseOneTimeRandomization() {
       FieldTrialList::GetEntropyProviderForOneTimeRandomization();
   if (!entropy_provider) {
     NOTREACHED();
-    // TODO(stevet): Remove this temporary histogram when logging
-    // investigations are complete.
-    UMA_HISTOGRAM_BOOLEAN("Variations.DisabledNoEntropyProvider", true);
     Disable();
     return;
   }
@@ -202,21 +198,8 @@ void FieldTrial::FinalizeGroupChoice() {
 }
 
 bool FieldTrial::GetActiveGroup(ActiveGroup* active_group) const {
-  if (!group_reported_ || !enable_field_trial_) {
-    // TODO(asvitkine): Temporary histogram. Remove this once it is not needed.
-    if (trial_name_ == "UMA-Uniformity-Trial-1-Percent") {
-      const int kGroupNotReported = 1;
-      const int kTrialDisabled = 2;
-      int value = 0;
-      if (!group_reported_)
-        value |= kGroupNotReported;
-      if (!enable_field_trial_)
-        value |= kTrialDisabled;
-      UMA_HISTOGRAM_ENUMERATION("Variations.UniformityTrialGroupNotActive",
-                                value, 4);
-    }
+  if (!group_reported_ || !enable_field_trial_)
     return false;
-  }
   DCHECK_NE(group_, kNotFinalized);
   active_group->trial_name = trial_name_;
   active_group->group_name = group_name_;
@@ -244,11 +227,10 @@ FieldTrialList::FieldTrialList(
   DCHECK(!used_without_global_);
   global_ = this;
 
+  Time two_years_from_build_time = GetBuildTime() + TimeDelta::FromDays(730);
   Time::Exploded exploded;
-  Time two_years_from_now =
-      Time::NowFromSystemTime() + TimeDelta::FromDays(730);
-  two_years_from_now.LocalExplode(&exploded);
-  kExpirationYearInFuture = exploded.year;
+  two_years_from_build_time.LocalExplode(&exploded);
+  kNoExpirationYear = exploded.year;
 }
 
 FieldTrialList::~FieldTrialList() {
@@ -288,12 +270,8 @@ FieldTrial* FieldTrialList::FactoryGetFieldTrial(
 
   FieldTrial* field_trial =
       new FieldTrial(name, total_probability, default_group_name);
-  if (GetBuildTime() > CreateTimeFromParams(year, month, day_of_month)) {
-    // TODO(asvitkine): Temporary histogram. Remove this once it is not needed.
-    if (name == "UMA-Uniformity-Trial-1-Percent")
-      UMA_HISTOGRAM_BOOLEAN("Variations.UniformityTrialExpired", true);
+  if (GetBuildTime() > CreateTimeFromParams(year, month, day_of_month))
     field_trial->Disable();
-  }
   FieldTrialList::Register(field_trial);
   return field_trial;
 }

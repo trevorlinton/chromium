@@ -10,10 +10,10 @@ import android.util.DisplayMetrics;
 import android.view.Display;
 import android.view.WindowManager;
 
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.content.browser.test.util.JavaScriptUtils;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer;
-import org.chromium.content.common.DeviceInfo;
 
 /**
  * Test suite for viewport-related properties.
@@ -46,8 +46,12 @@ public class ViewportTest extends ContentViewTestBase {
         return Integer.valueOf(evaluateStringValue(expression));
     }
 
+    /*
     @MediumTest
     @Feature({"Viewport", "InitialViewportSize"})
+    https://bugs.webkit.org/show_bug.cgi?id=107424
+    */
+    @DisabledTest
     public void testDefaultViewportSize() throws Throwable {
         launchContentShellWithUrl("about:blank");
         waitForActiveShellToBeDoneLoading();

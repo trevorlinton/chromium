@@ -55,12 +55,12 @@ class TestViewsDelegate : public ViewsDelegate {
   virtual bool UseTransparentWindows() const OVERRIDE;
   virtual void AddRef() OVERRIDE {}
   virtual void ReleaseRef() OVERRIDE {}
-  virtual int GetDispositionForEvent(int event_flags) OVERRIDE;
   virtual content::WebContents* CreateWebContents(
       content::BrowserContext* browser_context,
       content::SiteInstance* site_instance) OVERRIDE;
-  virtual void OnBeforeWidgetInit(Widget::InitParams* params,
-                            internal::NativeWidgetDelegate* delegate) OVERRIDE;
+  virtual void OnBeforeWidgetInit(
+      Widget::InitParams* params,
+      internal::NativeWidgetDelegate* delegate) OVERRIDE;
 
  private:
   bool use_transparent_windows_;

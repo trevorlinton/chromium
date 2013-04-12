@@ -8,14 +8,15 @@
 #include "ash/shell.h"
 #include "ash/shell_window_ids.h"
 #include "ash/system/chromeos/network/network_icon.h"
+#include "ash/system/chromeos/network/network_icon_animation.h"
+#include "ash/system/chromeos/network/tray_network.h"
+#include "ash/system/tray/hover_highlight_view.h"
 #include "ash/system/tray/system_tray.h"
 #include "ash/system/tray/system_tray_delegate.h"
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_details_view.h"
-#include "ash/system/tray/tray_views.h"
 #include "base/utf_string_conversions.h"
 #include "chromeos/network/device_state.h"
-#include "chromeos/network/network_configuration_handler.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
 #include "grit/ash_resources.h"
@@ -30,6 +31,8 @@
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/widget/widget.h"
 
+using chromeos::NetworkStateHandler;
+
 namespace ash {
 namespace internal {
 namespace tray {
@@ -41,10 +44,22 @@ const int kNetworkListHeight = 203;
 
 // Create a label with the font size and color used in the network info bubble.
 views::Label* CreateInfoBubbleLabel(const string16& text) {
-  const SkColor text_color = SkColorSetARGB(127, 0, 0, 0);
   views::Label* label = new views::Label(text);
-  label->SetFont(label->font().DeriveFont(-1));
-  label->SetEnabledColor(text_color);
+  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
+  label->SetFont(rb.GetFont(ui::ResourceBundle::SmallFont));
+  label->SetEnabledColor(SkColorSetARGB(127, 0, 0, 0));
+  return label;
+}
+
+// Create a label formatted for info items in the menu
+views::Label* CreateMenuInfoLabel(const string16& text) {
+  views::Label* label = new views::Label(text);
+  label->set_border(views::Border::CreateEmptyBorder(
+      ash::kTrayPopupPaddingBetweenItems,
+      ash::kTrayPopupPaddingHorizontal,
+      ash::kTrayPopupPaddingBetweenItems, 0));
+  label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+  label->SetEnabledColor(SkColorSetARGB(192, 0, 0, 0));
   return label;
 }
 
@@ -87,14 +102,13 @@ class NonActivatableSettingsBubble : public views::BubbleDelegateView {
 //------------------------------------------------------------------------------
 
 struct NetworkInfo {
-  NetworkInfo(const std::string& path, const string16& description)
+  NetworkInfo(const std::string& path)
       : service_path(path),
-        description(description),
         highlight(false) {
   }
 
   std::string service_path;
-  string16 description;
+  string16 label;
   gfx::ImageSkia image;
   bool highlight;
 };
@@ -103,11 +117,11 @@ struct NetworkInfo {
 // NetworkStateListDetailedView
 
 NetworkStateListDetailedView::NetworkStateListDetailedView(
-    SystemTrayItem* owner, user::LoginStatus login)
-    : NetworkDetailedView(owner),
+    TrayNetwork* tray_network,
+    user::LoginStatus login)
+    : NetworkDetailedView(tray_network),
+      tray_network_(tray_network),
       login_(login),
-      wifi_enabled_(false),
-      wifi_scanning_(false),
       info_icon_(NULL),
       button_wifi_(NULL),
       button_mobile_(NULL),
@@ -119,66 +133,64 @@ NetworkStateListDetailedView::NetworkStateListDetailedView(
       settings_(NULL),
       proxy_settings_(NULL),
       scanning_view_(NULL),
+      no_wifi_networks_view_(NULL),
+      no_cellular_networks_view_(NULL),
       info_bubble_(NULL) {
+  network_icon::NetworkIconAnimation::GetInstance()->AddObserver(this);
 }
 
 NetworkStateListDetailedView::~NetworkStateListDetailedView() {
   if (info_bubble_)
     info_bubble_->GetWidget()->CloseNow();
+  network_icon::NetworkIconAnimation::GetInstance()->RemoveObserver(this);
 }
 
 void NetworkStateListDetailedView::ManagerChanged() {
-  chromeos::NetworkStateHandler* handler = chromeos::NetworkStateHandler::Get();
-  bool wifi_was_enabled = wifi_enabled_;
-  wifi_enabled_ = handler->TechnologyEnabled(flimflam::kTypeWifi);
-  if (wifi_enabled_ != wifi_was_enabled) {
-    bool wifi_was_scanning = wifi_scanning_;
-    if (wifi_enabled_ && !wifi_scanning_)
-      wifi_scanning_ = handler->RequestWifiScan();
-    else if (!wifi_enabled_ && wifi_scanning_)
-      wifi_scanning_ = false;
-    if (wifi_scanning_ != wifi_was_scanning)
-      RefreshNetworkList();
-  }
+  UpdateNetworkListEntries();
   UpdateHeaderButtons();
-  UpdateNetworkEntries();
+  UpdateMobileAccount();
   UpdateNetworkExtra();
   Layout();
 }
 
-void NetworkStateListDetailedView::NetworkListChanged(
-    const NetworkStateList& network_list) {
-  wifi_scanning_ = false;
+void NetworkStateListDetailedView::NetworkListChanged() {
+  NetworkStateList network_list;
+  NetworkStateHandler::Get()->GetNetworkList(&network_list);
   UpdateNetworks(network_list);
+  UpdateNetworkListEntries();
+  UpdateHeaderButtons();
+  UpdateMobileAccount();
+  UpdateNetworkExtra();
   Layout();
 }
 
 void NetworkStateListDetailedView::NetworkServiceChanged(
     const chromeos::NetworkState* network) {
-  RefreshNetworkList();
+  UpdateNetworkListEntries();
   Layout();
 }
 
 void NetworkStateListDetailedView::NetworkIconChanged() {
-  UpdateNetworkIcons();
-  RefreshNetworkList();
+  UpdateNetworkListEntries();
   Layout();
 }
 
 // Overridden from NetworkDetailedView:
 
 void NetworkStateListDetailedView::Init() {
-  CreateNetworkEntries();
+  CreateMobileAccount();
   CreateNetworkExtra();
   CreateHeaderEntry();
   CreateHeaderButtons();
-  chromeos::NetworkStateHandler* handler = chromeos::NetworkStateHandler::Get();
+  NetworkStateHandler* handler = NetworkStateHandler::Get();
   NetworkStateList network_list;
-  wifi_enabled_ = handler->TechnologyEnabled(flimflam::kTypeWifi);
-  if (wifi_enabled_)
-    wifi_scanning_ = handler->RequestWifiScan();
+  handler->RequestScan();
   handler->GetNetworkList(&network_list);
   UpdateNetworks(network_list);
+  UpdateNetworkListEntries();
+  UpdateHeaderButtons();
+  UpdateMobileAccount();
+  UpdateNetworkExtra();
 }
 
 NetworkDetailedView::DetailedViewType
@@ -198,7 +210,7 @@ void NetworkStateListDetailedView::ButtonPressed(views::Button* sender,
   // If the info bubble was visible, close it when some other item is clicked.
   ResetInfoBubble();
 
-  chromeos::NetworkStateHandler* handler = chromeos::NetworkStateHandler::Get();
+  NetworkStateHandler* handler = NetworkStateHandler::Get();
   ash::SystemTrayDelegate* delegate =
       ash::Shell::GetInstance()->system_tray_delegate();
   if (sender == button_wifi_) {
@@ -211,9 +223,10 @@ void NetworkStateListDetailedView::ButtonPressed(views::Button* sender,
         flimflam::kTypeWifi, true,
         chromeos::network_handler::ErrorCallback());
   } else if (sender == button_mobile_) {
-    bool enabled = handler->TechnologyEnabled(flimflam::kTypeCellular);
+    bool enabled = handler->TechnologyEnabled(
+        NetworkStateHandler::kMatchTypeMobile);
     handler->SetTechnologyEnabled(
-        flimflam::kTypeCellular, !enabled,
+        NetworkStateHandler::kMatchTypeMobile, !enabled,
         chromeos::network_handler::ErrorCallback());
   } else if (sender == settings_) {
     delegate->ShowNetworkSettings();
@@ -228,7 +241,7 @@ void NetworkStateListDetailedView::ButtonPressed(views::Button* sender,
   }
 }
 
-void NetworkStateListDetailedView::ClickedOn(views::View* sender) {
+void NetworkStateListDetailedView::OnViewClicked(views::View* sender) {
   // If the info bubble was visible, close it when some other item is clicked.
   ResetInfoBubble();
 
@@ -250,23 +263,8 @@ void NetworkStateListDetailedView::ClickedOn(views::View* sender) {
   } else {
     std::map<views::View*, std::string>::iterator found =
         network_map_.find(sender);
-    if (found != network_map_.end()) {
-      std::string service_path = found->second;
-      const chromeos::NetworkState* network =
-          chromeos::NetworkStateHandler::Get()->GetNetworkState(service_path);
-      if (!network)
-        return;
-      if (!network->IsConnectedState()) {
-        chromeos::NetworkConfigurationHandler::Get()->Connect(
-            service_path,
-            base::Closure(),
-            chromeos::network_handler::ErrorCallback());
-      } else {
-        // This will show the settings UI for a connected network.
-        // TODO(stevenjb): Change the API to explicitly show network settings.
-        delegate->ConnectToNetwork(service_path);
-      }
-    }
+    if (found != network_map_.end())
+      tray_network_->ConnectToNetwork(found->second);
   }
 }
 
@@ -315,11 +313,10 @@ void NetworkStateListDetailedView::CreateHeaderButtons() {
   footer()->AddButton(info_icon_);
 }
 
-void NetworkStateListDetailedView::CreateNetworkEntries() {
+void NetworkStateListDetailedView::CreateMobileAccount() {
   CreateScrollableList();
 
   HoverHighlightView* container = new HoverHighlightView(this);
-  container->set_fixed_height(kTrayPopupItemHeight);
   container->AddLabel(
       ui::ResourceBundle::GetSharedInstance().
       GetLocalizedString(IDS_ASH_STATUS_TRAY_MOBILE_VIEW_ACCOUNT),
@@ -328,7 +325,6 @@ void NetworkStateListDetailedView::CreateNetworkEntries() {
   view_mobile_account_ = container;
 
   container = new HoverHighlightView(this);
-  container->set_fixed_height(kTrayPopupItemHeight);
   container->AddLabel(ui::ResourceBundle::GetSharedInstance().
                       GetLocalizedString(IDS_ASH_STATUS_TRAY_SETUP_MOBILE),
                       gfx::Font::NORMAL);
@@ -366,15 +362,17 @@ void NetworkStateListDetailedView::CreateNetworkExtra() {
 // Update UI components.
 
 void NetworkStateListDetailedView::UpdateHeaderButtons() {
-  chromeos::NetworkStateHandler* handler = chromeos::NetworkStateHandler::Get();
+  NetworkStateHandler* handler = NetworkStateHandler::Get();
   button_wifi_->SetToggled(
       !handler->TechnologyEnabled(flimflam::kTypeWifi));
-  button_mobile_->SetToggled(
-      !handler->TechnologyEnabled(flimflam::kTypeCellular));
-  button_mobile_->SetVisible(
-      handler->TechnologyAvailable(flimflam::kTypeCellular));
+  button_mobile_->SetToggled(!handler->TechnologyEnabled(
+      NetworkStateHandler::kMatchTypeMobile));
+  button_mobile_->SetVisible(handler->TechnologyAvailable(
+      NetworkStateHandler::kMatchTypeMobile));
   if (proxy_settings_)
     proxy_settings_->SetEnabled(handler->DefaultNetwork() != NULL);
+
+  static_cast<views::View*>(footer())->Layout();
 }
 
 void NetworkStateListDetailedView::UpdateNetworks(
@@ -385,115 +383,38 @@ void NetworkStateListDetailedView::UpdateNetworks(
     const chromeos::NetworkState* network = *iter;
     if (network->type() == flimflam::kTypeVPN)
       continue;  // Skip VPNs
-    string16 description;
-    if (network->IsConnectingState()) {
-      description = l10n_util::GetStringFUTF16(
-          IDS_ASH_STATUS_TRAY_NETWORK_CONNECTING,
-          UTF8ToUTF16(network->name()));
-    } else {
-      description = UTF8ToUTF16(network->name());
-    }
-    NetworkInfo* info = new NetworkInfo(network->path(), description);
-    info->highlight =
-        network->IsConnectedState() || network->IsConnectingState();
-    info->image = network_icon::GetImageForNetwork(network,
-                                                   network_icon::COLOR_DARK,
-                                                   this);
+    NetworkInfo* info = new NetworkInfo(network->path());
     network_list_.push_back(info);
   }
-  RefreshNetworkList();
-
-  UpdateHeaderButtons();
-  UpdateNetworkEntries();
-  UpdateNetworkExtra();
 }
 
-void NetworkStateListDetailedView::RefreshNetworkList() {
-  network_map_.clear();
-  std::set<std::string> new_service_paths;
+void NetworkStateListDetailedView::UpdateNetworkListEntries() {
+  NetworkStateHandler* handler = NetworkStateHandler::Get();
 
-  bool needs_relayout = false;
-  views::View* highlighted_view = NULL;
-
-  if (service_path_map_.empty()) {
-    scroll_content()->RemoveAllChildViews(true);
-    scanning_view_ = NULL;
-  }
-
-  // Insert child views. Order is:
-  // * Highlit networks (connected and connecting)
-  // * "Scanning..."
-  // * Un-highlit networks (not connected). Usually empty while scanning.
-
-  if (wifi_scanning_ && scanning_view_ == NULL) {
-    scanning_view_ = new views::Label(
-        ui::ResourceBundle::GetSharedInstance().
-        GetLocalizedString(IDS_ASH_STATUS_TRAY_WIFI_SCANNING_MESSAGE));
-    scanning_view_->set_border(views::Border::CreateEmptyBorder(20, 0, 10, 0));
-    scanning_view_->SetFont(
-        scanning_view_->font().DeriveFont(0, gfx::Font::ITALIC));
-    // Initially insert "scanning" first.
-    scroll_content()->AddChildViewAt(scanning_view_, 0);
-    needs_relayout = true;
-  } else if (!wifi_scanning_ && scanning_view_ != NULL) {
-    scroll_content()->RemoveChildView(scanning_view_);
-    scanning_view_ = NULL;
-    needs_relayout = true;
-  }
-
-  int child_index_offset = 0;
+  // First, update state for all networks
   for (size_t i = 0; i < network_list_.size(); ++i) {
     NetworkInfo* info = network_list_[i];
-    if (scanning_view_ && child_index_offset == 0 && !info->highlight)
-      child_index_offset = 1;
-    // |child_index| determines the position of the view, which is the same
-    // as the list index for highlit views, and offset by one for any
-    // non-highlit views when scanning.
-    int child_index = child_index_offset + i;
-    std::map<std::string, HoverHighlightView*>::const_iterator it =
-        service_path_map_.find(info->service_path);
-    HoverHighlightView* container = NULL;
-    std::string description;
-    if (it == service_path_map_.end()) {
-      // Create a new view.
-      container = new HoverHighlightView(this);
-      container->set_fixed_height(kTrayPopupItemHeight);
-      container->AddIconAndLabel(
-          info->image,
-          info->description,
-          info->highlight ? gfx::Font::BOLD : gfx::Font::NORMAL);
-      scroll_content()->AddChildViewAt(container, child_index);
-      container->set_border(views::Border::CreateEmptyBorder(
-          0, kTrayPopupPaddingHorizontal, 0, 0));
-      needs_relayout = true;
-    } else {
-      container = it->second;
-      container->RemoveAllChildViews(true);
-      container->AddIconAndLabel(
-          info->image,
-          info->description,
-          info->highlight ? gfx::Font::BOLD : gfx::Font::NORMAL);
-      container->Layout();
-      container->SchedulePaint();
-
-      // Reordering the view if necessary.
-      views::View* child = scroll_content()->child_at(child_index);
-      if (child != container) {
-        scroll_content()->ReorderChildView(container, child_index);
-        needs_relayout = true;
-      }
-    }
-
-    if (info->highlight)
-      highlighted_view = container;
-    network_map_[container] = info->service_path;
-    service_path_map_[info->service_path] = container;
-    new_service_paths.insert(info->service_path);
+    const chromeos::NetworkState* network =
+        handler->GetNetworkState(info->service_path);
+    if (!network)
+      continue;
+    info->image = network_icon::GetImageForNetwork(
+        network, network_icon::ICON_TYPE_LIST);
+    info->label = network_icon::GetLabelForNetwork(
+        network, network_icon::ICON_TYPE_LIST);
+    info->highlight =
+        network->IsConnectedState() || network->IsConnectingState();
   }
 
+  // Get the updated list entries
+  network_map_.clear();
+  std::set<std::string> new_service_paths;
+  bool needs_relayout = UpdateNetworkListEntries(&new_service_paths);
+
+  // Remove old children
   std::set<std::string> remove_service_paths;
-  for (std::map<std::string, HoverHighlightView*>::const_iterator it =
-           service_path_map_.begin(); it != service_path_map_.end(); ++it) {
+  for (ServicePathMap::const_iterator it = service_path_map_.begin();
+       it != service_path_map_.end(); ++it) {
     if (new_service_paths.find(it->first) == new_service_paths.end()) {
       remove_service_paths.insert(it->first);
       scroll_content()->RemoveChildView(it->second);
@@ -508,14 +429,146 @@ void NetworkStateListDetailedView::RefreshNetworkList() {
   }
 
   if (needs_relayout) {
+    views::View* selected_view = NULL;
+    for (ServicePathMap::const_iterator iter = service_path_map_.begin();
+         iter != service_path_map_.end(); ++iter) {
+      if (iter->second->hover()) {
+        selected_view = iter->second;
+        break;
+      }
+    }
     scroll_content()->SizeToPreferredSize();
     static_cast<views::View*>(scroller())->Layout();
-    if (highlighted_view)
-      scroll_content()->ScrollRectToVisible(highlighted_view->bounds());
+    if (selected_view)
+      scroll_content()->ScrollRectToVisible(selected_view->bounds());
   }
 }
 
-void NetworkStateListDetailedView::UpdateNetworkEntries() {
+bool NetworkStateListDetailedView::CreateOrUpdateInfoLabel(
+    int index, const string16& text, views::Label** label) {
+  if (*label == NULL) {
+    *label = CreateMenuInfoLabel(text);
+    scroll_content()->AddChildViewAt(*label, index);
+    return true;
+  } else {
+    (*label)->SetText(text);
+    return OrderChild(*label, index);
+  }
+}
+
+bool NetworkStateListDetailedView::UpdateNetworkChild(
+    int index, const NetworkInfo* info) {
+  bool needs_relayout = false;
+  HoverHighlightView* container = NULL;
+  ServicePathMap::const_iterator found =
+      service_path_map_.find(info->service_path);
+  gfx::Font::FontStyle font =
+      info->highlight ? gfx::Font::BOLD : gfx::Font::NORMAL;
+  if (found == service_path_map_.end()) {
+    container = new HoverHighlightView(this);
+    container->AddIconAndLabel(info->image, info->label, font);
+    scroll_content()->AddChildViewAt(container, index);
+    container->set_border(views::Border::CreateEmptyBorder(
+        0, kTrayPopupPaddingHorizontal, 0, 0));
+    needs_relayout = true;
+  } else {
+    container = found->second;
+    container->RemoveAllChildViews(true);
+    container->AddIconAndLabel(info->image, info->label, font);
+    container->Layout();
+    container->SchedulePaint();
+    needs_relayout = OrderChild(container, index);
+  }
+
+  network_map_[container] = info->service_path;
+  service_path_map_[info->service_path] = container;
+  return needs_relayout;
+}
+
+bool NetworkStateListDetailedView::OrderChild(views::View* view, int index) {
+  if (scroll_content()->child_at(index) != view) {
+    scroll_content()->ReorderChildView(view, index);
+    return true;
+  }
+  return false;
+}
+
+bool NetworkStateListDetailedView::UpdateNetworkListEntries(
+    std::set<std::string>* new_service_paths) {
+  bool needs_relayout = false;
+  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
+  NetworkStateHandler* handler = NetworkStateHandler::Get();
+
+  // Insert child views
+  int index = 0;
+
+  // Highlighted networks
+  for (size_t i = 0; i < network_list_.size(); ++i) {
+    const NetworkInfo* info = network_list_[i];
+    if (info->highlight) {
+      if (UpdateNetworkChild(index++, info))
+        needs_relayout = true;
+      new_service_paths->insert(info->service_path);
+    }
+  }
+
+  // Cellular initializing
+  int status_message_id = tray_network_->GetUninitializedMsg();
+  if (!status_message_id &&
+      handler->TechnologyEnabled(NetworkStateHandler::kMatchTypeMobile) &&
+      !handler->FirstNetworkByType(NetworkStateHandler::kMatchTypeMobile)) {
+    status_message_id = IDS_ASH_STATUS_TRAY_NO_CELLULAR_NETWORKS;
+  }
+  if (status_message_id) {
+    string16 text = rb.GetLocalizedString(status_message_id);
+    if (CreateOrUpdateInfoLabel(index++, text, &no_cellular_networks_view_))
+      needs_relayout = true;
+  } else if (no_cellular_networks_view_) {
+    scroll_content()->RemoveChildView(no_cellular_networks_view_);
+    no_cellular_networks_view_ = NULL;
+    needs_relayout = true;
+  }
+
+  // "Wifi Enabled / Disabled"
+  if (network_list_.empty()) {
+    int message_id = handler->TechnologyEnabled(flimflam::kTypeWifi) ?
+        IDS_ASH_STATUS_TRAY_NETWORK_WIFI_ENABLED :
+        IDS_ASH_STATUS_TRAY_NETWORK_WIFI_DISABLED;
+    string16 text = rb.GetLocalizedString(message_id);
+    if (CreateOrUpdateInfoLabel(index++, text, &no_wifi_networks_view_))
+      needs_relayout = true;
+  } else if (no_wifi_networks_view_) {
+    scroll_content()->RemoveChildView(no_wifi_networks_view_);
+    no_wifi_networks_view_ = NULL;
+    needs_relayout = true;
+  }
+
+  // "Wifi Scanning"
+  if (handler->GetScanningByType(flimflam::kTypeWifi)) {
+    string16 text =
+        rb.GetLocalizedString(IDS_ASH_STATUS_TRAY_WIFI_SCANNING_MESSAGE);
+    if (CreateOrUpdateInfoLabel(index++, text, &scanning_view_))
+      needs_relayout = true;
+  } else if (scanning_view_ != NULL) {
+    scroll_content()->RemoveChildView(scanning_view_);
+    scanning_view_ = NULL;
+    needs_relayout = true;
+  }
+
+  // Un-highlighted networks
+  for (size_t i = 0; i < network_list_.size(); ++i) {
+    const NetworkInfo* info = network_list_[i];
+    if (!info->highlight) {
+      if (UpdateNetworkChild(index++, info))
+        needs_relayout = true;
+      new_service_paths->insert(info->service_path);
+    }
+  }
+
+  return needs_relayout;
+}
+
+void NetworkStateListDetailedView::UpdateMobileAccount() {
   view_mobile_account_->SetVisible(false);
   setup_mobile_account_->SetVisible(false);
 
@@ -546,7 +599,7 @@ void NetworkStateListDetailedView::UpdateNetworkExtra() {
   if (login_ == user::LOGGED_IN_LOCKED)
     return;
 
-  chromeos::NetworkStateHandler* handler = chromeos::NetworkStateHandler::Get();
+  NetworkStateHandler* handler = NetworkStateHandler::Get();
   if (!handler->TechnologyAvailable(flimflam::kTypeWifi)) {
     turn_on_wifi_->SetVisible(false);
     other_wifi_->SetVisible(false);
@@ -557,37 +610,23 @@ void NetworkStateListDetailedView::UpdateNetworkExtra() {
     turn_on_wifi_->SetVisible(false);
     other_wifi_->SetVisible(true);
   }
-  turn_on_wifi_->parent()->Layout();
 
   bool show_other_mobile = false;
-  if (handler->TechnologyAvailable(flimflam::kTypeCellular)) {
+  if (handler->TechnologyAvailable(NetworkStateHandler::kMatchTypeMobile)) {
     const chromeos::DeviceState* device =
-        handler->GetDeviceStateByType(flimflam::kTypeCellular);
+        handler->GetDeviceStateByType(NetworkStateHandler::kMatchTypeMobile);
     show_other_mobile = (device && device->support_network_scan());
   }
   if (show_other_mobile) {
     other_mobile_->SetVisible(true);
     other_mobile_->SetEnabled(
-        handler->TechnologyEnabled(flimflam::kTypeCellular));
+        handler->TechnologyEnabled(NetworkStateHandler::kMatchTypeMobile));
   } else {
     other_mobile_->SetVisible(false);
   }
-}
 
-void NetworkStateListDetailedView::UpdateNetworkIcons() {
-  chromeos::NetworkStateHandler* handler = chromeos::NetworkStateHandler::Get();
-  for (size_t i = 0; i < network_list_.size(); ++i) {
-    NetworkInfo* info = network_list_[i];
-    const chromeos::NetworkState* network =
-        handler->GetNetworkState(info->service_path);
-    if (!network)
-      continue;
-    info->image = network_icon::GetImageForNetwork(network,
-                                                   network_icon::COLOR_DARK,
-                                                   this);
-    info->highlight =
-        network->IsConnectedState() || network->IsConnectingState();
-  }
+  // All these buttons have the same parent.
+  turn_on_wifi_->parent()->Layout();
 }
 
 void NetworkStateListDetailedView::CreateSettingsEntry() {
@@ -623,7 +662,7 @@ bool NetworkStateListDetailedView::ResetInfoBubble() {
 
 views::View* NetworkStateListDetailedView::CreateNetworkInfoView() {
   ui::ResourceBundle& bundle = ui::ResourceBundle::GetSharedInstance();
-  chromeos::NetworkStateHandler* handler = chromeos::NetworkStateHandler::Get();
+  NetworkStateHandler* handler = NetworkStateHandler::Get();
 
   std::string ip_address("0.0.0.0");
   const chromeos::NetworkState* network = handler->DefaultNetwork();

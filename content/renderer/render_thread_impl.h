@@ -45,6 +45,10 @@ namespace IPC {
 class ForwardingMessageFilter;
 }
 
+namespace media {
+class AudioHardwareConfig;
+}
+
 namespace v8 {
 class Extension;
 }
@@ -64,6 +68,7 @@ class IndexedDBDispatcher;
 class MediaStreamCenter;
 class MediaStreamDependencyFactory;
 class P2PSocketDispatcher;
+class PeerConnectionTracker;
 class RendererWebKitPlatformSupportImpl;
 class RenderProcessObserver;
 class VideoCaptureImplManager;
@@ -118,7 +123,7 @@ class CONTENT_EXPORT RenderThreadImpl : public RenderThread,
   virtual void EnsureWebKitInitialized() OVERRIDE;
   virtual void RecordUserMetrics(const std::string& action) OVERRIDE;
   virtual scoped_ptr<base::SharedMemory> HostAllocateSharedMemoryBuffer(
-      uint32 buffer_size) OVERRIDE;
+      size_t buffer_size) OVERRIDE;
   virtual void RegisterExtension(v8::Extension* extension) OVERRIDE;
   virtual void ScheduleIdleHandler(int64 initial_delay_ms) OVERRIDE;
   virtual void IdleHandler() OVERRIDE;
@@ -143,7 +148,7 @@ class CONTENT_EXPORT RenderThreadImpl : public RenderThread,
   virtual scoped_refptr<base::MessageLoopProxy> GetIOLoopProxy() OVERRIDE;
   virtual base::WaitableEvent* GetShutDownEvent() OVERRIDE;
   virtual scoped_ptr<base::SharedMemory> AllocateSharedMemory(
-      uint32 size) OVERRIDE;
+      size_t size) OVERRIDE;
   virtual int32 CreateViewCommandBuffer(
       int32 surface_id,
       const GPUCreateCommandBufferConfig& init_params) OVERRIDE;
@@ -167,6 +172,14 @@ class CONTENT_EXPORT RenderThreadImpl : public RenderThread,
   // the behavior.
   void DoNotSuspendWebKitSharedTimer();
   void DoNotNotifyWebKitOfModalLoop();
+
+  // True if changing the focus of a RenderView requires a active user gesture.
+  bool require_user_gesture_for_focus() const {
+    return require_user_gesture_for_focus_;
+  }
+  void set_require_user_gesture_for_focus(bool require_gesture) {
+    require_user_gesture_for_focus_ = require_gesture;
+  }
 
   IPC::ForwardingMessageFilter* compositor_output_surface_filter() const {
     return compositor_output_surface_filter_.get();
@@ -202,6 +215,10 @@ class CONTENT_EXPORT RenderThreadImpl : public RenderThread,
 
   // Returns a factory used for creating RTC PeerConnection objects.
   MediaStreamDependencyFactory* GetMediaStreamDependencyFactory();
+
+  PeerConnectionTracker* peer_connection_tracker() {
+    return peer_connection_tracker_.get();
+  }
 
   // Current P2PSocketDispatcher. Set to NULL if P2P API is disabled.
   P2PSocketDispatcher* p2p_socket_dispatcher() {
@@ -240,6 +257,11 @@ class CONTENT_EXPORT RenderThreadImpl : public RenderThread,
   // instances shared based on configured audio parameters.  Lazily created on
   // first call.
   AudioRendererMixerManager* GetAudioRendererMixerManager();
+
+  // AudioHardwareConfig contains audio hardware configuration for
+  // renderer side clients.  Creation requires a synchronous IPC call so it is
+  // lazily created on the first call.
+  media::AudioHardwareConfig* GetAudioHardwareConfig();
 
 #if defined(OS_WIN)
   void PreCacheFontCharacters(const LOGFONT& log_font, const string16& str);
@@ -291,6 +313,9 @@ class CONTENT_EXPORT RenderThreadImpl : public RenderThread,
     return &histogram_customizer_;
   }
 
+  void SetFlingCurveParameters(const std::vector<float>& new_touchpad,
+                               const std::vector<float>& new_touchscreen);
+
  private:
   virtual bool OnControlMessageReceived(const IPC::Message& msg) OVERRIDE;
 
@@ -314,7 +339,7 @@ class CONTENT_EXPORT RenderThreadImpl : public RenderThread,
   scoped_ptr<RendererWebKitPlatformSupportImpl> webkit_platform_support_;
 
   // Used on the render thread and deleted by WebKit at shutdown.
-  MediaStreamCenter* media_stream_center_;
+  WebKit::WebMediaStreamCenter* media_stream_center_;
 
   // Used on the renderer and IPC threads.
   scoped_refptr<DBMessageFilter> db_message_filter_;
@@ -323,6 +348,10 @@ class CONTENT_EXPORT RenderThreadImpl : public RenderThread,
   scoped_refptr<DevToolsAgentFilter> devtools_agent_message_filter_;
 
   scoped_ptr<MediaStreamDependencyFactory> media_stream_factory_;
+
+  // This is used to communicate to the browser process the status
+  // of all the peer connections created in the renderer.
+  scoped_ptr<PeerConnectionTracker> peer_connection_tracker_;
 
   // Dispatches all P2P sockets.
   scoped_refptr<P2PSocketDispatcher> p2p_socket_dispatcher_;
@@ -353,6 +382,8 @@ class CONTENT_EXPORT RenderThreadImpl : public RenderThread,
   bool suspend_webkit_shared_timer_;
   bool notify_webkit_of_modal_loop_;
 
+  bool require_user_gesture_for_focus_;
+
   // Timer that periodically calls IdleHandler.
   base::RepeatingTimer<RenderThreadImpl> idle_timer_;
 
@@ -373,6 +404,7 @@ class CONTENT_EXPORT RenderThreadImpl : public RenderThread,
   scoped_ptr<WebGraphicsContext3DCommandBufferImpl> gpu_vda_context3d_;
 
   scoped_ptr<AudioRendererMixerManager> audio_renderer_mixer_manager_;
+  scoped_ptr<media::AudioHardwareConfig> audio_hardware_config_;
 
   HistogramCustomizer histogram_customizer_;
 

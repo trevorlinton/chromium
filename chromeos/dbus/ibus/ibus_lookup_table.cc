@@ -12,8 +12,6 @@
 #include "dbus/message.h"
 
 namespace chromeos {
-// TODO(nona): Remove ibus namespace after complete libibus removal.
-namespace ibus {
 
 namespace {
 // The default entry number of a page in IBusLookupTable.
@@ -43,7 +41,7 @@ void AppendIBusLookupTable(const IBusLookupTable& table,
   bool have_labels = false;
   for (size_t i = 0; i < candidates.size(); ++i) {
     // Write candidate string as IBusText.
-    ibus::IBusText text;
+    IBusText text;
     text.set_text(candidates[i].value);
     text.set_annotation(candidates[i].annotation);
     text.set_description_title(candidates[i].description_title);
@@ -132,7 +130,7 @@ bool PopIBusLookupTable(dbus::MessageReader* reader, IBusLookupTable* table) {
 
   std::vector<IBusLookupTable::Entry>* candidates = table->mutable_candidates();
   while (text_array_reader.HasMoreData()) {
-    ibus::IBusText candidate_text;
+    IBusText candidate_text;
     // The attributes in IBusText are not used in Chrome.
     if (!PopIBusText(&text_array_reader, &candidate_text)) {
       LOG(ERROR) << "Invalid variant structure[IBusLookupTable]: "
@@ -184,11 +182,43 @@ IBusLookupTable::IBusLookupTable()
     : page_size_(kDefaultPageSize),
       cursor_position_(0),
       is_cursor_visible_(true),
-      orientation_(IBUS_LOOKUP_TABLE_ORIENTATION_HORIZONTAL),
+      orientation_(HORIZONTAL),
       show_window_at_composition_(false) {
 }
 
 IBusLookupTable::~IBusLookupTable() {
+}
+
+bool IBusLookupTable::IsEqual(const IBusLookupTable& table) const {
+  if (page_size_ != table.page_size_ ||
+      cursor_position_ != table.cursor_position_ ||
+      is_cursor_visible_ != table.is_cursor_visible_ ||
+      orientation_ != table.orientation_ ||
+      show_window_at_composition_ != table.show_window_at_composition_ ||
+      candidates_.size() != table.candidates_.size())
+    return false;
+
+  for (size_t i = 0; i < candidates_.size(); ++i) {
+    const Entry& left = candidates_[i];
+    const Entry& right = table.candidates_[i];
+    if (left.value != right.value ||
+        left.label != right.label ||
+        left.annotation != right.annotation ||
+        left.description_title != right.description_title ||
+        left.description_body != right.description_body)
+      return false;
+  }
+  return true;
+}
+
+void IBusLookupTable::CopyFrom(const IBusLookupTable& table) {
+  page_size_ = table.page_size_;
+  cursor_position_ = table.cursor_position_;
+  is_cursor_visible_ = table.is_cursor_visible_;
+  orientation_ = table.orientation_;
+  show_window_at_composition_ = table.show_window_at_composition_;
+  candidates_.clear();
+  candidates_ = table.candidates_;
 }
 
 IBusLookupTable::Entry::Entry() {
@@ -197,5 +227,4 @@ IBusLookupTable::Entry::Entry() {
 IBusLookupTable::Entry::~Entry() {
 }
 
-}  // namespace ibus
 }  // namespace chromeos

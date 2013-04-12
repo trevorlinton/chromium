@@ -13,6 +13,7 @@
 #include "base/message_loop.h"
 #include "base/message_loop_proxy.h"
 #include "media/base/audio_decoder_config.h"
+#include "media/base/data_buffer.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/video_decoder_config.h"
 #include "media/base/video_frame.h"
@@ -193,7 +194,7 @@ void PpapiDecryptor::DecryptAndDecodeAudio(
     return;
   }
 
-  DVLOG(1) << "DecryptAndDecodeAudio()";
+  DVLOG(3) << "DecryptAndDecodeAudio()";
   if (!plugin_cdm_delegate_->DecryptAndDecodeAudio(encrypted, audio_decode_cb))
     audio_decode_cb.Run(kError, AudioBuffers());
 }

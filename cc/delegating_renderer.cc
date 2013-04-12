@@ -12,6 +12,7 @@
 #include "base/string_split.h"
 #include "base/string_util.h"
 #include "cc/checkerboard_draw_quad.h"
+#include "cc/compositor_frame.h"
 #include "cc/compositor_frame_ack.h"
 #include "cc/debug_border_draw_quad.h"
 #include "cc/render_pass.h"
@@ -28,17 +29,22 @@ using WebKit::WebGraphicsContext3D;
 namespace cc {
 
 scoped_ptr<DelegatingRenderer> DelegatingRenderer::Create(
-    RendererClient* client, ResourceProvider* resource_provider) {
+    RendererClient* client,
+    OutputSurface* output_surface,
+    ResourceProvider* resource_provider) {
   scoped_ptr<DelegatingRenderer> renderer(
-      new DelegatingRenderer(client, resource_provider));
+      new DelegatingRenderer(client, output_surface, resource_provider));
   if (!renderer->Initialize())
     return scoped_ptr<DelegatingRenderer>();
   return renderer.Pass();
 }
 
 DelegatingRenderer::DelegatingRenderer(
-    RendererClient* client, ResourceProvider* resource_provider)
+    RendererClient* client,
+    OutputSurface* output_surface,
+    ResourceProvider* resource_provider)
     : Renderer(client),
+      output_surface_(output_surface),
       resource_provider_(resource_provider),
       visible_(true) {
   DCHECK(resource_provider_);
@@ -125,10 +131,38 @@ const RendererCapabilities& DelegatingRenderer::capabilities() const {
   return capabilities_;
 }
 
+static ResourceProvider::ResourceId AppendToArray(
+    ResourceProvider::ResourceIdArray* array,
+    ResourceProvider::ResourceId id) {
+  array->push_back(id);
+  return id;
+}
+
 void DelegatingRenderer::drawFrame(
     RenderPassList& render_passes_in_draw_order) {
   TRACE_EVENT0("cc", "DelegatingRenderer::drawFrame");
-  NOTIMPLEMENTED();
+
+  CompositorFrame out_frame;
+  out_frame.metadata = m_client->makeCompositorFrameMetadata();
+
+  out_frame.delegated_frame_data = make_scoped_ptr(new DelegatedFrameData);
+
+  // Collect all resource ids in the render passes into a ResourceIdArray.
+  ResourceProvider::ResourceIdArray resources;
+  DrawQuad::ResourceIteratorCallback append_to_array =
+      base::Bind(&AppendToArray, &resources);
+  for (size_t i = 0; i < render_passes_in_draw_order.size(); ++i) {
+    RenderPass* render_pass = render_passes_in_draw_order[i];
+    for (size_t j = 0; j < render_pass->quad_list.size(); ++j)
+      render_pass->quad_list[j]->IterateResources(append_to_array);
+  }
+
+  // Move the render passes and resources into the |out_frame|.
+  DelegatedFrameData& out_data = *out_frame.delegated_frame_data;
+  out_data.render_pass_list.swap(render_passes_in_draw_order);
+  resource_provider_->prepareSendToParent(resources, &out_data.resource_list);
+
+  output_surface_->SendFrameToParentCompositor(&out_frame);
 }
 
 bool DelegatingRenderer::swapBuffers() {
@@ -143,7 +177,8 @@ void DelegatingRenderer::getFramebufferPixels(void *pixels,
 void DelegatingRenderer::receiveCompositorFrameAck(
     const CompositorFrameAck& ack) {
   resource_provider_->receiveFromParent(ack.resources);
-  m_client->onSwapBuffersComplete();
+  if (m_client->hasImplThread())
+    m_client->onSwapBuffersComplete();
 }
 
 

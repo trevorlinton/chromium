@@ -8,15 +8,16 @@
 // they work.
 
 #include "base/bind.h"
+#include "base/prefs/pref_service.h"
 #include "base/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/prefs/pref_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/database_manager.h"
 #include "chrome/browser/safe_browsing/malware_details.h"
 #include "chrome/browser/safe_browsing/safe_browsing_blocking_page.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
+#include "chrome/browser/safe_browsing/safe_browsing_util.h"
 #include "chrome/browser/safe_browsing/ui_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
@@ -32,6 +33,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
 #include "content/public/test/test_browser_thread.h"
+#include "content/public/test/test_utils.h"
 
 using content::BrowserThread;
 using content::InterstitialPage;
@@ -43,6 +45,31 @@ namespace {
 const char kEmptyPage[] = "files/empty.html";
 const char kMalwarePage[] = "files/safe_browsing/malware.html";
 const char kMalwareIframe[] = "files/safe_browsing/malware_iframe.html";
+
+class InterstitialObserver : public content::WebContentsObserver {
+ public:
+  InterstitialObserver(content::WebContents* web_contents,
+                       const base::Closure& attach_callback,
+                       const base::Closure& detach_callback)
+      : WebContentsObserver(web_contents),
+        attach_callback_(attach_callback),
+        detach_callback_(detach_callback) {
+  }
+
+  virtual void DidAttachInterstitialPage() OVERRIDE {
+    attach_callback_.Run();
+  }
+
+  virtual void DidDetachInterstitialPage() OVERRIDE {
+    detach_callback_.Run();
+  }
+
+ private:
+  base::Closure attach_callback_;
+  base::Closure detach_callback_;
+
+  DISALLOW_COPY_AND_ASSIGN(InterstitialObserver);
+};
 
 // A SafeBrowsingDatabaseManager class that allows us to inject the malicious
 // URLs.
@@ -56,7 +83,7 @@ class FakeSafeBrowsingDatabaseManager :  public SafeBrowsingDatabaseManager {
   // Otherwise it returns false, and "client" is called asynchronously with the
   // result when it is ready.
   // Overrides SafeBrowsingDatabaseManager::CheckBrowseUrl.
-  virtual bool CheckBrowseUrl(const GURL& gurl, Client* client) {
+  virtual bool CheckBrowseUrl(const GURL& gurl, Client* client) OVERRIDE {
     if (badurls[gurl.spec()] == SB_THREAT_TYPE_SAFE)
       return true;
 
@@ -68,11 +95,13 @@ class FakeSafeBrowsingDatabaseManager :  public SafeBrowsingDatabaseManager {
   }
 
   void OnCheckBrowseURLDone(const GURL& gurl, Client* client) {
-    SafeBrowsingDatabaseManager::SafeBrowsingCheck check;
-    check.urls.push_back(gurl);
-    check.client = client;
-    check.threat_type = badurls[gurl.spec()];
-    client->OnSafeBrowsingResult(check);
+    SafeBrowsingDatabaseManager::SafeBrowsingCheck sb_check(
+        std::vector<GURL>(1, gurl),
+        std::vector<SBFullHash>(),
+        client,
+        safe_browsing_util::MALWARE);
+    sb_check.url_results[0] = badurls[gurl.spec()];
+    client->OnSafeBrowsingResult(sb_check);
   }
 
   void SetURLThreatType(const GURL& url, SBThreatType threat_type) {
@@ -93,7 +122,8 @@ class FakeSafeBrowsingUIManager :  public SafeBrowsingUIManager {
       SafeBrowsingUIManager(service) { }
 
   // Overrides SafeBrowsingUIManager
-  virtual void SendSerializedMalwareDetails(const std::string& serialized) {
+  virtual void SendSerializedMalwareDetails(
+      const std::string& serialized) OVERRIDE {
     reports_.push_back(serialized);
     // Notify the UI thread that we got a report.
     BrowserThread::PostTask(
@@ -261,7 +291,7 @@ class TestSafeBrowsingBlockingPage : public SafeBrowsingBlockingPageV2 {
     malware_details_proceed_delay_ms_ = 100;
   }
 
-  ~TestSafeBrowsingBlockingPage() {
+  virtual ~TestSafeBrowsingBlockingPage() {
     if (!wait_for_delete_)
       return;
 
@@ -283,7 +313,7 @@ class TestSafeBrowsingBlockingPageFactory
     : public SafeBrowsingBlockingPageFactory {
  public:
   TestSafeBrowsingBlockingPageFactory() { }
-  ~TestSafeBrowsingBlockingPageFactory() { }
+  virtual ~TestSafeBrowsingBlockingPageFactory() { }
 
   virtual SafeBrowsingBlockingPage* CreateSafeBrowsingPage(
       SafeBrowsingUIManager* delegate,
@@ -422,11 +452,13 @@ class SafeBrowsingBlockingPageTest : public InProcessBrowserTest {
   void WaitForInterstitial() {
     WebContents* contents =
         browser()->tab_strip_model()->GetActiveWebContents();
-    content::WindowedNotificationObserver interstitial_observer(
-        content::NOTIFICATION_INTERSTITIAL_ATTACHED,
-        content::Source<WebContents>(contents));
+    scoped_refptr<content::MessageLoopRunner> loop_runner(
+        new content::MessageLoopRunner);
+    InterstitialObserver observer(contents,
+                                  loop_runner->QuitClosure(),
+                                  base::Closure());
     if (!InterstitialPage::GetInterstitialPage(contents))
-      interstitial_observer.Wait();
+      loop_runner->Run();
   }
 
   void AssertReportSent() {
@@ -492,9 +524,8 @@ class SafeBrowsingBlockingPageTest : public InProcessBrowserTest {
     // practice it spins at most once or twice.
     std::string ready_state;
     do {
-      scoped_ptr<base::Value> value(rvh->ExecuteJavascriptAndGetValue(
-          string16(),
-          ASCIIToUTF16("document.readyState")));
+      scoped_ptr<base::Value> value = content::ExecuteScriptAndGetValue(
+          rvh, "document.readyState");
       if (!value.get() || !value->GetAsString(&ready_state))
         return false;
     } while (ready_state != "complete");
@@ -505,14 +536,13 @@ class SafeBrowsingBlockingPageTest : public InProcessBrowserTest {
     content::RenderViewHost* rvh = GetRenderViewHost();
     if (!rvh)
       return VISIBILITY_ERROR;
-    scoped_ptr<base::Value> value(rvh->ExecuteJavascriptAndGetValue(
-        string16(),
-        ASCIIToUTF16(
-            "var node = document.getElementById('" + node_id + "');\n"
-            "if (node)\n"
-            "   node.offsetWidth > 0 && node.offsetHeight > 0;"
-            "else\n"
-            "  'node not found';\n")));
+    scoped_ptr<base::Value> value = content::ExecuteScriptAndGetValue(
+        rvh,
+        "var node = document.getElementById('" + node_id + "');\n"
+        "if (node)\n"
+        "   node.offsetWidth > 0 && node.offsetHeight > 0;"
+        "else\n"
+        "  'node not found';\n");
     if (!value.get())
       return VISIBILITY_ERROR;
     bool result = false;
@@ -525,7 +555,7 @@ class SafeBrowsingBlockingPageTest : public InProcessBrowserTest {
     content::RenderViewHost* rvh = GetRenderViewHost();
     if (!rvh)
       return false;
-    // We don't use ExecuteJavascriptAndGetValue for this one, since clicking
+    // We don't use ExecuteScriptAndGetValue for this one, since clicking
     // the button/link may navigate away before the injected javascript can
     // reply, hanging the test.
     rvh->ExecuteJavascriptInWebFrame(
@@ -538,13 +568,15 @@ class SafeBrowsingBlockingPageTest : public InProcessBrowserTest {
     // We wait for interstitial_detached rather than nav_entry_committed, as
     // going back from a main-frame malware interstitial page will not cause a
     // nav entry committed event.
-    content::WindowedNotificationObserver observer(
-        content::NOTIFICATION_INTERSTITIAL_DETACHED,
-        content::Source<WebContents>(
-            browser()->tab_strip_model()->GetActiveWebContents()));
+    scoped_refptr<content::MessageLoopRunner> loop_runner(
+        new content::MessageLoopRunner);
+    InterstitialObserver observer(
+        browser()->tab_strip_model()->GetActiveWebContents(),
+        base::Closure(),
+        loop_runner->QuitClosure());
     if (!Click(node_id))
       return false;
-    observer.Wait();
+    loop_runner->Run();
     return true;
   }
 
@@ -558,8 +590,14 @@ class SafeBrowsingBlockingPageTest : public InProcessBrowserTest {
   DISALLOW_COPY_AND_ASSIGN(SafeBrowsingBlockingPageTest);
 };
 
+// TODO(linux_aura) http://crbug.com/163931
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS) && defined(USE_AURA)
+#define MAYBE_MalwareRedirectInIFrameCanceled DISABLED_MalwareRedirectInIFrameCanceled
+#else
+#define MAYBE_MalwareRedirectInIFrameCanceled MalwareRedirectInIFrameCanceled
+#endif
 IN_PROC_BROWSER_TEST_F(SafeBrowsingBlockingPageTest,
-                       MalwareRedirectInIFrameCanceled) {
+                       MAYBE_MalwareRedirectInIFrameCanceled) {
   // 1. Test the case that redirect is a subresource.
   MalwareRedirectCancelAndProceed("openWinIFrame");
   // If the redirect was from subresource but canceled, "proceed" will continue
@@ -708,9 +746,9 @@ IN_PROC_BROWSER_TEST_F(SafeBrowsingBlockingPageTest, ReportingDisabled) {
   browser()->profile()->GetPrefs()->SetBoolean(
       prefs::kSafeBrowsingReportingEnabled, true);
 
-  net::TestServer https_server(net::TestServer::TYPE_HTTPS,
-                               net::TestServer::kLocalhost,
-                               FilePath(FILE_PATH_LITERAL("chrome/test/data")));
+  net::TestServer https_server(
+      net::TestServer::TYPE_HTTPS, net::TestServer::kLocalhost,
+      base::FilePath(FILE_PATH_LITERAL("chrome/test/data")));
   ASSERT_TRUE(https_server.Start());
   GURL url = https_server.GetURL(kEmptyPage);
   SetURLThreatType(url, SB_THREAT_TYPE_URL_MALWARE);

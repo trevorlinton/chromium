@@ -32,7 +32,7 @@ void executeCalculateDrawProperties(LayerImpl* root, std::vector<LayerImpl*>& re
     ASSERT_TRUE(root->renderSurface());
     ASSERT_FALSE(renderSurfaceLayerList.size());
 
-    LayerTreeHostCommon::calculateDrawProperties(root, root->bounds(), 1, 1, dummyMaxTextureSize, false, renderSurfaceLayerList);
+    LayerTreeHostCommon::calculateDrawProperties(root, root->bounds(), 1, 1, dummyMaxTextureSize, false, renderSurfaceLayerList, false);
 }
 
 void clearDamageForAllSurfaces(LayerImpl* layer)
@@ -341,7 +341,7 @@ TEST_F(DamageTrackerTest, verifyDamageForPerspectiveClippedLayer)
     gfx::Transform transform;
     transform.Translate3d(500, 500, 0);
     transform.ApplyPerspectiveDepth(1);
-    MathUtil::rotateEulerAngles(&transform, 0, 45, 0);
+    transform.RotateAboutYAxis(45);
     transform.Translate3d(-50, -50, 0);
 
     // Set up the child

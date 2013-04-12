@@ -12,14 +12,14 @@
 #include <vector>
 
 #include "base/command_line.h"
-#include "base/file_path.h"
 #include "base/file_util.h"
+#include "base/files/file_path.h"
 #include "base/location.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop.h"
 #include "base/string16.h"
-#include "base/string_number_conversions.h"
 #include "base/string_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/time.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/browser/bookmarks/base_bookmark_model_observer.h"
@@ -81,13 +81,12 @@ class FakeServerChange {
     EXPECT_EQ(BaseNode::INIT_OK, parent.InitByIdLookup(parent_id));
     syncer::WriteNode node(trans_);
     if (predecessor_id == 0) {
-      EXPECT_TRUE(node.InitByCreation(syncer::BOOKMARKS, parent, NULL));
+      EXPECT_TRUE(node.InitBookmarkByCreation(parent, NULL));
     } else {
       syncer::ReadNode predecessor(trans_);
       EXPECT_EQ(BaseNode::INIT_OK, predecessor.InitByIdLookup(predecessor_id));
       EXPECT_EQ(predecessor.GetParentId(), parent.GetId());
-      EXPECT_TRUE(node.InitByCreation(syncer::BOOKMARKS, parent,
-                                      &predecessor));
+      EXPECT_TRUE(node.InitBookmarkByCreation(parent, &predecessor));
     }
     EXPECT_EQ(node.GetPredecessorId(), predecessor_id);
     EXPECT_EQ(node.GetParentId(), parent_id);
@@ -127,7 +126,9 @@ class FakeServerChange {
       syncer::WriteNode node(trans_);
       EXPECT_EQ(BaseNode::INIT_OK, node.InitByIdLookup(id));
       EXPECT_FALSE(node.GetFirstChildId());
-      node.Remove();
+      node.GetMutableEntryForTest()->Put(syncer::syncable::SERVER_IS_DEL,
+                                         true);
+      node.Tombstone();
     }
     {
       // Verify the deletion.
@@ -235,7 +236,7 @@ class ExtensiveChangesBookmarkModelObserver : public BaseBookmarkModelObserver {
     ++completed_count_;
   }
 
-  void BookmarkModelChanged() {}
+  virtual void BookmarkModelChanged() OVERRIDE {}
 
   int get_started() const {
     return started_count_;
@@ -361,7 +362,7 @@ class ProfileSyncServiceBookmarkTest : public testing::Test {
         predecessor = &predecessor_node;
       }
       syncer::WriteNode node(&trans);
-      if (!node.InitByCreation(type, root, predecessor))
+      if (!node.InitBookmarkByCreation(root, predecessor))
         return false;
       node.SetIsFolder(true);
       node.GetMutableEntryForTest()->Put(
@@ -374,6 +375,8 @@ class ProfileSyncServiceBookmarkTest : public testing::Test {
   }
 
   void StartSync() {
+    test_user_share_.Reload();
+
     ASSERT_TRUE(CreatePermanentBookmarkNodes());
 
     // Set up model associator.
@@ -422,8 +425,10 @@ class ProfileSyncServiceBookmarkTest : public testing::Test {
 
   void StopSync() {
     change_processor_.reset();
-    syncer::SyncError error = model_associator_->DisassociateModels();
-    EXPECT_FALSE(error.IsSet());
+    if (model_associator_.get()) {
+      syncer::SyncError error = model_associator_->DisassociateModels();
+      EXPECT_FALSE(error.IsSet());
+    }
     model_associator_.reset();
 
     message_loop_.RunUntilIdle();
@@ -976,7 +981,7 @@ TEST_F(ProfileSyncServiceBookmarkTest, UnrecoverableErrorSuspendsService) {
     syncer::WriteTransaction trans(FROM_HERE, test_user_share_.user_share());
     syncer::WriteNode sync_node(&trans);
     ASSERT_TRUE(InitSyncNodeFromChromeNode(node, &sync_node));
-    sync_node.Remove();
+    sync_node.Tombstone();
   }
   // The models don't match at this point, but the ProfileSyncService
   // doesn't know it yet.
@@ -1007,6 +1012,87 @@ TEST_F(ProfileSyncServiceBookmarkTest, MergeDuplicates) {
 
   EXPECT_EQ(2, model_->other_node()->child_count());
   ExpectModelMatch();
+}
+
+TEST_F(ProfileSyncServiceBookmarkTest, ApplySyncDeletesFromJournal) {
+  // Initialize sync model and bookmark model as:
+  // URL 0
+  // Folder 1
+  //   |-- URL 1
+  //   +-- Folder 2
+  //         +-- URL 2
+  LoadBookmarkModel(DELETE_EXISTING_STORAGE, SAVE_TO_STORAGE);
+  int64 u0 = 0;
+  int64 f1 = 0;
+  int64 u1 = 0;
+  int64 f2 = 0;
+  int64 u2 = 0;
+  StartSync();
+  int fixed_sync_bk_count = GetSyncBookmarkCount();
+  {
+    syncer::WriteTransaction trans(FROM_HERE, test_user_share_.user_share());
+    FakeServerChange adds(&trans);
+    u0 = adds.AddURL(L"URL 0", "http://plus.google.com/", bookmark_bar_id(), 0);
+    f1 = adds.AddFolder(L"Folder 1", bookmark_bar_id(), u0);
+    u1 = adds.AddURL(L"URL 1", "http://www.google.com/", f1, 0);
+    f2 = adds.AddFolder(L"Folder 2", f1, u1);
+    u2 = adds.AddURL(L"URL 2", "http://mail.google.com/", f2, 0);
+    adds.ApplyPendingChanges(change_processor_.get());
+  }
+  StopSync();
+
+  // Reload bookmark model and disable model saving to make sync changes not
+  // persisted.
+  LoadBookmarkModel(LOAD_FROM_STORAGE, DONT_SAVE_TO_STORAGE);
+  EXPECT_EQ(6, model_->bookmark_bar_node()->GetTotalNodeCount());
+  EXPECT_EQ(fixed_sync_bk_count + 5, GetSyncBookmarkCount());
+  StartSync();
+  {
+    // Remove all folders/bookmarks except u3 added above.
+    syncer::WriteTransaction trans(FROM_HERE, test_user_share_.user_share());
+    FakeServerChange dels(&trans);
+    dels.Delete(u2);
+    dels.Delete(f2);
+    dels.Delete(u1);
+    dels.Delete(f1);
+    dels.ApplyPendingChanges(change_processor_.get());
+  }
+  StopSync();
+  // Bookmark bar itself and u0 remain.
+  EXPECT_EQ(2, model_->bookmark_bar_node()->GetTotalNodeCount());
+
+  // Reload bookmarks including ones deleted in sync model from storage.
+  LoadBookmarkModel(LOAD_FROM_STORAGE, DONT_SAVE_TO_STORAGE);
+  EXPECT_EQ(6, model_->bookmark_bar_node()->GetTotalNodeCount());
+  // Add a bookmark under f1 when sync is off so that f1 will not be
+  // deleted even when f1 matches delete journal because it's not empty.
+  model_->AddURL(model_->bookmark_bar_node()->GetChild(1),
+                 0, UTF8ToUTF16("local"), GURL("http://www.youtube.com"));
+  // Sync model has fixed bookmarks nodes and u3.
+  EXPECT_EQ(fixed_sync_bk_count + 1, GetSyncBookmarkCount());
+  StartSync();
+  // Expect 4 bookmarks after model association because u2, f2, u1 are removed
+  // by delete journal, f1 is not removed by delete journal because it's
+  // not empty due to www.youtube.com added above.
+  EXPECT_EQ(4, model_->bookmark_bar_node()->GetTotalNodeCount());
+  EXPECT_EQ(UTF8ToUTF16("URL 0"),
+            model_->bookmark_bar_node()->GetChild(0)->GetTitle());
+  EXPECT_EQ(UTF8ToUTF16("Folder 1"),
+            model_->bookmark_bar_node()->GetChild(1)->GetTitle());
+  EXPECT_EQ(UTF8ToUTF16("local"),
+            model_->bookmark_bar_node()->GetChild(1)->GetChild(0)->GetTitle());
+  StopSync();
+
+  // Verify purging of delete journals.
+  // Delete journals for u2, f2, u1 remains because they are used in last
+  // association.
+  EXPECT_EQ(3u, test_user_share_.GetDeleteJournalSize());
+  StartSync();
+  StopSync();
+  // Reload again and all delete journals should be gone because none is used
+  // in last association.
+  ASSERT_TRUE(test_user_share_.Reload());
+  EXPECT_EQ(0u, test_user_share_.GetDeleteJournalSize());
 }
 
 struct TestData {

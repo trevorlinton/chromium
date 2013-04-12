@@ -94,6 +94,10 @@ gfx::Font NativeWidgetAura::GetWindowTitleFont() {
 // NativeWidgetAura, internal::NativeWidgetPrivate implementation:
 
 void NativeWidgetAura::InitNativeWidget(const Widget::InitParams& params) {
+  // Aura needs to know which desktop (Ash or regular) will manage this widget.
+  // See Widget::InitParams::context for details.
+  DCHECK(params.parent || params.context);
+
   ownership_ = params.ownership;
 
   window_->set_user_data(this);
@@ -136,15 +140,8 @@ void NativeWidgetAura::InitNativeWidget(const Widget::InitParams& params) {
   if (parent) {
     parent->AddChild(window_);
   } else {
-    // TODO(erg): Once I've threaded context through chrome, uncomment this
-    // check, which currently fails on the NULL == NULL case.
-    //
-    // DCHECK_NE(params.GetParent(), params.context);
-
-    // TODO(erg): Remove this NULL check once we've made everything in views
-    // actually pass us a context.
-    aura::RootWindow* root_window = context ? context->GetRootWindow() : NULL;
-    window_->SetDefaultParentByRootWindow(root_window, window_bounds);
+    window_->SetDefaultParentByRootWindow(context->GetRootWindow(),
+                                          window_bounds);
   }
 
   // Wait to set the bounds until we have a parent. That way we can know our
@@ -160,7 +157,7 @@ void NativeWidgetAura::InitNativeWidget(const Widget::InitParams& params) {
   DCHECK(GetWidget()->GetRootView());
 #if !defined(OS_MACOSX)
   if (params.type != Widget::InitParams::TYPE_TOOLTIP)
-    tooltip_manager_.reset(new views::TooltipManagerAura(this));
+    tooltip_manager_.reset(new views::TooltipManagerAura(window_, GetWidget()));
 #endif  // !defined(OS_MACOSX)
 
   drop_helper_.reset(new DropHelper(GetWidget()->GetRootView()));
@@ -276,7 +273,7 @@ InputMethod* NativeWidgetAura::CreateInputMethod() {
   aura::RootWindow* root_window = window_->GetRootWindow();
   ui::InputMethod* host =
       root_window->GetProperty(aura::client::kRootWindowInputMethodKey);
-  return new InputMethodBridge(this, host);
+  return new InputMethodBridge(this, host, true);
 }
 
 internal::InputMethodDelegate* NativeWidgetAura::GetInputMethodDelegate() {
@@ -594,7 +591,7 @@ void NativeWidgetAura::SetCursor(gfx::NativeCursor cursor) {
 void NativeWidgetAura::ClearNativeFocus() {
   aura::client::FocusClient* client = aura::client::GetFocusClient(window_);
   if (window_ && client && window_->Contains(client->GetFocusedWindow()))
-    client->FocusWindow(window_, NULL);
+    client->ResetFocusWithinActiveWindow(window_);
 }
 
 gfx::Rect NativeWidgetAura::GetWorkAreaBoundsInScreen() const {
@@ -612,12 +609,18 @@ void NativeWidgetAura::SetInactiveRenderingDisabled(bool value) {
 }
 
 Widget::MoveLoopResult NativeWidgetAura::RunMoveLoop(
-    const gfx::Vector2d& drag_offset) {
+    const gfx::Vector2d& drag_offset,
+    Widget::MoveLoopSource source) {
   if (window_->parent() &&
       aura::client::GetWindowMoveClient(window_->parent())) {
     SetCapture();
+    aura::client::WindowMoveSource window_move_source =
+        source == Widget::MOVE_LOOP_SOURCE_MOUSE ?
+        aura::client::WINDOW_MOVE_SOURCE_MOUSE :
+        aura::client::WINDOW_MOVE_SOURCE_TOUCH;
     if (aura::client::GetWindowMoveClient(window_->parent())->RunMoveLoop(
-            window_, drag_offset) == aura::client::MOVE_SUCCESSFUL) {
+            window_, drag_offset, window_move_source) ==
+        aura::client::MOVE_SUCCESSFUL) {
       return Widget::MOVE_LOOP_SUCCESSFUL;
     }
   }
@@ -740,7 +743,6 @@ void NativeWidgetAura::OnWindowDestroying() {
 
 void NativeWidgetAura::OnWindowDestroyed() {
   window_ = NULL;
-  tooltip_manager_.reset();
   delegate_->OnNativeWidgetDestroyed();
   if (ownership_ == Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET)
     delete this;
@@ -799,18 +801,6 @@ void NativeWidgetAura::OnMouseEvent(ui::MouseEvent* event) {
 }
 
 void NativeWidgetAura::OnScrollEvent(ui::ScrollEvent* event) {
-  if (event->type() == ui::ET_SCROLL) {
-    delegate_->OnScrollEvent(event);
-    if (event->handled())
-      return;
-
-    // Convert unprocessed scroll events into wheel events.
-    ui::MouseWheelEvent mwe(*static_cast<ui::ScrollEvent*>(event));
-    delegate_->OnMouseEvent(&mwe);
-    if (mwe.handled())
-      event->SetHandled();
-    return;
-  }
   delegate_->OnScrollEvent(event);
 }
 
@@ -874,8 +864,9 @@ void NativeWidgetAura::OnWindowFocused(aura::Window* gained_focus,
       DCHECK_EQ(ownership_, Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
     }
 
-    delegate_->OnNativeBlur(
-        aura::client::GetFocusClient(window_)->GetFocusedWindow());
+    aura::client::FocusClient* client = aura::client::GetFocusClient(window_);
+    if (client)  // NULL during destruction of aura::Window.
+      delegate_->OnNativeBlur(client->GetFocusedWindow());
   }
 }
 
@@ -1053,8 +1044,9 @@ void NativeWidgetPrivate::ReparentNativeView(gfx::NativeView native_view,
     // in this case is the stacking client of the current RootWindow. This
     // matches our previous behaviour; the global stacking client would almost
     // always reattach the window to the same RootWindow.
-    native_view->SetDefaultParentByRootWindow(native_view->GetRootWindow(),
-                                              gfx::Rect());
+    aura::RootWindow* root_window = native_view->GetRootWindow();
+    native_view->SetDefaultParentByRootWindow(
+        root_window, root_window->GetBoundsInScreen());
   }
 
   // And now, notify them that they have a brand new parent.

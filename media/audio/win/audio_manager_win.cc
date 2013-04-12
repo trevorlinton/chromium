@@ -13,7 +13,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop.h"
 #include "base/path_service.h"
@@ -215,10 +215,6 @@ string16 AudioManagerWin::GetAudioInputDeviceModel() {
   return string16();
 }
 
-bool AudioManagerWin::CanShowAudioInputSettings() {
-  return true;
-}
-
 void AudioManagerWin::ShowAudioInputSettings() {
   std::wstring program;
   std::string argument;
@@ -230,7 +226,7 @@ void AudioManagerWin::ShowAudioInputSettings() {
     argument = "mmsys.cpl,,1";
   }
 
-  FilePath path;
+  base::FilePath path;
   PathService::Get(base::DIR_SYSTEM, &path);
   path = path.Append(program);
   CommandLine command_line(path);
@@ -288,11 +284,15 @@ AudioOutputStream* AudioManagerWin::MakeLowLatencyOutputStream(
   if (!CoreAudioUtil::IsSupported()) {
     // Fall back to Windows Wave implementation on Windows XP or lower.
     DVLOG(1) << "Using WaveOut since WASAPI requires at least Vista.";
-    return new PCMWaveOutAudioOutputStream(this, params, 2, WAVE_MAPPER);
+    return new PCMWaveOutAudioOutputStream(
+        this, params, media::NumberOfWaveOutBuffers(), WAVE_MAPPER);
   }
 
-  // TODO(henrika): remove once we properly handle input device selection.
-  if (CommandLine::ForCurrentProcess()->HasSwitch(
+  // TODO(crogers): support more than stereo input.
+  // TODO(henrika): remove flag once we properly handle input device selection.
+  // https://code.google.com/p/chromium/issues/detail?id=147327
+  if (params.input_channels() == 2 &&
+      CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kEnableWebAudioInput)) {
     if (WASAPIUnifiedStream::HasUnifiedDefaultIO()) {
       DVLOG(1) << "WASAPIUnifiedStream is created.";
@@ -361,6 +361,7 @@ AudioParameters AudioManagerWin::GetPreferredLowLatencyOutputStreamParameters(
   int sample_rate = input_params.sample_rate();
   int bits_per_sample = input_params.bits_per_sample();
   ChannelLayout channel_layout = input_params.channel_layout();
+  int input_channels = input_params.input_channels();
   if (CoreAudioUtil::IsSupported()) {
     sample_rate = GetAudioHardwareSampleRate();
     bits_per_sample = 16;
@@ -369,7 +370,7 @@ AudioParameters AudioManagerWin::GetPreferredLowLatencyOutputStreamParameters(
 
   // TODO(dalecurtis): This should include hardware bits per channel eventually.
   return AudioParameters(
-      AudioParameters::AUDIO_PCM_LOW_LATENCY, channel_layout,
+      AudioParameters::AUDIO_PCM_LOW_LATENCY, channel_layout, input_channels,
       sample_rate, bits_per_sample, GetAudioHardwareBufferSize());
 }
 

@@ -18,6 +18,7 @@
 #include "net/base/auth.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/load_flags.h"
+#include "net/base/load_timing_info.h"
 #include "net/base/net_errors.h"
 #include "net/base/net_log.h"
 #include "net/base/network_change_notifier.h"
@@ -370,6 +371,10 @@ HttpResponseHeaders* URLRequest::response_headers() const {
   return response_info_.headers.get();
 }
 
+void URLRequest::GetLoadTimingInfo(LoadTimingInfo* load_timing_info) const {
+  *load_timing_info = load_timing_info_;
+}
+
 bool URLRequest::GetResponseCookies(ResponseCookies* cookies) {
   DCHECK(job_);
   return job_->GetResponseCookies(cookies);
@@ -453,7 +458,11 @@ void URLRequest::Start() {
   DCHECK_EQ(network_delegate_, context_->network_delegate());
 
   g_url_requests_started = true;
-  response_info_.request_time = Time::Now();
+  response_info_.request_time = base::Time::Now();
+
+  load_timing_info_ = LoadTimingInfo();
+  load_timing_info_.request_start_time = response_info_.request_time;
+  load_timing_info_.request_start = base::TimeTicks::Now();
 
   // Only notify the delegate for the initial request.
   if (network_delegate_) {
@@ -719,7 +728,12 @@ void URLRequest::PrepareToRestart() {
   OrphanJob();
 
   response_info_ = HttpResponseInfo();
-  response_info_.request_time = Time::Now();
+  response_info_.request_time = base::Time::Now();
+
+  load_timing_info_ = LoadTimingInfo();
+  load_timing_info_.request_start_time = response_info_.request_time;
+  load_timing_info_.request_start = base::TimeTicks::Now();
+
   status_ = URLRequestStatus();
   is_pending_ = false;
 }
@@ -824,7 +838,7 @@ bool URLRequest::GetHSTSRedirect(GURL* redirect_url) const {
           url.host(),
           SSLConfigService::IsSNIAvailable(context()->ssl_config_service()),
           &domain_state) &&
-      domain_state.ShouldRedirectHTTPToHTTPS()) {
+      domain_state.ShouldUpgradeToSSL()) {
     url_canon::Replacements<char> replacements;
     const char kNewScheme[] = "https";
     replacements.SetScheme(kNewScheme,
@@ -929,14 +943,23 @@ void URLRequest::NotifyReadCompleted(int bytes_read) {
 
   // Notify NetworkChangeNotifier that we just received network data.
   // This is to identify cases where the NetworkChangeNotifier thinks we
-  // are off-line but we are still receiving network data (crbug.com/124069).
+  // are off-line but we are still receiving network data (crbug.com/124069),
+  // and to get rough network connection measurements.
   if (bytes_read > 0 && !was_cached())
-    NetworkChangeNotifier::NotifyDataReceived(url());
+    NetworkChangeNotifier::NotifyDataReceived(*this, bytes_read);
 
   if (delegate_)
     delegate_->OnReadCompleted(this, bytes_read);
 
   // Nothing below this line as OnReadCompleted may delete |this|.
+}
+
+void URLRequest::OnHeadersComplete() {
+  // Cache load timing information now, as information will be lost once the
+  // socket is closed and the ClientSocketHandle is Reset, which will happen
+  // once the body is complete.  The start times should already be populated.
+  if (job_)
+    job_->GetLoadTimingInfo(&load_timing_info_);
 }
 
 void URLRequest::NotifyRequestCompleted() {

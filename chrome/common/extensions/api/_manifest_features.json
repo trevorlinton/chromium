@@ -20,7 +20,8 @@
       "nckgahadagoaajjgafhacjanaoiihapd",  // Google Talk prod
       "eggnbpckecmjlblplehfpjjdhhidfdoj",  // Google Talk beta
       "ppleadejekpmccmnpjdimmlfljlkdfej",  // Google Talk alpha
-      "ljclpkphhpbpinifbeabbhlfddcpfdde"   // Google Talk debug
+      "ljclpkphhpbpinifbeabbhlfddcpfdde",   // Google Talk debug
+      "lphgohfeebnhcpiohjndkgbhhkoapkjc" // Apps Debugger
     ]
   },
   "app.background": {
@@ -76,6 +77,10 @@
     "extension_types": ["extension", "packaged_app", "platform_app"],
     "min_manifest_version": 2
   },
+  "content_pack": {
+    "channel": "dev",
+    "extension_types": ["extension"]
+  },
   "content_security_policy": {
     "channel": "stable",
     // Platform apps have a restricted content security policy that cannot be
@@ -110,16 +115,34 @@
     "channel": "stable",
     "extension_types": ["extension", "packaged_app"]
   },
-  "display_in_launcher": {
-    "channel": "stable",
-    "extension_types": ["packaged_app", "platform_app"],
-    "location": "component"
-  },
-  "display_in_new_tab_page": {
-    "channel": "stable",
-    "extension_types": ["packaged_app", "platform_app"],
-    "location": "component"
-  },
+  "display_in_launcher": [
+    {
+      "channel": "stable",
+      "extension_types": ["packaged_app", "platform_app"],
+      "location": "component"
+    },
+    {
+      "channel": "stable",
+      "extension_types": ["packaged_app", "platform_app"],
+      "whitelist": [
+        "nmmhkkegccagdldgiimedpiccmgmieda"
+      ]
+    }
+  ],
+  "display_in_new_tab_page": [
+    {
+      "channel": "stable",
+      "extension_types": ["packaged_app", "platform_app"],
+      "location": "component"
+    },
+    {
+      "channel": "stable",
+      "extension_types": ["packaged_app", "platform_app"],
+      "whitelist": [
+        "nmmhkkegccagdldgiimedpiccmgmieda"
+      ]
+    }
+  ],
   "file_browser_handlers": {
     "channel": "stable",
     "extension_types": ["extension", "packaged_app"]
@@ -210,6 +233,10 @@
     "channel": "stable",
     "extension_types": ["extension"],
     "max_manifest_version": 1
+  },
+  "page_launcher": {
+    "channel": "dev",
+    "extension_types": ["platform_app"]
   },
   "permissions": {
     "channel": "stable",

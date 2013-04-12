@@ -8,7 +8,6 @@
 #include "base/metrics/histogram.h"
 #include "base/string_util.h"
 #include "base/win/windows_version.h"
-#include "content/renderer/media/audio_hardware.h"
 #include "content/renderer/media/webrtc_audio_capturer.h"
 #include "content/renderer/media/webrtc_audio_renderer.h"
 #include "content/renderer/render_thread_impl.h"
@@ -36,7 +35,6 @@ WebRtcAudioDeviceImpl::WebRtcAudioDeviceImpl()
       output_delay_ms_(0),
       last_error_(AudioDeviceModule::kAdmErrNone),
       last_process_time_(base::TimeTicks::Now()),
-      session_id_(0),
       initialized_(false),
       playing_(false),
       agc_is_enabled_(false) {
@@ -146,8 +144,8 @@ void WebRtcAudioDeviceImpl::CaptureData(const int16* audio_data,
   // "higher than maximum". The input volume slider in the sound preference
   // allows the user to set a scaling that is higher than 100%. It means that
   // even if the reported maximum levels is N, the actual microphone level can
-  // go up to 1.5*N and that corresponds to a normalized |volume| of 1.5.
-  DCHECK_LE(volume, 1.5);
+  // go up to 1.5x*N and that corresponds to a normalized |volume| of 1.5x.
+  DCHECK_LE(volume, 1.6);
 #endif
 
   int output_delay_ms = 0;
@@ -214,6 +212,7 @@ void WebRtcAudioDeviceImpl::CaptureData(const int16* audio_data,
 
 void WebRtcAudioDeviceImpl::SetCaptureFormat(
     const media::AudioParameters& params) {
+  DVLOG(1) << "WebRtcAudioDeviceImpl::SetCaptureFormat()";
   input_audio_parameters_ = params;
 }
 
@@ -439,16 +438,6 @@ int32_t WebRtcAudioDeviceImpl::StartPlayout() {
     return 0;
   }
 
-  {
-    // TODO(xians): We're calling out while under a lock.  This opens up
-    // possibilities for deadlocks.  Instead lock, transfer ownership of the
-    // renderer_ pointer over to a local variable, release the lock, and call
-    // Play() using the local variable.
-    base::AutoLock auto_lock(lock_);
-    if (renderer_)
-      renderer_->Play();
-  }
-
   playing_ = true;
   start_render_time_ = base::Time::Now();
   return 0;
@@ -468,14 +457,6 @@ int32_t WebRtcAudioDeviceImpl::StopPlayout() {
     UMA_HISTOGRAM_LONG_TIMES("WebRTC.AudioRenderTime", render_time);
   }
 
-  {
-    base::AutoLock auto_lock(lock_);
-    // TODO(xians): transfer ownership of the renderer_ pointer over to a local
-    // variable, release the lock, and call Pause() using the local variable.
-    if (renderer_)
-      renderer_->Pause();
-  }
-
   playing_ = false;
   return 0;
 }
@@ -492,11 +473,6 @@ int32_t WebRtcAudioDeviceImpl::StartRecording() {
     return -1;
   }
 
-  if (session_id_ <= 0) {
-    LOG(ERROR) << session_id_ << " is an invalid session id.";
-    return -1;
-  }
-
   if (capturer_->is_recording()) {
     // webrtc::VoiceEngine assumes that it is OK to call Start() twice and
     // that the call is ignored the second time.
@@ -505,8 +481,7 @@ int32_t WebRtcAudioDeviceImpl::StartRecording() {
 
   start_capture_time_ = base::Time::Now();
 
-  // Specify the session_id which is mapped to a certain device.
-  capturer_->SetDevice(session_id_);
+  // Start capturing using the selected device.
   capturer_->Start();
   return 0;
 }
@@ -878,10 +853,6 @@ int32_t WebRtcAudioDeviceImpl::SetLoudspeakerStatus(bool enable) {
 int32_t WebRtcAudioDeviceImpl::GetLoudspeakerStatus(bool* enabled) const {
   NOTIMPLEMENTED();
   return -1;
-}
-
-void WebRtcAudioDeviceImpl::SetSessionId(int session_id) {
-  session_id_ = session_id;
 }
 
 }  // namespace content

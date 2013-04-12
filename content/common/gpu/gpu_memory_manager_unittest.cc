@@ -14,8 +14,8 @@
 namespace BASE_HASH_NAMESPACE {
 template<>
 struct hash<content::GpuMemoryManagerClient*> {
-  size_t operator()(content::GpuMemoryManagerClient* ptr) const {
-    return hash<size_t>()(reinterpret_cast<size_t>(ptr));
+  uint64 operator()(content::GpuMemoryManagerClient* ptr) const {
+    return hash<uint64>()(reinterpret_cast<uint64>(ptr));
   }
 };
 }  // namespace BASE_HASH_NAMESPACE
@@ -23,13 +23,16 @@ struct hash<content::GpuMemoryManagerClient*> {
 
 class FakeMemoryTracker : public gpu::gles2::MemoryTracker {
  public:
-  void TrackMemoryAllocatedChange(
-      size_t old_size,
-      size_t new_size,
-      gpu::gles2::MemoryTracker::Pool pool) {
+  virtual void TrackMemoryAllocatedChange(
+      size_t /* old_size */,
+      size_t /* new_size */,
+      gpu::gles2::MemoryTracker::Pool /* pool */) OVERRIDE {
+  }
+  virtual bool EnsureGPUMemoryAvailable(size_t /* size_needed */) OVERRIDE {
+    return true;
   }
  private:
-  ~FakeMemoryTracker() {
+  virtual ~FakeMemoryTracker() {
   }
 };
 
@@ -68,7 +71,7 @@ class FakeClient : public GpuMemoryManagerClient {
  public:
   GpuMemoryManager* memmgr_;
   GpuMemoryAllocation allocation_;
-  size_t total_gpu_memory_;
+  uint64 total_gpu_memory_;
   gfx::Size surface_size_;
   GpuMemoryManagerClient* share_group_;
   scoped_refptr<gpu::gles2::MemoryTracker> memory_tracker_;
@@ -106,33 +109,33 @@ class FakeClient : public GpuMemoryManagerClient {
         this, surface_id != 0, visible));
   }
 
-  ~FakeClient() {
+  virtual ~FakeClient() {
     client_state_.reset();
     tracking_group_.reset();
     memory_tracker_ = NULL;
   }
 
-  void SetMemoryAllocation(const GpuMemoryAllocation& alloc) {
+  virtual void SetMemoryAllocation(const GpuMemoryAllocation& alloc) OVERRIDE {
     allocation_ = alloc;
     ClientAssignmentCollector::AddClientStat(this, alloc);
   }
 
-  bool GetTotalGpuMemory(size_t* bytes) {
+  virtual bool GetTotalGpuMemory(uint64* bytes) OVERRIDE {
     if (total_gpu_memory_) {
       *bytes = total_gpu_memory_;
       return true;
     }
     return false;
   }
-  void SetTotalGpuMemory(size_t bytes) { total_gpu_memory_ = bytes; }
+  void SetTotalGpuMemory(uint64 bytes) { total_gpu_memory_ = bytes; }
 
-  gpu::gles2::MemoryTracker* GetMemoryTracker() const OVERRIDE {
+  virtual gpu::gles2::MemoryTracker* GetMemoryTracker() const OVERRIDE {
     if (share_group_)
       return share_group_->GetMemoryTracker();
     return memory_tracker_.get();
   }
 
-  gfx::Size GetSurfaceSize() const {
+  virtual gfx::Size GetSurfaceSize() const OVERRIDE {
     return surface_size_;
   }
   void SetSurfaceSize(gfx::Size size) { surface_size_ = size; }
@@ -145,22 +148,23 @@ class FakeClient : public GpuMemoryManagerClient {
     client_state_->SetManagedMemoryStats(stats);
   }
 
-  size_t BytesWhenVisible() const {
+  uint64 BytesWhenVisible() const {
     return allocation_.renderer_allocation.bytes_limit_when_visible;
   }
 
-  size_t BytesWhenNotVisible() const {
+  uint64 BytesWhenNotVisible() const {
     return allocation_.renderer_allocation.bytes_limit_when_not_visible;
   }
 };
 
 class GpuMemoryManagerTest : public testing::Test {
  protected:
-  static const size_t kFrontbufferLimitForTest = 3;
+  static const uint64 kFrontbufferLimitForTest = 3;
 
   GpuMemoryManagerTest()
       : memmgr_(0, kFrontbufferLimitForTest) {
     memmgr_.TestingDisableScheduleManage();
+    memmgr_.TestingSetUseNonuniformMemoryPolicy(false);
   }
 
   virtual void SetUp() {
@@ -176,35 +180,35 @@ class GpuMemoryManagerTest : public testing::Test {
     return alloc.browser_allocation.suggest_have_frontbuffer &&
            !alloc.renderer_allocation.have_backbuffer_when_not_visible &&
            alloc.renderer_allocation.bytes_limit_when_visible >=
-               GetMinimumTabAllocation();
+               GetMinimumClientAllocation();
   }
   bool IsAllocationBackgroundForSurfaceYes(
       const GpuMemoryAllocation& alloc) {
     return alloc.browser_allocation.suggest_have_frontbuffer &&
            !alloc.renderer_allocation.have_backbuffer_when_not_visible &&
            alloc.renderer_allocation.bytes_limit_when_not_visible <=
-               memmgr_.GetCurrentBackgroundedAvailableGpuMemory();
+               memmgr_.GetCurrentNonvisibleAvailableGpuMemory();
   }
   bool IsAllocationHibernatedForSurfaceYes(
       const GpuMemoryAllocation& alloc) {
     return !alloc.browser_allocation.suggest_have_frontbuffer &&
            !alloc.renderer_allocation.have_backbuffer_when_not_visible &&
            alloc.renderer_allocation.bytes_limit_when_not_visible <=
-               memmgr_.GetCurrentBackgroundedAvailableGpuMemory();
+               memmgr_.GetCurrentNonvisibleAvailableGpuMemory();
   }
   bool IsAllocationForegroundForSurfaceNo(
       const GpuMemoryAllocation& alloc) {
     return !alloc.browser_allocation.suggest_have_frontbuffer &&
            !alloc.renderer_allocation.have_backbuffer_when_not_visible &&
            alloc.renderer_allocation.bytes_limit_when_visible ==
-               GetMinimumTabAllocation();
+               GetMinimumClientAllocation();
   }
   bool IsAllocationBackgroundForSurfaceNo(
       const GpuMemoryAllocation& alloc) {
     return !alloc.browser_allocation.suggest_have_frontbuffer &&
            !alloc.renderer_allocation.have_backbuffer_when_not_visible &&
            alloc.renderer_allocation.bytes_limit_when_visible ==
-               GetMinimumTabAllocation();
+               GetMinimumClientAllocation();
   }
   bool IsAllocationHibernatedForSurfaceNo(
       const GpuMemoryAllocation& alloc) {
@@ -218,33 +222,40 @@ class GpuMemoryManagerTest : public testing::Test {
     memmgr_.Manage();
   }
 
-  size_t CalcAvailableFromGpuTotal(size_t bytes) {
+  uint64 CalcAvailableFromGpuTotal(uint64 bytes) {
     return GpuMemoryManager::CalcAvailableFromGpuTotal(bytes);
   }
 
-  size_t CalcAvailableFromViewportArea(int viewport_area) {
-    return GpuMemoryManager::CalcAvailableFromViewportArea(viewport_area);
-  }
-
-  size_t CalcAvailableClamped(size_t bytes) {
+  uint64 CalcAvailableClamped(uint64 bytes) {
     bytes = std::max(bytes, memmgr_.GetDefaultAvailableGpuMemory());
     bytes = std::min(bytes, memmgr_.GetMaximumTotalGpuMemory());
     return bytes;
   }
 
-  size_t GetAvailableGpuMemory() {
+  uint64 GetAvailableGpuMemory() {
     return memmgr_.GetAvailableGpuMemory();
   }
 
-  size_t GetMaximumTabAllocation() {
-    return memmgr_.GetMaximumTabAllocation();
+  uint64 GetMaximumClientAllocation() {
+    return memmgr_.GetMaximumClientAllocation();
   }
 
-  size_t GetMinimumTabAllocation() {
-    return memmgr_.GetMinimumTabAllocation();
+  uint64 GetMinimumClientAllocation() {
+    return memmgr_.GetMinimumClientAllocation();
   }
 
   GpuMemoryManager memmgr_;
+};
+
+class GpuMemoryManagerTestNonuniform : public GpuMemoryManagerTest {
+ protected:
+  void SetClientStats(
+      FakeClient* client,
+      uint64 required,
+      uint64 nicetohave) {
+    client->SetManagedMemoryStats(
+        GpuManagedMemoryStats(required, nicetohave, 0, false));
+  }
 };
 
 // Test GpuMemoryManager::Manage basic functionality.
@@ -462,11 +473,11 @@ TEST_F(GpuMemoryManagerTest, TestManageChangingImportanceShareGroup) {
 // Test GpuMemoryAllocation memory allocation bonuses:
 // When the number of visible tabs is small, each tab should get a
 // gpu_resource_size_in_bytes allocation value that is greater than
-// GetMinimumTabAllocation(), and when the number of tabs is large, each should
-// get exactly GetMinimumTabAllocation() and not less.
+// GetMinimumClientAllocation(), and when the number of tabs is large,
+// each should get exactly GetMinimumClientAllocation() and not less.
 TEST_F(GpuMemoryManagerTest, TestForegroundStubsGetBonusAllocation) {
-  size_t max_stubs_before_no_bonus =
-      GetAvailableGpuMemory() / (GetMinimumTabAllocation() + 1);
+  size_t max_stubs_before_no_bonus = static_cast<size_t>(
+      GetAvailableGpuMemory() / (GetMinimumClientAllocation() + 1));
 
   std::vector<FakeClient*> stubs;
   for (size_t i = 0; i < max_stubs_before_no_bonus; ++i) {
@@ -479,7 +490,7 @@ TEST_F(GpuMemoryManagerTest, TestForegroundStubsGetBonusAllocation) {
     EXPECT_TRUE(IsAllocationForegroundForSurfaceYes(stubs[i]->allocation_));
     EXPECT_GT(
         stubs[i]->allocation_.renderer_allocation.bytes_limit_when_visible,
-        static_cast<size_t>(GetMinimumTabAllocation()));
+        GetMinimumClientAllocation());
   }
 
   FakeClient extra_stub(&memmgr_, GenerateUniqueSurfaceId(), true);
@@ -489,7 +500,7 @@ TEST_F(GpuMemoryManagerTest, TestForegroundStubsGetBonusAllocation) {
     EXPECT_TRUE(IsAllocationForegroundForSurfaceYes(stubs[i]->allocation_));
     EXPECT_EQ(
         stubs[i]->allocation_.renderer_allocation.bytes_limit_when_visible,
-        GetMinimumTabAllocation());
+        GetMinimumClientAllocation());
   }
 
   for (size_t i = 0; i < max_stubs_before_no_bonus; ++i) {
@@ -503,25 +514,14 @@ TEST_F(GpuMemoryManagerTest, TestUpdateAvailableGpuMemory) {
              stub2(&memmgr_, GenerateUniqueSurfaceId(), false),
              stub3(&memmgr_, GenerateUniqueSurfaceId(), true),
              stub4(&memmgr_, GenerateUniqueSurfaceId(), false);
-
-#if defined(OS_ANDROID)
-  // We use the largest visible surface size to calculate the limit
-  stub1.SetSurfaceSize(gfx::Size(1024, 512)); // Surface size
-  stub2.SetSurfaceSize(gfx::Size(2048, 512)); // Larger but not visible.
-  stub3.SetSurfaceSize(gfx::Size(512, 512));  // Visible but smaller.
-  stub4.SetSurfaceSize(gfx::Size(512, 512));  // Not visible and smaller.
-  Manage();
-  size_t bytes_expected = CalcAvailableFromViewportArea(1024*512);
-#else
   // We take the lowest GPU's total memory as the limit
-  size_t expected = 400 * 1024 * 1024;
+  uint64 expected = 400 * 1024 * 1024;
   stub1.SetTotalGpuMemory(expected); // GPU Memory
   stub2.SetTotalGpuMemory(expected - 1024 * 1024); // Smaller but not visible.
   stub3.SetTotalGpuMemory(expected + 1024 * 1024); // Visible but larger.
   stub4.SetTotalGpuMemory(expected + 1024 * 1024); // Not visible and larger.
   Manage();
-  size_t bytes_expected = CalcAvailableFromGpuTotal(expected);
-#endif
+  uint64 bytes_expected = CalcAvailableFromGpuTotal(expected);
   EXPECT_EQ(GetAvailableGpuMemory(), CalcAvailableClamped(bytes_expected));
 }
 
@@ -547,9 +547,9 @@ TEST_F(GpuMemoryManagerTest, GpuMemoryAllocationCompareTests) {
   suggested_buffer_allocation_values.push_back(
       GpuMemoryAllocation::kHasNoFrontbuffer);
 
-  for(size_t i = 0; i != gpu_resource_size_in_bytes_values.size(); ++i) {
-    for(size_t j = 0; j != suggested_buffer_allocation_values.size(); ++j) {
-      int sz = gpu_resource_size_in_bytes_values[i];
+  for (size_t i = 0; i != gpu_resource_size_in_bytes_values.size(); ++i) {
+    for (size_t j = 0; j != suggested_buffer_allocation_values.size(); ++j) {
+      uint64 sz = gpu_resource_size_in_bytes_values[i];
       GpuMemoryAllocation::BufferAllocation buffer_allocation =
           suggested_buffer_allocation_values[j];
       GpuMemoryAllocation allocation(sz, buffer_allocation);
@@ -559,7 +559,7 @@ TEST_F(GpuMemoryManagerTest, GpuMemoryAllocationCompareTests) {
       EXPECT_FALSE(allocation.Equals(
           GpuMemoryAllocation(sz+1, buffer_allocation)));
 
-      for(size_t k = 0; k != suggested_buffer_allocation_values.size(); ++k) {
+      for (size_t k = 0; k != suggested_buffer_allocation_values.size(); ++k) {
         GpuMemoryAllocation::BufferAllocation buffer_allocation_other =
             suggested_buffer_allocation_values[k];
         if (buffer_allocation == buffer_allocation_other) continue;
@@ -583,7 +583,7 @@ TEST_F(GpuMemoryManagerTest, StubMemoryStatsForLastManageTests) {
   FakeClient stub1(&memmgr_, GenerateUniqueSurfaceId(), true);
   Manage();
   stats = ClientAssignmentCollector::GetClientStatsForLastManage();
-  size_t stub1allocation1 =
+  uint64 stub1allocation1 =
       stats[&stub1].allocation.renderer_allocation.bytes_limit_when_visible;
 
   EXPECT_EQ(stats.size(), 1ul);
@@ -593,51 +593,51 @@ TEST_F(GpuMemoryManagerTest, StubMemoryStatsForLastManageTests) {
   Manage();
   stats = ClientAssignmentCollector::GetClientStatsForLastManage();
   EXPECT_EQ(stats.count(&stub1), 1ul);
-  size_t stub1allocation2 =
+  uint64 stub1allocation2 =
       stats[&stub1].allocation.renderer_allocation.bytes_limit_when_visible;
   EXPECT_EQ(stats.count(&stub2), 1ul);
-  size_t stub2allocation2 =
+  uint64 stub2allocation2 =
       stats[&stub2].allocation.renderer_allocation.bytes_limit_when_visible;
 
   EXPECT_EQ(stats.size(), 2ul);
   EXPECT_GT(stub1allocation2, 0ul);
   EXPECT_GT(stub2allocation2, 0ul);
-  if (stub1allocation2 != GetMaximumTabAllocation())
+  if (stub1allocation2 != GetMaximumClientAllocation())
     EXPECT_LT(stub1allocation2, stub1allocation1);
 
   FakeClient stub3(&memmgr_, GenerateUniqueSurfaceId(), true);
   Manage();
   stats = ClientAssignmentCollector::GetClientStatsForLastManage();
-  size_t stub1allocation3 =
+  uint64 stub1allocation3 =
       stats[&stub1].allocation.renderer_allocation.bytes_limit_when_visible;
-  size_t stub2allocation3 =
+  uint64 stub2allocation3 =
       stats[&stub2].allocation.renderer_allocation.bytes_limit_when_visible;
-  size_t stub3allocation3 =
+  uint64 stub3allocation3 =
       stats[&stub3].allocation.renderer_allocation.bytes_limit_when_visible;
 
   EXPECT_EQ(stats.size(), 3ul);
   EXPECT_GT(stub1allocation3, 0ul);
   EXPECT_GT(stub2allocation3, 0ul);
   EXPECT_GT(stub3allocation3, 0ul);
-  if (stub1allocation3 != GetMaximumTabAllocation())
+  if (stub1allocation3 != GetMaximumClientAllocation())
     EXPECT_LT(stub1allocation3, stub1allocation2);
 
   stub1.SetVisible(false);
 
   Manage();
   stats = ClientAssignmentCollector::GetClientStatsForLastManage();
-  size_t stub1allocation4 =
+  uint64 stub1allocation4 =
       stats[&stub1].allocation.renderer_allocation.bytes_limit_when_visible;
-  size_t stub2allocation4 =
+  uint64 stub2allocation4 =
       stats[&stub2].allocation.renderer_allocation.bytes_limit_when_visible;
-  size_t stub3allocation4 =
+  uint64 stub3allocation4 =
       stats[&stub3].allocation.renderer_allocation.bytes_limit_when_visible;
 
   EXPECT_EQ(stats.size(), 3ul);
   EXPECT_GT(stub1allocation4, 0ul);
   EXPECT_GE(stub2allocation4, 0ul);
   EXPECT_GT(stub3allocation4, 0ul);
-  if (stub3allocation3 != GetMaximumTabAllocation())
+  if (stub3allocation3 != GetMaximumClientAllocation())
     EXPECT_GT(stub3allocation4, stub3allocation3);
 }
 
@@ -646,39 +646,39 @@ TEST_F(GpuMemoryManagerTest, TestManagedUsageTracking) {
   FakeClient stub1(&memmgr_, GenerateUniqueSurfaceId(), true),
              stub2(&memmgr_, GenerateUniqueSurfaceId(), false);
   EXPECT_EQ(0ul, memmgr_.bytes_allocated_managed_visible_);
-  EXPECT_EQ(0ul, memmgr_.bytes_allocated_managed_backgrounded_);
+  EXPECT_EQ(0ul, memmgr_.bytes_allocated_managed_nonvisible_);
 
   // Set memory allocations and verify the results are reflected.
   stub1.SetManagedMemoryStats(GpuManagedMemoryStats(0, 0, 5, false));
   stub2.SetManagedMemoryStats(GpuManagedMemoryStats(0, 0, 7, false));
   EXPECT_EQ(5ul, memmgr_.bytes_allocated_managed_visible_);
-  EXPECT_EQ(7ul, memmgr_.bytes_allocated_managed_backgrounded_);
+  EXPECT_EQ(7ul, memmgr_.bytes_allocated_managed_nonvisible_);
 
   // Remove a visible client
   stub1.client_state_.reset();
   EXPECT_EQ(0ul, memmgr_.bytes_allocated_managed_visible_);
-  EXPECT_EQ(7ul, memmgr_.bytes_allocated_managed_backgrounded_);
+  EXPECT_EQ(7ul, memmgr_.bytes_allocated_managed_nonvisible_);
   EXPECT_EQ(0ul, memmgr_.bytes_allocated_managed_visible_);
-  EXPECT_EQ(7ul, memmgr_.bytes_allocated_managed_backgrounded_);
+  EXPECT_EQ(7ul, memmgr_.bytes_allocated_managed_nonvisible_);
   stub1.client_state_.reset(memmgr_.CreateClientState(&stub1, true, true));
   EXPECT_EQ(0ul, memmgr_.bytes_allocated_managed_visible_);
-  EXPECT_EQ(7ul, memmgr_.bytes_allocated_managed_backgrounded_);
+  EXPECT_EQ(7ul, memmgr_.bytes_allocated_managed_nonvisible_);
   stub1.SetManagedMemoryStats(GpuManagedMemoryStats(0, 0, 5, false));
   EXPECT_EQ(5ul, memmgr_.bytes_allocated_managed_visible_);
-  EXPECT_EQ(7ul, memmgr_.bytes_allocated_managed_backgrounded_);
+  EXPECT_EQ(7ul, memmgr_.bytes_allocated_managed_nonvisible_);
 
-  // Remove a backgrounded client
+  // Remove a nonvisible client
   stub2.client_state_.reset();
   EXPECT_EQ(5ul, memmgr_.bytes_allocated_managed_visible_);
-  EXPECT_EQ(0ul, memmgr_.bytes_allocated_managed_backgrounded_);
+  EXPECT_EQ(0ul, memmgr_.bytes_allocated_managed_nonvisible_);
   EXPECT_EQ(5ul, memmgr_.bytes_allocated_managed_visible_);
-  EXPECT_EQ(0ul, memmgr_.bytes_allocated_managed_backgrounded_);
+  EXPECT_EQ(0ul, memmgr_.bytes_allocated_managed_nonvisible_);
   stub2.client_state_.reset(memmgr_.CreateClientState(&stub2, true, false));
   EXPECT_EQ(5ul, memmgr_.bytes_allocated_managed_visible_);
-  EXPECT_EQ(0ul, memmgr_.bytes_allocated_managed_backgrounded_);
+  EXPECT_EQ(0ul, memmgr_.bytes_allocated_managed_nonvisible_);
   stub2.SetManagedMemoryStats(GpuManagedMemoryStats(0, 0, 7, false));
   EXPECT_EQ(5ul, memmgr_.bytes_allocated_managed_visible_);
-  EXPECT_EQ(7ul, memmgr_.bytes_allocated_managed_backgrounded_);
+  EXPECT_EQ(7ul, memmgr_.bytes_allocated_managed_nonvisible_);
 
   // Create and then destroy some stubs, and verify their allocations go away.
   {
@@ -687,40 +687,40 @@ TEST_F(GpuMemoryManagerTest, TestManagedUsageTracking) {
     stub3.SetManagedMemoryStats(GpuManagedMemoryStats(0, 0, 1, false));
     stub4.SetManagedMemoryStats(GpuManagedMemoryStats(0, 0, 2, false));
     EXPECT_EQ(6ul, memmgr_.bytes_allocated_managed_visible_);
-    EXPECT_EQ(9ul, memmgr_.bytes_allocated_managed_backgrounded_);
+    EXPECT_EQ(9ul, memmgr_.bytes_allocated_managed_nonvisible_);
   }
   EXPECT_EQ(5ul, memmgr_.bytes_allocated_managed_visible_);
-  EXPECT_EQ(7ul, memmgr_.bytes_allocated_managed_backgrounded_);
+  EXPECT_EQ(7ul, memmgr_.bytes_allocated_managed_nonvisible_);
 
   // Do no-op changes to stubs' visibility and make sure nothing chnages.
   stub1.SetVisible(true);
   stub2.SetVisible(false);
   EXPECT_EQ(5ul, memmgr_.bytes_allocated_managed_visible_);
-  EXPECT_EQ(7ul, memmgr_.bytes_allocated_managed_backgrounded_);
+  EXPECT_EQ(7ul, memmgr_.bytes_allocated_managed_nonvisible_);
 
   // Change visbility state.
   stub1.SetVisible(false);
   stub2.SetVisible(true);
   EXPECT_EQ(7ul, memmgr_.bytes_allocated_managed_visible_);
-  EXPECT_EQ(5ul, memmgr_.bytes_allocated_managed_backgrounded_);
+  EXPECT_EQ(5ul, memmgr_.bytes_allocated_managed_nonvisible_);
 
   // Increase allocation amounts.
   stub1.SetManagedMemoryStats(GpuManagedMemoryStats(0, 0, 6, false));
   stub2.SetManagedMemoryStats(GpuManagedMemoryStats(0, 0, 8, false));
   EXPECT_EQ(8ul, memmgr_.bytes_allocated_managed_visible_);
-  EXPECT_EQ(6ul, memmgr_.bytes_allocated_managed_backgrounded_);
+  EXPECT_EQ(6ul, memmgr_.bytes_allocated_managed_nonvisible_);
 
   // Decrease allocation amounts.
   stub1.SetManagedMemoryStats(GpuManagedMemoryStats(0, 0, 4, false));
   stub2.SetManagedMemoryStats(GpuManagedMemoryStats(0, 0, 6, false));
   EXPECT_EQ(6ul, memmgr_.bytes_allocated_managed_visible_);
-  EXPECT_EQ(4ul, memmgr_.bytes_allocated_managed_backgrounded_);
+  EXPECT_EQ(4ul, memmgr_.bytes_allocated_managed_nonvisible_);
 }
 
 // Test GpuMemoryManager's background cutoff threshoulds
 TEST_F(GpuMemoryManagerTest, TestBackgroundCutoff) {
   memmgr_.TestingSetAvailableGpuMemory(64);
-  memmgr_.TestingSetBackgroundedAvailableGpuMemory(16);
+  memmgr_.TestingSetNonvisibleAvailableGpuMemory(16);
 
   FakeClient stub1(&memmgr_, GenerateUniqueSurfaceId(), true);
 
@@ -733,9 +733,9 @@ TEST_F(GpuMemoryManagerTest, TestBackgroundCutoff) {
   // stub1 now fits, so it should have a full budget.
   stub1.SetManagedMemoryStats(GpuManagedMemoryStats(16, 24, 18, false));
   Manage();
-  EXPECT_EQ(memmgr_.bytes_backgrounded_available_gpu_memory_,
-            memmgr_.GetCurrentBackgroundedAvailableGpuMemory());
-  EXPECT_EQ(memmgr_.GetCurrentBackgroundedAvailableGpuMemory(),
+  EXPECT_EQ(memmgr_.bytes_nonvisible_available_gpu_memory_,
+            memmgr_.GetCurrentNonvisibleAvailableGpuMemory());
+  EXPECT_EQ(memmgr_.GetCurrentNonvisibleAvailableGpuMemory(),
             stub1.BytesWhenNotVisible());
 
   // Background stub1.
@@ -747,11 +747,11 @@ TEST_F(GpuMemoryManagerTest, TestBackgroundCutoff) {
   FakeClient stub2(&memmgr_, GenerateUniqueSurfaceId(), true);
   stub2.SetManagedMemoryStats(GpuManagedMemoryStats(16, 50, 48, false));
   Manage();
-  EXPECT_EQ(memmgr_.bytes_backgrounded_available_gpu_memory_,
-            memmgr_.GetCurrentBackgroundedAvailableGpuMemory());
-  EXPECT_EQ(memmgr_.GetCurrentBackgroundedAvailableGpuMemory(),
+  EXPECT_EQ(memmgr_.bytes_nonvisible_available_gpu_memory_,
+            memmgr_.GetCurrentNonvisibleAvailableGpuMemory());
+  EXPECT_EQ(memmgr_.GetCurrentNonvisibleAvailableGpuMemory(),
             stub1.BytesWhenNotVisible());
-  EXPECT_EQ(memmgr_.GetCurrentBackgroundedAvailableGpuMemory(),
+  EXPECT_EQ(memmgr_.GetCurrentNonvisibleAvailableGpuMemory(),
             stub2.BytesWhenNotVisible());
 
   // Increase stub2 to force stub1 to be evicted.
@@ -759,66 +759,71 @@ TEST_F(GpuMemoryManagerTest, TestBackgroundCutoff) {
   Manage();
   EXPECT_EQ(0ul,
             stub1.BytesWhenNotVisible());
-  EXPECT_EQ(memmgr_.GetCurrentBackgroundedAvailableGpuMemory(),
+  EXPECT_EQ(memmgr_.GetCurrentNonvisibleAvailableGpuMemory(),
             stub2.BytesWhenNotVisible());
 }
 
 // Test GpuMemoryManager's background MRU behavior
 TEST_F(GpuMemoryManagerTest, TestBackgroundMru) {
   memmgr_.TestingSetAvailableGpuMemory(64);
-  memmgr_.TestingSetBackgroundedAvailableGpuMemory(16);
+  memmgr_.TestingSetNonvisibleAvailableGpuMemory(16);
+
+  uint64 bytes_when_not_visible_expected =
+      memmgr_.GetCurrentNonvisibleAvailableGpuMemory();
+#if defined (OS_ANDROID)
+  bytes_when_not_visible_expected = 0;
+#endif
 
   FakeClient stub1(&memmgr_, GenerateUniqueSurfaceId(), true);
   FakeClient stub2(&memmgr_, GenerateUniqueSurfaceId(), true);
   FakeClient stub3(&memmgr_, GenerateUniqueSurfaceId(), true);
 
   // When all are visible, they should all be allowed to have memory
-  // should they become backgrounded.
+  // should they become nonvisible.
   stub1.SetManagedMemoryStats(GpuManagedMemoryStats(7, 24, 7, false));
   stub2.SetManagedMemoryStats(GpuManagedMemoryStats(7, 24, 7, false));
   stub3.SetManagedMemoryStats(GpuManagedMemoryStats(7, 24, 7, false));
   Manage();
-  EXPECT_EQ(memmgr_.bytes_backgrounded_available_gpu_memory_,
-            memmgr_.GetCurrentBackgroundedAvailableGpuMemory());
-  EXPECT_EQ(memmgr_.GetCurrentBackgroundedAvailableGpuMemory(),
-            stub1.BytesWhenNotVisible());
-  EXPECT_EQ(memmgr_.GetCurrentBackgroundedAvailableGpuMemory(),
-            stub2.BytesWhenNotVisible());
-  EXPECT_EQ(memmgr_.GetCurrentBackgroundedAvailableGpuMemory(),
-            stub3.BytesWhenNotVisible());
-
+  EXPECT_EQ(memmgr_.bytes_nonvisible_available_gpu_memory_,
+            memmgr_.GetCurrentNonvisibleAvailableGpuMemory());
+  EXPECT_EQ(stub1.BytesWhenNotVisible(),
+            bytes_when_not_visible_expected);
+  EXPECT_EQ(stub2.BytesWhenNotVisible(),
+            bytes_when_not_visible_expected);
+  EXPECT_EQ(stub3.BytesWhenNotVisible(),
+            bytes_when_not_visible_expected);
 
   // Background stubs 1 and 2, and they should fit
   stub2.SetVisible(false);
   stub1.SetVisible(false);
   Manage();
-  EXPECT_EQ(memmgr_.bytes_backgrounded_available_gpu_memory_,
-            memmgr_.GetCurrentBackgroundedAvailableGpuMemory());
-  EXPECT_EQ(memmgr_.GetCurrentBackgroundedAvailableGpuMemory(),
-            stub1.BytesWhenNotVisible());
-  EXPECT_EQ(memmgr_.GetCurrentBackgroundedAvailableGpuMemory(),
-            stub2.BytesWhenNotVisible());
-  EXPECT_EQ(memmgr_.GetCurrentBackgroundedAvailableGpuMemory(),
-            stub3.BytesWhenNotVisible());
+  EXPECT_EQ(memmgr_.bytes_nonvisible_available_gpu_memory_,
+            bytes_when_not_visible_expected);
+  EXPECT_EQ(stub1.BytesWhenNotVisible(),
+            bytes_when_not_visible_expected);
+  EXPECT_EQ(stub2.BytesWhenNotVisible(),
+            bytes_when_not_visible_expected);
+  EXPECT_EQ(stub3.BytesWhenNotVisible(),
+            bytes_when_not_visible_expected);
 
   // Now background stub 3, and it should cause stub 2 to be
   // evicted because it was set non-visible first
   stub3.SetVisible(false);
   Manage();
-  EXPECT_EQ(memmgr_.bytes_backgrounded_available_gpu_memory_,
-            memmgr_.GetCurrentBackgroundedAvailableGpuMemory());
-  EXPECT_EQ(memmgr_.GetCurrentBackgroundedAvailableGpuMemory(),
-            stub1.BytesWhenNotVisible());
-  EXPECT_EQ(0ul,
-            stub2.BytesWhenNotVisible());
-  EXPECT_EQ(memmgr_.GetCurrentBackgroundedAvailableGpuMemory(),
-            stub3.BytesWhenNotVisible());
+  EXPECT_EQ(memmgr_.bytes_nonvisible_available_gpu_memory_,
+            memmgr_.GetCurrentNonvisibleAvailableGpuMemory());
+  EXPECT_EQ(stub1.BytesWhenNotVisible(),
+            bytes_when_not_visible_expected);
+  EXPECT_EQ(stub2.BytesWhenNotVisible(),
+            0ul);
+  EXPECT_EQ(stub3.BytesWhenNotVisible(),
+            bytes_when_not_visible_expected);
 }
 
 // Test GpuMemoryManager's tracking of unmanaged (e.g, WebGL) memory.
 TEST_F(GpuMemoryManagerTest, TestUnmanagedTracking) {
   memmgr_.TestingSetAvailableGpuMemory(64);
-  memmgr_.TestingSetBackgroundedAvailableGpuMemory(16);
+  memmgr_.TestingSetNonvisibleAvailableGpuMemory(16);
   memmgr_.TestingSetUnmanagedLimitStep(16);
   memmgr_.TestingSetMinimumClientAllocation(8);
 
@@ -826,7 +831,7 @@ TEST_F(GpuMemoryManagerTest, TestUnmanagedTracking) {
 
   // Expect that the one stub get the maximum tab allocation.
   Manage();
-  EXPECT_EQ(memmgr_.GetMaximumTabAllocation(),
+  EXPECT_EQ(memmgr_.GetMaximumClientAllocation(),
             stub1.BytesWhenVisible());
 
   // Now allocate some unmanaged memory and make sure the amount
@@ -837,7 +842,7 @@ TEST_F(GpuMemoryManagerTest, TestUnmanagedTracking) {
       48,
       gpu::gles2::MemoryTracker::kUnmanaged);
   Manage();
-  EXPECT_GT(memmgr_.GetMaximumTabAllocation(),
+  EXPECT_GT(memmgr_.GetMaximumClientAllocation(),
             stub1.BytesWhenVisible());
 
   // Now allocate the entire FB worth of unmanaged memory, and
@@ -848,7 +853,7 @@ TEST_F(GpuMemoryManagerTest, TestUnmanagedTracking) {
       64,
       gpu::gles2::MemoryTracker::kUnmanaged);
   Manage();
-  EXPECT_EQ(memmgr_.GetMinimumTabAllocation(),
+  EXPECT_EQ(memmgr_.GetMinimumClientAllocation(),
             stub1.BytesWhenVisible());
 
   // Far-oversubscribe the entire FB, and make sure we stay at
@@ -859,7 +864,7 @@ TEST_F(GpuMemoryManagerTest, TestUnmanagedTracking) {
       999,
       gpu::gles2::MemoryTracker::kUnmanaged);
   Manage();
-  EXPECT_EQ(memmgr_.GetMinimumTabAllocation(),
+  EXPECT_EQ(memmgr_.GetMinimumClientAllocation(),
             stub1.BytesWhenVisible());
 
   // Delete all tracked memory so we don't hit leak checks.
@@ -868,6 +873,179 @@ TEST_F(GpuMemoryManagerTest, TestUnmanagedTracking) {
       999,
       0,
       gpu::gles2::MemoryTracker::kUnmanaged);
+}
+
+// Test nonvisible MRU behavior (the most recently used nonvisible clients
+// keep their contents).
+TEST_F(GpuMemoryManagerTestNonuniform, BackgroundMru) {
+  // Set memory manager constants for this test
+  memmgr_.TestingSetUseNonuniformMemoryPolicy(true);
+  memmgr_.TestingSetAvailableGpuMemory(64);
+  memmgr_.TestingSetNonvisibleAvailableGpuMemory(16);
+  memmgr_.TestingSetMinimumClientAllocation(8);
+
+  uint64 bytes_when_not_visible_expected = 6u;
+#if defined (OS_ANDROID)
+  bytes_when_not_visible_expected = 0;
+#endif
+
+  FakeClient stub1(&memmgr_, GenerateUniqueSurfaceId(), true);
+  FakeClient stub2(&memmgr_, GenerateUniqueSurfaceId(), true);
+  FakeClient stub3(&memmgr_, GenerateUniqueSurfaceId(), true);
+
+  // When all are visible, they should all be allowed to have memory
+  // should they become nonvisible.
+  SetClientStats(&stub1, 6, 23);
+  SetClientStats(&stub2, 6, 23);
+  SetClientStats(&stub3, 6, 23);
+  Manage();
+  EXPECT_GE(stub1.BytesWhenVisible(), 20u);
+  EXPECT_GE(stub2.BytesWhenVisible(), 20u);
+  EXPECT_GE(stub3.BytesWhenVisible(), 20u);
+  EXPECT_LT(stub1.BytesWhenVisible(), 22u);
+  EXPECT_LT(stub2.BytesWhenVisible(), 22u);
+  EXPECT_LT(stub3.BytesWhenVisible(), 22u);
+  EXPECT_GE(stub1.BytesWhenNotVisible(), bytes_when_not_visible_expected);
+  EXPECT_GE(stub2.BytesWhenNotVisible(), bytes_when_not_visible_expected);
+  EXPECT_GE(stub3.BytesWhenNotVisible(), bytes_when_not_visible_expected);
+
+  // Background stubs 1 and 2, and they should fit. All stubs should
+  // have their full nicetohave budget should they become visible.
+  stub2.SetVisible(false);
+  stub1.SetVisible(false);
+  Manage();
+  EXPECT_GE(stub1.BytesWhenVisible(), 23u);
+  EXPECT_GE(stub2.BytesWhenVisible(), 23u);
+  EXPECT_GE(stub3.BytesWhenVisible(), 23u);
+  EXPECT_LT(stub1.BytesWhenVisible(), 32u);
+  EXPECT_LT(stub2.BytesWhenVisible(), 32u);
+  EXPECT_GE(stub1.BytesWhenNotVisible(), bytes_when_not_visible_expected);
+  EXPECT_GE(stub2.BytesWhenNotVisible(), bytes_when_not_visible_expected);
+  EXPECT_GE(stub3.BytesWhenNotVisible(), bytes_when_not_visible_expected);
+
+  // Now background stub 3, and it should cause stub 2 to be
+  // evicted because it was set non-visible first
+  stub3.SetVisible(false);
+  Manage();
+  EXPECT_GE(stub1.BytesWhenNotVisible(), bytes_when_not_visible_expected);
+  EXPECT_EQ(stub2.BytesWhenNotVisible(), 0u);
+  EXPECT_GE(stub3.BytesWhenNotVisible(), bytes_when_not_visible_expected);
+}
+
+// Test that once a backgrounded client has dropped its resources, it
+// doesn't get them back until it becomes visible again.
+TEST_F(GpuMemoryManagerTestNonuniform, BackgroundDiscardPersistent) {
+  // Set memory manager constants for this test
+  memmgr_.TestingSetUseNonuniformMemoryPolicy(true);
+  memmgr_.TestingSetAvailableGpuMemory(64);
+  memmgr_.TestingSetNonvisibleAvailableGpuMemory(16);
+  memmgr_.TestingSetMinimumClientAllocation(8);
+
+  uint64 bytes_when_not_visible_expected = 10ul;
+#if defined (OS_ANDROID)
+  bytes_when_not_visible_expected = 0;
+#endif
+
+  FakeClient stub1(&memmgr_, GenerateUniqueSurfaceId(), true);
+  FakeClient stub2(&memmgr_, GenerateUniqueSurfaceId(), true);
+
+  // Both clients should be able to keep their contents should one of
+  // them become nonvisible.
+  SetClientStats(&stub1, 10, 20);
+  SetClientStats(&stub2, 10, 20);
+  Manage();
+  EXPECT_GE(stub1.BytesWhenNotVisible(), bytes_when_not_visible_expected);
+  EXPECT_GE(stub2.BytesWhenNotVisible(), bytes_when_not_visible_expected);
+
+  // If they both go nonvisible, then only the most recently used client
+  // should keep its contents.
+  stub1.SetVisible(false);
+  stub2.SetVisible(false);
+  Manage();
+  EXPECT_EQ(stub1.BytesWhenNotVisible(), 0u);
+  EXPECT_GE(stub2.BytesWhenNotVisible(), bytes_when_not_visible_expected);
+
+  // When becoming visible, stub 2 should get its contents back, and
+  // retain them next time it is made nonvisible.
+  stub2.SetVisible(true);
+  Manage();
+  EXPECT_GE(stub2.BytesWhenNotVisible(), bytes_when_not_visible_expected);
+  stub2.SetVisible(false);
+  Manage();
+  EXPECT_GE(stub2.BytesWhenNotVisible(), bytes_when_not_visible_expected);
+}
+
+// Test tracking of unmanaged (e.g, WebGL) memory.
+TEST_F(GpuMemoryManagerTestNonuniform, UnmanagedTracking) {
+  // Set memory manager constants for this test
+  memmgr_.TestingSetUseNonuniformMemoryPolicy(true);
+  memmgr_.TestingSetAvailableGpuMemory(64);
+  memmgr_.TestingSetNonvisibleAvailableGpuMemory(16);
+  memmgr_.TestingSetMinimumClientAllocation(8);
+  memmgr_.TestingSetUnmanagedLimitStep(16);
+
+  FakeClient stub1(&memmgr_, GenerateUniqueSurfaceId(), true);
+
+  // Expect that the one stub get its nicetohave level.
+  SetClientStats(&stub1, 16, 32);
+  Manage();
+  EXPECT_GE(stub1.BytesWhenVisible(), 32u);
+
+  // Now allocate some unmanaged memory and make sure the amount
+  // goes down.
+  memmgr_.TrackMemoryAllocatedChange(
+      stub1.tracking_group_.get(),
+      0,
+      48,
+      gpu::gles2::MemoryTracker::kUnmanaged);
+  Manage();
+  EXPECT_LT(stub1.BytesWhenVisible(), 24u);
+
+  // Now allocate the entire FB worth of unmanaged memory, and
+  // make sure that we stay stuck at the minimum tab allocation.
+  memmgr_.TrackMemoryAllocatedChange(
+      stub1.tracking_group_.get(),
+      48,
+      64,
+      gpu::gles2::MemoryTracker::kUnmanaged);
+  Manage();
+  EXPECT_EQ(stub1.BytesWhenVisible(), 8u);
+
+  // Far-oversubscribe the entire FB, and make sure we stay at
+  // the minimum allocation, and don't blow up.
+  memmgr_.TrackMemoryAllocatedChange(
+      stub1.tracking_group_.get(),
+      64,
+      999,
+      gpu::gles2::MemoryTracker::kUnmanaged);
+  Manage();
+  EXPECT_EQ(stub1.BytesWhenVisible(), 8u);
+
+  // Delete all tracked memory so we don't hit leak checks.
+  memmgr_.TrackMemoryAllocatedChange(
+      stub1.tracking_group_.get(),
+      999,
+      0,
+      gpu::gles2::MemoryTracker::kUnmanaged);
+}
+
+// Test the default allocation levels are used.
+TEST_F(GpuMemoryManagerTestNonuniform, DefaultAllocation) {
+  // Set memory manager constants for this test
+  memmgr_.TestingSetUseNonuniformMemoryPolicy(true);
+  memmgr_.TestingSetAvailableGpuMemory(64);
+  memmgr_.TestingSetNonvisibleAvailableGpuMemory(16);
+  memmgr_.TestingSetMinimumClientAllocation(8);
+  memmgr_.TestingSetDefaultClientAllocation(16);
+
+  FakeClient stub1(&memmgr_, GenerateUniqueSurfaceId(), true);
+
+  // Expect that a client which has not sent stats receive at
+  // least the default allocation.
+  Manage();
+  EXPECT_GE(stub1.BytesWhenVisible(),
+            memmgr_.GetDefaultClientAllocation());
+  EXPECT_EQ(stub1.BytesWhenNotVisible(), 0u);
 }
 
 }  // namespace content

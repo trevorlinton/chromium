@@ -6,6 +6,7 @@
 
 #include <map>
 
+#include "base/debug/trace_event.h"
 #include "base/lazy_instance.h"
 #include "base/message_loop.h"
 #include "base/process.h"
@@ -15,13 +16,13 @@
 #include "content/renderer/devtools/devtools_agent_filter.h"
 #include "content/renderer/devtools/devtools_client.h"
 #include "content/renderer/render_view_impl.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebPoint.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebConsoleMessage.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebConsoleMessage.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebDevToolsAgent.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebFrame.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebView.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebPoint.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebString.h"
 
 #if defined(USE_TCMALLOC)
 #include "third_party/tcmalloc/chromium/src/gperftools/heap-profiler.h"
@@ -36,6 +37,8 @@ using WebKit::WebString;
 using WebKit::WebCString;
 using WebKit::WebVector;
 using WebKit::WebView;
+
+using base::debug::TraceLog;
 
 namespace content {
 
@@ -129,6 +132,12 @@ void DevToolsAgent::clearBrowserCookies() {
   Send(new DevToolsHostMsg_ClearBrowserCookies(routing_id()));
 }
 
+void DevToolsAgent::setTraceEventCallback(TraceEventCallback cb) {
+  TraceLog* trace_log = TraceLog::GetInstance();
+  trace_log->SetEventCallback(cb);
+  trace_log->SetEnabled(!!cb, TraceLog::RECORD_UNTIL_FULL);
+}
+
 #if defined(USE_TCMALLOC) && !defined(OS_WIN)
 static void AllocationVisitor(void* data, const void* ptr) {
     typedef WebKit::WebDevToolsAgentClient::AllocatedObjectVisitor Visitor;
@@ -196,14 +205,14 @@ void DevToolsAgent::OnAddMessageToConsole(ConsoleMessageLevel level,
   if (!web_view)
     return;
 
-  WebFrame* main_frame = web_view-> mainFrame();
+  WebFrame* main_frame = web_view->mainFrame();
   if (!main_frame)
     return;
 
   WebConsoleMessage::Level target_level = WebConsoleMessage::LevelLog;
   switch (level) {
-    case CONSOLE_MESSAGE_LEVEL_TIP:
-      target_level = WebConsoleMessage::LevelTip;
+    case CONSOLE_MESSAGE_LEVEL_DEBUG:
+      target_level = WebConsoleMessage::LevelDebug;
       break;
     case CONSOLE_MESSAGE_LEVEL_LOG:
       target_level = WebConsoleMessage::LevelLog;

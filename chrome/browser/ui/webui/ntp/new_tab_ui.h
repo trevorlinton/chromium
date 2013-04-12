@@ -5,31 +5,33 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_NTP_NEW_TAB_UI_H_
 #define CHROME_BROWSER_UI_WEBUI_NTP_NEW_TAB_UI_H_
 
-#include <map>
 #include <string>
 
 #include "base/gtest_prod_util.h"
 #include "base/prefs/public/pref_change_registrar.h"
 #include "base/time.h"
 #include "base/timer.h"
-#include "chrome/browser/sessions/tab_restore_service.h"
-#include "chrome/browser/ui/webui/chrome_url_data_manager.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
+#include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_ui_controller.h"
 
 class GURL;
-class PrefServiceSyncable;
+class PrefRegistrySyncable;
 class Profile;
 
-// The WebContents used for the New Tab page.
+namespace base {
+class DictionaryValue;
+}
+
+// The WebUIController used for the New Tab page.
 class NewTabUI : public content::WebUIController,
                  public content::NotificationObserver {
  public:
   explicit NewTabUI(content::WebUI* web_ui);
   virtual ~NewTabUI();
 
-  static void RegisterUserPrefs(PrefServiceSyncable* prefs);
+  static void RegisterUserPrefs(PrefRegistrySyncable* registry);
 
   // Returns whether or not to show apps pages.
   static bool ShouldShowApps();
@@ -56,37 +58,32 @@ class NewTabUI : public content::WebUIController,
   virtual void RenderViewReused(
       content::RenderViewHost* render_view_host) OVERRIDE;
 
-  // Returns true if the bookmark bar can be displayed over this webui, detached
-  // from the location bar.
-  bool CanShowBookmarkBar() const;
-
   bool showing_sync_bubble() { return showing_sync_bubble_; }
   void set_showing_sync_bubble(bool showing) { showing_sync_bubble_ = showing; }
 
-  class NewTabHTMLSource : public ChromeURLDataManager::DataSource {
+  class NewTabHTMLSource : public content::URLDataSource {
    public:
     explicit NewTabHTMLSource(Profile* profile);
+    virtual ~NewTabHTMLSource();
 
-    // Called when the network layer has requested a resource underneath
-    // the path we registered.
-    virtual void StartDataRequest(const std::string& path,
-                                  bool is_incognito,
-                                  int request_id) OVERRIDE;
-
+    // content::URLDataSource implementation.
+    virtual std::string GetSource() OVERRIDE;
+    virtual void StartDataRequest(
+        const std::string& path,
+        bool is_incognito,
+        const content::URLDataSource::GotDataCallback& callback) OVERRIDE;
     virtual std::string GetMimeType(const std::string&) const OVERRIDE;
-
     virtual bool ShouldReplaceExistingSource() const OVERRIDE;
+    virtual bool ShouldAddContentSecurityPolicy() const OVERRIDE;
 
     // Adds |resource| to the source. |resource_id| is resource id or 0,
     // which means return empty data set. |mime_type| is mime type of the
     // resource.
     void AddResource(const char* resource,
-                     const char *mime_type,
+                     const char* mime_type,
                      int resource_id);
 
    private:
-    virtual ~NewTabHTMLSource();
-
     // Pointer back to the original profile.
     Profile* profile_;
 
@@ -105,9 +102,6 @@ class NewTabUI : public content::WebUIController,
                        const content::NotificationDetails& details) OVERRIDE;
 
   void OnShowBookmarkBarChanged();
-
-  // Reset the CSS caches.
-  void InitializeCSSCaches();
 
   void StartTimingPaint(content::RenderViewHost* render_view_host);
   void PaintTimeout();

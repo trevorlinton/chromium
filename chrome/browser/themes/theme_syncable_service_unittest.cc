@@ -6,19 +6,20 @@
 
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/memory/scoped_ptr.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/themes/theme_service_factory.h"
-#include "chrome/common/extensions/extension_manifest_constants.h"
 #include "chrome/common/extensions/extension.h"
+#include "chrome/common/extensions/extension_manifest_constants.h"
+#include "chrome/common/extensions/manifest_url_handler.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/test/test_browser_thread.h"
-#include "sync/api/sync_error_factory_mock.h"
 #include "sync/api/sync_error.h"
+#include "sync/api/sync_error_factory_mock.h"
 #include "sync/protocol/sync.pb.h"
 #include "sync/protocol/theme_specifics.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -31,9 +32,10 @@ static const char kCustomThemeName[] = "name";
 static const char kCustomThemeUrl[] = "http://update.url/foo";
 
 #if defined(OS_WIN)
-const FilePath::CharType kExtensionFilePath[] = FILE_PATH_LITERAL("c:\\foo");
+const base::FilePath::CharType kExtensionFilePath[] =
+    FILE_PATH_LITERAL("c:\\foo");
 #elif defined(OS_POSIX)
-const FilePath::CharType kExtensionFilePath[] = FILE_PATH_LITERAL("/oo");
+const base::FilePath::CharType kExtensionFilePath[] = FILE_PATH_LITERAL("/oo");
 #endif
 
 class FakeSyncChangeProcessor : public syncer::SyncChangeProcessor {
@@ -126,7 +128,7 @@ ProfileKeyedService* BuildMockThemeService(Profile* profile) {
 }
 
 scoped_refptr<extensions::Extension> MakeThemeExtension(
-    const FilePath& extension_path,
+    const base::FilePath& extension_path,
     const string& name,
     const string& update_url) {
   DictionaryValue source;
@@ -137,7 +139,7 @@ scoped_refptr<extensions::Extension> MakeThemeExtension(
   string error;
   scoped_refptr<extensions::Extension> extension =
       extensions::Extension::Create(
-          extension_path, extensions::Extension::EXTERNAL_PREF_DOWNLOAD, source,
+          extension_path, extensions::Manifest::EXTERNAL_PREF_DOWNLOAD, source,
           extensions::Extension::NO_FLAGS, &error);
   EXPECT_TRUE(extension);
   EXPECT_EQ("", error);
@@ -154,7 +156,7 @@ class ThemeSyncableServiceTest : public testing::Test {
         file_thread_(BrowserThread::FILE, &loop_),
         fake_theme_service_(NULL) {}
 
-  ~ThemeSyncableServiceTest() {}
+  virtual ~ThemeSyncableServiceTest() {}
 
   virtual void SetUp() {
     profile_.reset(new TestingProfile);
@@ -175,17 +177,15 @@ class ThemeSyncableServiceTest : public testing::Test {
     extensions::TestExtensionSystem* test_ext_system =
         static_cast<extensions::TestExtensionSystem*>(
                 extensions::ExtensionSystem::Get(profile_.get()));
-    ExtensionService* service =
-        test_ext_system->CreateExtensionService(&command_line,
-                                                FilePath(kExtensionFilePath),
-                                                false);
+    ExtensionService* service = test_ext_system->CreateExtensionService(
+        &command_line, base::FilePath(kExtensionFilePath), false);
     EXPECT_TRUE(service->extensions_enabled());
     service->Init();
     loop_.RunUntilIdle();
 
     // Create and add custom theme extension so the ThemeSyncableService can
     // find it.
-    theme_extension_ = MakeThemeExtension(FilePath(kExtensionFilePath),
+    theme_extension_ = MakeThemeExtension(base::FilePath(kExtensionFilePath),
                                           kCustomThemeName, kCustomThemeUrl);
     service->AddExtension(theme_extension_);
     ASSERT_EQ(1u, service->extensions()->size());
@@ -353,7 +353,7 @@ TEST_F(ThemeSyncableServiceTest, UpdateThemeSpecificsFromCurrentTheme) {
   EXPECT_TRUE(theme_specifics.use_custom_theme());
   EXPECT_EQ(theme_extension_->id(), theme_specifics.custom_theme_id());
   EXPECT_EQ(theme_extension_->name(), theme_specifics.custom_theme_name());
-  EXPECT_EQ(theme_extension_->update_url().spec(),
+  EXPECT_EQ(extensions::ManifestURL::GetUpdateURL(theme_extension_).spec(),
             theme_specifics.custom_theme_update_url());
 }
 
@@ -370,7 +370,7 @@ TEST_F(ThemeSyncableServiceTest, GetAllSyncData) {
   EXPECT_TRUE(theme_specifics.use_custom_theme());
   EXPECT_EQ(theme_extension_->id(), theme_specifics.custom_theme_id());
   EXPECT_EQ(theme_extension_->name(), theme_specifics.custom_theme_name());
-  EXPECT_EQ(theme_extension_->update_url().spec(),
+  EXPECT_EQ(extensions::ManifestURL::GetUpdateURL(theme_extension_).spec(),
             theme_specifics.custom_theme_update_url());
 }
 
@@ -433,7 +433,7 @@ TEST_F(ThemeSyncableServiceTest, OnThemeChangeByUser) {
   EXPECT_TRUE(change_specifics.use_custom_theme());
   EXPECT_EQ(theme_extension_->id(), change_specifics.custom_theme_id());
   EXPECT_EQ(theme_extension_->name(), change_specifics.custom_theme_name());
-  EXPECT_EQ(theme_extension_->update_url().spec(),
+  EXPECT_EQ(extensions::ManifestURL::GetUpdateURL(theme_extension_).spec(),
             change_specifics.custom_theme_update_url());
 }
 

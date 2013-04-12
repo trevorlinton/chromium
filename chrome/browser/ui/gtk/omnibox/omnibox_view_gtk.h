@@ -20,8 +20,8 @@
 #include "ui/base/gtk/gtk_signal.h"
 #include "ui/base/gtk/gtk_signal_registrar.h"
 #include "ui/base/gtk/owned_widget_gtk.h"
+#include "ui/base/window_open_disposition.h"
 #include "ui/gfx/rect.h"
-#include "webkit/glue/window_open_disposition.h"
 
 class Browser;
 class OmniboxPopupView;
@@ -87,7 +87,8 @@ class OmniboxViewGtk : public OmniboxView,
   virtual void ApplyCaretVisibility() OVERRIDE;
   virtual void OnTemporaryTextMaybeChanged(
       const string16& display_text,
-      bool save_original_selection) OVERRIDE;
+      bool save_original_selection,
+      bool notify_text_changed) OVERRIDE;
   virtual bool OnInlineAutocompleteTextMaybeChanged(
       const string16& display_text, size_t user_text_length) OVERRIDE;
   virtual void OnRevertTemporaryText() OVERRIDE;

@@ -23,7 +23,7 @@ namespace {
 
 class MockSyncWebSocket : public SyncWebSocket {
  public:
-  MockSyncWebSocket() : connected_(false), id_(-1) {}
+  MockSyncWebSocket() : connected_(false), id_(-1), queued_messages_(1) {}
   virtual ~MockSyncWebSocket() {}
 
   virtual bool Connect(const GURL& url) OVERRIDE {
@@ -60,12 +60,18 @@ class MockSyncWebSocket : public SyncWebSocket {
     result.SetInteger("param", 1);
     response.Set("result", result.DeepCopy());
     base::JSONWriter::Write(&response, message);
+    --queued_messages_;
     return true;
+  }
+
+  virtual bool HasNextMessage() OVERRIDE {
+    return queued_messages_ > 0;
   }
 
  private:
   bool connected_;
   int id_;
+  int queued_messages_;
 };
 
 template <typename T>
@@ -78,7 +84,7 @@ scoped_ptr<SyncWebSocket> CreateMockSyncWebSocket() {
 TEST(DevToolsClientImpl, SendCommand) {
   SyncWebSocketFactory factory =
       base::Bind(&CreateMockSyncWebSocket<MockSyncWebSocket>);
-  DevToolsClientImpl client(factory, "http://url", NULL);
+  DevToolsClientImpl client(factory, "http://url");
   base::DictionaryValue params;
   params.SetInteger("param", 1);
   ASSERT_EQ(kOk, client.SendCommand("method", params).code());
@@ -87,7 +93,7 @@ TEST(DevToolsClientImpl, SendCommand) {
 TEST(DevToolsClientImpl, SendCommandAndGetResult) {
   SyncWebSocketFactory factory =
       base::Bind(&CreateMockSyncWebSocket<MockSyncWebSocket>);
-  DevToolsClientImpl client(factory, "http://url", NULL);
+  DevToolsClientImpl client(factory, "http://url");
   base::DictionaryValue params;
   params.SetInteger("param", 1);
   scoped_ptr<base::DictionaryValue> result;
@@ -118,6 +124,10 @@ class MockSyncWebSocket2 : public SyncWebSocket {
     EXPECT_TRUE(false);
     return false;
   }
+
+  virtual bool HasNextMessage() OVERRIDE {
+    return true;
+  }
 };
 
 }  // namespace
@@ -125,7 +135,7 @@ class MockSyncWebSocket2 : public SyncWebSocket {
 TEST(DevToolsClientImpl, SendCommandConnectFails) {
   SyncWebSocketFactory factory =
       base::Bind(&CreateMockSyncWebSocket<MockSyncWebSocket2>);
-  DevToolsClientImpl client(factory, "http://url", NULL);
+  DevToolsClientImpl client(factory, "http://url");
   base::DictionaryValue params;
   ASSERT_TRUE(client.SendCommand("method", params).IsError());
 }
@@ -149,6 +159,10 @@ class MockSyncWebSocket3 : public SyncWebSocket {
     EXPECT_TRUE(false);
     return false;
   }
+
+  virtual bool HasNextMessage() OVERRIDE {
+    return true;
+  }
 };
 
 }  // namespace
@@ -156,7 +170,7 @@ class MockSyncWebSocket3 : public SyncWebSocket {
 TEST(DevToolsClientImpl, SendCommandSendFails) {
   SyncWebSocketFactory factory =
       base::Bind(&CreateMockSyncWebSocket<MockSyncWebSocket3>);
-  DevToolsClientImpl client(factory, "http://url", NULL);
+  DevToolsClientImpl client(factory, "http://url");
   base::DictionaryValue params;
   ASSERT_TRUE(client.SendCommand("method", params).IsError());
 }
@@ -179,6 +193,10 @@ class MockSyncWebSocket4 : public SyncWebSocket {
   virtual bool ReceiveNextMessage(std::string* message) OVERRIDE {
     return false;
   }
+
+  virtual bool HasNextMessage() OVERRIDE {
+    return true;
+  }
 };
 
 }  // namespace
@@ -186,7 +204,7 @@ class MockSyncWebSocket4 : public SyncWebSocket {
 TEST(DevToolsClientImpl, SendCommandReceiveNextMessageFails) {
   SyncWebSocketFactory factory =
       base::Bind(&CreateMockSyncWebSocket<MockSyncWebSocket4>);
-  DevToolsClientImpl client(factory, "http://url", NULL);
+  DevToolsClientImpl client(factory, "http://url");
   base::DictionaryValue params;
   ASSERT_TRUE(client.SendCommand("method", params).IsError());
 }
@@ -209,6 +227,10 @@ class FakeSyncWebSocket : public SyncWebSocket {
   }
 
   virtual bool ReceiveNextMessage(std::string* message) OVERRIDE {
+    return true;
+  }
+
+  virtual bool HasNextMessage() OVERRIDE {
     return true;
   }
 
@@ -271,6 +293,10 @@ class MockListener : public DevToolsEventListener {
     EXPECT_TRUE(called_);
   }
 
+  virtual Status OnConnected() OVERRIDE {
+    return Status(kOk);
+  }
+
   virtual void OnEvent(const std::string& method,
                        const base::DictionaryValue& params) OVERRIDE {
     called_ = true;
@@ -292,17 +318,76 @@ bool ReturnEventThenResponse(
   if (*first) {
     *type = internal::kEventMessageType;
     event->method = "method";
-    base::DictionaryValue params;
-    params.SetInteger("key", 1);
-    event->params.reset(params.DeepCopy());
+    event->params.reset(new base::DictionaryValue());
+    event->params->SetInteger("key", 1);
   } else {
     *type = internal::kCommandResponseMessageType;
     command_response->id = expected_id;
     base::DictionaryValue params;
-    params.SetInteger("key", 2);
-    command_response->result.reset(params.DeepCopy());
+    command_response->result.reset(new base::DictionaryValue());
+    command_response->result->SetInteger("key", 2);
   }
   *first = false;
+  return true;
+}
+
+bool ReturnEvent(
+    const std::string& message,
+    int expected_id,
+    internal::InspectorMessageType* type,
+    internal::InspectorEvent* event,
+    internal::InspectorCommandResponse* command_response) {
+  *type = internal::kEventMessageType;
+  event->method = "method";
+  event->params.reset(new base::DictionaryValue());
+  event->params->SetInteger("key", 1);
+  return true;
+}
+
+bool ReturnOutOfOrderResponses(
+    int* recurse_count,
+    DevToolsClient* client,
+    const std::string& message,
+    int expected_id,
+    internal::InspectorMessageType* type,
+    internal::InspectorEvent* event,
+    internal::InspectorCommandResponse* command_response) {
+  int key = 0;
+  base::DictionaryValue params;
+  params.SetInteger("param", 1);
+  switch ((*recurse_count)++) {
+    case 0:
+      client->SendCommand("method", params);
+      *type = internal::kEventMessageType;
+      event->method = "method";
+      event->params.reset(new base::DictionaryValue());
+      event->params->SetInteger("key", 1);
+      return true;
+    case 1:
+      command_response->id = expected_id - 1;
+      key = 2;
+      break;
+    case 2:
+      command_response->id = expected_id;
+      key = 3;
+      break;
+  }
+  *type = internal::kCommandResponseMessageType;
+  command_response->result.reset(new base::DictionaryValue());
+  command_response->result->SetInteger("key", key);
+  return true;
+}
+
+bool ReturnError(
+    const std::string& message,
+    int expected_id,
+    internal::InspectorMessageType* type,
+    internal::InspectorEvent* event,
+    internal::InspectorCommandResponse* command_response) {
+  return false;
+}
+
+bool AlwaysTrue() {
   return true;
 }
 
@@ -311,7 +396,7 @@ bool ReturnEventThenResponse(
 TEST(DevToolsClientImpl, SendCommandOnlyConnectsOnce) {
   SyncWebSocketFactory factory =
       base::Bind(&CreateMockSyncWebSocket<FakeSyncWebSocket>);
-  DevToolsClientImpl client(factory, "http://url", NULL, base::Bind(
+  DevToolsClientImpl client(factory, "http://url", base::Bind(
       &ReturnCommand));
   base::DictionaryValue params;
   ASSERT_TRUE(client.SendCommand("method", params).IsOk());
@@ -321,7 +406,7 @@ TEST(DevToolsClientImpl, SendCommandOnlyConnectsOnce) {
 TEST(DevToolsClientImpl, SendCommandBadResponse) {
   SyncWebSocketFactory factory =
       base::Bind(&CreateMockSyncWebSocket<FakeSyncWebSocket>);
-  DevToolsClientImpl client(factory, "http://url", NULL, base::Bind(
+  DevToolsClientImpl client(factory, "http://url", base::Bind(
       &ReturnBadResponse));
   base::DictionaryValue params;
   ASSERT_TRUE(client.SendCommand("method", params).IsError());
@@ -330,7 +415,7 @@ TEST(DevToolsClientImpl, SendCommandBadResponse) {
 TEST(DevToolsClientImpl, SendCommandBadId) {
   SyncWebSocketFactory factory =
       base::Bind(&CreateMockSyncWebSocket<FakeSyncWebSocket>);
-  DevToolsClientImpl client(factory, "http://url", NULL, base::Bind(
+  DevToolsClientImpl client(factory, "http://url", base::Bind(
       &ReturnCommandBadId));
   base::DictionaryValue params;
   ASSERT_TRUE(client.SendCommand("method", params).IsError());
@@ -339,7 +424,7 @@ TEST(DevToolsClientImpl, SendCommandBadId) {
 TEST(DevToolsClientImpl, SendCommandResponseError) {
   SyncWebSocketFactory factory =
       base::Bind(&CreateMockSyncWebSocket<FakeSyncWebSocket>);
-  DevToolsClientImpl client(factory, "http://url", NULL, base::Bind(
+  DevToolsClientImpl client(factory, "http://url", base::Bind(
       &ReturnCommandError));
   base::DictionaryValue params;
   ASSERT_TRUE(client.SendCommand("method", params).IsError());
@@ -350,8 +435,9 @@ TEST(DevToolsClientImpl, SendCommandEventBeforeResponse) {
       base::Bind(&CreateMockSyncWebSocket<FakeSyncWebSocket>);
   MockListener listener;
   bool first = true;
-  DevToolsClientImpl client(factory, "http://url", &listener, base::Bind(
+  DevToolsClientImpl client(factory, "http://url", base::Bind(
       &ReturnEventThenResponse, &first));
+  client.AddListener(&listener);
   base::DictionaryValue params;
   scoped_ptr<base::DictionaryValue> result;
   ASSERT_TRUE(client.SendCommandAndGetResult("method", params, &result).IsOk());
@@ -434,4 +520,162 @@ TEST(ParseInspectorMessage, Command) {
   int key;
   ASSERT_TRUE(response.result->GetInteger("key", &key));
   ASSERT_EQ(1, key);
+}
+
+TEST(DevToolsClientImpl, HandleEventsUntil) {
+  MockListener listener;
+  SyncWebSocketFactory factory =
+      base::Bind(&CreateMockSyncWebSocket<MockSyncWebSocket>);
+  DevToolsClientImpl client(factory, "http://url", base::Bind(
+      &ReturnEvent));
+  client.AddListener(&listener);
+  Status status = client.HandleEventsUntil(base::Bind(&AlwaysTrue));
+  ASSERT_EQ(kOk, status.code());
+}
+
+TEST(DevToolsClientImpl, WaitForNextEventCommand) {
+  SyncWebSocketFactory factory =
+      base::Bind(&CreateMockSyncWebSocket<MockSyncWebSocket>);
+  DevToolsClientImpl client(factory, "http://url", base::Bind(
+      &ReturnCommand));
+  Status status = client.HandleEventsUntil(base::Bind(&AlwaysTrue));
+  ASSERT_EQ(kUnknownError, status.code());
+}
+
+TEST(DevToolsClientImpl, WaitForNextEventError) {
+  SyncWebSocketFactory factory =
+      base::Bind(&CreateMockSyncWebSocket<MockSyncWebSocket>);
+  DevToolsClientImpl client(factory, "http://url", base::Bind(
+      &ReturnError));
+  Status status = client.HandleEventsUntil(base::Bind(&AlwaysTrue));
+  ASSERT_EQ(kUnknownError, status.code());
+}
+
+TEST(DevToolsClientImpl, NestedCommandsWithOutOfOrderResults) {
+  SyncWebSocketFactory factory =
+      base::Bind(&CreateMockSyncWebSocket<MockSyncWebSocket>);
+  int recurse_count = 0;
+  DevToolsClientImpl client(factory, "http://url");
+  client.SetParserFuncForTesting(
+      base::Bind(&ReturnOutOfOrderResponses, &recurse_count, &client));
+  base::DictionaryValue params;
+  params.SetInteger("param", 1);
+  scoped_ptr<base::DictionaryValue> result;
+  ASSERT_TRUE(client.SendCommandAndGetResult("method", params, &result).IsOk());
+  ASSERT_TRUE(result);
+  int key;
+  ASSERT_TRUE(result->GetInteger("key", &key));
+  ASSERT_EQ(2, key);
+}
+
+namespace {
+
+class OnConnectedListener : public DevToolsEventListener {
+ public:
+  OnConnectedListener(const std::string& method, DevToolsClient* client)
+      : method_(method),
+        client_(client),
+        on_connected_called_(false),
+        on_event_called_(false) {
+    client_->AddListener(this);
+  }
+  virtual ~OnConnectedListener() {}
+
+  void VerifyCalled() {
+    EXPECT_TRUE(on_connected_called_);
+    EXPECT_TRUE(on_event_called_);
+  }
+
+  virtual Status OnConnected() OVERRIDE {
+    EXPECT_FALSE(on_connected_called_);
+    EXPECT_FALSE(on_event_called_);
+    on_connected_called_ = true;
+    base::DictionaryValue params;
+    return client_->SendCommand(method_, params);
+  }
+
+  virtual void OnEvent(const std::string& method,
+                       const base::DictionaryValue& params) OVERRIDE {
+    EXPECT_TRUE(on_connected_called_);
+    on_event_called_ = true;
+  }
+
+ private:
+  std::string method_;
+  DevToolsClient* client_;
+  bool on_connected_called_;
+  bool on_event_called_;
+};
+
+class OnConnectedSyncWebSocket : public SyncWebSocket {
+ public:
+  OnConnectedSyncWebSocket() : connected_(false) {}
+  virtual ~OnConnectedSyncWebSocket() {}
+
+  virtual bool Connect(const GURL& url) OVERRIDE {
+    connected_ = true;
+    return true;
+  }
+
+  virtual bool Send(const std::string& message) OVERRIDE {
+    EXPECT_TRUE(connected_);
+    scoped_ptr<base::Value> value(base::JSONReader::Read(message));
+    base::DictionaryValue* dict = NULL;
+    EXPECT_TRUE(value->GetAsDictionary(&dict));
+    if (!dict)
+      return false;
+    int id;
+    EXPECT_TRUE(dict->GetInteger("id", &id));
+    std::string method;
+    EXPECT_TRUE(dict->GetString("method", &method));
+
+    base::DictionaryValue response;
+    response.SetInteger("id", id);
+    response.Set("result", new base::DictionaryValue());
+    std::string json_response;
+    base::JSONWriter::Write(&response, &json_response);
+    queued_response_.push_back(json_response);
+
+    // Push one event.
+    base::DictionaryValue event;
+    event.SetString("method", "updateEvent");
+    event.Set("params", new base::DictionaryValue());
+    std::string json_event;
+    base::JSONWriter::Write(&event, &json_event);
+    queued_response_.push_back(json_event);
+
+    return true;
+  }
+
+  virtual bool ReceiveNextMessage(std::string* message) OVERRIDE {
+    if (queued_response_.empty())
+      return false;
+    *message = queued_response_.front();
+    queued_response_.pop_front();
+    return true;
+  }
+
+  virtual bool HasNextMessage() OVERRIDE {
+    return !queued_response_.empty();
+  }
+
+ private:
+  bool connected_;
+  std::list<std::string> queued_response_;
+};
+
+}  // namespace
+
+TEST(DevToolsClientImpl, ProcessOnConnectedBeforeOnEvent) {
+  SyncWebSocketFactory factory =
+      base::Bind(&CreateMockSyncWebSocket<OnConnectedSyncWebSocket>);
+  DevToolsClientImpl client(factory, "http://url");
+  OnConnectedListener listener1("DOM.getDocument", &client);
+  OnConnectedListener listener2("Runtime.enable", &client);
+  OnConnectedListener listener3("Page.enable", &client);
+  base::DictionaryValue params;
+  EXPECT_EQ(kOk, client.SendCommand("Runtime.execute", params).code());
+  listener1.VerifyCalled();
+  listener2.VerifyCalled();
+  listener3.VerifyCalled();
 }

@@ -7,7 +7,7 @@
 #include "chrome/browser/browser_shutdown.h"
 #include "chrome/browser/ui/sad_tab_helper.h"
 #include "chrome/browser/ui/tab_contents/chrome_web_contents_view_delegate.h"
-#include "chrome/browser/ui/views/constrained_window_views.h"
+#include "chrome/browser/ui/views/sad_tab_view.h"
 #include "chrome/browser/ui/views/tab_contents/render_view_context_menu_views.h"
 #include "chrome/browser/ui/web_contents_modal_dialog_manager.h"
 #include "chrome/common/chrome_switches.h"
@@ -15,18 +15,19 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_view.h"
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/focus/view_storage.h"
 #include "ui/views/widget/widget.h"
 
 #if defined(USE_AURA)
-#include "chrome/browser/tab_contents/web_drag_bookmark_handler_aura.h"
+#include "chrome/browser/ui/aura/tab_contents/web_drag_bookmark_handler_aura.h"
 #include "ui/aura/client/screen_position_client.h"
 #include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
 #else
-#include "chrome/browser/tab_contents/web_drag_bookmark_handler_win.h"
+#include "chrome/browser/ui/views/tab_contents/web_drag_bookmark_handler_win.h"
 #endif
 
 ChromeWebContentsViewDelegateViews::ChromeWebContentsViewDelegateViews(
@@ -61,9 +62,9 @@ content::WebDragDestDelegate*
 bool ChromeWebContentsViewDelegateViews::Focus() {
   SadTabHelper* sad_tab_helper = SadTabHelper::FromWebContents(web_contents_);
   if (sad_tab_helper) {
-    views::Widget* sad_tab = sad_tab_helper->sad_tab();
+    SadTabView* sad_tab = static_cast<SadTabView*>(sad_tab_helper->sad_tab());
     if (sad_tab) {
-      sad_tab->GetContentsView()->RequestFocus();
+      sad_tab->RequestFocus();
       return true;
     }
   }
@@ -74,11 +75,8 @@ bool ChromeWebContentsViewDelegateViews::Focus() {
     // TODO(erg): WebContents used to own web contents modal dialogs, which is
     // why this is here. Eventually this should be ported to a containing view
     // specializing in web contents modal dialog management.
-    if (web_contents_modal_dialog_manager->dialog_count() > 0) {
-      WebContentsModalDialog* window =
-          *web_contents_modal_dialog_manager->dialog_begin();
-      DCHECK(window);
-      window->FocusWebContentsModalDialog();
+    if (web_contents_modal_dialog_manager->IsShowingDialog()) {
+      web_contents_modal_dialog_manager->FocusTopmostDialog();
       return true;
     }
   }
@@ -172,9 +170,9 @@ void ChromeWebContentsViewDelegateViews::SizeChanged(const gfx::Size& size) {
   SadTabHelper* sad_tab_helper = SadTabHelper::FromWebContents(web_contents_);
   if (!sad_tab_helper)
     return;
-  views::Widget* sad_tab = sad_tab_helper->sad_tab();
+  SadTabView* sad_tab = static_cast<SadTabView*>(sad_tab_helper->sad_tab());
   if (sad_tab)
-    sad_tab->SetBounds(gfx::Rect(size));
+    sad_tab->GetWidget()->SetBounds(gfx::Rect(size));
 }
 
 views::Widget* ChromeWebContentsViewDelegateViews::GetTopLevelWidget() {
@@ -193,7 +191,8 @@ views::FocusManager*
 
 void ChromeWebContentsViewDelegateViews::SetInitialFocus() {
   if (web_contents_->FocusLocationBarByDefault()) {
-    web_contents_->SetFocusToLocationBar(false);
+    if (web_contents_->GetDelegate())
+      web_contents_->GetDelegate()->SetFocusToLocationBar(false);
   } else {
     web_contents_->GetView()->Focus();
   }

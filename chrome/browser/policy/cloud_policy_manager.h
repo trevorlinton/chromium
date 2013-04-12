@@ -10,11 +10,14 @@
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/prefs/public/pref_member.h"
+#include "chrome/browser/policy/cloud_policy_constants.h"
 #include "chrome/browser/policy/cloud_policy_core.h"
 #include "chrome/browser/policy/cloud_policy_store.h"
 #include "chrome/browser/policy/configuration_policy_provider.h"
 
 namespace policy {
+
+class PolicyBundle;
 
 // CloudPolicyManager is the main switching central between cloud policy and the
 // upper layers of the policy stack. It wires up a CloudPolicyCore to the
@@ -26,7 +29,8 @@ namespace policy {
 class CloudPolicyManager : public ConfigurationPolicyProvider,
                            public CloudPolicyStore::Observer {
  public:
-  explicit CloudPolicyManager(CloudPolicyStore* cloud_policy_store);
+  CloudPolicyManager(const PolicyNamespaceKey& policy_ns_key,
+                     CloudPolicyStore* cloud_policy_store);
   virtual ~CloudPolicyManager();
 
   CloudPolicyCore* core() { return &core_; }
@@ -34,7 +38,7 @@ class CloudPolicyManager : public ConfigurationPolicyProvider,
 
   // ConfigurationPolicyProvider:
   virtual void Shutdown() OVERRIDE;
-  virtual bool IsInitializationComplete() const OVERRIDE;
+  virtual bool IsInitializationComplete(PolicyDomain domain) const OVERRIDE;
   virtual void RefreshPolicies() OVERRIDE;
 
   // CloudPolicyStore::Observer:
@@ -45,6 +49,10 @@ class CloudPolicyManager : public ConfigurationPolicyProvider,
   // Check whether fully initialized and if so, publish policy by calling
   // ConfigurationPolicyStore::UpdatePolicy().
   void CheckAndPublishPolicy();
+
+  // Called by CheckAndPublishPolicy() to create a bundle with the current
+  // policies.
+  virtual scoped_ptr<PolicyBundle> CreatePolicyBundle();
 
   // Convenience accessors to core() components.
   CloudPolicyClient* client() { return core_.client(); }

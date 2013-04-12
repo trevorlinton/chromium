@@ -19,11 +19,13 @@
 #include "base/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_content_browser_client.h"
+#include "chrome/browser/ui/webui/chrome_web_ui_controller_factory.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_content_client.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/testing_browser_process.h"
+#include "content/public/test/test_launcher.h"
 #include "net/base/mock_host_resolver.h"
 #include "net/base/net_errors.h"
 #include "net/base/net_util.h"
@@ -35,6 +37,7 @@
 #include "base/android/jni_android.h"
 #include "chrome/browser/android/chrome_jni_registrar.h"
 #include "net/android/net_jni_registrar.h"
+#include "ui/android/ui_jni_registrar.h"
 #endif
 
 #if defined(OS_MACOSX)
@@ -87,7 +90,7 @@ class LocalHostResolverProc : public net::HostResolverProc {
                       net::AddressFamily address_family,
                       net::HostResolverFlags host_resolver_flags,
                       net::AddressList* addrlist,
-                      int* os_error) {
+                      int* os_error) OVERRIDE {
     const char* kLocalHostNames[] = {"localhost", "127.0.0.1", "::1"};
     bool local = false;
 
@@ -202,6 +205,7 @@ void ChromeTestSuite::Initialize() {
 #if defined(OS_ANDROID)
   // Register JNI bindings for android.
   net::android::RegisterJni(base::android::AttachCurrentThread());
+  ui::android::RegisterJni(base::android::AttachCurrentThread());
   chrome::android::RegisterJni(base::android::AttachCurrentThread());
 #endif
 
@@ -210,6 +214,16 @@ void ChromeTestSuite::Initialize() {
     PathService::Override(base::DIR_EXE, browser_dir_);
     PathService::Override(base::DIR_MODULE, browser_dir_);
   }
+
+#if !defined(OS_IOS)
+  if (!content::GetCurrentTestLauncherDelegate()) {
+    // Only want to do this for unit tests. For browser tests, this won't create
+    // the right object since TestChromeWebUIControllerFactory is used. That's
+    // created and registered in ChromeBrowserMainParts as in normal startup.
+    content::WebUIControllerFactory::RegisterFactory(
+        ChromeWebUIControllerFactory::GetInstance());
+  }
+#endif
 
   // Disable external libraries load if we are under python process in
   // ChromeOS.  That means we are autotest and, if ASAN is used,
@@ -223,7 +237,7 @@ void ChromeTestSuite::Initialize() {
 
 #if defined(OS_MACOSX) && !defined(OS_IOS)
   // Look in the framework bundle for resources.
-  FilePath path;
+  base::FilePath path;
   PathService::Get(base::DIR_EXE, &path);
   path = path.Append(chrome::kFrameworkName);
   base::mac::SetOverrideFrameworkBundlePath(path);
@@ -232,10 +246,14 @@ void ChromeTestSuite::Initialize() {
   // Force unittests to run using en-US so if we test against string
   // output, it'll pass regardless of the system language.
   ResourceBundle::InitSharedInstanceWithLocale("en-US", NULL);
-  FilePath resources_pack_path;
+  base::FilePath resources_pack_path;
+#if defined(OS_MACOSX) && !defined(OS_IOS)
   PathService::Get(base::DIR_MODULE, &resources_pack_path);
   resources_pack_path =
       resources_pack_path.Append(FILE_PATH_LITERAL("resources.pak"));
+#else
+  PathService::Get(chrome::FILE_RESOURCES_PACK, &resources_pack_path);
+#endif
   ResourceBundle::GetSharedInstance().AddDataPackFromPath(
       resources_pack_path, ui::SCALE_FACTOR_NONE);
 

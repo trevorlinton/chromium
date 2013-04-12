@@ -31,7 +31,6 @@ import org.chromium.content.browser.ContainerViewDelegate;
 import org.chromium.content.browser.ContentView;
 import org.chromium.content.browser.test.util.TouchCommon;
 import org.chromium.content.browser.test.util.UiUtils;
-import org.chromium.content.browser.test.util.TouchUtils;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.ui.gfx.ActivityNativeWindow;
@@ -76,17 +75,13 @@ public class AutofillTest extends ChromiumTestShellTestBase {
         private static final int CALLBACK_TIMEOUT_MS = 4000;
         private static final int CHECK_INTERVAL_MS = 100;
         private final AtomicBoolean mGotPopupSelection = new AtomicBoolean(false);
-        private Pair<String, Integer> mSelectedData = null;
+        public int mListIndex = -1;
 
         @Override
-        public void suggestionSelected(int listIndex, String value, int uniqueId) {
-            mSelectedData = new Pair<String, Integer>(value, uniqueId);
+        public void suggestionSelected(int listIndex) {
+            mListIndex = listIndex;
             mAutofillPopup.dismiss();
             mGotPopupSelection.set(true);
-        }
-
-        public Pair<String, Integer> getSelectedData() {
-            return mSelectedData;
         }
 
         public boolean waitForCallback() throws InterruptedException {
@@ -157,8 +152,6 @@ public class AutofillTest extends ChromiumTestShellTestBase {
         touchCommon.singleClickViewRelative(mAutofillPopup.getListView(), 10, 10);
         assertTrue(mMockAutofillCallback.waitForCallback());
 
-        Pair<String, Integer> selected = mMockAutofillCallback.getSelectedData();
-        assertEquals(suggestions[0].mName, selected.first);
-        assertEquals(suggestions[0].mUniqueId, selected.second.intValue());
+        assertEquals(0, mMockAutofillCallback.mListIndex);
     }
 }

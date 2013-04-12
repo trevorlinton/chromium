@@ -11,30 +11,31 @@ namespace net {
 // Highest number of microseconds that DateTimeOffset can hold.
 const int64 kQuicInfiniteTimeUs = GG_INT64_C(0x7fffffffffffffff) / 10;
 
-QuicTime::Delta::Delta()
-    : delta_(base::TimeDelta::FromMicroseconds(0)) {
-}
-
 QuicTime::Delta::Delta(base::TimeDelta delta)
     : delta_(delta) {
 }
 
+// static
+QuicTime::Delta QuicTime::Delta::Zero() {
+  return QuicTime::Delta::FromMicroseconds(0);
+}
+
+// static
 QuicTime::Delta QuicTime::Delta::Infinite() {
   return QuicTime::Delta::FromMicroseconds(kQuicInfiniteTimeUs);
 }
 
-bool QuicTime::Delta::IsZero() const {
-  return delta_.InMicroseconds() == 0;
+// static
+QuicTime::Delta QuicTime::Delta::FromSeconds(int64 seconds) {
+  return QuicTime::Delta(base::TimeDelta::FromSeconds(seconds));
 }
 
-bool QuicTime::Delta::IsInfinite() const {
-  return delta_.InMicroseconds() == kQuicInfiniteTimeUs;
-}
-
+// static
 QuicTime::Delta QuicTime::Delta::FromMilliseconds(int64 ms) {
   return QuicTime::Delta(base::TimeDelta::FromMilliseconds(ms));
 }
 
+// static
 QuicTime::Delta QuicTime::Delta::FromMicroseconds(int64 us) {
   return QuicTime::Delta(base::TimeDelta::FromMicroseconds(us));
 }
@@ -61,14 +62,20 @@ QuicTime::Delta QuicTime::Delta::Subtract(const Delta& delta) const {
                                            delta.ToMicroseconds());
 }
 
-
-QuicTime::QuicTime() {
+bool QuicTime::Delta::IsZero() const {
+  return delta_.InMicroseconds() == 0;
 }
 
-QuicTime::QuicTime(base::TimeTicks ticks)
-    : ticks_(ticks) {
+bool QuicTime::Delta::IsInfinite() const {
+  return delta_.InMicroseconds() == kQuicInfiniteTimeUs;
 }
 
+// static
+QuicTime QuicTime::Zero() {
+  return QuicTime::FromMilliseconds(0);
+}
+
+// static
 QuicTime QuicTime::FromMilliseconds(int64 time_ms) {
   // DateTime use 100 ns as resolution make sure we don't pass down too high
   // values.
@@ -77,12 +84,17 @@ QuicTime QuicTime::FromMilliseconds(int64 time_ms) {
                   base::TimeDelta::FromMilliseconds(time_ms));
 }
 
+// static
 QuicTime QuicTime::FromMicroseconds(int64 time_us) {
   // DateTime use 100 ns as resolution make sure we don't pass down too high
   // values.
   DCHECK(time_us < kQuicInfiniteTimeUs);
   return QuicTime(base::TimeTicks() +
                   base::TimeDelta::FromMicroseconds(time_us));
+}
+
+QuicTime::QuicTime(base::TimeTicks ticks)
+    : ticks_(ticks) {
 }
 
 int64 QuicTime::ToMilliseconds() const {

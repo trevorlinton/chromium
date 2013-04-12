@@ -35,7 +35,7 @@ def SetChromeTimeoutScale(adb, scale):
     # Delete if scale is None/0.0/1.0 since the default timeout scale is 1.0
     adb.RunShellCommand('rm %s' % path)
   else:
-    adb.SetFileContents(path, '%f' % scale)
+    adb.SetProtectedFileContents(path, '%f' % scale)
 
 
 class BaseTool(object):
@@ -91,7 +91,14 @@ class AddressSanitizerTool(BaseTool):
   def __init__(self, adb):
     self._adb = adb
     self._wrap_properties = ['wrap.com.google.android.apps.ch',
-                             'wrap.org.chromium.native_test']
+                             'wrap.org.chromium.native_test',
+                             'wrap.org.chromium.content_shell',
+                             'wrap.org.chromium.chrome.testsh',
+                             'wrap.org.chromium.android_webvi']
+    # Configure AndroidCommands to run utils (such as md5sum_bin) under ASan.
+    # This is required because ASan is a compiler-based tool, and md5sum
+    # includes instrumented code from base.
+    adb.SetUtilWrapper(self.GetUtilWrapper())
 
   def CopyFiles(self):
     """Copies ASan tools to the device."""

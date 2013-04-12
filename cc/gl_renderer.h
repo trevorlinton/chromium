@@ -45,6 +45,8 @@ public:
 
     virtual void viewportChanged() OVERRIDE;
 
+    virtual void receiveCompositorFrameAck(const CompositorFrameAck& ack) OVERRIDE;
+
     // waits for rendering to finish
     virtual void finish() OVERRIDE;
 
@@ -60,10 +62,10 @@ public:
 
     virtual void sendManagedMemoryStats(size_t bytesVisible, size_t bytesVisibleAndNearby, size_t bytesAllocated) OVERRIDE;
 
+    static void debugGLCall(WebKit::WebGraphicsContext3D*, const char* command, const char* file, int line);
+
 protected:
     GLRenderer(RendererClient*, OutputSurface*, ResourceProvider*);
-
-    static void debugGLCall(WebKit::WebGraphicsContext3D*, const char* command, const char* file, int line);
 
     bool isBackbufferDiscarded() const { return m_isBackbufferDiscarded; }
     bool initialize();
@@ -160,7 +162,7 @@ private:
 
     // Texture shaders.
     typedef ProgramBinding<VertexShaderPosTexTransform, FragmentShaderRGBATexVaryingAlpha> TextureProgram;
-    typedef ProgramBinding<VertexShaderPosTexTransform, FragmentShaderRGBATexFlipVaryingAlpha> TextureProgramFlip;
+    typedef ProgramBinding<VertexShaderPosTexTransformFlip, FragmentShaderRGBATexVaryingAlpha> TextureProgramFlip;
     typedef ProgramBinding<VertexShaderPosTexTransform, FragmentShaderRGBATexRectVaryingAlpha> TextureIOSurfaceProgram;
 
     // Video shaders.
@@ -230,6 +232,8 @@ private:
     TexturedQuadDrawCache m_drawCache;
 
     scoped_ptr<ResourceProvider::ScopedWriteLockGL> m_currentFramebufferLock;
+
+    scoped_refptr<ResourceProvider::Fence> m_lastSwapFence;
 
     DISALLOW_COPY_AND_ASSIGN(GLRenderer);
 };

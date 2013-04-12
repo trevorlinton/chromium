@@ -11,19 +11,21 @@
 #include "android_webview/common/url_constants.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
-#include "content/components/navigation_interception/intercept_navigation_delegate.h"
+#include "components/auto_login_parser/auto_login_parser.h"
+#include "components/navigation_interception/intercept_navigation_delegate.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/resource_controller.h"
 #include "content/public/browser/resource_dispatcher_host.h"
 #include "content/public/browser/resource_dispatcher_host_login_delegate.h"
+#include "content/public/browser/resource_request_info.h"
 #include "content/public/browser/resource_throttle.h"
 #include "content/public/common/url_constants.h"
 #include "net/base/load_flags.h"
 #include "net/url_request/url_request.h"
 
 using android_webview::AwContentsIoThreadClient;
+using components::InterceptNavigationDelegate;
 using content::BrowserThread;
-using content::InterceptNavigationDelegate;
 
 namespace {
 
@@ -248,7 +250,7 @@ void AwResourceDispatcherHostDelegate::DownloadStarting(
   request->GetResponseHeaderByName("content-disposition", &content_disposition);
   request->extra_request_headers().GetHeader(
       net::HttpRequestHeaders::kUserAgent, &user_agent);
-  request->GetResponseHeaderByName("mime-type", &mime_type);
+  request->GetMimeType(&mime_type);
 
   request->Cancel();
 
@@ -286,6 +288,37 @@ bool AwResourceDispatcherHostDelegate::HandleExternalProtocol(const GURL& url,
   // gets called.
   NOTREACHED();
   return false;
+}
+
+void AwResourceDispatcherHostDelegate::OnResponseStarted(
+    net::URLRequest* request,
+    content::ResourceContext* resource_context,
+    content::ResourceResponse* response,
+    IPC::Sender* sender) {
+  const content::ResourceRequestInfo* request_info =
+      content::ResourceRequestInfo::ForRequest(request);
+  if (!request_info) {
+    DLOG(FATAL) << "Started request without associated info: " <<
+        request->url();
+    return;
+  }
+
+  if (request_info->GetResourceType() == ResourceType::MAIN_FRAME) {
+    // Check for x-auto-login header.
+    components::auto_login::HeaderData header_data;
+    if (components::auto_login::ParserHeaderInResponse(
+            request,
+            components::auto_login::ALLOW_ANY_REALM,
+            &header_data)) {
+      scoped_ptr<AwContentsIoThreadClient> io_client =
+          AwContentsIoThreadClient::FromID(
+              request_info->GetChildID(),
+              request_info->GetRouteID());
+      io_client->NewLoginRequest(header_data.realm,
+                                 header_data.account,
+                                 header_data.args);
+    }
+  }
 }
 
 void AwResourceDispatcherHostDelegate::RemovePendingThrottleOnIoThread(

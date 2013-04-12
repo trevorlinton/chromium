@@ -8,6 +8,7 @@
 #include "base/compiler_specific.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop.h"
+#include "chrome/browser/policy/cloud_policy_constants.h"
 #include "chrome/browser/policy/configuration_policy_provider_test.h"
 #include "chrome/browser/policy/mock_cloud_policy_client.h"
 #include "chrome/browser/policy/mock_cloud_policy_store.h"
@@ -69,7 +70,9 @@ ConfigurationPolicyProvider* TestHarness::CreateProvider(
     const PolicyDefinitionList* policy_definition_list) {
   // Create and initialize the store.
   store_.NotifyStoreLoaded();
-  ConfigurationPolicyProvider* provider = new CloudPolicyManager(&store_);
+  ConfigurationPolicyProvider* provider = new CloudPolicyManager(
+      PolicyNamespaceKey(dm_protocol::kChromeUserPolicyType, std::string()),
+      &store_);
   Mock::VerifyAndClearExpectations(&store_);
   return provider;
 }
@@ -127,7 +130,10 @@ INSTANTIATE_TEST_CASE_P(
 class TestCloudPolicyManager : public CloudPolicyManager {
  public:
   explicit TestCloudPolicyManager(CloudPolicyStore* store)
-      : CloudPolicyManager(store) {}
+      : CloudPolicyManager(PolicyNamespaceKey(
+                               dm_protocol::kChromeUserPolicyType,
+                               std::string()),
+                           store) {}
   virtual ~TestCloudPolicyManager() {}
 
   // Publish the protected members for testing.
@@ -146,14 +152,15 @@ MATCHER_P(ProtoMatches, proto, "") {
 
 class CloudPolicyManagerTest : public testing::Test {
  protected:
-  CloudPolicyManagerTest() {}
+  CloudPolicyManagerTest()
+      : policy_ns_key_(dm_protocol::kChromeUserPolicyType, std::string()) {}
 
   virtual void SetUp() OVERRIDE {
     // Set up a policy map for testing.
     policy_map_.Set("key", POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
                     base::Value::CreateStringValue("value"));
-    expected_bundle_.Get(POLICY_DOMAIN_CHROME, std::string()).CopyFrom(
-        policy_map_);
+    expected_bundle_.Get(PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()))
+        .CopyFrom(policy_map_);
 
     policy_.payload().mutable_homepagelocation()->set_value(
         "http://www.example.com");
@@ -175,6 +182,7 @@ class CloudPolicyManagerTest : public testing::Test {
   MessageLoop loop_;
 
   // Testing policy.
+  const PolicyNamespaceKey policy_ns_key_;
   UserPolicyBuilder policy_;
   PolicyMap policy_map_;
   PolicyBundle expected_bundle_;
@@ -191,7 +199,7 @@ class CloudPolicyManagerTest : public testing::Test {
 TEST_F(CloudPolicyManagerTest, InitAndShutdown) {
   PolicyBundle empty_bundle;
   EXPECT_TRUE(empty_bundle.Equals(manager_->policies()));
-  EXPECT_FALSE(manager_->IsInitializationComplete());
+  EXPECT_FALSE(manager_->IsInitializationComplete(POLICY_DOMAIN_CHROME));
 
   EXPECT_CALL(observer_, OnUpdatePolicy(_)).Times(0);
   manager_->CheckAndPublishPolicy();
@@ -203,7 +211,7 @@ TEST_F(CloudPolicyManagerTest, InitAndShutdown) {
   store_.NotifyStoreLoaded();
   Mock::VerifyAndClearExpectations(&observer_);
   EXPECT_TRUE(expected_bundle_.Equals(manager_->policies()));
-  EXPECT_TRUE(manager_->IsInitializationComplete());
+  EXPECT_TRUE(manager_->IsInitializationComplete(POLICY_DOMAIN_CHROME));
 
   MockCloudPolicyClient* client = new MockCloudPolicyClient();
   EXPECT_CALL(*client, SetupRegistration(_, _));
@@ -225,7 +233,7 @@ TEST_F(CloudPolicyManagerTest, RegistrationAndFetch) {
   EXPECT_CALL(observer_, OnUpdatePolicy(manager_.get()));
   store_.NotifyStoreLoaded();
   Mock::VerifyAndClearExpectations(&observer_);
-  EXPECT_TRUE(manager_->IsInitializationComplete());
+  EXPECT_TRUE(manager_->IsInitializationComplete(POLICY_DOMAIN_CHROME));
 
   MockCloudPolicyClient* client = new MockCloudPolicyClient();
   manager_->core()->Connect(scoped_ptr<CloudPolicyClient>(client));
@@ -233,7 +241,7 @@ TEST_F(CloudPolicyManagerTest, RegistrationAndFetch) {
   client->SetDMToken(policy_.policy_data().request_token());
   client->NotifyRegistrationStateChanged();
 
-  client->SetPolicy(policy_.policy());
+  client->SetPolicy(policy_ns_key_, policy_.policy());
   EXPECT_CALL(store_, Store(ProtoMatches(policy_.policy())));
   client->NotifyPolicyFetched();
   Mock::VerifyAndClearExpectations(&store_);
@@ -249,7 +257,7 @@ TEST_F(CloudPolicyManagerTest, Update) {
   EXPECT_CALL(observer_, OnUpdatePolicy(manager_.get()));
   store_.NotifyStoreLoaded();
   Mock::VerifyAndClearExpectations(&observer_);
-  EXPECT_TRUE(manager_->IsInitializationComplete());
+  EXPECT_TRUE(manager_->IsInitializationComplete(POLICY_DOMAIN_CHROME));
   PolicyBundle empty_bundle;
   EXPECT_TRUE(empty_bundle.Equals(manager_->policies()));
 
@@ -258,7 +266,7 @@ TEST_F(CloudPolicyManagerTest, Update) {
   store_.NotifyStoreLoaded();
   Mock::VerifyAndClearExpectations(&observer_);
   EXPECT_TRUE(expected_bundle_.Equals(manager_->policies()));
-  EXPECT_TRUE(manager_->IsInitializationComplete());
+  EXPECT_TRUE(manager_->IsInitializationComplete(POLICY_DOMAIN_CHROME));
 }
 
 TEST_F(CloudPolicyManagerTest, RefreshNotRegistered) {
@@ -306,7 +314,7 @@ TEST_F(CloudPolicyManagerTest, RefreshSuccessful) {
   // Respond to the policy fetch, which should trigger a write to |store_|.
   EXPECT_CALL(observer_, OnUpdatePolicy(_)).Times(0);
   EXPECT_CALL(store_, Store(_));
-  client->SetPolicy(policy_.policy());
+  client->SetPolicy(policy_ns_key_, policy_.policy());
   client->NotifyPolicyFetched();
   Mock::VerifyAndClearExpectations(&observer_);
   Mock::VerifyAndClearExpectations(&store_);
@@ -316,6 +324,16 @@ TEST_F(CloudPolicyManagerTest, RefreshSuccessful) {
   store_.NotifyStoreLoaded();
   EXPECT_TRUE(expected_bundle_.Equals(manager_->policies()));
   Mock::VerifyAndClearExpectations(&observer_);
+}
+
+TEST_F(CloudPolicyManagerTest, SignalOnError) {
+  // Simulate a failed load and verify that it triggers OnUpdatePolicy().
+  store_.policy_.reset(new em::PolicyData(policy_.policy_data()));
+  EXPECT_CALL(observer_, OnUpdatePolicy(manager_.get()));
+  store_.NotifyStoreError();
+  Mock::VerifyAndClearExpectations(&observer_);
+
+  EXPECT_TRUE(manager_->IsInitializationComplete(POLICY_DOMAIN_CHROME));
 }
 
 }  // namespace

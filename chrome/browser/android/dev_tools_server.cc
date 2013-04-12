@@ -56,8 +56,8 @@ class DevToolsServerDelegate : public content::DevToolsHttpHandlerDelegate {
     return use_bundled_frontend_resources_;
   }
 
-  virtual FilePath GetDebugFrontendDir() {
-    return FilePath();
+  virtual base::FilePath GetDebugFrontendDir() {
+    return base::FilePath();
   }
 
   virtual std::string GetPageThumbnailData(const GURL& url) {
@@ -75,6 +75,10 @@ class DevToolsServerDelegate : public content::DevToolsHttpHandlerDelegate {
 
   content::RenderViewHost* CreateNewTarget() {
     return NULL;
+  }
+
+  TargetType GetTargetType(content::RenderViewHost*) {
+    return kTargetTypeTab;
   }
 
  private:

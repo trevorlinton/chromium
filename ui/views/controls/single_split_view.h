@@ -56,6 +56,8 @@ class VIEWS_EXPORT SingleSplitView : public View {
   }
   int divider_offset() const { return divider_offset_; }
 
+  int GetDividerSize() const;
+
   // Sets whether the leading component is resized when the split views size
   // changes. The default is true. A value of false results in the trailing
   // component resizing on a bounds change.
@@ -71,12 +73,6 @@ class VIEWS_EXPORT SingleSplitView : public View {
                                gfx::Rect* trailing_bounds) const;
 
   void SetAccessibleName(const string16& name);
-
-  // This allows for a layout where another view is placed between the
-  // leading view and the separator. Calling this method will cause a layout
-  // invalidation, i.e., InvalidateLayou()t will be called if |offset| is
-  // different from the current value of |leading_bottom_offset_|.
-  void SetLeadingBottomOffset(int offset);
 
  protected:
   // View overrides.
@@ -134,10 +130,6 @@ class VIEWS_EXPORT SingleSplitView : public View {
 
   // The accessible name of this view.
   string16 accessible_name_;
-
-  // An offset to leave room between the bottom of the leading view bounds and
-  // the separator, if any, or the bottom of the splitview bounds otherwise.
-  int leading_bottom_offset_;
 
   DISALLOW_COPY_AND_ASSIGN(SingleSplitView);
 };

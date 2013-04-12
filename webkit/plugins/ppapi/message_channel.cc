@@ -20,7 +20,7 @@
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebFrame.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebNode.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebPluginContainer.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebSerializedScriptValue.h"
+#include "third_party/WebKit/Source/WebKit/chromium/public/WebSerializedScriptValue.h"
 #include "v8/include/v8.h"
 #include "webkit/plugins/ppapi/host_array_buffer_var.h"
 #include "webkit/plugins/ppapi/npapi_glue.h"
@@ -400,6 +400,11 @@ void MessageChannel::QueueJavaScriptMessages() {
 }
 
 void MessageChannel::DrainEarlyMessageQueue() {
+  // Take a reference on the PluginInstance. This is because JavaScript code
+  // may delete the plugin, which would destroy the PluginInstance and its
+  // corresponding MessageChannel.
+  scoped_refptr<PluginInstance> instance_ref(instance_);
+
   if (early_message_queue_state_ == DRAIN_CANCELLED) {
     early_message_queue_state_ = QUEUE_MESSAGES;
     return;

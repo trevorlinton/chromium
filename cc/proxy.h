@@ -7,9 +7,12 @@
 
 #include "base/basictypes.h"
 #include "base/logging.h"
-#include "base/time.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/time.h"
+#include "base/values.h"
 #include "cc/cc_export.h"
+#include "skia/ext/refptr.h"
+#include "third_party/skia/include/core/SkPicture.h"
 
 namespace gfx {
 class Rect;
@@ -95,6 +98,9 @@ public:
     virtual size_t maxPartialTextureUpdates() const = 0;
 
     virtual void acquireLayerTextures() = 0;
+
+    virtual skia::RefPtr<SkPicture> capturePicture() = 0;
+    virtual scoped_ptr<base::Value> asValue() const = 0;
 
     // Testing hooks
     virtual bool commitPendingForTesting() = 0;

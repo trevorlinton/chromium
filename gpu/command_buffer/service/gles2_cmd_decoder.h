@@ -53,6 +53,7 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
  public:
   typedef error::Error Error;
   typedef base::Callback<void(int32 id, const std::string& msg)> MsgCallback;
+  typedef base::Callback<bool(uint32 id)> WaitSyncPointCallback;
 
   // Creates a decoder.
   static GLES2Decoder* Create(ContextGroup* group);
@@ -142,6 +143,17 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
   // Gets the service id for any simulated backbuffer fbo.
   virtual void RestoreState() const = 0;
 
+  // Restore States.
+  virtual void RestoreActiveTexture() const = 0;
+  virtual void RestoreAttribute(unsigned index) const = 0;
+  virtual void RestoreBufferBindings() const = 0;
+  virtual void RestoreFramebufferBindings() const = 0;
+  virtual void RestoreGlobalState() const = 0;
+  virtual void RestoreProgramBindings() const = 0;
+  virtual void RestoreRenderbufferBindings() const = 0;
+  virtual void RestoreTextureState(unsigned service_id) const = 0;
+  virtual void RestoreTextureUnitBindings(unsigned unit) const = 0;
+
   // Gets the QueryManager for this context.
   virtual QueryManager* GetQueryManager() = 0;
 
@@ -190,6 +202,11 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
   // A callback for messages from the decoder.
   virtual void SetMsgCallback(const MsgCallback& callback) = 0;
 
+  // Sets the callback for waiting on a sync point. The callback returns the
+  // scheduling status (i.e. true if the channel is still scheduled).
+  virtual void SetWaitSyncPointCallback(
+      const WaitSyncPointCallback& callback) = 0;
+
   virtual uint32 GetTextureUploadCount() = 0;
   virtual base::TimeDelta GetTotalTextureUploadTime() = 0;
   virtual base::TimeDelta GetTotalProcessingCommandsTime() = 0;
@@ -220,5 +237,4 @@ class GPU_EXPORT GLES2Decoder : public base::SupportsWeakPtr<GLES2Decoder>,
 
 }  // namespace gles2
 }  // namespace gpu
-
 #endif  // GPU_COMMAND_BUFFER_SERVICE_GLES2_CMD_DECODER_H_

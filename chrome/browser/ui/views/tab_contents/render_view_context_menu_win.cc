@@ -8,7 +8,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/tab_contents/retargeting_details.h"
 #include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "content/public/browser/web_contents.h"
 #include "win8/util/win8_util.h"
@@ -59,9 +59,9 @@ void RenderViewContextMenuWin::ExecuteCommand(int command_id,
     // TODO(robertshield): FTB - Switch this to HOST_DESKTOP_TYPE_ASH when
     //                     we make that the default for metro.
     Browser* browser =
-        browser::FindTabbedBrowser(profile_->GetOriginalProfile(),
-                                   false,
-                                   chrome::HOST_DESKTOP_TYPE_NATIVE);
+        chrome::FindTabbedBrowser(profile_->GetOriginalProfile(),
+                                  false,
+                                  chrome::HOST_DESKTOP_TYPE_NATIVE);
     if (browser) {
       content::OpenURLParams url_params(
           params_.link_url,
@@ -71,7 +71,8 @@ void RenderViewContextMenuWin::ExecuteCommand(int command_id,
           NEW_FOREGROUND_TAB,
           content::PAGE_TRANSITION_LINK,
           false);
-      WebContents* source_web_contents = chrome::GetActiveWebContents(browser);
+      WebContents* source_web_contents =
+          browser->tab_strip_model()->GetActiveWebContents();
       WebContents* new_contents = source_web_contents->OpenURL(url_params);
       DCHECK(new_contents);
       return;

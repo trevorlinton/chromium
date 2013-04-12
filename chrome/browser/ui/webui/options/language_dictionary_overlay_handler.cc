@@ -44,12 +44,6 @@ void LanguageDictionaryOverlayHandler::GetLocalizedValues(
       l10n_util::GetStringUTF16(IDS_LANGUAGE_DICTIONARY_OVERLAY_NO_MATCHES));
 }
 
-void LanguageDictionaryOverlayHandler::InitializeHandler() {
-}
-
-void LanguageDictionaryOverlayHandler::InitializePage() {
-}
-
 void LanguageDictionaryOverlayHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       "addDictionaryWord",
@@ -75,12 +69,15 @@ void LanguageDictionaryOverlayHandler::OnCustomDictionaryLoaded() {
   ResetDictionaryWords();
 }
 
-void LanguageDictionaryOverlayHandler::OnCustomDictionaryWordAdded(
-    const std::string& word) {
-}
-
-void LanguageDictionaryOverlayHandler::OnCustomDictionaryWordRemoved(
-    const std::string& word) {
+void LanguageDictionaryOverlayHandler::OnCustomDictionaryChanged(
+    const SpellcheckCustomDictionary::Change& dictionary_change) {
+  ListValue add_words;
+  ListValue remove_words;
+  add_words.AppendStrings(dictionary_change.to_add());
+  remove_words.AppendStrings(dictionary_change.to_remove());
+  web_ui()->CallJavascriptFunction("EditDictionaryOverlay.updateWords",
+                                   add_words,
+                                   remove_words);
 }
 
 void LanguageDictionaryOverlayHandler::ResetDictionaryWords() {

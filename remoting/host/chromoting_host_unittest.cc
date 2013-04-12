@@ -6,14 +6,12 @@
 #include "base/bind_helpers.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop_proxy.h"
+#include "media/video/capture/screen/screen_capturer_fake.h"
 #include "remoting/base/auto_thread_task_runner.h"
-#include "remoting/capturer/video_frame_capturer_fake.h"
 #include "remoting/host/audio_capturer.h"
 #include "remoting/host/chromoting_host.h"
 #include "remoting/host/chromoting_host_context.h"
 #include "remoting/host/desktop_environment.h"
-#include "remoting/host/desktop_environment_factory.h"
-#include "remoting/host/event_executor_fake.h"
 #include "remoting/host/host_mock_objects.h"
 #include "remoting/host/it2me_host_user_interface.h"
 #include "remoting/jingle_glue/mock_objects.h"
@@ -21,8 +19,8 @@
 #include "remoting/protocol/errors.h"
 #include "remoting/protocol/protocol_mock_objects.h"
 #include "remoting/protocol/session_config.h"
-#include "testing/gmock_mutant.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "testing/gmock_mutant.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using ::remoting::protocol::MockClientStub;
@@ -84,7 +82,7 @@ class MockIt2MeHostUserInterface : public It2MeHostUserInterface {
 MockIt2MeHostUserInterface::MockIt2MeHostUserInterface(
     scoped_refptr<base::SingleThreadTaskRunner> network_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner)
-    : It2MeHostUserInterface(network_task_runner, ui_task_runner) {
+    : It2MeHostUserInterface(network_task_runner, ui_task_runner, UiStrings()) {
 }
 
 void MockIt2MeHostUserInterface::InitFrom(
@@ -123,6 +121,9 @@ class ChromotingHostTest : public testing::Test {
         .Times(AnyNumber())
         .WillRepeatedly(Invoke(this,
                                &ChromotingHostTest::CreateDesktopEnvironment));
+    EXPECT_CALL(*desktop_environment_factory_, SupportsAudioCapture())
+        .Times(AnyNumber())
+        .WillRepeatedly(Return(false));
 
     session_manager_ = new protocol::MockSessionManager();
 
@@ -131,9 +132,11 @@ class ChromotingHostTest : public testing::Test {
         desktop_environment_factory_.get(),
         scoped_ptr<protocol::SessionManager>(session_manager_),
         ui_task_runner_,  // Audio
+        ui_task_runner_,  // Input
         ui_task_runner_,  // Video capture
         ui_task_runner_,  // Video encode
-        ui_task_runner_); // Network
+        ui_task_runner_,  // Network
+        ui_task_runner_); // UI
     host_->AddStatusObserver(&host_status_observer_);
 
     disconnect_window_ = new MockDisconnectWindow();
@@ -237,15 +240,15 @@ class ChromotingHostTest : public testing::Test {
     scoped_refptr<ClientSession> client = new ClientSession(
         host_.get(),
         ui_task_runner_,  // Audio
+        ui_task_runner_,  // Input
         ui_task_runner_,  // Video capture
         ui_task_runner_,  // Video encode
         ui_task_runner_,  // Network
+        ui_task_runner_,  // UI
         connection.Pass(),
         desktop_environment_factory_.get(),
         base::TimeDelta());
     connection_ptr->set_host_stub(client);
-    connection_ptr->set_input_stub(
-        client->desktop_environment()->event_executor());
 
     ui_task_runner_->PostTask(
         FROM_HERE, base::Bind(&ChromotingHostTest::AddClientToHost,
@@ -282,12 +285,38 @@ class ChromotingHostTest : public testing::Test {
     host_->OnSessionRouteChange(get_client(0), channel_name, route);
   }
 
+  // Creates a DesktopEnvironment with a fake media::ScreenCapturer, to mock
+  // DesktopEnvironmentFactory::Create().
   DesktopEnvironment* CreateDesktopEnvironment() {
-    scoped_ptr<EventExecutor> event_executor(new EventExecutorFake());
-    scoped_ptr<VideoFrameCapturer> video_capturer(new VideoFrameCapturerFake());
-    return new DesktopEnvironment(scoped_ptr<AudioCapturer>(NULL),
-                                  event_executor.Pass(),
-                                  video_capturer.Pass());
+    MockDesktopEnvironment* desktop_environment = new MockDesktopEnvironment();
+    EXPECT_CALL(*desktop_environment, CreateAudioCapturerPtr(_))
+        .Times(0);
+    EXPECT_CALL(*desktop_environment, CreateEventExecutorPtr(_, _))
+        .Times(AnyNumber())
+        .WillRepeatedly(Invoke(this, &ChromotingHostTest::CreateEventExecutor));
+    EXPECT_CALL(*desktop_environment, CreateVideoCapturerPtr(_, _))
+        .Times(AnyNumber())
+        .WillRepeatedly(Invoke(this, &ChromotingHostTest::CreateVideoCapturer));
+
+    return desktop_environment;
+  }
+
+  // Creates a dummy EventExecutor, to mock
+  // DesktopEnvironment::CreateEventExecutor().
+  EventExecutor* CreateEventExecutor(
+      scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner) {
+    MockEventExecutor* event_executor = new MockEventExecutor();
+    EXPECT_CALL(*event_executor, StartPtr(_));
+    return event_executor;
+  }
+
+  // Creates a fake media::ScreenCapturer, to mock
+  // DesktopEnvironment::CreateVideoCapturer().
+  media::ScreenCapturer* CreateVideoCapturer(
+      scoped_refptr<base::SingleThreadTaskRunner> capture_task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> encode_task_runner) {
+    return new media::ScreenCapturerFake();
   }
 
   void DisconnectAllClients() {
@@ -323,7 +352,6 @@ class ChromotingHostTest : public testing::Test {
   static void AddClientToHost(scoped_refptr<ChromotingHost> host,
                               ClientSession* session) {
     host->clients_.push_back(session);
-    host->clients_count_++;
   }
 
   void ShutdownHost() {
@@ -338,6 +366,7 @@ class ChromotingHostTest : public testing::Test {
     it2me_host_user_interface_.reset();
     ui_task_runner_ = NULL;
     host_ = NULL;
+    desktop_environment_factory_.reset();
   }
 
   void QuitMainMessageLoop() {

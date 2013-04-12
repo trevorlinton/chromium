@@ -17,7 +17,7 @@
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/favicon/favicon_service.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
-#include "chrome/browser/history/history.h"
+#include "chrome/browser/history/history_service.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/importer/firefox2_importer.h"
 #include "chrome/test/base/testing_profile.h"
@@ -119,7 +119,7 @@ class BookmarkHTMLWriterTest : public testing::Test {
   }
 
   base::ScopedTempDir temp_dir_;
-  FilePath path_;
+  base::FilePath path_;
 };
 
 // Class that will notify message loop when file is written.
@@ -129,7 +129,7 @@ class BookmarksObserver : public BookmarksExportObserver {
     DCHECK(loop);
   }
 
-  virtual void OnExportFinished() {
+  virtual void OnExportFinished() OVERRIDE {
     loop_->Quit();
   }
 
@@ -200,7 +200,8 @@ TEST_F(BookmarkHTMLWriterTest, Test) {
       AddPage(url1, base::Time::Now(), history::SOURCE_BROWSED);
   FaviconServiceFactory::GetForProfile(
       &profile, Profile::EXPLICIT_ACCESS)->SetFavicons(
-          url1, url1_favicon, history::FAVICON, gfx::Image(bitmap));
+          url1, url1_favicon, history::FAVICON,
+          gfx::Image::CreateFrom1xBitmap(bitmap));
   message_loop.RunUntilIdle();
   const BookmarkNode* f2 = model->AddFolder(f1, 1, f2_title);
   model->AddURLWithCreationTime(f2, 0, url2_title, url2, t2);

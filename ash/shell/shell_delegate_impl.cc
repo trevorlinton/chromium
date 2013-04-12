@@ -11,7 +11,6 @@
 #include "ash/shell/context_menu.h"
 #include "ash/shell/toplevel_window.h"
 #include "ash/shell_window_ids.h"
-#include "ash/wm/stacking_controller.h"
 #include "ash/wm/window_util.h"
 #include "base/message_loop.h"
 #include "ui/aura/window.h"
@@ -25,7 +24,8 @@ ShellDelegateImpl::ShellDelegateImpl()
       locked_(false),
       spoken_feedback_enabled_(false),
       high_contrast_enabled_(false),
-      screen_magnifier_type_(MAGNIFIER_OFF) {
+      screen_magnifier_enabled_(false),
+      screen_magnifier_type_(kDefaultMagnifierType) {
 }
 
 ShellDelegateImpl::~ShellDelegateImpl() {
@@ -91,7 +91,7 @@ void ShellDelegateImpl::ToggleMaximized() {
     ash::wm::ToggleMaximizedWindow(window);
 }
 
-void ShellDelegateImpl::OpenFileManager() {
+void ShellDelegateImpl::OpenFileManager(bool as_dialog) {
 }
 
 void ShellDelegateImpl::OpenCrosh() {
@@ -134,8 +134,16 @@ bool ShellDelegateImpl::IsHighContrastEnabled() const {
   return high_contrast_enabled_;
 }
 
-void ShellDelegateImpl::SetMagnifier(MagnifierType type) {
+void ShellDelegateImpl::SetMagnifierEnabled(bool enabled) {
+  screen_magnifier_enabled_ = enabled;
+}
+
+void ShellDelegateImpl::SetMagnifierType(MagnifierType type) {
   screen_magnifier_type_ = type;
+}
+
+bool ShellDelegateImpl::IsMagnifierEnabled() const {
+  return screen_magnifier_enabled_;
 }
 
 MagnifierType ShellDelegateImpl::GetMagnifierType() const {
@@ -206,12 +214,12 @@ ui::MenuModel* ShellDelegateImpl::CreateContextMenu(aura::RootWindow* root) {
   return new ContextMenu(root);
 }
 
-aura::client::StackingClient* ShellDelegateImpl::CreateStackingClient() {
-  return new StackingController;
-}
-
 RootWindowHostFactory* ShellDelegateImpl::CreateRootWindowHostFactory() {
   return RootWindowHostFactory::Create();
+}
+
+string16 ShellDelegateImpl::GetProductName() const {
+  return string16();
 }
 
 }  // namespace shell

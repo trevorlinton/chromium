@@ -14,6 +14,8 @@ usage() {
   echo "--[no-]syms: enable or disable installation of debugging symbols"
   echo "--[no-]lib32: enable or disable installation of 32 bit libraries"
   echo "--[no-]arm: enable or disable installation of arm cross toolchain"
+  echo "--[no-]chromeos-fonts: enable or disable installation of Chrome OS"\
+       "fonts"
   echo "--no-prompt: silently select standard options/defaults"
   echo "Script will prompt interactively if options not given."
   exit 1
@@ -28,26 +30,36 @@ do
   --no-lib32)               do_inst_lib32=0;;
   --arm)                    do_inst_arm=1;;
   --no-arm)                 do_inst_arm=0;;
+  --chromeos-fonts)         do_inst_chromeos_fonts=1;;
+  --no-chromeos-fonts)      do_inst_chromeos_fonts=0;;
   --no-prompt)              do_default=1
                             do_quietly="-qq --assume-yes"
     ;;
+  --unsupported)            do_unsupported=1;;
   *) usage;;
   esac
   shift
 done
 
-ubuntu_versions="10\.04|10\.10|11\.04|11\.10|12\.04"
-ubuntu_codenames="lucid|maverick|natty|oneiric|precise"
+ubuntu_versions="10\.04|10\.10|11\.04|11\.10|12\.04|12\.10"
+ubuntu_codenames="lucid|maverick|natty|oneiric|precise|quantal"
+ubuntu_issue="Ubuntu ($ubuntu_versions|$ubuntu_codenames)"
+# GCEL is an Ubuntu-derived VM image used on Google Compute Engine; /etc/issue
+# doesn't contain a version number so just trust that the user knows what
+# they're doing.
+gcel_issue="^GCEL"
 
-if ! egrep -q "Ubuntu ($ubuntu_versions|$ubuntu_codenames)" /etc/issue; then
-  echo "ERROR: Only Ubuntu 10.04 (lucid) through 12.04 (precise) are currently"\
-      "supported" >&2
-  exit 1
-fi
+if [ 0 -eq "${do_unsupported-0}" ] ; then
+  if ! egrep -q "($ubuntu_issue|$gcel_issue)" /etc/issue; then
+    echo "ERROR: Only Ubuntu 10.04 (lucid) through 12.10 (quantal) are"\
+        "currently supported" >&2
+    exit 1
+  fi
 
-if ! uname -m | egrep -q "i686|x86_64"; then
-  echo "Only x86 architectures are currently supported" >&2
-  exit
+  if ! uname -m | egrep -q "i686|x86_64"; then
+    echo "Only x86 architectures are currently supported" >&2
+    exit
+  fi
 fi
 
 if [ "x$(id -u)" != x0 ]; then
@@ -67,9 +79,9 @@ dev_list="apache2.2-bin bison curl elfutils fakeroot flex g++ gperf
           libgnome-keyring-dev libgtk2.0-dev libkrb5-dev libnspr4-dev
           libnss3-dev libpam0g-dev libpci-dev libsctp-dev libspeechd-dev
           libsqlite3-dev libssl-dev libudev-dev libwww-perl libxslt1-dev
-          libxss-dev libxt-dev libxtst-dev mesa-common-dev patch perl php5-cgi
-          pkg-config python python-cherrypy3 python-dev python-psutil rpm ruby
-          subversion ttf-dejavu-core ttf-indic-fonts ttf-kochi-gothic
+          libxss-dev libxt-dev libxtst-dev mesa-common-dev metacity patch perl
+          php5-cgi pkg-config python python-cherrypy3 python-dev python-psutil
+          rpm ruby subversion ttf-dejavu-core ttf-indic-fonts ttf-kochi-gothic
           ttf-kochi-mincho ttf-thai-tlwg wdiff git-core
           $chromeos_dev_list"
 
@@ -108,8 +120,6 @@ arm_list="libc6-armel-cross libc6-dev-armel-cross libgcc1-armel-cross
           gcc-arm-linux-gnueabi g++-arm-linux-gnueabi
           libmudflap0-dbg-armel-cross"
 
-# Plugin lists needed for tests.
-plugin_list="flashplugin-installer"
 
 # Some package names have changed over time
 if apt-cache show ttf-mscorefonts-installer >/dev/null 2>&1; then
@@ -193,6 +203,15 @@ else
   dbg_list=
 fi
 
+# Install the Chrome OS default fonts.
+if test "$do_inst_chromeos_fonts" != "0"; then
+  echo "Installing Chrome OS fonts."
+  dir=`echo $0 | sed -r -e 's/\/[^/]+$//'`
+  sudo $dir/linux/install-chromeos-fonts.py
+else
+  echo "Skipping installation of Chrome OS fonts."
+fi
+
 # When cross building for arm on 64-bit systems the host binaries
 # that are part of v8 need to be compiled with -m32 which means
 # that basic multilib support is needed.
@@ -220,7 +239,7 @@ sudo apt-get update
 # without accidentally promoting any packages from "auto" to "manual".
 # We then re-run "apt-get" with just the list of missing packages.
 echo "Finding missing packages..."
-packages="${dev_list} ${lib_list} ${dbg_list} ${plugin_list} ${arm_list}"
+packages="${dev_list} ${lib_list} ${dbg_list} ${arm_list}"
 # Intentionally leaving $packages unquoted so it's more readable.
 echo "Packages required: " $packages
 echo

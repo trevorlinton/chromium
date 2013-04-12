@@ -6,7 +6,7 @@
 
 namespace cc {
 
-SharedQuadState::SharedQuadState() : opacity(0) {}
+SharedQuadState::SharedQuadState() : is_clipped(false), opacity(0) {}
 
 SharedQuadState::~SharedQuadState() {}
 
@@ -20,14 +20,14 @@ scoped_ptr<SharedQuadState> SharedQuadState::Copy() const {
 
 void SharedQuadState::SetAll(
     const gfx::Transform& content_to_target_transform,
+    const gfx::Size content_bounds,
     const gfx::Rect& visible_content_rect,
-    const gfx::Rect& clipped_rect_in_target,
     const gfx::Rect& clip_rect,
     bool is_clipped,
     float opacity) {
   this->content_to_target_transform = content_to_target_transform;
+  this->content_bounds = content_bounds;
   this->visible_content_rect = visible_content_rect;
-  this->clipped_rect_in_target = clipped_rect_in_target;
   this->clip_rect = clip_rect;
   this->is_clipped = is_clipped;
   this->opacity = opacity;

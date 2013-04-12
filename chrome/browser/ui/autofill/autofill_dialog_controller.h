@@ -5,241 +5,154 @@
 #ifndef CHROME_BROWSER_UI_AUTOFILL_AUTOFILL_DIALOG_CONTROLLER_H_
 #define CHROME_BROWSER_UI_AUTOFILL_AUTOFILL_DIALOG_CONTROLLER_H_
 
-#include <map>
-#include <set>
-#include <utility>
 #include <vector>
 
-#include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/string16.h"
 #include "chrome/browser/autofill/field_types.h"
-#include "chrome/browser/autofill/form_structure.h"
-#include "chrome/browser/autofill/personal_data_manager.h"
-#include "chrome/browser/ui/autofill/autofill_dialog_models.h"
-#include "chrome/browser/ui/autofill/autofill_popup_controller_impl.h"
-#include "chrome/browser/ui/autofill/autofill_popup_delegate.h"
-#include "content/public/common/ssl_status.h"
-#include "ui/base/models/combobox_model.h"
-#include "ui/base/models/simple_menu_model.h"
+#include "chrome/browser/ui/autofill/autofill_dialog_types.h"
+#include "ui/base/ui_base_types.h"
+#include "ui/gfx/image/image.h"
 #include "ui/gfx/native_widget_types.h"
 
-class AutofillPopupControllerImpl;
-class FormGroup;
-class GURL;
 class Profile;
 
 namespace content {
 class WebContents;
+struct NativeWebKeyboardEvent;
 }
 
 namespace gfx {
 class Rect;
 }
 
+namespace ui {
+class ComboboxModel;
+class MenuModel;
+}
+
 namespace autofill {
 
-class AutofillDialogView;
-
-// This struct describes a single input control for the imperative autocomplete
-// dialog.
-struct DetailInput {
-  // Multiple DetailInput structs with the same row_id go on the same row. The
-  // actual order of the rows is determined by their order of appearance in
-  // kBillingInputs.
-  int row_id;
-  AutofillFieldType type;
-  // TODO(estade): remove this, do l10n.
-  const char* placeholder_text;
-  // The section suffix that the field must have to match up to this input.
-  const char* section_suffix;
-  // A number between 0 and 1.0 that describes how much of the horizontal space
-  // in the row should be allotted to this input. 0 is equivalent to 1.
-  float expand_weight;
-  // When non-empty, indicates the value that should be pre-filled into the
-  // input.
-  string16 autofilled_value;
-};
-
-// Sections of the dialog --- all fields that may be shown to the user fit under
-// one of these sections. TODO(estade): add telephone number.
-enum DialogSection {
-  SECTION_EMAIL,
-  SECTION_CC,
-  SECTION_BILLING,
-  SECTION_SHIPPING,
-};
-
-// Termination actions for the dialog.
-enum DialogAction {
-  ACTION_ABORT,
-  ACTION_SUBMIT,
-};
-
-typedef std::vector<DetailInput> DetailInputs;
-typedef std::map<const DetailInput*, string16> DetailOutputMap;
-
-// This class drives the dialog that appears when a site uses the imperative
-// autocomplete API to fill out a form.
-class AutofillDialogController : public AutofillPopupDelegate,
-                                 public SuggestionsMenuModelDelegate {
+// This class defines the interface to the controller that the dialog view sees.
+class AutofillDialogController {
  public:
-  AutofillDialogController(
-      content::WebContents* contents,
-      const FormData& form_structure,
-      const GURL& source_url,
-      const content::SSLStatus& ssl_status,
-      const base::Callback<void(const FormStructure*)>& callback);
-  virtual ~AutofillDialogController();
 
-  void Show();
+  // Strings -------------------------------------------------------------------
 
-  // Called by the view.
-  string16 DialogTitle() const;
-  string16 SecurityWarning() const;
-  string16 SiteLabel() const;
-  string16 IntroText() const;
-  // Returns the text before and after |SiteLabel()| in |IntroText()|. This is
-  // needed because views need to bold just part of a translation.
-  std::pair<string16, string16> GetIntroTextParts() const;
-  string16 LabelForSection(DialogSection section) const;
-  string16 UseBillingForShippingText() const;
-  string16 WalletOptionText() const;
-  string16 CancelButtonText() const;
-  string16 ConfirmButtonText() const;
-  bool ConfirmButtonEnabled() const;
+  virtual string16 DialogTitle() const = 0;
+  virtual string16 AccountChooserText() const = 0;
+  virtual string16 SignInLinkText() const = 0;
+  virtual string16 EditSuggestionText() const = 0;
+  virtual string16 UseBillingForShippingText() const = 0;
+  virtual string16 CancelButtonText() const = 0;
+  virtual string16 ConfirmButtonText() const = 0;
+  virtual string16 CancelSignInText() const = 0;
+  virtual string16 SaveLocallyText() const = 0;
+  virtual string16 ProgressBarText() const = 0;
+
+  // State ---------------------------------------------------------------------
+
+  // Whether the user is known to be signed in.
+  virtual DialogSignedInState SignedInState() const = 0;
+
+  // Whether to show the checkbox to save data locally (in Autofill).
+  virtual bool ShouldOfferToSaveInChrome() const = 0;
+
+  // Returns the model for the account chooser. It will return NULL if the
+  // account chooser should not show a menu. In this case, clicking on the
+  // account chooser should initiate sign-in.
+  virtual ui::MenuModel* MenuModelForAccountChooser() = 0;
+
+  // Returns the icon that should be shown in the account chooser.
+  virtual gfx::Image AccountChooserImage() = 0;
+
+  // Whether or not an Autocheckout flow is running.
+  virtual bool AutocheckoutIsRunning() const = 0;
+
+  // Whether or not there was an error in an Autocheckout flow.
+  virtual bool HadAutocheckoutError() const = 0;
+
+  // Whether or not the |button| should be enabled.
+  virtual bool IsDialogButtonEnabled(ui::DialogButton button) const = 0;
+
+  // Detail inputs -------------------------------------------------------------
+
+  // Whether the section is currently active (i.e. should be shown).
+  virtual bool SectionIsActive(DialogSection section) const = 0;
+
   // Returns the set of inputs the page has requested which fall under
   // |section|.
-  const DetailInputs& RequestedFieldsForSection(DialogSection section) const;
+  virtual const DetailInputs& RequestedFieldsForSection(DialogSection section)
+      const = 0;
+
   // Returns the combobox model for inputs of type |type|, or NULL if the input
   // should be a text field.
-  ui::ComboboxModel* ComboboxModelForAutofillType(AutofillFieldType type);
+  virtual ui::ComboboxModel* ComboboxModelForAutofillType(
+      AutofillFieldType type) = 0;
+
   // Returns the model for suggestions for fields that fall under |section|.
-  ui::MenuModel* MenuModelForSection(DialogSection section);
-  string16 SuggestionTextForSection(DialogSection section);
+  virtual ui::MenuModel* MenuModelForSection(DialogSection section) = 0;
 
-  // Called when the view has been closed. The value for |action| indicates
-  // whether the Autofill operation should be aborted.
-  void ViewClosed(DialogAction action);
+  virtual string16 LabelForSection(DialogSection section) const = 0;
+  virtual string16 SuggestionTextForSection(DialogSection section) = 0;
+  virtual gfx::Image SuggestionIconForSection(DialogSection section) = 0;
+  virtual void EditClickedForSection(DialogSection section) = 0;
 
-  // Called by the view when the user changes the contents of a text field.
-  void UserEditedInput(const DetailInput* input,
-                       gfx::NativeView view,
-                       const gfx::Rect& content_bounds,
-                       const string16& field_contents);
+  // Returns an icon to be displayed along with the input for the given type.
+  // |user_input| is the current text in the textfield.
+  virtual gfx::Image IconForField(AutofillFieldType type,
+                                  const string16& user_input) const = 0;
+
+  // Decides whether input of |value| is valid for a field of type |type|.
+  virtual bool InputIsValid(AutofillFieldType type,
+                            const string16& value) = 0;
+
+  // Called when the user changes the contents of a text field or activates it
+  // (by focusing and then clicking it). |was_edit| is true when the function
+  // was called in response to the user editing the text field.
+  virtual void UserEditedOrActivatedInput(const DetailInput* input,
+                                          DialogSection section,
+                                          gfx::NativeView parent_view,
+                                          const gfx::Rect& content_bounds,
+                                          const string16& field_contents,
+                                          bool was_edit) = 0;
+
+  // The view forwards keypresses in text inputs. Returns true if there should
+  // be no further processing of the event.
+  virtual bool HandleKeyPressEventInInput(
+      const content::NativeWebKeyboardEvent& event) = 0;
 
   // Called when focus has changed position within the view.
-  void FocusMoved();
+  virtual void FocusMoved() = 0;
 
-  // AutofillPopupDelegate implementation.
-  virtual void DidSelectSuggestion(int identifier) OVERRIDE;
-  virtual void DidAcceptSuggestion(const string16& value,
-                                   int identifier) OVERRIDE;
-  virtual void RemoveSuggestion(const string16& value,
-                                int identifier) OVERRIDE;
-  virtual void ClearPreviewedForm() OVERRIDE;
-  virtual void ControllerDestroyed() OVERRIDE;
+  // Miscellany ----------------------------------------------------------------
 
-  // SuggestionsMenuModelDelegate implementation.
-  virtual void SuggestionItemSelected(const SuggestionsMenuModel& model)
-      OVERRIDE;
+  // Called when the view has been closed.
+  virtual void ViewClosed() = 0;
 
-  content::WebContents* web_contents() { return contents_; }
+  // Returns dialog notifications that the view should currently be showing in
+  // order from top to bottom.
+  virtual std::vector<DialogNotification> CurrentNotifications() const = 0;
 
- private:
-  // Determines whether |input| and |field| match.
-  typedef base::Callback<bool(const DetailInput& input,
-                              const AutofillField& field)> InputFieldComparator;
+  // Begins the flow to sign into Wallet.
+  virtual void StartSignInFlow() = 0;
 
-  // Whether or not the current request wants credit info back.
-  bool RequestingCreditCardInfo() const;
+  // Marks the signin flow into Wallet complete.
+  virtual void EndSignInFlow() = 0;
 
-  // Whether or not the view should show a security warning.
-  bool ShouldShowSecurityWarning() const;
+  // Called when the view has been cancelled.
+  virtual void OnCancel() = 0;
 
-  // Initializes |suggested_email_| et al.
-  void GenerateSuggestionsModels();
+  // Called when the view has been accepted.
+  virtual void OnSubmit() = 0;
 
-  // Returns whether |profile| is complete, i.e. can fill out all the relevant
-  // address info. Incomplete profiles will not be displayed in the dropdown
-  // menu.
-  bool IsCompleteProfile(const AutofillProfile& profile);
+  // Returns the profile for this dialog.
+  virtual Profile* profile() = 0;
 
-  // Fills in |section|-related fields in |output_| according to the state of
-  // |view_|.
-  void FillOutputForSection(DialogSection section);
-  // As above, but uses |compare| to determine whether a DetailInput matches
-  // a field.
-  void FillOutputForSectionWithComparator(DialogSection section,
-                                          const InputFieldComparator& compare);
+  // The web contents that prompted the dialog.
+  virtual content::WebContents* web_contents() = 0;
 
-  // Fills in |form_structure_| using |form_group|. Utility method for
-  // FillOutputForSection.
-  void FillFormStructureForSection(const FormGroup& form_group,
-                                   DialogSection section,
-                                   const InputFieldComparator& compare);
-
-  // Gets the SuggestionsMenuModel for |section|.
-  SuggestionsMenuModel* SuggestionsMenuModelForSection(DialogSection section);
-  // And the reverse.
-  DialogSection SectionForSuggestionsMenuModel(
-      const SuggestionsMenuModel& model);
-
-  // Loads profiles that can suggest data for |type|. |field_contents| is the
-  // part the user has already typed. |inputs| is the rest of section.
-  // Identifying info is loaded into the last three outparams as well as
-  // |popup_guids_|.
-  void GetProfileSuggestions(
-      AutofillFieldType type,
-      const string16& field_contents,
-      const DetailInputs& inputs,
-      std::vector<string16>* popup_values,
-      std::vector<string16>* popup_labels,
-      std::vector<string16>* popup_icons);
-
-  // Returns the PersonalDataManager for |profile_|.
-  PersonalDataManager* GetManager();
-
-  // The |profile| for |contents_|.
-  Profile* const profile_;
-
-  // The WebContents where the Autofill action originated.
-  content::WebContents* const contents_;
-
-  FormStructure form_structure_;
-
-  // The URL of the invoking site.
-  GURL source_url_;
-
-  // The SSL info from the invoking site.
-  content::SSLStatus ssl_status_;
-
-  base::Callback<void(const FormStructure*)> callback_;
-
-  // The fields for billing and shipping which the page has actually requested.
-  DetailInputs requested_email_fields_;
-  DetailInputs requested_cc_fields_;
-  DetailInputs requested_billing_fields_;
-  DetailInputs requested_shipping_fields_;
-
-  // Models for the credit card expiration inputs.
-  MonthComboboxModel cc_exp_month_combobox_model_;
-  YearComboboxModel cc_exp_year_combobox_model_;
-
-  // Models for the suggestion views.
-  SuggestionsMenuModel suggested_email_;
-  SuggestionsMenuModel suggested_cc_;
-  SuggestionsMenuModel suggested_billing_;
-  SuggestionsMenuModel suggested_shipping_;
-
-  // The GUIDs for the currently showing unverified profiles popup.
-  std::vector<PersonalDataManager::GUIDPair> popup_guids_;
-
-  AutofillPopupControllerImpl* popup_controller_;
-
-  scoped_ptr<AutofillDialogView> view_;
-
-  DISALLOW_COPY_AND_ASSIGN(AutofillDialogController);
+ protected:
+  virtual ~AutofillDialogController();
 };
 
 }  // namespace autofill

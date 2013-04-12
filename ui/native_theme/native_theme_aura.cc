@@ -9,6 +9,7 @@
 #include "ui/base/layout.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image_skia.h"
+#include "ui/gfx/path.h"
 #include "ui/gfx/rect.h"
 #include "ui/gfx/size.h"
 #include "ui/gfx/skbitmap_operations.h"
@@ -53,6 +54,18 @@ const SkColor kTextfieldSelectionBackgroundUnfocused = SK_ColorLTGRAY;
 const SkColor kTextfieldSelectionColor =
     color_utils::AlphaBlend(SK_ColorBLACK,
         kTextfieldSelectionBackgroundFocused, 0xdd);
+// Tree
+const SkColor kTreeBackground = SK_ColorWHITE;
+const SkColor kTreeTextColor = SK_ColorBLACK;
+const SkColor kTreeSelectedTextColor = SK_ColorBLACK;
+const SkColor kTreeSelectionBackgroundColor = SkColorSetRGB(0xEE, 0xEE, 0xEE);
+const SkColor kTreeArrowColor = SkColorSetRGB(0x7A, 0x7A, 0x7A);
+// Table
+const SkColor kTableBackground = SK_ColorWHITE;
+const SkColor kTableTextColor = SK_ColorBLACK;
+const SkColor kTableSelectedTextColor = SK_ColorBLACK;
+const SkColor kTableSelectionBackgroundColor = SkColorSetRGB(0xEE, 0xEE, 0xEE);
+const SkColor kTableGroupingIndicatorColor = SkColorSetRGB(0xCC, 0xCC, 0xCC);
 
 }  // namespace
 
@@ -80,10 +93,8 @@ NativeThemeAura::~NativeThemeAura() {
 SkColor NativeThemeAura::GetSystemColor(ColorId color_id) const {
   // This implementation returns hardcoded colors.
   SkColor color;
-  if (IsNewMenuStyleEnabled() &&
-      CommonThemeGetSystemColor(color_id, &color)) {
+  if (IsNewMenuStyleEnabled() && CommonThemeGetSystemColor(color_id, &color))
     return color;
-  }
 
   switch (color_id) {
     // Windows
@@ -146,17 +157,65 @@ SkColor NativeThemeAura::GetSystemColor(ColorId color_id) const {
     case kColorId_TextfieldSelectionBackgroundUnfocused:
       return kTextfieldSelectionBackgroundUnfocused;
 
-    default:
-      NOTREACHED() << "Invalid color_id: " << color_id;
+    // Tree
+    case kColorId_TreeBackground:
+      return kTreeBackground;
+    case kColorId_TreeText:
+      return kTreeTextColor;
+    case kColorId_TreeSelectedText:
+    case kColorId_TreeSelectedTextUnfocused:
+      return kTreeSelectedTextColor;
+    case kColorId_TreeSelectionBackgroundFocused:
+    case kColorId_TreeSelectionBackgroundUnfocused:
+      return kTreeSelectionBackgroundColor;
+    case kColorId_TreeArrow:
+      return kTreeArrowColor;
+
+    // Table
+    case kColorId_TableBackground:
+      return kTableBackground;
+    case kColorId_TableText:
+      return kTableTextColor;
+    case kColorId_TableSelectedText:
+    case kColorId_TableSelectedTextUnfocused:
+      return kTableSelectedTextColor;
+    case kColorId_TableSelectionBackgroundFocused:
+    case kColorId_TableSelectionBackgroundUnfocused:
+      return kTableSelectionBackgroundColor;
+    case kColorId_TableGroupingIndicatorColor:
+      return kTableGroupingIndicatorColor;
+
+    case kColorId_MenuBackgroundColor:
+    case kColorId_MenuBorderColor:
+      NOTREACHED();
       break;
   }
 
   return kInvalidColorIdColor;
 }
 
-void NativeThemeAura::PaintMenuPopupBackground(SkCanvas* canvas,
-                                               const gfx::Size& size) const {
-  canvas->drawColor(kMenuBackgroundColor, SkXfermode::kSrc_Mode);
+void NativeThemeAura::PaintMenuPopupBackground(
+    SkCanvas* canvas,
+    const gfx::Size& size,
+    const MenuBackgroundExtraParams& menu_background) const {
+  if (menu_background.corner_radius > 0) {
+    SkPaint paint;
+    paint.setStyle(SkPaint::kFill_Style);
+    paint.setFlags(SkPaint::kAntiAlias_Flag);
+    paint.setColor(kMenuBackgroundColor);
+
+    gfx::Path path;
+    SkRect rect = SkRect::MakeWH(SkIntToScalar(size.width()),
+                                 SkIntToScalar(size.height()));
+    SkScalar radius = SkIntToScalar(menu_background.corner_radius);
+    SkScalar radii[8] = {radius, radius, radius, radius,
+                         radius, radius, radius, radius};
+    path.addRoundRect(rect, radii);
+
+    canvas->drawPath(path, paint);
+  } else {
+    canvas->drawColor(kMenuBackgroundColor, SkXfermode::kSrc_Mode);
+  }
 }
 
 void NativeThemeAura::PaintScrollbarTrack(

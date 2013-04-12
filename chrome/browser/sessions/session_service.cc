@@ -25,13 +25,16 @@
 #include "chrome/browser/sessions/session_restore.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/sessions/session_types.h"
+#include "chrome/browser/ui/browser_iterator.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/extensions/extension.h"
+#include "chrome/common/startup_metric_utils.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_details.h"
@@ -176,7 +179,7 @@ bool MigrateClosedPayload(const SessionCommand& command,
 // SessionService -------------------------------------------------------------
 
 SessionService::SessionService(Profile* profile)
-    : BaseSessionService(SESSION_RESTORE, profile, FilePath()),
+    : BaseSessionService(SESSION_RESTORE, profile, base::FilePath()),
       has_open_trackable_browsers_(false),
       move_on_new_browser_(false),
       save_delay_in_millis_(base::TimeDelta::FromMilliseconds(2500)),
@@ -186,7 +189,7 @@ SessionService::SessionService(Profile* profile)
   Init();
 }
 
-SessionService::SessionService(const FilePath& save_path)
+SessionService::SessionService(const base::FilePath& save_path)
     : BaseSessionService(SESSION_RESTORE, NULL, save_path),
       has_open_trackable_browsers_(false),
       move_on_new_browser_(false),
@@ -558,6 +561,7 @@ bool SessionService::RestoreIfNecessary(const std::vector<GURL>& urls_to_open,
     if (pref.type == SessionStartupPref::LAST) {
       SessionRestore::RestoreSession(
           profile(), browser,
+          browser ? browser->host_desktop_type() : chrome::GetActiveDesktop(),
           browser ? 0 : SessionRestore::ALWAYS_CREATE_TABBED_BROWSER,
           urls_to_open);
       return true;
@@ -1003,6 +1007,9 @@ bool SessionService::CreateTabsAndWindows(
   // still return true and attempt to restore what we we can.
   VLOG(1) << "CreateTabsAndWindows";
 
+  startup_metric_utils::ScopedSlowStartupUMA
+      scoped_timer("Startup.SlowStartupSessionServiceCreateTabsAndWindows");
+
   for (std::vector<SessionCommand*>::const_iterator i = data.begin();
        i != data.end(); ++i) {
     const SessionCommand::id_type kCommandSetWindowBounds2 = 10;
@@ -1361,17 +1368,18 @@ void SessionService::BuildCommandsForBrowser(
   }
 
   windows_to_track->insert(browser->session_id().id());
-  for (int i = 0; i < browser->tab_count(); ++i) {
-    WebContents* tab = chrome::GetWebContentsAt(browser, i);
+  TabStripModel* tab_strip = browser->tab_strip_model();
+  for (int i = 0; i < tab_strip->count(); ++i) {
+    WebContents* tab = tab_strip->GetWebContentsAt(i);
     DCHECK(tab);
     BuildCommandsForTab(browser->session_id(), tab, i,
-                        browser->tab_strip_model()->IsTabPinned(i),
+                        tab_strip->IsTabPinned(i),
                         commands, tab_to_available_range);
   }
 
   commands->push_back(
       CreateSetSelectedTabInWindow(browser->session_id(),
-                                   browser->active_index()));
+                                   browser->tab_strip_model()->active_index()));
 }
 
 void SessionService::BuildCommandsFromBrowsers(
@@ -1379,16 +1387,15 @@ void SessionService::BuildCommandsFromBrowsers(
     IdToRange* tab_to_available_range,
     std::set<SessionID::id_type>* windows_to_track) {
   DCHECK(commands);
-  for (BrowserList::const_iterator i = BrowserList::begin();
-       i != BrowserList::end(); ++i) {
-    Browser* browser = *i;
+  for (chrome::BrowserIterator it; !it.done(); it.Next()) {
+    Browser* browser = *it;
     // Make sure the browser has tabs and a window. Browser's destructor
     // removes itself from the BrowserList. When a browser is closed the
     // destructor is not necessarily run immediately. This means it's possible
     // for us to get a handle to a browser that is about to be removed. If
     // the tab count is 0 or the window is NULL, the browser is about to be
     // deleted, so we ignore it.
-    if (ShouldTrackBrowser(browser) && browser->tab_count() &&
+    if (ShouldTrackBrowser(browser) && browser->tab_strip_model()->count() &&
         browser->window()) {
       BuildCommandsForBrowser(browser, commands, tab_to_available_range,
                               windows_to_track);
@@ -1503,9 +1510,8 @@ bool SessionService::IsOnlyOneTabLeft() const {
   }
 
   int window_count = 0;
-  for (BrowserList::const_iterator i = BrowserList::begin();
-       i != BrowserList::end(); ++i) {
-    Browser* browser = *i;
+  for (chrome::BrowserIterator it; !it.done(); it.Next()) {
+    Browser* browser = *it;
     const SessionID::id_type window_id = browser->session_id().id();
     if (ShouldTrackBrowser(browser) &&
         window_closing_ids_.find(window_id) == window_closing_ids_.end()) {
@@ -1513,7 +1519,7 @@ bool SessionService::IsOnlyOneTabLeft() const {
         return false;
       // By the time this is invoked the tab has been removed. As such, we use
       // > 0 here rather than > 1.
-      if ((*i)->tab_count() > 0)
+      if (browser->tab_strip_model()->count() > 0)
         return false;
     }
   }
@@ -1527,9 +1533,8 @@ bool SessionService::HasOpenTrackableBrowsers(
     return true;
   }
 
-  for (BrowserList::const_iterator i = BrowserList::begin();
-       i != BrowserList::end(); ++i) {
-    Browser* browser = *i;
+  for (chrome::BrowserIterator it; !it.done(); it.Next()) {
+    Browser* browser = *it;
     const SessionID::id_type browser_id = browser->session_id().id();
     if (browser_id != window_id.id() &&
         window_closing_ids_.find(browser_id) == window_closing_ids_.end() &&

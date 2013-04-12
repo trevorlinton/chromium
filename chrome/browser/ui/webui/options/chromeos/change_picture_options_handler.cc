@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright (c) 2013 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,11 +20,11 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/chrome_select_file_policy.h"
-#include "chrome/browser/ui/webui/web_ui_util.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/common/url_constants.h"
@@ -35,6 +35,9 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/views/widget/widget.h"
+#include "ui/webui/web_ui_util.h"
+
+using content::BrowserThread;
 
 namespace chromeos {
 namespace options {
@@ -60,7 +63,7 @@ ui::SelectFileDialog::FileTypeInfo GetUserImageFileTypeInfo() {
   file_type_info.extension_description_overrides[0] =
       l10n_util::GetStringUTF16(IDS_IMAGE_FILES);
 
-  file_type_info.support_gdata = true;
+  file_type_info.support_drive = true;
   return file_type_info;
 }
 
@@ -155,7 +158,7 @@ void ChangePictureOptionsHandler::HandleChooseFile(const ListValue* args) {
   select_file_dialog_ = ui::SelectFileDialog::Create(
       this, new ChromeSelectFilePolicy(web_ui()->GetWebContents()));
 
-  FilePath downloads_path;
+  base::FilePath downloads_path;
   if (!PathService::Get(chrome::DIR_DEFAULT_DOWNLOADS, &downloads_path)) {
     NOTREACHED();
     return;
@@ -178,6 +181,7 @@ void ChangePictureOptionsHandler::HandleChooseFile(const ListValue* args) {
 
 void ChangePictureOptionsHandler::HandlePhotoTaken(
     const base::ListValue* args) {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   std::string image_url;
   if (!args || args->GetSize() != 1 || !args->GetString(0, &image_url))
     NOTREACHED();
@@ -195,7 +199,9 @@ void ChangePictureOptionsHandler::HandlePhotoTaken(
     image_decoder_->set_delegate(NULL);
   image_decoder_ = new ImageDecoder(this, raw_data,
                                     ImageDecoder::DEFAULT_CODEC);
-  image_decoder_->Start();
+  scoped_refptr<base::MessageLoopProxy> task_runner =
+      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::UI);
+  image_decoder_->Start(task_runner);
 }
 
 void ChangePictureOptionsHandler::HandleCheckCameraPresence(
@@ -226,7 +232,7 @@ void ChangePictureOptionsHandler::SendSelectedImage() {
     case User::kExternalImageIndex: {
       // User has image from camera/file, record it and add to the image list.
       previous_image_ = user->image();
-      SendOldImage(web_ui_util::GetBitmapDataUrl(*previous_image_.bitmap()));
+      SendOldImage(webui::GetBitmapDataUrl(*previous_image_.bitmap()));
       break;
     }
     case User::kProfileImageIndex: {
@@ -253,7 +259,7 @@ void ChangePictureOptionsHandler::SendSelectedImage() {
 
 void ChangePictureOptionsHandler::SendProfileImage(const gfx::ImageSkia& image,
                                                    bool should_select) {
-  base::StringValue data_url(web_ui_util::GetBitmapDataUrl(*image.bitmap()));
+  base::StringValue data_url(webui::GetBitmapDataUrl(*image.bitmap()));
   base::FundamentalValue select(should_select);
   web_ui()->CallJavascriptFunction("ChangePictureOptions.setProfileImage",
                                    data_url, select);
@@ -356,7 +362,7 @@ void ChangePictureOptionsHandler::HandleSelectImage(const ListValue* args) {
     image_decoder_->set_delegate(NULL);
 }
 
-void ChangePictureOptionsHandler::FileSelected(const FilePath& path,
+void ChangePictureOptionsHandler::FileSelected(const base::FilePath& path,
                                                int index,
                                                void* params) {
   UserManager* user_manager = UserManager::Get();
@@ -420,7 +426,7 @@ void ChangePictureOptionsHandler::OnImageDecoded(
     const SkBitmap& decoded_image) {
   DCHECK_EQ(image_decoder_.get(), decoder);
   image_decoder_ = NULL;
-  user_photo_ = gfx::ImageSkia(decoded_image);
+  user_photo_ = gfx::ImageSkia::CreateFrom1xBitmap(decoded_image);
   SetImageFromCamera(user_photo_);
 }
 

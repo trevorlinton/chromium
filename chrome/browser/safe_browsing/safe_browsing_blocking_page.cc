@@ -13,22 +13,20 @@
 #include "base/lazy_instance.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram.h"
-#include "base/string_number_conversions.h"
+#include "base/prefs/pref_service.h"
 #include "base/string_piece.h"
 #include "base/stringprintf.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/time.h"
 #include "base/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/google/google_util.h"
-#include "chrome/browser/prefs/pref_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/renderer_preferences_util.h"
 #include "chrome/browser/safe_browsing/malware_details.h"
 #include "chrome/browser/safe_browsing/ui_manager.h"
 #include "chrome/browser/tab_contents/tab_util.h"
-#include "chrome/browser/ui/webui/chrome_url_data_manager.h"
-#include "chrome/common/jstemplate_builder.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/browser_thread.h"
@@ -43,6 +41,8 @@
 #include "net/base/escape.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/webui/jstemplate_builder.h"
+#include "ui/webui/web_ui_util.h"
 
 using content::BrowserThread;
 using content::InterstitialPage;
@@ -124,10 +124,11 @@ static base::LazyInstance<SafeBrowsingBlockingPage::UnsafeResourceMap>
 class SafeBrowsingBlockingPageFactoryImpl
     : public SafeBrowsingBlockingPageFactory {
  public:
-  SafeBrowsingBlockingPage* CreateSafeBrowsingPage(
+  virtual SafeBrowsingBlockingPage* CreateSafeBrowsingPage(
       SafeBrowsingUIManager* ui_manager,
       WebContents* web_contents,
-      const SafeBrowsingBlockingPage::UnsafeResourceList& unsafe_resources) {
+      const SafeBrowsingBlockingPage::UnsafeResourceList& unsafe_resources)
+      OVERRIDE {
     // Only do the trial if the interstitial is for a single malware or
     // phishing resource, the multi-threat interstitial has not been updated to
     // V2 yet.
@@ -321,19 +322,21 @@ void SafeBrowsingBlockingPage::CommandReceived(const std::string& cmd) {
 
   // The "report error" and "show diagnostic" commands can have a number
   // appended to them, which is the index of the element they apply to.
-  int element_index = 0;
+  size_t element_index = 0;
   size_t colon_index = command.find(':');
   if (colon_index != std::string::npos) {
     DCHECK(colon_index < command.size() - 1);
+    int result_int = 0;
     bool result = base::StringToInt(base::StringPiece(command.begin() +
                                                       colon_index + 1,
                                                       command.end()),
-                                    &element_index);
+                                    &result_int);
     command = command.substr(0, colon_index);
-    DCHECK(result);
+    if (result)
+      element_index = static_cast<size_t>(result_int);
   }
 
-  if (element_index >= static_cast<int>(unsafe_resources_.size())) {
+  if (element_index >= unsafe_resources_.size()) {
     NOTREACHED();
     return;
   }
@@ -769,7 +772,7 @@ std::string SafeBrowsingBlockingPageV1::GetHTMLContents() {
   html = rb.GetRawDataResource(
       IDR_SAFE_BROWSING_MULTIPLE_THREAT_BLOCK).as_string();
   interstitial_show_time_ = base::TimeTicks::Now();
-  return jstemplate_builder::GetTemplatesHtml(html, &strings, "template_root");
+  return webui::GetTemplatesHtml(html, &strings, "template_root");
 }
 
 void SafeBrowsingBlockingPageV1::PopulateStringDictionary(
@@ -918,7 +921,7 @@ std::string SafeBrowsingBlockingPageV2::GetHTMLContents() {
         as_string();
   }
   interstitial_show_time_ = base::TimeTicks::Now();
-  return jstemplate_builder::GetTemplatesHtml(html, &strings, "template-root");
+  return webui::GetTemplatesHtml(html, &strings, "template-root");
 }
 
 void SafeBrowsingBlockingPageV2::PopulateStringDictionary(
@@ -945,7 +948,7 @@ void SafeBrowsingBlockingPageV2::PopulateStringDictionary(
   strings->SetString("proceed",
       l10n_util::GetStringUTF16(IDS_SAFE_BROWSING_MALWARE_V2_PROCEED_LINK));
 
-  ChromeURLDataManager::DataSource::SetFontAndTextDirection(strings);
+  webui::SetFontAndTextDirection(strings);
 }
 
 void SafeBrowsingBlockingPageV2::PopulateMultipleThreatStringDictionary(

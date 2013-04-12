@@ -6,10 +6,16 @@
 
 namespace message_center {
 
-const int kNotificationIconWidth = 80;
+const int kNotificationIconSize = 80;
 const int kNotificationPreferredImageSize = 300;
+const int kNotificationButtonIconSize = 16;
+const int kSettingsIconSize = 16;
 
 const int kNotificationMaximumImageHeight = 300;
 const size_t kNotificationMaximumItems = 8;
 
+const int kAutocloseHighPriorityDelaySeconds = 25;
+const int kAutocloseDefaultDelaySeconds = 8;
+
+const int kMarginBetweenItems = 10;
 }  // namespace message_center

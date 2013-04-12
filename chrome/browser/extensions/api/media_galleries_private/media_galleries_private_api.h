@@ -8,22 +8,23 @@
 #include <string>
 
 #include "base/memory/scoped_ptr.h"
+#include "chrome/browser/extensions/api/media_galleries_private/gallery_watch_state_tracker.h"
+#include "chrome/browser/extensions/api/profile_keyed_api_factory.h"
 #include "chrome/browser/extensions/event_router.h"
 #include "chrome/browser/extensions/extension_function.h"
-#include "chrome/browser/media_gallery/media_galleries_preferences.h"
-#include "chrome/browser/profiles/profile_keyed_service.h"
+#include "chrome/browser/media_galleries/media_galleries_preferences.h"
+#include "chrome/browser/storage_monitor/storage_monitor.h"
+#include "chrome/common/extensions/api/media_galleries_private.h"
 
-class FilePath;
 class Profile;
 
 namespace extensions {
 
-class MediaGalleryExtensionNotificationObserver;
 class MediaGalleriesPrivateEventRouter;
 
 // The profile-keyed service that manages the media galleries private extension
 // API.
-class MediaGalleriesPrivateAPI : public ProfileKeyedService,
+class MediaGalleriesPrivateAPI : public ProfileKeyedAPI,
                                  public EventRouter::Observer {
  public:
   explicit MediaGalleriesPrivateAPI(Profile* profile);
@@ -32,19 +33,33 @@ class MediaGalleriesPrivateAPI : public ProfileKeyedService,
   // ProfileKeyedService implementation.
   virtual void Shutdown() OVERRIDE;
 
+  // ProfileKeyedAPI implementation.
+  static ProfileKeyedAPIFactory<MediaGalleriesPrivateAPI>* GetFactoryInstance();
+
+  // Convenience method to get the MediaGalleriesPrivateAPI for a profile.
+  static MediaGalleriesPrivateAPI* Get(Profile* profile);
+
   // EventRouter::Observer implementation.
   virtual void OnListenerAdded(const EventListenerInfo& details) OVERRIDE;
 
   MediaGalleriesPrivateEventRouter* GetEventRouter();
+  GalleryWatchStateTracker* GetGalleryWatchStateTracker();
 
  private:
+  friend class ProfileKeyedAPIFactory<MediaGalleriesPrivateAPI>;
+
   void MaybeInitializeEventRouter();
+
+  // ProfileKeyedAPI implementation.
+  static const char* service_name() {
+    return "MediaGalleriesPrivateAPI";
+  }
+  static const bool kServiceIsNULLWhileTesting = true;
 
   // Current profile.
   Profile* profile_;
 
-  scoped_ptr<MediaGalleryExtensionNotificationObserver>
-      extension_notification_observer_;
+  GalleryWatchStateTracker tracker_;
 
   // Created lazily on first access.
   scoped_ptr<MediaGalleriesPrivateEventRouter>
@@ -57,7 +72,8 @@ class MediaGalleriesPrivateAPI : public ProfileKeyedService,
 class MediaGalleriesPrivateAddGalleryWatchFunction
     : public AsyncExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("mediaGalleriesPrivate.addGalleryWatch");
+  DECLARE_EXTENSION_FUNCTION("mediaGalleriesPrivate.addGalleryWatch",
+                             MEDIAGALLERIESPRIVATE_ADDGALLERYWATCH);
 
  protected:
   virtual ~MediaGalleriesPrivateAddGalleryWatchFunction();
@@ -75,13 +91,58 @@ class MediaGalleriesPrivateAddGalleryWatchFunction
 class MediaGalleriesPrivateRemoveGalleryWatchFunction
     : public SyncExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("mediaGalleriesPrivate.removeGalleryWatch");
+  DECLARE_EXTENSION_FUNCTION("mediaGalleriesPrivate.removeGalleryWatch",
+                             MEDIAGALLERIESPRIVATE_REMOVEGALLERYWATCH);
 
  protected:
   virtual ~MediaGalleriesPrivateRemoveGalleryWatchFunction();
 
   // SyncExtensionFunction overrides.
   virtual bool RunImpl() OVERRIDE;
+};
+
+// Implements the chrome.mediaGalleriesPrivate.getAllGalleryWatch method.
+class MediaGalleriesPrivateGetAllGalleryWatchFunction
+    : public SyncExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("mediaGalleriesPrivate.getAllGalleryWatch",
+                             MEDIAGALLERIESPRIVATE_GETALLGALLERYWATCH);
+ protected:
+  virtual ~MediaGalleriesPrivateGetAllGalleryWatchFunction();
+
+  // SyncExtensionFunction overrides.
+  virtual bool RunImpl() OVERRIDE;
+};
+
+// Implements the chrome.mediaGalleriesPrivate.removeAllGalleryWatch method.
+class MediaGalleriesPrivateRemoveAllGalleryWatchFunction
+    : public SyncExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("mediaGalleriesPrivate.removeAllGalleryWatch",
+                             MEDIAGALLERIESPRIVATE_REMOVEALLGALLERYWATCH);
+ protected:
+  virtual ~MediaGalleriesPrivateRemoveAllGalleryWatchFunction();
+
+  // SyncExtensionFunction overrides.
+  virtual bool RunImpl() OVERRIDE;
+};
+
+// Implements the chrome.mediaGalleriesPrivate.ejectDevice method.
+class MediaGalleriesPrivateEjectDeviceFunction
+    : public AsyncExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("mediaGalleriesPrivate.ejectDevice",
+                             MEDIAGALLERIESPRIVATE_EJECTDEVICE);
+
+ protected:
+  virtual ~MediaGalleriesPrivateEjectDeviceFunction();
+
+  // AsyncExtensionFunction overrides.
+  virtual bool RunImpl() OVERRIDE;
+
+ private:
+  // Eject device request handler.
+  void HandleResponse(chrome::StorageMonitor::EjectStatus status);
 };
 
 }  // namespace extensions

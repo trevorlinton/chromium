@@ -31,11 +31,15 @@ class RuntimeEventRouter {
       Profile* profile,
       const std::string& extension_id,
       const base::DictionaryValue* manifest);
+
+  // Dispatches the onBrowserUpdateAvailable event to all extensions.
+  static void DispatchOnBrowserUpdateAvailableEvent(Profile* profile);
 };
 
 class RuntimeGetBackgroundPageFunction : public AsyncExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("runtime.getBackgroundPage");
+  DECLARE_EXTENSION_FUNCTION("runtime.getBackgroundPage",
+                             RUNTIME_GETBACKGROUNDPAGE)
 
  protected:
   virtual ~RuntimeGetBackgroundPageFunction() {}
@@ -47,7 +51,7 @@ class RuntimeGetBackgroundPageFunction : public AsyncExtensionFunction {
 
 class RuntimeReloadFunction : public SyncExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("runtime.reload");
+  DECLARE_EXTENSION_FUNCTION("runtime.reload", RUNTIME_RELOAD)
 
  protected:
   virtual ~RuntimeReloadFunction() {}
@@ -57,7 +61,8 @@ class RuntimeReloadFunction : public SyncExtensionFunction {
 class RuntimeRequestUpdateCheckFunction : public AsyncExtensionFunction,
                                           public content::NotificationObserver {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("runtime.requestUpdateCheck");
+  DECLARE_EXTENSION_FUNCTION("runtime.requestUpdateCheck",
+                             RUNTIME_REQUESTUPDATECHECK)
 
   RuntimeRequestUpdateCheckFunction();
  protected:

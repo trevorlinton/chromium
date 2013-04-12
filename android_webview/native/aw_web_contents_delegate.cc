@@ -6,14 +6,12 @@
 
 #include "android_webview/browser/find_helper.h"
 #include "android_webview/native/aw_contents.h"
-#include "android_webview/native/aw_javascript_dialog_creator.h"
+#include "android_webview/native/aw_javascript_dialog_manager.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/lazy_instance.h"
 #include "base/message_loop.h"
-#include "content/public/browser/android/download_controller_android.h"
 #include "content/public/browser/web_contents.h"
 #include "jni/AwWebContentsDelegate_jni.h"
-#include "net/http/http_request_headers.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ScopedJavaLocalRef;
@@ -21,8 +19,8 @@ using content::WebContents;
 
 namespace android_webview {
 
-static base::LazyInstance<AwJavaScriptDialogCreator>::Leaky
-    g_javascript_dialog_creator = LAZY_INSTANCE_INITIALIZER;
+static base::LazyInstance<AwJavaScriptDialogManager>::Leaky
+    g_javascript_dialog_manager = LAZY_INSTANCE_INITIALIZER;
 
 AwWebContentsDelegate::AwWebContentsDelegate(
     JNIEnv* env,
@@ -33,9 +31,9 @@ AwWebContentsDelegate::AwWebContentsDelegate(
 AwWebContentsDelegate::~AwWebContentsDelegate() {
 }
 
-content::JavaScriptDialogCreator*
-AwWebContentsDelegate::GetJavaScriptDialogCreator() {
-  return g_javascript_dialog_creator.Pointer();
+content::JavaScriptDialogManager*
+AwWebContentsDelegate::GetJavaScriptDialogManager() {
+  return g_javascript_dialog_manager.Pointer();
 }
 
 void AwWebContentsDelegate::FindReply(WebContents* web_contents,
@@ -57,16 +55,15 @@ void AwWebContentsDelegate::FindReply(WebContents* web_contents,
 bool AwWebContentsDelegate::CanDownload(content::RenderViewHost* source,
                                         int request_id,
                                         const std::string& request_method) {
-  if (request_method == net::HttpRequestHeaders::kGetMethod) {
-    content::DownloadControllerAndroid::Get()->CreateGETDownload(
-        source, request_id);
-  }
+  // Android webview intercepts download in its resource dispatcher host
+  // delegate, so should not reach here.
+  NOTREACHED();
   return false;
 }
 
 void AwWebContentsDelegate::OnStartDownload(WebContents* source,
                                             content::DownloadItem* download) {
-  NOTREACHED();  // We always return false in CanDownload.
+  NOTREACHED();  // Downloads are cancelled in ResourceDispatcherHostDelegate.
 }
 
 void AwWebContentsDelegate::AddNewContents(content::WebContents* source,

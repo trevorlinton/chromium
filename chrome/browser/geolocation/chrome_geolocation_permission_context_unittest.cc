@@ -33,9 +33,9 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_ANDROID)
-#include "chrome/browser/prefs/pref_service.h"
-#include "chrome/common/pref_names.h"
+#include "base/prefs/pref_service.h"
 #include "chrome/browser/android/mock_google_location_settings_helper.h"
+#include "chrome/common/pref_names.h"
 #endif
 
 using content::MockRenderProcessHost;
@@ -52,7 +52,7 @@ class ClosedDelegateTracker : public content::NotificationObserver {
   // content::NotificationObserver:
   virtual void Observe(int type,
                        const content::NotificationSource& source,
-                       const content::NotificationDetails& details);
+                       const content::NotificationDetails& details) OVERRIDE;
 
   size_t size() const {
     return removed_infobar_delegates_.size();
@@ -264,7 +264,7 @@ void GeolocationPermissionContextTests::SetUp() {
   MockGoogleLocationSettingsHelper::SetLocationStatus(true, true);
 #endif
   geolocation_permission_context_ =
-      ChromeGeolocationPermissionContextFactory::Create(profile());
+      ChromeGeolocationPermissionContextFactory::GetForProfile(profile());
 }
 
 void GeolocationPermissionContextTests::TearDown() {
@@ -430,6 +430,31 @@ TEST_F(GeolocationPermissionContextTests, QueuedPermission) {
       profile()->GetHostContentSettingsMap()->GetContentSetting(
           requesting_frame_1,
           requesting_frame_0,
+          CONTENT_SETTINGS_TYPE_GEOLOCATION,
+          std::string()));
+}
+
+TEST_F(GeolocationPermissionContextTests, PermissionForFileScheme) {
+  GURL requesting_frame("file://example/geolocation.html");
+  NavigateAndCommit(requesting_frame);
+  EXPECT_EQ(0U, infobar_service()->GetInfoBarCount());
+  RequestGeolocationPermission(RequestID(0), requesting_frame);
+  EXPECT_EQ(1U, infobar_service()->GetInfoBarCount());
+  ConfirmInfoBarDelegate* infobar =
+      infobar_service()->GetInfoBarDelegateAt(0)->AsConfirmInfoBarDelegate();
+  ASSERT_TRUE(infobar);
+  // Accept the frame
+  infobar->Accept();
+  CheckTabContentsState(requesting_frame, CONTENT_SETTING_ALLOW);
+  CheckPermissionMessageSent(0, true);
+  infobar_service()->RemoveInfoBar(infobar);
+  delete infobar;
+
+  // Make sure the setting is not stored.
+  EXPECT_EQ(CONTENT_SETTING_ASK,
+      profile()->GetHostContentSettingsMap()->GetContentSetting(
+          requesting_frame,
+          requesting_frame,
           CONTENT_SETTINGS_TYPE_GEOLOCATION,
           std::string()));
 }

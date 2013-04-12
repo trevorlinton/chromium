@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/time.h"
 #include "build/build_config.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_export.h"
@@ -77,6 +78,8 @@ class GL_EXPORT AsyncPixelTransferState :
 
 class GL_EXPORT AsyncPixelTransferDelegate {
  public:
+  typedef base::Callback<void(const AsyncMemoryParams&)> CompletionCallback;
+
   static scoped_ptr<AsyncPixelTransferDelegate>
       Create(gfx::GLContext* context);
   virtual ~AsyncPixelTransferDelegate() {}
@@ -88,8 +91,10 @@ class GL_EXPORT AsyncPixelTransferDelegate {
     return make_scoped_ptr(CreateRawPixelTransferState(texture_id));
   }
 
+  // There's no guarantee that callback will run on the caller thread.
   virtual void AsyncNotifyCompletion(
-      const base::Closure& notify_task) = 0;
+      const AsyncMemoryParams& mem_params,
+      const CompletionCallback& callback) = 0;
 
   virtual void AsyncTexImage2D(
       AsyncPixelTransferState* state,
@@ -100,6 +105,9 @@ class GL_EXPORT AsyncPixelTransferDelegate {
       AsyncPixelTransferState* state,
       const AsyncTexSubImage2DParams& tex_params,
       const AsyncMemoryParams& mem_params) = 0;
+
+  virtual uint32 GetTextureUploadCount() = 0;
+  virtual base::TimeDelta GetTotalTextureUploadTime() = 0;
 
  protected:
   AsyncPixelTransferDelegate() {}

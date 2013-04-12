@@ -369,7 +369,10 @@ class BASE_EXPORT DictionaryValue : public Value {
    public:
     explicit Iterator(const DictionaryValue& target);
 
+    // DEPRECATED: use !IsAtEnd() instead.
     bool HasNext() const { return it_ != target_.dictionary_.end(); }
+
+    bool IsAtEnd() const { return it_ == target_.dictionary_.end(); }
     void Advance() { ++it_; }
 
     const std::string& key() const { return it_->first; }
@@ -450,7 +453,9 @@ class BASE_EXPORT ListValue : public Value {
 
   // Removes the element at |iter|. If |out_value| is NULL, the value will be
   // deleted, otherwise ownership of the value is passed back to the caller.
-  void Erase(iterator iter, Value** out_value);
+  // Returns an iterator pointing to the location of the element that
+  // followed the erased element.
+  iterator Erase(iterator iter, Value** out_value);
 
   // Appends a Value to the end of the list.
   void Append(Value* in_value);

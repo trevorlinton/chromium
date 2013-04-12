@@ -62,7 +62,7 @@ public class NetworkChangeNotifierAutoDetect extends BroadcastReceiver
 
     private final Observer mObserver;
 
-    private final Context mContext;
+    private Context mContext;
     private ConnectivityManagerDelegate mConnectivityManagerDelegate;
     private boolean mRegistered;
     private int mConnectionType;
@@ -79,10 +79,6 @@ public class NetworkChangeNotifierAutoDetect extends BroadcastReceiver
         mContext = context;
         mConnectivityManagerDelegate = new ConnectivityManagerDelegate(context);
         mConnectionType = getCurrentConnectionType();
-
-        if (ActivityStatus.getState() != ActivityStatus.PAUSED) {
-            registerReceiver();
-        }
         ActivityStatus.registerStateListener(this);
     }
 
@@ -163,22 +159,39 @@ public class NetworkChangeNotifierAutoDetect extends BroadcastReceiver
     // BroadcastReceiver
     @Override
     public void onReceive(Context context, Intent intent) {
-        int newConnectionType = getCurrentConnectionType();
-        if (newConnectionType != mConnectionType) {
-            mConnectionType = newConnectionType;
-            Log.d(TAG, "Network connectivity changed, type is: " + mConnectionType);
-            mObserver.onConnectionTypeChanged(newConnectionType);
-        }
+        connectionTypeChanged();
     }
 
     // ActivityStatus.StateListener
     @Override
     public void onActivityStateChange(int state) {
-        if (state == ActivityStatus.PAUSED) {
-            unregisterReceiver();
-        } else if (state == ActivityStatus.RESUMED) {
-            registerReceiver();
+        Context context = ActivityStatus.getActivity();
+        if (mContext != context && context != null) {
+            // Note that |context| can be null during testing. In this case |mContext| should not be
+            // overwritten.
+            mContext = context;
         }
+        if (state == ActivityStatus.RESUMED) {
+            // Note that this also covers the case where the main activity is created. The CREATED
+            // event is always followed by the RESUMED event. This is a temporary "hack" until
+            // http://crbug.com/176837 is fixed. The CREATED event can't be used reliably for now
+            // since its notification is deferred. This means that it can immediately follow a
+            // DESTROYED/STOPPED/... event which is problematic.
+            // TODO(pliard): fix http://crbug.com/176837.
+            connectionTypeChanged();
+            registerReceiver();
+        } else if (state == ActivityStatus.PAUSED) {
+            unregisterReceiver();
+        }
+    }
+
+    private void connectionTypeChanged() {
+        int newConnectionType = getCurrentConnectionType();
+        if (newConnectionType == mConnectionType) return;
+
+        mConnectionType = newConnectionType;
+        Log.d(TAG, "Network connectivity changed, type is: " + mConnectionType);
+        mObserver.onConnectionTypeChanged(newConnectionType);
     }
 
     private static class NetworkConnectivityIntentFilter extends IntentFilter {

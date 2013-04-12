@@ -10,8 +10,9 @@
 #include "base/platform_file.h"
 #include "content/common/content_export.h"
 #include "content/common/webkitplatformsupport_impl.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebGraphicsContext3D.h"
+#include "third_party/WebKit/Source/WebKit/chromium/public/WebIDBFactory.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebSharedWorkerRepository.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebGraphicsContext3D.h"
 
 namespace webkit_glue {
 class WebClipboardImpl;
@@ -19,7 +20,6 @@ class WebClipboardImpl;
 
 namespace content {
 class GamepadSharedMemoryReader;
-class Hyphenator;
 class RendererClipboardClient;
 class WebFileSystemImpl;
 class WebSharedWorkerRepositoryImpl;
@@ -33,12 +33,13 @@ class CONTENT_EXPORT RendererWebKitPlatformSupportImpl
   void set_plugin_refresh_allowed(bool plugin_refresh_allowed) {
     plugin_refresh_allowed_ = plugin_refresh_allowed;
   }
-  // WebKitPlatformSupport methods:
+  // Platform methods:
   virtual WebKit::WebClipboard* clipboard();
   virtual WebKit::WebMimeRegistry* mimeRegistry();
   virtual WebKit::WebFileUtilities* fileUtilities();
   virtual WebKit::WebSandboxSupport* sandboxSupport();
   virtual WebKit::WebCookieJar* cookieJar();
+  virtual WebKit::WebHyphenator* hyphenator();
   virtual bool sandboxEnabled();
   virtual unsigned long long visitedLinkHash(
       const char* canonicalURL, size_t length);
@@ -51,7 +52,7 @@ class CONTENT_EXPORT RendererWebKitPlatformSupportImpl
   virtual void suddenTerminationChanged(bool enabled);
   virtual WebKit::WebStorageNamespace* createLocalStorageNamespace(
       const WebKit::WebString& path, unsigned quota);
-  virtual WebKit::WebKitPlatformSupport::FileHandle databaseOpenFile(
+  virtual WebKit::Platform::FileHandle databaseOpenFile(
       const WebKit::WebString& vfs_file_name, int desired_flags);
   virtual int databaseDeleteFile(const WebKit::WebString& vfs_file_name,
                                  bool sync_dir);
@@ -70,11 +71,24 @@ class CONTENT_EXPORT RendererWebKitPlatformSupportImpl
   virtual WebKit::WebFileSystem* fileSystem();
   virtual WebKit::WebSharedWorkerRepository* sharedWorkerRepository();
   virtual bool canAccelerate2dCanvas();
+  virtual bool isThreadedCompositingEnabled();
   virtual double audioHardwareSampleRate();
   virtual size_t audioHardwareBufferSize();
+
+  // TODO(crogers): remove deprecated API as soon as WebKit calls new API.
   virtual WebKit::WebAudioDevice* createAudioDevice(
       size_t buffer_size, unsigned channels, double sample_rate,
       WebKit::WebAudioDevice::RenderCallback* callback);
+  // TODO(crogers): remove deprecated API as soon as WebKit calls new API.
+  virtual WebKit::WebAudioDevice* createAudioDevice(
+      size_t buffer_size, unsigned input_channels, unsigned channels,
+      double sample_rate, WebKit::WebAudioDevice::RenderCallback* callback);
+
+  virtual WebKit::WebAudioDevice* createAudioDevice(
+      size_t buffer_size, unsigned input_channels, unsigned channels,
+      double sample_rate, WebKit::WebAudioDevice::RenderCallback* callback,
+      const WebKit::WebString& input_device_id);
+
   virtual WebKit::WebBlobRegistry* blobRegistry();
   virtual void sampleGamepads(WebKit::WebGamepads&);
   virtual WebKit::WebString userAgent(const WebKit::WebURL& url);
@@ -89,6 +103,8 @@ class CONTENT_EXPORT RendererWebKitPlatformSupportImpl
       size_t length,
       size_t before_index,
       const WebKit::WebString& locale);
+  virtual bool processMemorySizesInBytes(
+      size_t* private_bytes, size_t* shared_bytes);
 
   // Disables the WebSandboxSupport implementation for testing.
   // Tests that do not set up a full sandbox environment should call
@@ -120,6 +136,9 @@ class CONTENT_EXPORT RendererWebKitPlatformSupportImpl
   class SandboxSupport;
   scoped_ptr<SandboxSupport> sandbox_support_;
 
+  class Hyphenator;
+  scoped_ptr<Hyphenator> hyphenator_;
+
   // This counter keeps track of the number of times sudden termination is
   // enabled or disabled. It starts at 0 (enabled) and for every disable
   // increments by 1, for every enable decrements by 1. When it reaches 0,
@@ -140,8 +159,6 @@ class CONTENT_EXPORT RendererWebKitPlatformSupportImpl
   scoped_ptr<WebKit::WebBlobRegistry> blob_registry_;
 
   scoped_ptr<GamepadSharedMemoryReader> gamepad_shared_memory_reader_;
-
-  scoped_ptr<content::Hyphenator> hyphenator_;
 };
 
 }  // namespace content

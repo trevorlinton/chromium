@@ -12,6 +12,9 @@
 
 namespace extensions {
 
+template <typename T>
+class ProfileKeyedAPIFactory;
+
 // Instantiations of ProfileKeyedAPIFactory should use this base class
 // and also define a static const char* service_name() function (used in the
 // ProfileKeyedBaseFactory constructor). These fields should be accessible
@@ -22,6 +25,28 @@ class ProfileKeyedAPI : public ProfileKeyedService {
   // See ProfileKeyedBaseFactory for usage.
   static const bool kServiceRedirectedInIncognito = false;
   static const bool kServiceIsNULLWhileTesting = false;
+
+  // Users of this factory template must define a GetFactoryInstance()
+  // and manage their own instances (typically using LazyInstance or
+  // Singleton), because those cannot be included in more than one
+  // translation unit (and thus cannot be initialized in a header file).
+  //
+  // In the header file, declare GetFactoryInstance(), e.g.:
+  //   class ProcessesAPI {
+  //   ...
+  //    public:
+  //     static ProfileKeyedAPIFactory<ProcessesAPI>* GetFactoryInstance();
+  //   };
+  //
+  // In the cc file, provide the implementation, e.g.:
+  //   static base::LazyInstance<ProfileKeyedAPIFactory<ProcessesAPI> >
+  //   g_factory = LAZY_INSTANCE_INITIALIZER;
+  //
+  //   // static
+  //   ProfileKeyedAPIFactory<ProcessesAPI>*
+  //   ProcessesAPI::GetFactoryInstance() {
+  //     return &g_factory.Get();
+  //   }
 };
 
 // A template for factories for ProfileKeyedServices that manage extension APIs.
@@ -32,30 +57,8 @@ class ProfileKeyedAPIFactory : public ProfileKeyedServiceFactory {
  public:
   static T* GetForProfile(Profile* profile) {
     return static_cast<T*>(
-        GetInstance()->GetServiceForProfile(profile, true));
+        T::GetFactoryInstance()->GetServiceForProfile(profile, true));
   }
-
-  // Users of this factory template must manage their own instances
-  // (typically using LazyInstance or Singleton), because those cannot be
-  // included in more than one translation unit (and thus cannot be initialized
-  // in a header file).
-  //
-  // In the header file, declare the specialization, e.g.:
-  //   template <>
-  //   ProfileKeyedAPIFactory<ProcessesAPI>
-  //   ProfileKeyedAPIFactory<ProcessesAPI>::GetInstance();
-  //
-  // In the cc file, provide the implementation:
-  //   static base::LazyInstance<ProfileKeyedAPIFactory<ProcessesAPI> >
-  //   g_factory = LAZY_INSTANCE_INITIALIZER;
-  //
-  //   template <>
-  //   ProfileKeyedAPIFactory<ProcessesAPI>*
-  //   ProfileKeyedAPIFactory<ProcessesAPI>::GetInstance() {
-  //     return &g_factory.Get();
-  //   }
-
-  static ProfileKeyedAPIFactory* GetInstance();
 
   // Declare dependencies on other factories.
   // By default, ExtensionSystemFactory is the only dependency; however,

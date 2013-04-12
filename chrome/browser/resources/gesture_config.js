@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright (c) 2013 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,11 +10,14 @@ var $ = function(id) { return document.getElementById(id); };
 /**
  * A generic WebUI for configuring preference values used by Chrome's gesture
  * recognition systems.
+ * @param {string} title The user-visible title to display for the configuration
+ *    section.
  * @param {string} prefix The prefix for the configuration fields.
- * @param {object} fields An array of fields that contain the name of the pref
+ * @param {!Object} fields An array of fields that contain the name of the pref
  *    and user-visible labels.
  */
-function GeneralConfig(prefix, fields) {
+function GeneralConfig(title, prefix, fields) {
+  this.title = title;
   this.prefix = prefix;
   this.fields = fields;
 }
@@ -35,12 +38,19 @@ GeneralConfig.prototype = {
   buildForm: function() {
     var buf = [];
 
+    var section = $('section-template').cloneNode(true);
+    section.removeAttribute('id');
+    var title = section.querySelector('.section-title');
+    title.textContent = this.title;
+
     for (var i = 0; i < this.fields.length; i++) {
       var field = this.fields[i];
 
-      var row = $('gesture-form-row').cloneNode(true);
+      var row = $('section-row-template').cloneNode(true);
+      row.removeAttribute('id');
+
       var label = row.querySelector('.row-label');
-      var input = row.querySelector('.row-input');
+      var input = row.querySelector('.input');
       var units = row.querySelector('.row-units');
 
       label.setAttribute('for', field.key);
@@ -51,10 +61,12 @@ GeneralConfig.prototype = {
       if (field.max) input.max = field.max;
       if (field.step) input.step = field.step;
 
-      $('gesture-form').appendChild(row);
       if (field.units)
         units.innerHTML = field.units;
+
+      section.querySelector('.section-properties').appendChild(row);
     }
+    $('gesture-form').appendChild(section);
   },
 
   /**
@@ -126,11 +138,24 @@ GeneralConfig.prototype = {
  * @return {object} A GeneralConfig object.
  */
 function GestureConfig() {
+  /** The title of the section for the gesture preferences. **/
+  /** @const */ var GESTURE_TITLE = 'Gesture Configuration';
+
   /** Common prefix of gesture preferences. **/
   /** @const */ var GESTURE_PREFIX = 'gesture.';
 
   /** List of fields used to dynamically build form. **/
   var GESTURE_FIELDS = [
+    {
+      key: 'fling_max_cancel_to_down_time_in_ms',
+      label: 'Maximum Cancel to Down Time for Tap Suppression',
+      units: 'milliseconds',
+    },
+    {
+      key: 'fling_max_tap_gap_time_in_ms',
+      label: 'Maximum Tap Gap Time for Tap Suppression',
+      units: 'milliseconds',
+    },
     {
       key: 'long_press_time_in_seconds',
       label: 'Long Press Time',
@@ -139,7 +164,8 @@ function GestureConfig() {
     {
       key: 'semi_long_press_time_in_seconds',
       label: 'Semi Long Press Time',
-      units: 'seconds'
+      units: 'seconds',
+      step: 0.1
     },
     {
       key: 'max_seconds_between_double_click',
@@ -249,10 +275,15 @@ function GestureConfig() {
       key: 'fling_velocity_cap',
       label: 'Touchscreen Fling Velocity Cap',
       units: 'pixels / second'
+    },
+    {
+      key: 'tab_scrub_activation_delay_in_ms',
+      label: 'Tab scrub auto activation delay, (-1 for never)',
+      units: 'milliseconds'
     }
   ];
 
-  return new GeneralConfig(GESTURE_PREFIX, GESTURE_FIELDS);
+  return new GeneralConfig(GESTURE_TITLE, GESTURE_PREFIX, GESTURE_FIELDS);
 }
 
 /**
@@ -260,7 +291,9 @@ function GestureConfig() {
  * @return {object} A GeneralConfig object.
  */
 function OverscrollConfig() {
-  var OVERSCROLL_PREFIX = 'overscroll.';
+  /** @const */ var OVERSCROLL_TITLE = 'Overscroll Configuration';
+
+  /** @const */ var OVERSCROLL_PREFIX = 'overscroll.';
 
   var OVERSCROLL_FIELDS = [
     {
@@ -290,8 +323,125 @@ function OverscrollConfig() {
     },
   ];
 
-  return new GeneralConfig(OVERSCROLL_PREFIX, OVERSCROLL_FIELDS);
+  return new GeneralConfig(OVERSCROLL_TITLE,
+                           OVERSCROLL_PREFIX,
+                           OVERSCROLL_FIELDS);
 }
+
+/**
+ * Returns a GeneralConfig for configuring workspace_cycler.* preferences.
+ * @return {object} A GeneralConfig object.
+ */
+function WorkspaceCyclerConfig() {
+  /** @const */ var WORKSPACE_CYCLER_TITLE = 'Workspace Cycler Configuration';
+
+  /** @const */ var WORKSPACE_CYCLER_PREFIX = 'workspace_cycler.';
+
+  var WORKSPACE_CYCLER_FIELDS = [
+    {
+      key: 'selected_scale',
+      label: 'Scale of the selected workspace',
+      units: '%'
+    },
+    {
+      key: 'min_scale',
+      label: 'Minimum workspace scale (scale of deepest workspace)',
+      units: '%'
+    },
+    {
+      key: 'max_scale',
+      label: 'Maximimum workspace scale (scale of shallowest workspace)',
+      units: '%'
+    },
+    {
+      key: 'min_brightness',
+      label: 'Minimum workspace brightness (deepest & shallowest workspace)',
+      units: '%'
+    },
+    {
+      key: 'background_opacity',
+      label: 'Desktop background opacity when cycling through workspaces',
+      units: '%'
+    },
+    {
+      key: 'desktop_workspace_brightness',
+      label: 'Desktop workspace brightness when cycling through workspaces',
+      units: '%'
+    },
+    {
+      key: 'distance_to_initiate_cycling',
+      label: 'Vertical distance to scroll to initiate cycling',
+      units: 'pixels'
+    },
+    {
+      key: 'scroll_distance_to_cycle_to_next_workspace',
+      label: 'Vertical distance to scroll to cycle to the next workspace',
+      units: 'pixels'
+    },
+    { key: 'cycler_step_animation_duration_ratio',
+      label: 'Cycler step animation duration ratio',
+      units: 'ms / pixels vertical scroll'
+    },
+    { key: 'start_cycler_animation_duration',
+      label: 'Duration of the animations to start cycling',
+      units: 'ms'
+    },
+    { key: 'stop_cycler_animation_duration',
+      label: 'Duration of the animations to stop cycling',
+      units: 'ms'
+    }
+  ];
+
+  return new GeneralConfig(WORKSPACE_CYCLER_TITLE,
+                           WORKSPACE_CYCLER_PREFIX,
+                           WORKSPACE_CYCLER_FIELDS);
+}
+
+/**
+ * Returns a GeneralConfig for configuring flingcurve.* preferences.
+ * @return {object} A GeneralConfig object.
+ */
+function FlingConfig() {
+  /** @const */ var FLING_TITLE = 'Fling Configuration';
+
+  /** @const */ var FLING_PREFIX = 'flingcurve.';
+
+  var FLING_FIELDS = [
+    {
+      key: 'touchscreen_alpha',
+      label: 'Touchscreen fling deacceleration coefficients',
+      units: 'alpha'
+    },
+    {
+      key: 'touchscreen_beta',
+      label: '',
+      units: 'beta'
+    },
+    {
+      key: 'touchscreen_gamma',
+      label: '',
+      units: 'gamma'
+    },
+    {
+      key: 'touchpad_alpha',
+      label: 'Touchpad fling deacceleration coefficients',
+      units: 'alpha'
+    },
+    {
+      key: 'touchpad_beta',
+      label: '',
+      units: 'beta'
+    },
+    {
+      key: 'touchpad_gamma',
+      label: '',
+      units: 'gamma'
+    },
+  ];
+
+  return new GeneralConfig(FLING_TITLE, FLING_PREFIX, FLING_FIELDS);
+}
+
 
 /**
  * WebUI instance for configuring gesture.* and overscroll.* preference values
@@ -309,9 +459,17 @@ var gesture_config = (function() {
     var o = OverscrollConfig();
     o.buildAll();
 
+    var f = FlingConfig();
+    f.buildAll();
+
+    var c = WorkspaceCyclerConfig();
+    c.buildAll();
+
     $('reset-button').onclick = function() {
       g.onReset();
       o.onReset();
+      f.onReset();
+      c.onReset();
     };
   }
 

@@ -472,62 +472,67 @@ TEST_F(WindowSizerTestWithBrowser, PlaceNewWindows) {
   scoped_ptr<TestingProfile> profile(new TestingProfile());
   // Creating a popup handler here to make sure it does not interfere with the
   // existing windows.
+  Browser::CreateParams native_params(profile.get(),
+                                      chrome::HOST_DESKTOP_TYPE_ASH);
   scoped_ptr<Browser> browser(
-      chrome::CreateBrowserWithTestWindowForProfile(profile.get()));
+      chrome::CreateBrowserWithTestWindowForParams(&native_params));
 
   // Creating a popup handler here to make sure it does not interfere with the
   // existing windows.
   scoped_ptr<BrowserWindow> browser_window(
       new TestBrowserWindowAura(window.get()));
-  Browser::CreateParams window_params(profile.get());
+  Browser::CreateParams window_params(profile.get(),
+                                      chrome::HOST_DESKTOP_TYPE_ASH);
   window_params.window = browser_window.get();
   scoped_ptr<Browser> window_owning_browser(new Browser(window_params));
 
   // Creating a popup to make sure it does not interfere with the positioning.
   scoped_ptr<BrowserWindow> browser_popup(
       new TestBrowserWindowAura(popup.get()));
-  Browser::CreateParams popup_params(Browser::TYPE_POPUP, profile.get());
+  Browser::CreateParams popup_params(Browser::TYPE_POPUP, profile.get(),
+                                     chrome::HOST_DESKTOP_TYPE_ASH);
   popup_params.window = browser_popup.get();
   scoped_ptr<Browser> popup_owning_browser(new Browser(popup_params));
 
   // Creating a panel to make sure it does not interfere with the positioning.
   scoped_ptr<BrowserWindow> browser_panel(
       new TestBrowserWindowAura(panel.get()));
-  Browser::CreateParams panel_params(Browser::TYPE_POPUP, profile.get());
+  Browser::CreateParams panel_params(Browser::TYPE_POPUP, profile.get(),
+                                     chrome::HOST_DESKTOP_TYPE_ASH);
   panel_params.window = browser_panel.get();
   scoped_ptr<Browser> panel_owning_browser(new Browser(panel_params));
 
   window->Show();
   { // With a shown window it's size should get returned.
     gfx::Rect window_bounds;
-    GetWindowBounds(p1024x768, p1024x768, gfx::Rect(),
-                    gfx::Rect(50, 100, 300, 150), bottom_s1024x768,
+    GetWindowBounds(p1600x1200, p1600x1200, gfx::Rect(),
+                    gfx::Rect(50, 100, 300, 150), bottom_s1600x1200,
                     PERSISTED, browser.get(), gfx::Rect(), &window_bounds);
     // The position should be right flush.
-    EXPECT_EQ("384,32 640x320", window_bounds.ToString());
+    EXPECT_EQ("960,32 640x320", window_bounds.ToString());
   }
 
   { // With the window shown - but more on the right side then on the left
     // side (and partially out of the screen), it should default to the other
     // side and inside the screen.
-    window->SetBounds(gfx::Rect(350, 600, 640, 320));
+    window->SetBounds(gfx::Rect(1000, 600, 640, 320));
     gfx::Rect window_bounds;
-    GetWindowBounds(p1024x768, p1024x768, gfx::Rect(),
-                    gfx::Rect(50, 100, 300, 150), bottom_s1024x768,
+    GetWindowBounds(p1600x1200, p1600x1200, gfx::Rect(),
+                    gfx::Rect(50, 100, 300, 150), bottom_s1600x1200,
                     PERSISTED, browser.get(), gfx::Rect(), &window_bounds);
     // The position should be left & bottom flush.
-    EXPECT_EQ("0,448 640x320", window_bounds.ToString());
+    EXPECT_EQ("0,600 640x320", window_bounds.ToString());
   }
 
   { // If the second windows right side is already over the right side of the
     // screen, it will not move back into the screen.
     window->SetBounds(gfx::Rect(1000, 600, 640, 320));
     gfx::Rect window_bounds;
-    GetWindowBounds(p1024x768, p1024x768, gfx::Rect(),
-                    gfx::Rect(50, 100, 300, 150), bottom_s1024x768,
+    GetWindowBounds(p1600x1200, p1600x1200, gfx::Rect(),
+                    gfx::Rect(50, 100, 300, 150), bottom_s1600x1200,
                     PERSISTED, browser.get(), gfx::Rect(), &window_bounds);
     // The position should be left & bottom flush.
-    EXPECT_EQ("0,448 640x320", window_bounds.ToString());
+    EXPECT_EQ("0,600 640x320", window_bounds.ToString());
     // If the other window was already beyond the point to get right flush
     // it will remain where it is.
     EXPECT_EQ("1000,600 640x320", window->bounds().ToString());
@@ -535,8 +540,8 @@ TEST_F(WindowSizerTestWithBrowser, PlaceNewWindows) {
 
   { // Make sure that popups do not get changed.
     gfx::Rect window_bounds;
-    GetWindowBounds(p1024x768, p1024x768, gfx::Rect(),
-                    gfx::Rect(50, 100, 300, 150), bottom_s1024x768,
+    GetWindowBounds(p1600x1200, p1600x1200, gfx::Rect(),
+                    gfx::Rect(50, 100, 300, 150), bottom_s1600x1200,
                     PERSISTED, popup_owning_browser.get(),
                     gfx::Rect(), &window_bounds);
     EXPECT_EQ("50,100 300x150", window_bounds.ToString());
@@ -545,21 +550,25 @@ TEST_F(WindowSizerTestWithBrowser, PlaceNewWindows) {
   window->Hide();
   { // If a window is there but not shown the persisted default should be used.
     gfx::Rect window_bounds;
-    GetWindowBounds(p1024x768, p1024x768, gfx::Rect(),
-                    gfx::Rect(50, 100, 300, 150), bottom_s1024x768,
+    GetWindowBounds(p1600x1200, p1600x1200, gfx::Rect(),
+                    gfx::Rect(50, 100, 300, 150), bottom_s1600x1200,
                     PERSISTED, browser.get(), gfx::Rect(), &window_bounds);
     EXPECT_EQ("50,100 300x150", window_bounds.ToString());
   }
 
   { // If a window is there but not shown the default should be returned.
     gfx::Rect window_bounds;
-    GetWindowBounds(p1024x768, p1024x768, gfx::Rect(),
-                    gfx::Rect(), bottom_s1024x768,
+    GetWindowBounds(p1600x1200, p1600x1200, gfx::Rect(),
+                    gfx::Rect(), bottom_s1600x1200,
                     DEFAULT, browser.get(), gfx::Rect(), &window_bounds);
-    EXPECT_EQ(gfx::Rect(WindowSizer::kDesktopBorderSize,
+    // Note: We need to also take the defaults maximum width into account here
+    // since that might get used if the resolution is too big.
+    EXPECT_EQ(gfx::Rect(std::max(WindowSizer::kDesktopBorderSize,
+                                 (1600 - WindowSizer::kMaximumWindowWidth) / 2),
                         WindowSizer::kDesktopBorderSize,
-                        1024 - 2 * WindowSizer::kDesktopBorderSize,
-                        768 - WindowSizer::kDesktopBorderSize).ToString(),
+                        std::min(WindowSizer::kMaximumWindowWidth,
+                                 1600 - 2 * WindowSizer::kDesktopBorderSize),
+                        1200 - WindowSizer::kDesktopBorderSize).ToString(),
               window_bounds.ToString());
   }
 }
@@ -573,8 +582,8 @@ TEST_F(WindowSizerTestWithBrowser, PlaceNewWindows) {
 
 // Test the placement of newly created windows on multiple dislays.
 TEST_F(WindowSizerTestWithBrowser, MAYBE_PlaceNewWindowsOnMultipleDisplays) {
-  UpdateDisplay("1024x768,400x400");
-  const gfx::Rect secondary(1024, 0, 400, 400);
+  UpdateDisplay("1600x1200,1600x1200");
+  const gfx::Rect secondary(1600, 0, 1600, 1200);
 
   ash::Shell::GetInstance()->set_active_root_window(
       ash::Shell::GetPrimaryRootWindow());
@@ -586,17 +595,19 @@ TEST_F(WindowSizerTestWithBrowser, MAYBE_PlaceNewWindowsOnMultipleDisplays) {
   window->SetBounds(gfx::Rect(10, 10, 200, 200));
   scoped_ptr<BrowserWindow> browser_window(
       new TestBrowserWindowAura(window.get()));
-  Browser::CreateParams window_params(profile.get());
+  Browser::CreateParams window_params(profile.get(),
+                                      chrome::HOST_DESKTOP_TYPE_ASH);
   window_params.window = browser_window.get();
   scoped_ptr<Browser> window_owning_browser(new Browser(window_params));
   browser_window->Show();
   EXPECT_EQ(window->GetRootWindow(), ash::Shell::GetActiveRootWindow());
 
   scoped_ptr<aura::Window> another_window(CreateTestWindowInShellWithId(1));
-  another_window->SetBounds(gfx::Rect(800, 10, 300, 300));
+  another_window->SetBounds(gfx::Rect(1600 - 200, 10, 300, 300));
   scoped_ptr<BrowserWindow> another_browser_window(
       new TestBrowserWindowAura(another_window.get()));
-  Browser::CreateParams another_window_params(profile.get());
+  Browser::CreateParams another_window_params(profile.get(),
+                                              chrome::HOST_DESKTOP_TYPE_ASH);
   another_window_params.window = another_browser_window.get();
   scoped_ptr<Browser> another_window_owning_browser(
       new Browser(another_window_params));
@@ -606,7 +617,8 @@ TEST_F(WindowSizerTestWithBrowser, MAYBE_PlaceNewWindowsOnMultipleDisplays) {
   scoped_ptr<aura::Window> new_window(CreateTestWindowInShellWithId(0));
   scoped_ptr<BrowserWindow> new_browser_window(
       new TestBrowserWindowAura(new_window.get()));
-  Browser::CreateParams new_window_params(profile.get());
+  Browser::CreateParams new_window_params(profile.get(),
+                                          chrome::HOST_DESKTOP_TYPE_ASH);
   new_window_params.window = new_browser_window.get();
   scoped_ptr<Browser> new_browser(new Browser(new_window_params));
 
@@ -617,27 +629,29 @@ TEST_F(WindowSizerTestWithBrowser, MAYBE_PlaceNewWindowsOnMultipleDisplays) {
   // First new window should be in the primary.
   {
     gfx::Rect window_bounds;
-    GetWindowBounds(p1024x768, p1024x768, secondary,
+    GetWindowBounds(p1600x1200, p1600x1200, secondary,
                     gfx::Rect(), secondary,
                     PERSISTED, new_browser.get(), gfx::Rect(), &window_bounds);
     EXPECT_EQ("0,10 300x300", window_bounds.ToString());
   }
 
-  // Move the window to the secondary display and create a new window.
-  // It should be opened in the secondary display.
+  // Move the window to the right side of the secondary display and create a new
+  // window. It should be opened then on the left side on the secondary display.
   {
     gfx::Display second_display = gfx::Screen::GetScreenFor(window.get())->
-        GetDisplayNearestPoint(gfx::Point(1200,10));
-    window->SetBoundsInScreen(gfx::Rect(1200, 10, 200, 200), second_display);
+        GetDisplayNearestPoint(gfx::Point(1600 + 100,10));
+    window->SetBoundsInScreen(
+       gfx::Rect(secondary.CenterPoint().x() + 300, 10, 200, 200),
+        second_display);
     browser_window->Activate();
     EXPECT_NE(ash::Shell::GetPrimaryRootWindow(),
               ash::Shell::GetActiveRootWindow());
 
     gfx::Rect window_bounds;
-    GetWindowBounds(p1024x768, p1024x768, secondary,
+    GetWindowBounds(p1600x1200, p1600x1200, secondary,
                     gfx::Rect(), secondary,
                     PERSISTED, new_browser.get(), gfx::Rect(), &window_bounds);
-    EXPECT_EQ("1024,10 200x200", window_bounds.ToString());
+    EXPECT_EQ("1600,10 200x200", window_bounds.ToString());
   }
 
   // Activate another window in the primary display and create a new window.
@@ -648,7 +662,7 @@ TEST_F(WindowSizerTestWithBrowser, MAYBE_PlaceNewWindowsOnMultipleDisplays) {
               ash::Shell::GetActiveRootWindow());
 
     gfx::Rect window_bounds;
-    GetWindowBounds(p1024x768, p1024x768, secondary,
+    GetWindowBounds(p1600x1200, p1600x1200, secondary,
                     gfx::Rect(), secondary,
                     PERSISTED, new_browser.get(), gfx::Rect(), &window_bounds);
     EXPECT_EQ("0,10 300x300", window_bounds.ToString());
@@ -665,7 +679,8 @@ TEST_F(WindowSizerTestWithBrowser, TestShowState) {
 
   scoped_ptr<BrowserWindow> browser_window(
       new TestBrowserWindowAura(window.get()));
-  Browser::CreateParams window_params(Browser::TYPE_TABBED, profile.get());
+  Browser::CreateParams window_params(Browser::TYPE_TABBED, profile.get(),
+                                      chrome::HOST_DESKTOP_TYPE_ASH);
   window_params.window = browser_window.get();
   scoped_ptr<Browser> browser(new Browser(window_params));
 
@@ -675,7 +690,8 @@ TEST_F(WindowSizerTestWithBrowser, TestShowState) {
 
   scoped_ptr<BrowserWindow> browser_popup(
       new TestBrowserWindowAura(popup.get()));
-  Browser::CreateParams popup_params(Browser::TYPE_POPUP, profile.get());
+  Browser::CreateParams popup_params(Browser::TYPE_POPUP, profile.get(),
+                                     chrome::HOST_DESKTOP_TYPE_ASH);
   popup_params.window = browser_window.get();
   scoped_ptr<Browser> popup_browser(new Browser(popup_params));
 
@@ -685,24 +701,28 @@ TEST_F(WindowSizerTestWithBrowser, TestShowState) {
             GetWindowShowState(ui::SHOW_STATE_MAXIMIZED,
                                ui::SHOW_STATE_NORMAL,
                                BOTH,
-                               browser.get()));
+                               browser.get(),
+                               p1600x1200));
   EXPECT_EQ(ui::SHOW_STATE_DEFAULT,
             GetWindowShowState(ui::SHOW_STATE_DEFAULT,
                                ui::SHOW_STATE_NORMAL,
                                BOTH,
-                               browser.get()));
+                               browser.get(),
+                               p1600x1200));
   // Non tabbed windows should always follow the window saved visibility state.
   EXPECT_EQ(ui::SHOW_STATE_MAXIMIZED,
             GetWindowShowState(ui::SHOW_STATE_MAXIMIZED,
                                ui::SHOW_STATE_NORMAL,
                                BOTH,
-                               popup_browser.get()));
+                               popup_browser.get(),
+                               p1600x1200));
   // The non tabbed window will take the status of the last active of its kind.
   EXPECT_EQ(ui::SHOW_STATE_NORMAL,
             GetWindowShowState(ui::SHOW_STATE_DEFAULT,
                                ui::SHOW_STATE_NORMAL,
                                BOTH,
-                               popup_browser.get()));
+                               popup_browser.get(),
+                               p1600x1200));
 
   // Now create a top level window and check again for both. Only the tabbed
   // window should follow the top level window's state.
@@ -712,7 +732,8 @@ TEST_F(WindowSizerTestWithBrowser, TestShowState) {
 
   scoped_ptr<BrowserWindow> browser_window2(
       new TestBrowserWindowAura(window2.get()));
-  Browser::CreateParams window2_params(Browser::TYPE_TABBED, profile.get());
+  Browser::CreateParams window2_params(Browser::TYPE_TABBED, profile.get(),
+                                       chrome::HOST_DESKTOP_TYPE_ASH);
   window2_params.window = browser_window2.get();
   scoped_ptr<Browser> browser2(new Browser(window2_params));
 
@@ -721,13 +742,36 @@ TEST_F(WindowSizerTestWithBrowser, TestShowState) {
             GetWindowShowState(ui::SHOW_STATE_MAXIMIZED,
                                ui::SHOW_STATE_DEFAULT,
                                BOTH,
-                               browser2.get()));
+                               browser2.get(),
+                               p1600x1200));
   // Non tabbed windows should always follow the window saved visibility state.
   EXPECT_EQ(ui::SHOW_STATE_MAXIMIZED,
             GetWindowShowState(ui::SHOW_STATE_MAXIMIZED,
                                ui::SHOW_STATE_MINIMIZED,
                                BOTH,
-                               popup_browser.get()));
+                               popup_browser.get(),
+                               p1600x1200));
+
+  // In smaller screen resolutions we default to maximized if there is no other
+  // window visible.
+  int min_size = WindowSizer::GetForceMaximizedWidthLimit() / 2;
+  if (min_size > 0) {
+    const gfx::Rect tiny_screen(0, 0, min_size, min_size);
+    EXPECT_EQ(ui::SHOW_STATE_DEFAULT,
+              GetWindowShowState(ui::SHOW_STATE_MAXIMIZED,
+                                 ui::SHOW_STATE_DEFAULT,
+                                 BOTH,
+                                 browser2.get(),
+                                 tiny_screen));
+    window->Hide();
+    EXPECT_EQ(ui::SHOW_STATE_MAXIMIZED,
+              GetWindowShowState(ui::SHOW_STATE_MAXIMIZED,
+                                 ui::SHOW_STATE_DEFAULT,
+                                 BOTH,
+                                 browser2.get(),
+                                 tiny_screen));
+
+  }
 }
 
 // Test that the default show state override behavior is properly handled.
@@ -740,7 +784,8 @@ TEST_F(WindowSizerTestWithBrowser, TestShowStateDefaults) {
 
   scoped_ptr<BrowserWindow> browser_window(
       new TestBrowserWindowAura(window.get()));
-  Browser::CreateParams window_params(Browser::TYPE_TABBED, profile.get());
+  Browser::CreateParams window_params(Browser::TYPE_TABBED, profile.get(),
+                                      chrome::HOST_DESKTOP_TYPE_ASH);
   window_params.window = browser_window.get();
   scoped_ptr<Browser> browser(new Browser(window_params));
 
@@ -751,7 +796,8 @@ TEST_F(WindowSizerTestWithBrowser, TestShowStateDefaults) {
 
   scoped_ptr<BrowserWindow> browser_popup(
       new TestBrowserWindowAura(popup.get()));
-  Browser::CreateParams popup_params(Browser::TYPE_POPUP, profile.get());
+  Browser::CreateParams popup_params(Browser::TYPE_POPUP, profile.get(),
+                                     chrome::HOST_DESKTOP_TYPE_ASH);
   popup_params.window = browser_window.get();
   scoped_ptr<Browser> popup_browser(new Browser(popup_params));
 
@@ -760,22 +806,26 @@ TEST_F(WindowSizerTestWithBrowser, TestShowStateDefaults) {
   EXPECT_EQ(GetWindowShowState(ui::SHOW_STATE_MAXIMIZED,
                                ui::SHOW_STATE_MAXIMIZED,
                                DEFAULT,
-                               browser.get()), ui::SHOW_STATE_DEFAULT);
+                               browser.get(),
+                               p1600x1200), ui::SHOW_STATE_DEFAULT);
   browser->set_initial_show_state(ui::SHOW_STATE_MINIMIZED);
   EXPECT_EQ(GetWindowShowState(ui::SHOW_STATE_MAXIMIZED,
                                ui::SHOW_STATE_MAXIMIZED,
                                BOTH,
-                               browser.get()), ui::SHOW_STATE_MINIMIZED);
+                               browser.get(),
+                               p1600x1200), ui::SHOW_STATE_MINIMIZED);
   browser->set_initial_show_state(ui::SHOW_STATE_NORMAL);
   EXPECT_EQ(GetWindowShowState(ui::SHOW_STATE_MAXIMIZED,
                                ui::SHOW_STATE_MAXIMIZED,
                                BOTH,
-                               browser.get()), ui::SHOW_STATE_NORMAL);
+                               browser.get(),
+                               p1600x1200), ui::SHOW_STATE_NORMAL);
   browser->set_initial_show_state(ui::SHOW_STATE_MAXIMIZED);
   EXPECT_EQ(GetWindowShowState(ui::SHOW_STATE_NORMAL,
                                ui::SHOW_STATE_NORMAL,
                                BOTH,
-                               browser.get()), ui::SHOW_STATE_MAXIMIZED);
+                               browser.get(),
+                               p1600x1200), ui::SHOW_STATE_MAXIMIZED);
 
   // Check that setting the maximized command line option is forcing the
   // maximized state.
@@ -785,11 +835,13 @@ TEST_F(WindowSizerTestWithBrowser, TestShowStateDefaults) {
   EXPECT_EQ(GetWindowShowState(ui::SHOW_STATE_NORMAL,
                                ui::SHOW_STATE_NORMAL,
                                BOTH,
-                               browser.get()), ui::SHOW_STATE_MAXIMIZED);
+                               browser.get(),
+                               p1600x1200), ui::SHOW_STATE_MAXIMIZED);
 
   // The popup should favor the initial show state over the command line.
   EXPECT_EQ(GetWindowShowState(ui::SHOW_STATE_NORMAL,
                                ui::SHOW_STATE_NORMAL,
                                BOTH,
-                               popup_browser.get()), ui::SHOW_STATE_NORMAL);
+                               popup_browser.get(),
+                               p1600x1200), ui::SHOW_STATE_NORMAL);
 }

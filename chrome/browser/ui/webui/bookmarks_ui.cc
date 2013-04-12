@@ -7,8 +7,8 @@
 #include "base/memory/ref_counted_memory.h"
 #include "base/message_loop.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/webui/chrome_url_data_manager.h"
 #include "chrome/common/url_constants.h"
+#include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_ui.h"
 #include "grit/theme_resources.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -19,17 +19,21 @@
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-BookmarksUIHTMLSource::BookmarksUIHTMLSource()
-    : DataSource(chrome::kChromeUIBookmarksHost, MessageLoop::current()) {
+BookmarksUIHTMLSource::BookmarksUIHTMLSource() {
 }
 
-void BookmarksUIHTMLSource::StartDataRequest(const std::string& path,
-                                             bool is_incognito,
-                                             int request_id) {
+std::string BookmarksUIHTMLSource::GetSource() {
+  return chrome::kChromeUIBookmarksHost;
+}
+
+void BookmarksUIHTMLSource::StartDataRequest(
+    const std::string& path,
+    bool is_incognito,
+    const content::URLDataSource::GotDataCallback& callback) {
   NOTREACHED() << "We should never get here since the extension should have"
                << "been triggered";
 
-  SendResponse(request_id, NULL);
+  callback.Run(NULL);
 }
 
 std::string BookmarksUIHTMLSource::GetMimeType(const std::string& path) const {
@@ -51,7 +55,7 @@ BookmarksUI::BookmarksUI(content::WebUI* web_ui) : WebUIController(web_ui) {
 
   // Set up the chrome://bookmarks/ source.
   Profile* profile = Profile::FromWebUI(web_ui);
-  ChromeURLDataManager::AddDataSource(profile, html_source);
+  content::URLDataSource::Add(profile, html_source);
 }
 
 // static

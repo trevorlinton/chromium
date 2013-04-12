@@ -7,6 +7,7 @@
 #include "base/bind.h"
 #include "base/message_loop.h"
 #include "base/stringprintf.h"
+#include "media/base/data_buffer.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/mock_filters.h"
 #include "media/base/test_data_util.h"
@@ -94,7 +95,7 @@ class FFmpegAudioDecoderTest : public testing::Test {
   }
 
   void DecodeFinished(AudioDecoder::Status status,
-                      const scoped_refptr<Buffer>& buffer) {
+                      const scoped_refptr<DataBuffer>& buffer) {
     decoded_audio_.push_back(buffer);
   }
 
@@ -107,8 +108,6 @@ class FFmpegAudioDecoderTest : public testing::Test {
 
   void ExpectEndOfStream(size_t i) {
     EXPECT_LT(i, decoded_audio_.size());
-    EXPECT_EQ(0, decoded_audio_[i]->GetTimestamp().InMicroseconds());
-    EXPECT_EQ(0, decoded_audio_[i]->GetDuration().InMicroseconds());
     EXPECT_TRUE(decoded_audio_[i]->IsEndOfStream());
   }
 
@@ -120,7 +119,7 @@ class FFmpegAudioDecoderTest : public testing::Test {
   scoped_refptr<DecoderBuffer> vorbis_extradata_;
 
   std::deque<scoped_refptr<DecoderBuffer> > encoded_audio_;
-  std::deque<scoped_refptr<Buffer> > decoded_audio_;
+  std::deque<scoped_refptr<DataBuffer> > decoded_audio_;
 
   AudioDecoderConfig config_;
 };

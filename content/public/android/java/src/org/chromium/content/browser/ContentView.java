@@ -21,6 +21,9 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.widget.FrameLayout;
 
+import com.google.common.annotations.VisibleForTesting;
+
+import org.chromium.content.common.ProcessInitException;
 import org.chromium.content.common.TraceEvent;
 import org.chromium.ui.gfx.NativeWindow;
 
@@ -38,52 +41,6 @@ public class ContentView extends FrameLayout implements ContentViewCore.Internal
     public static final int PERSONALITY_VIEW = ContentViewCore.PERSONALITY_VIEW;
     // Used for Chrome.
     public static final int PERSONALITY_CHROME = ContentViewCore.PERSONALITY_CHROME;
-
-    /**
-     * Automatically decide the number of renderer processes to use based on device memory class.
-     * */
-    public static final int MAX_RENDERERS_AUTOMATIC = AndroidBrowserProcess.MAX_RENDERERS_AUTOMATIC;
-    /**
-     * Use single-process mode that runs the renderer on a separate thread in the main application.
-     */
-    public static final int MAX_RENDERERS_SINGLE_PROCESS =
-            AndroidBrowserProcess.MAX_RENDERERS_SINGLE_PROCESS;
-    /**
-     * Cap on the maximum number of renderer processes that can be requested.
-     */
-    public static final int MAX_RENDERERS_LIMIT = AndroidBrowserProcess.MAX_RENDERERS_LIMIT;
-
-    /**
-     * Enable multi-process ContentView. This should be called by the application before
-     * constructing any ContentView instances. If enabled, ContentView will run renderers in
-     * separate processes up to the number of processes specified by maxRenderProcesses. If this is
-     * not called then the default is to run the renderer in the main application on a separate
-     * thread.
-     *
-     * @param context Context used to obtain the application context.
-     * @param maxRendererProcesses Limit on the number of renderers to use. Each tab runs in its own
-     * process until the maximum number of processes is reached. The special value of
-     * MAX_RENDERERS_SINGLE_PROCESS requests single-process mode where the renderer will run in the
-     * application process in a separate thread. If the special value MAX_RENDERERS_AUTOMATIC is
-     * used then the number of renderers will be determined based on the device memory class. The
-     * maximum number of allowed renderers is capped by MAX_RENDERERS_LIMIT.
-     * @return Whether the process actually needed to be initialized (false if already running).
-     */
-    public static boolean enableMultiProcess(Context context, int maxRendererProcesses) {
-        return ContentViewCore.enableMultiProcess(context, maxRendererProcesses);
-    }
-
-    /**
-     * Initialize the process as the platform browser. This must be called before accessing
-     * ContentView in order to treat this as a Chromium browser process.
-     *
-     * @param context Context used to obtain the application context.
-     * @param maxRendererProcesses Same as ContentView.enableMultiProcess()
-     * @return Whether the process actually needed to be initialized (false if already running).
-     */
-    public static boolean initChromiumBrowserProcess(Context context, int maxRendererProcesses) {
-        return ContentViewCore.initChromiumBrowserProcess(context, maxRendererProcesses);
-    }
 
     private ContentViewCore mContentViewCore;
 
@@ -163,6 +120,13 @@ public class ContentView extends FrameLayout implements ContentViewCore.Internal
     }
 
     /**
+     * @return The cache of scales and positions used to convert coordinates from/to CSS.
+     */
+    public RenderCoordinates getRenderCoordinates() {
+        return mContentViewCore.getRenderCoordinates();
+    }
+
+    /**
      * Returns true if the given Activity has hardware acceleration enabled
      * in its manifest, or in its foreground window.
      *
@@ -211,7 +175,7 @@ public class ContentView extends FrameLayout implements ContentViewCore.Internal
         mContentViewCore.setContentViewClient(client);
     }
 
-    // @VisibleForTesting
+    @VisibleForTesting
     public ContentViewClient getContentViewClient() {
         return mContentViewCore.getContentViewClient();
     }
@@ -344,18 +308,16 @@ public class ContentView extends FrameLayout implements ContentViewCore.Internal
     /**
      * Start profiling the update speed. You must call {@link #stopFpsProfiling}
      * to stop profiling.
-     *
-     * @VisibleForTesting
      */
+    @VisibleForTesting
     public void startFpsProfiling() {
         // TODO(nileshagrawal): Implement this.
     }
 
     /**
      * Stop profiling the update speed.
-     *
-     * @VisibleForTesting
      */
+    @VisibleForTesting
     public float stopFpsProfiling() {
         // TODO(nileshagrawal): Implement this.
         return 0.0f;
@@ -367,9 +329,8 @@ public class ContentView extends FrameLayout implements ContentViewCore.Internal
      * @param y Fling touch starting position
      * @param velocityX Initial velocity of the fling (X) measured in pixels per second.
      * @param velocityY Initial velocity of the fling (Y) measured in pixels per second.
-     *
-     * @VisibleForTesting
      */
+    @VisibleForTesting
     public void fling(long timeMs, int x, int y, int velocityX, int velocityY) {
         mContentViewCore.getContentViewGestureHandler().fling(timeMs, x, y, velocityX, velocityY);
     }
@@ -380,18 +341,16 @@ public class ContentView extends FrameLayout implements ContentViewCore.Internal
 
     /**
      * Start pinch zoom. You must call {@link #pinchEnd} to stop.
-     *
-     * @VisibleForTesting
      */
+    @VisibleForTesting
     public void pinchBegin(long timeMs, int x, int y) {
         mContentViewCore.getContentViewGestureHandler().pinchBegin(timeMs, x, y);
     }
 
     /**
      * Stop pinch zoom.
-     *
-     * @VisibleForTesting
      */
+    @VisibleForTesting
     public void pinchEnd(long timeMs) {
         mContentViewCore.getContentViewGestureHandler().pinchEnd(timeMs);
     }
@@ -411,26 +370,19 @@ public class ContentView extends FrameLayout implements ContentViewCore.Internal
      *            coordinate.
      * @param anchorY The magnification anchor (Y) in the current view
      *            coordinate.
-     *
-     * @VisibleForTesting
      */
+    @VisibleForTesting
     public void pinchBy(long timeMs, int anchorX, int anchorY, float delta) {
         mContentViewCore.getContentViewGestureHandler().pinchBy(timeMs, anchorX, anchorY, delta);
     }
 
     /**
      * Injects the passed JavaScript code in the current page and evaluates it.
-     * Once evaluated, an asynchronous call to
-     * ContentViewClient.onJavaScriptEvaluationResult is made. Used in automation
-     * tests.
      *
-     * @return an id that is passed along in the asynchronous onJavaScriptEvaluationResult callback
      * @throws IllegalStateException If the ContentView has been destroyed.
-     *
-     * TODO(nileshagrawal): Remove this method from the public interface.
      */
-    public int evaluateJavaScript(String script) throws IllegalStateException {
-        return mContentViewCore.evaluateJavaScript(script);
+    public void evaluateJavaScript(String script) throws IllegalStateException {
+        mContentViewCore.evaluateJavaScript(script, null);
     }
 
     /**
@@ -826,6 +778,13 @@ public class ContentView extends FrameLayout implements ContentViewCore.Internal
      */
     public void stopCurrentAccessibilityNotifications() {
         mContentViewCore.stopCurrentAccessibilityNotifications();
+    }
+
+    /**
+     * Inform WebKit that Fullscreen mode has been exited by the user.
+     */
+    public void exitFullscreen() {
+        mContentViewCore.exitFullscreen();
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////

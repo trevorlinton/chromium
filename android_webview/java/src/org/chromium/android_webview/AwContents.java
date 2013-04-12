@@ -8,41 +8,40 @@ import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Picture;
 import android.graphics.Rect;
 import android.net.http.SslCertificate;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.os.Message;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.webkit.GeolocationPermissions;
 import android.webkit.ValueCallback;
 
 import org.chromium.base.CalledByNative;
 import org.chromium.base.JNINamespace;
 import org.chromium.base.ThreadUtils;
 import org.chromium.content.browser.ContentSettings;
+import org.chromium.content.browser.ContentVideoView;
 import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content.browser.LoadUrlParams;
 import org.chromium.content.browser.NavigationHistory;
 import org.chromium.content.browser.PageTransitionTypes;
 import org.chromium.content.common.CleanupReference;
-import org.chromium.content.components.navigation_interception.InterceptNavigationDelegate;
-import org.chromium.net.X509Util;
+import org.chromium.components.navigation_interception.InterceptNavigationDelegate;
+import org.chromium.components.navigation_interception.NavigationParams;
+import org.chromium.net.GURLUtils;
+import org.chromium.ui.gfx.DeviceDisplayInfo;
 import org.chromium.ui.gfx.NativeWindow;
 
 import java.io.File;
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.security.KeyStoreException;
-import java.security.NoSuchAlgorithmException;
-import java.security.cert.CertificateException;
-import java.security.cert.X509Certificate;
 
 /**
  * Exposes the native AwContents class, and together these classes wrap the ContentViewCore
@@ -75,17 +74,45 @@ public class AwContents {
         public String imgSrc;
     }
 
+    /**
+     * Interface that consumers of {@link AwContents} must implement to allow the proper
+     * dispatching of view methods through the containing view.
+     */
+    public interface InternalAccessDelegate extends ContentViewCore.InternalAccessDelegate {
+        /**
+         * @see View#setMeasuredDimension(int, int)
+         */
+        void setMeasuredDimension(int measuredWidth, int measuredHeight);
+    }
+
+    /**
+     * Listener for renderer state change notifications coming through ContentViewCore.
+     */
+    private class AwContentStateChangeListener
+            implements ContentViewCore.ContentSizeChangeListener {
+        @Override
+        public void onContentSizeChanged(int contentWidthPix, int contentHeightPix) {
+            mLayoutSizer.onContentSizeChanged(contentWidthPix, contentHeightPix);
+        }
+    }
+
     private int mNativeAwContents;
+    private AwBrowserContext mBrowserContext;
     private ViewGroup mContainerView;
     private ContentViewCore mContentViewCore;
     private AwContentsClient mContentsClient;
+    private AwContentsClientBridge mContentsClientBridge;
     private AwContentsIoThreadClient mIoThreadClient;
     private InterceptNavigationDelegateImpl mInterceptNavigationDelegate;
-    private ContentViewCore.InternalAccessDelegate mInternalAccessAdapter;
+    private InternalAccessDelegate mInternalAccessAdapter;
+    private final AwLayoutSizer mLayoutSizer;
     // This can be accessed on any thread after construction. See AwContentsIoThreadClient.
     private final AwSettings mSettings;
-    private final ClientCallbackHandler mClientCallbackHandler;
     private boolean mIsPaused;
+    private Bitmap mFavicon;
+    private boolean mHasRequestedVisitedHistoryFromClient;
+    // TODO(boliu): This should be in a global context, not per webview.
+    private final double mDIPScale;
 
     // Must call nativeUpdateLastHitTestData first to update this before use.
     private final HitTestData mPossiblyStaleHitTestData;
@@ -103,64 +130,6 @@ public class AwContents {
 
     private CleanupReference mCleanupReference;
 
-    private static class DownloadInfo {
-        final String mUrl;
-        final String mUserAgent;
-        final String mContentDisposition;
-        final String mMimeType;
-        final long mContentLength;
-
-        DownloadInfo(String url,
-                     String userAgent,
-                     String contentDisposition,
-                     String mimeType,
-                     long contentLength) {
-            mUrl = url;
-            mUserAgent = userAgent;
-            mContentDisposition = contentDisposition;
-            mMimeType = mimeType;
-            mContentLength = contentLength;
-        }
-    }
-
-    // This class is responsible for calling certain client callbacks on the UI thread. Most
-    // callbacks do no go through here, but get forwarded to AwContentsClient directly.
-    // The messages processed here may originate from the IO or UI thread.
-    // TODO(mkosiba): merge the handler in AwContentsClient.WebContentsDelegateAdapter into this.
-    private class ClientCallbackHandler extends Handler {
-        public static final int MSG_ON_LOAD_RESOURCE = 1;
-        public static final int MSG_ON_PAGE_STARTED = 2;
-        public static final int MSG_ON_DOWNLOAD_START = 3;
-
-        @Override
-        public void handleMessage(Message msg) {
-            switch(msg.what) {
-                case MSG_ON_LOAD_RESOURCE: {
-                    final String url = (String) msg.obj;
-                    AwContents.this.mContentsClient.onLoadResource(url);
-                    break;
-                }
-                case MSG_ON_PAGE_STARTED: {
-                    final String url = (String) msg.obj;
-                    AwContents.this.mContentsClient.onPageStarted(url);
-                    break;
-                }
-                case MSG_ON_DOWNLOAD_START: {
-                    DownloadInfo info = (DownloadInfo)msg.obj;
-                    AwContents.this.mContentsClient.onDownloadStart(info.mUrl,
-                                                                    info.mUserAgent,
-                                                                    info.mContentDisposition,
-                                                                    info.mMimeType,
-                                                                    info.mContentLength);
-                    break;
-                }
-                default:
-                    throw new IllegalStateException(
-                            "IoThreadClientHandler: unhandled message " + msg.what);
-            }
-        }
-    }
-
     private class IoThreadClientImpl implements AwContentsIoThreadClient {
         // All methods are called on the IO thread.
 
@@ -174,10 +143,7 @@ public class AwContents {
             InterceptedRequestData interceptedRequestData =
                 AwContents.this.mContentsClient.shouldInterceptRequest(url);
             if (interceptedRequestData == null) {
-                mClientCallbackHandler.sendMessage(
-                        mClientCallbackHandler.obtainMessage(
-                            ClientCallbackHandler.MSG_ON_LOAD_RESOURCE,
-                            url));
+                mContentsClient.getCallbackHelper().postOnLoadResource(url);
             }
             return interceptedRequestData;
         }
@@ -203,15 +169,13 @@ public class AwContents {
                                     String contentDisposition,
                                     String mimeType,
                                     long contentLength) {
-            DownloadInfo info = new DownloadInfo(url,
-                                                 userAgent,
-                                                 contentDisposition,
-                                                 mimeType,
-                                                 contentLength);
-            mClientCallbackHandler.sendMessage(
-                    mClientCallbackHandler.obtainMessage(
-                          ClientCallbackHandler.MSG_ON_DOWNLOAD_START,
-                          info));
+            mContentsClient.getCallbackHelper().postOnDownloadStart(url, userAgent,
+                    contentDisposition, mimeType, contentLength);
+        }
+
+        @Override
+        public void newLoginRequest(String realm, String account, String args) {
+            mContentsClient.getCallbackHelper().postOnReceivedLoginRequest(realm, account, args);
         }
     }
 
@@ -223,8 +187,8 @@ public class AwContents {
         }
 
         @Override
-        public boolean shouldIgnoreNavigation(String url, boolean isPost, boolean hasUserGesture,
-                                              int pageTransition) {
+        public boolean shouldIgnoreNavigation(NavigationParams navigationParams) {
+            final String url = navigationParams.url;
             boolean ignoreNavigation = false;
             if (mLastLoadUrlAddress != null && mLastLoadUrlAddress.equals(url)) {
                 // Support the case where the user clicks on a link that takes them back to the
@@ -235,7 +199,7 @@ public class AwContents {
                 // do not offer it to AwContentsClient.shouldIgnoreNavigation.
                 // The embedder is also not allowed to intercept POST requests because of
                 // crbug.com/155250.
-            } else if (!isPost) {
+            } else if (!navigationParams.isPost) {
                 ignoreNavigation = AwContents.this.mContentsClient.shouldIgnoreNavigation(url);
             }
 
@@ -252,54 +216,79 @@ public class AwContents {
                 // The shouldIgnoreNavigation call might have resulted in posting messages to the
                 // UI thread. Using sendMessage here (instead of calling onPageStarted directly)
                 // will allow those to run.
-                mClientCallbackHandler.sendMessage(
-                        mClientCallbackHandler.obtainMessage(
-                            ClientCallbackHandler.MSG_ON_PAGE_STARTED,
-                            url));
+                mContentsClient.getCallbackHelper().postOnPageStarted(url);
             }
 
             return ignoreNavigation;
         }
     }
 
+    private class AwLayoutSizerDelegate implements AwLayoutSizer.Delegate {
+        @Override
+        public void requestLayout() {
+            mContainerView.requestLayout();
+        }
+
+        @Override
+        public void setMeasuredDimension(int measuredWidth, int measuredHeight) {
+            mInternalAccessAdapter.setMeasuredDimension(measuredWidth, measuredHeight);
+        }
+    }
+
+    // TODO(joth): Delete this when all callers pass browserContext
+    public AwContents(ViewGroup containerView, InternalAccessDelegate internalAccessAdapter,
+            AwContentsClient contentsClient, boolean isAccessFromFileURLsGrantedByDefault) {
+        this(AwBrowserProcess.getDefaultBrowserContext(), containerView, internalAccessAdapter,
+                contentsClient, isAccessFromFileURLsGrantedByDefault);
+    }
+
     /**
+     * @param browserContext the browsing context to associate this view contents with.
      * @param containerView the view-hierarchy item this object will be bound to.
      * @param internalAccessAdapter to access private methods on containerView.
      * @param contentsClient will receive API callbacks from this WebView Contents
-     * @param privateBrowsing whether this is a private browsing instance of WebView.
      * @param isAccessFromFileURLsGrantedByDefault passed to ContentViewCore.initialize.
-     * TODO(benm): Remove the nativeWindow parameter.
      */
-    public AwContents(ViewGroup containerView,
-            ContentViewCore.InternalAccessDelegate internalAccessAdapter,
-            AwContentsClient contentsClient,
-            NativeWindow nativeWindow, boolean privateBrowsing,
+    public AwContents(AwBrowserContext browserContext, ViewGroup containerView,
+            InternalAccessDelegate internalAccessAdapter, AwContentsClient contentsClient,
             boolean isAccessFromFileURLsGrantedByDefault) {
+        mBrowserContext = browserContext;
         mContainerView = containerView;
         mInternalAccessAdapter = internalAccessAdapter;
         // Note that ContentViewCore must be set up before AwContents, as ContentViewCore
         // setup performs process initialisation work needed by AwContents.
         mContentViewCore = new ContentViewCore(containerView.getContext(),
                 ContentViewCore.PERSONALITY_VIEW);
-        mNativeAwContents = nativeInit(contentsClient.getWebContentsDelegate(), privateBrowsing);
+        mContentsClientBridge = new AwContentsClientBridge(contentsClient);
+        mNativeAwContents = nativeInit(contentsClient.getWebContentsDelegate(),
+                mContentsClientBridge);
         mContentsClient = contentsClient;
         mCleanupReference = new CleanupReference(this, new DestroyRunnable(mNativeAwContents));
-        mClientCallbackHandler = new ClientCallbackHandler();
 
+        int nativeWebContents = nativeGetWebContents(mNativeAwContents);
         mContentViewCore.initialize(containerView, internalAccessAdapter,
-                nativeGetWebContents(mNativeAwContents),
+                nativeWebContents,
                 new AwNativeWindow(mContainerView.getContext()),
                 isAccessFromFileURLsGrantedByDefault);
         mContentViewCore.setContentViewClient(mContentsClient);
+        mLayoutSizer = new AwLayoutSizer(new AwLayoutSizerDelegate());
+        mContentViewCore.setContentSizeChangeListener(new AwContentStateChangeListener());
         mContentsClient.installWebContentsObserver(mContentViewCore);
 
-        mSettings = new AwSettings(mContentViewCore.getContext());
+        mSettings = new AwSettings(mContentViewCore.getContext(), nativeWebContents);
         setIoThreadClient(new IoThreadClientImpl());
         setInterceptNavigationDelegate(new InterceptNavigationDelegateImpl());
 
         mPossiblyStaleHitTestData = new HitTestData();
         nativeDidInitializeContentViewCore(mNativeAwContents,
                 mContentViewCore.getNativeContentViewCore());
+
+        mDIPScale = DeviceDisplayInfo.create(containerView.getContext()).getDIPScale();
+        mContentsClient.setDIPScale(mDIPScale);
+        mSettings.setDIPScale(mDIPScale);
+
+        ContentVideoView.registerContentVideoViewContextDelegate(
+                new AwContentVideoViewDelegate(contentsClient, containerView.getContext()));
     }
 
     public ContentViewCore getContentViewCore() {
@@ -323,6 +312,8 @@ public class AwContents {
 
     public void destroy() {
         mContentViewCore.destroy();
+        // The native part of AwSettings isn't needed for the IoThreadClient instance.
+        mSettings.destroy();
         // We explicitly do not null out the mContentViewCore reference here
         // because ContentViewCore already has code to deal with the case
         // methods are called on it after it's been destroyed, and other
@@ -341,11 +332,12 @@ public class AwContents {
 
     public int getAwDrawGLViewContext() {
         // Using the native pointer as the returned viewContext. This is matched by the
-        // reinterpret_cast back to AwContents pointer in the native DrawGLFunction.
-        return mNativeAwContents;
+        // reinterpret_cast back to BrowserViewRenderer pointer in the native DrawGLFunction.
+        return nativeGetAwDrawGLViewContext(mNativeAwContents);
     }
 
     public boolean onPrepareDrawGL(Canvas canvas) {
+        if (mNativeAwContents == 0) return false;
         nativeSetScrollForHWFrame(mNativeAwContents,
                 mContainerView.getScrollX(), mContainerView.getScrollY());
 
@@ -354,11 +346,39 @@ public class AwContents {
     }
 
     public void onDraw(Canvas canvas) {
-        if (!nativeDrawSW(mNativeAwContents, canvas)) {
+        if (mNativeAwContents == 0) return;
+        Rect clip = canvas.getClipBounds();
+        if (!nativeDrawSW(mNativeAwContents, canvas, clip.left, clip.top,
+                clip.right - clip.left, clip.bottom - clip.top)) {
             Log.w(TAG, "Native DrawSW failed; clearing to background color.");
             int c = mContentViewCore.getBackgroundColor();
             canvas.drawRGB(Color.red(c), Color.green(c), Color.blue(c));
         }
+    }
+
+    public void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        mLayoutSizer.onMeasure(widthMeasureSpec, heightMeasureSpec);
+    }
+
+    public int getContentHeightCss() {
+        return (int) Math.ceil(getContentViewCore().getContentHeightCss());
+    }
+
+    public int getContentWidthCss() {
+        return (int) Math.ceil(getContentViewCore().getContentWidthCss());
+    }
+
+    public Picture capturePicture() {
+        return nativeCapturePicture(mNativeAwContents);
+    }
+
+    /**
+     * Enable the OnNewPicture callback.
+     * @param enabled Flag to enable the callback.
+     * @param invalidationOnly Flag to call back only on invalidation without providing a picture.
+     */
+    public void enableOnNewPicture(boolean enabled, boolean invalidationOnly) {
+        nativeEnableOnNewPicture(mNativeAwContents, enabled, invalidationOnly);
     }
 
     public int findAllSync(String searchString) {
@@ -390,8 +410,23 @@ public class AwContents {
     }
 
     public Bitmap getFavicon() {
-        // To be implemented.
-        return null;
+        return mFavicon;
+    }
+
+    private void requestVisitedHistoryFromClient() {
+        ValueCallback<String[]> callback = new ValueCallback<String[]>() {
+            @Override
+            public void onReceiveValue(final String[] value) {
+                ThreadUtils.runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (mNativeAwContents == 0) return;
+                        nativeAddVisitedLinks(mNativeAwContents, value);
+                    }
+                });
+            }
+        };
+        mContentsClient.getVisitedHistory(callback);
     }
 
     /**
@@ -423,6 +458,14 @@ public class AwContents {
             // getUrl returns a sanitized address in the same format that will be used for
             // callbacks, so it's safe to use string comparison as an equality check later on.
             mInterceptNavigationDelegate.onUrlLoadRequested(mContentViewCore.getUrl());
+        }
+
+        // The behavior of WebViewClassic uses the populateVisitedLinks callback in WebKit.
+        // Chromium does not use this use code path and the best emulation of this behavior to call
+        // request visited links once on the first URL load of the WebView.
+        if (!mHasRequestedVisitedHistoryFromClient) {
+          mHasRequestedVisitedHistoryFromClient = true;
+          requestVisitedHistoryFromClient();
         }
     }
 
@@ -461,6 +504,8 @@ public class AwContents {
         nativeSetWebContents(mNativeAwContents, newWebContentsPtr);
         nativeSetIoThreadClient(mNativeAwContents, mIoThreadClient);
         nativeSetInterceptNavigationDelegate(mNativeAwContents, mInterceptNavigationDelegate);
+
+        mSettings.setWebContents(newWebContentsPtr);
 
         // Finally poke the new ContentViewCore with the size of the container view and show it.
         if (mContainerView.getWidth() != 0 || mContainerView.getHeight() != 0) {
@@ -585,29 +630,7 @@ public class AwContents {
      */
     public SslCertificate getCertificate() {
         if (mNativeAwContents == 0) return null;
-        byte[] derBytes = nativeGetCertificate(mNativeAwContents);
-        if (derBytes == null) {
-            return null;
-        }
-
-        try {
-            X509Certificate x509Certificate =
-                    X509Util.createCertificateFromBytes(derBytes);
-            return new SslCertificate(x509Certificate);
-        } catch (CertificateException e) {
-            // Intentional fall through
-            // A SSL related exception must have occured.  This shouldn't happen.
-            Log.w(TAG, "Could not read certificate: " + e);
-        } catch (KeyStoreException e) {
-            // Intentional fall through
-            // A SSL related exception must have occured.  This shouldn't happen.
-            Log.w(TAG, "Could not read certificate: " + e);
-        } catch (NoSuchAlgorithmException e) {
-            // Intentional fall through
-            // A SSL related exception must have occured.  This shouldn't happen.
-            Log.w(TAG, "Could not read certificate: " + e);
-        }
-        return null;
+        return SslUtil.getCertificateFromDerBytes(nativeGetCertificate(mNativeAwContents));
     }
 
     /**
@@ -650,6 +673,16 @@ public class AwContents {
         msg.sendToTarget();
     }
 
+    /**
+     * @see android.webkit.WebView#getScale()
+     *
+     * Please note that the scale returned is the page scale multiplied by
+     * the screen density factor. See CTS WebViewTest.testSetInitialScale.
+     */
+    public float getScale() {
+        return (float)(getContentViewCore().getScale() * mDIPScale);
+    }
+
     //--------------------------------------------------------------------------------------------
     //  View and ViewGroup method implementations
     //--------------------------------------------------------------------------------------------
@@ -666,8 +699,8 @@ public class AwContents {
 
             // Note this will trigger IPC back to browser even if nothing is hit.
             nativeRequestNewHitTestDataAt(mNativeAwContents,
-                                          Math.round(event.getX(actionIndex)),
-                                          Math.round(event.getY(actionIndex)));
+                                          (int)Math.round(event.getX(actionIndex) / mDIPScale),
+                                          (int)Math.round(event.getY(actionIndex) / mDIPScale));
         }
 
         return rv;
@@ -735,6 +768,8 @@ public class AwContents {
      */
     public void onSizeChanged(int w, int h, int ow, int oh) {
         if (mNativeAwContents == 0) return;
+
+        mContentViewCore.onPhysicalBackingSizeChanged(w, h);
         mContentViewCore.onSizeChanged(w, h, ow, oh);
         nativeOnSizeChanged(mNativeAwContents, w, h, ow, oh);
     }
@@ -818,6 +853,17 @@ public class AwContents {
         message.sendToTarget();
     }
 
+    @CalledByNative
+    private void onReceivedTouchIconUrl(String url, boolean precomposed) {
+        mContentsClient.onReceivedTouchIconUrl(url, precomposed);
+    }
+
+    @CalledByNative
+    private void onReceivedIcon(Bitmap bitmap) {
+        mContentsClient.onReceivedIcon(bitmap);
+        mFavicon = bitmap;
+    }
+
     /** Callback for generateMHTML. */
     @CalledByNative
     private static void generateMHTMLCallback(
@@ -831,10 +877,63 @@ public class AwContents {
         mContentsClient.onReceivedHttpAuthRequest(handler, host, realm);
     }
 
+    private class AwGeolocationCallback implements GeolocationPermissions.Callback {
+        private final AwGeolocationPermissions mGeolocationPermissions;
+
+        private AwGeolocationCallback(AwGeolocationPermissions geolocationPermissions) {
+            mGeolocationPermissions = geolocationPermissions;
+        }
+
+        @Override
+        public void invoke(final String origin, final boolean allow, final boolean retain) {
+            ThreadUtils.runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (retain) {
+                        if (allow) {
+                            mGeolocationPermissions.allow(origin);
+                        } else {
+                            mGeolocationPermissions.deny(origin);
+                        }
+                    }
+                    nativeInvokeGeolocationCallback(mNativeAwContents, allow, origin);
+                }
+            });
+        }
+    }
+
+    @CalledByNative
+    private void onGeolocationPermissionsShowPrompt(String origin) {
+        AwGeolocationPermissions permissions = AwGeolocationPermissions.getInstance();
+        // Reject if geoloaction is disabled, or the origin has a retained deny
+        if (!mSettings.getGeolocationEnabled()) {
+            nativeInvokeGeolocationCallback(mNativeAwContents, false, origin);
+            return;
+        }
+        // Allow if the origin has a retained allow
+        if (permissions.hasOrigin(origin)) {
+            nativeInvokeGeolocationCallback(mNativeAwContents, permissions.isOriginAllowed(origin),
+                    origin);
+            return;
+        }
+        mContentsClient.onGeolocationPermissionsShowPrompt(
+                origin, new AwGeolocationCallback(permissions));
+    }
+
+    @CalledByNative
+    private void onGeolocationPermissionsHidePrompt() {
+        mContentsClient.onGeolocationPermissionsHidePrompt();
+    }
+
     @CalledByNative
     public void onFindResultReceived(int activeMatchOrdinal, int numberOfMatches,
             boolean isDoneCounting) {
         mContentsClient.onFindResultReceived(activeMatchOrdinal, numberOfMatches, isDoneCounting);
+    }
+
+    @CalledByNative
+    public void onNewPicture(Picture picture) {
+        mContentsClient.onNewPicture(picture);
     }
 
     // Called as a result of nativeUpdateLastHitTestData.
@@ -935,7 +1034,7 @@ public class AwContents {
     //--------------------------------------------------------------------------------------------
 
     private native int nativeInit(AwWebContentsDelegate webViewWebContentsDelegate,
-            boolean privateBrowsing);
+            AwContentsClientBridge contentsClientBridge);
     private static native void nativeDestroy(int nativeAwContents);
     private static native void nativeSetAwDrawSWFunctionTable(int functionTablePointer);
     private static native int nativeGetAwDrawGLFunction();
@@ -953,7 +1052,8 @@ public class AwContents {
     private native void nativeSetInterceptNavigationDelegate(int nativeAwContents,
             InterceptNavigationDelegate navigationInterceptionDelegate);
 
-    private native boolean nativeDrawSW(int nativeAwContents, Canvas canvas);
+    private native void nativeAddVisitedLinks(int nativeAwContents, String[] visitedLinks);
+
     private native void nativeSetScrollForHWFrame(int nativeAwContents, int scrollX, int scrollY);
     private native int nativeFindAllSync(int nativeAwContents, String searchString);
     private native void nativeFindAllAsync(int nativeAwContents, String searchString);
@@ -961,8 +1061,11 @@ public class AwContents {
     private native void nativeClearMatches(int nativeAwContents);
     private native void nativeClearCache(int nativeAwContents, boolean includeDiskFiles);
     private native byte[] nativeGetCertificate(int nativeAwContents);
+
+    // Coordinates in desity independent pixels.
     private native void nativeRequestNewHitTestDataAt(int nativeAwContents, int x, int y);
     private native void nativeUpdateLastHitTestData(int nativeAwContents);
+
     private native void nativeOnSizeChanged(int nativeAwContents, int w, int h, int ow, int oh);
     private native void nativeSetWindowViewVisibility(int nativeAwContents, boolean windowVisible,
             boolean viewVisible);
@@ -978,4 +1081,14 @@ public class AwContents {
     private native int nativeReleasePopupWebContents(int nativeAwContents);
     private native void nativeSetWebContents(int nativeAwContents, int nativeNewWebContents);
     private native void nativeFocusFirstNode(int nativeAwContents);
+
+    private native boolean nativeDrawSW(int nativeAwContents, Canvas canvas, int clipX, int clipY,
+            int clipW, int clipH);
+    private native int nativeGetAwDrawGLViewContext(int nativeAwContents);
+    private native Picture nativeCapturePicture(int nativeAwContents);
+    private native void nativeEnableOnNewPicture(int nativeAwContents, boolean enabled,
+            boolean invalidationOnly);
+
+    private native void nativeInvokeGeolocationCallback(
+            int nativeAwContents, boolean value, String requestingFrame);
 }

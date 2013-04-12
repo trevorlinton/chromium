@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/command_line.h"
 #include "base/message_loop.h"
 #include "base/stl_util.h"
 #include "base/threading/thread.h"
@@ -15,13 +16,15 @@
 #include "content/public/browser/download_id.h"
 #include "content/public/browser/download_destination_observer.h"
 #include "content/public/browser/download_interrupt_reasons.h"
+#include "content/public/browser/download_url_parameters.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/test/mock_download_item.h"
 #include "content/public/test/test_browser_thread.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using ::testing::_;
-using ::testing::AllOf;
+using ::testing::NiceMock;
 using ::testing::Property;
 using ::testing::Return;
 using ::testing::SaveArg;
@@ -32,7 +35,7 @@ namespace {
 const int kDownloadChunkSize = 1000;
 const int kDownloadSpeed = 1000;
 const int kDummyDBHandle = 10;
-const FilePath::CharType kDummyPath[] = FILE_PATH_LITERAL("/testpath");
+const base::FilePath::CharType kDummyPath[] = FILE_PATH_LITERAL("/testpath");
 
 } // namespace
 
@@ -44,18 +47,47 @@ DownloadId::Domain kValidDownloadItemIdDomain = "valid DownloadId::Domain";
 
 class MockDelegate : public DownloadItemImplDelegate {
  public:
+  MockDelegate() : DownloadItemImplDelegate() {
+    SetDefaultExpectations();
+  }
+
   MOCK_METHOD2(DetermineDownloadTarget, void(
       DownloadItemImpl*, const DownloadTargetCallback&));
+  MOCK_METHOD2(ShouldCompleteDownload,
+               bool(DownloadItemImpl*, const base::Closure&));
   MOCK_METHOD2(ShouldOpenDownload,
                bool(DownloadItemImpl*, const ShouldOpenDownloadCallback&));
-  MOCK_METHOD1(ShouldOpenFileBasedOnExtension, bool(const FilePath&));
+  MOCK_METHOD1(ShouldOpenFileBasedOnExtension, bool(const base::FilePath&));
   MOCK_METHOD1(CheckForFileRemoval, void(DownloadItemImpl*));
+
+  virtual void ResumeInterruptedDownload(
+      scoped_ptr<DownloadUrlParameters> params, DownloadId id) OVERRIDE {
+    MockResumeInterruptedDownload(params.get(), id);
+  }
+  MOCK_METHOD2(MockResumeInterruptedDownload,
+               void(DownloadUrlParameters* params, DownloadId id));
+
   MOCK_CONST_METHOD0(GetBrowserContext, BrowserContext*());
   MOCK_METHOD1(UpdatePersistence, void(DownloadItemImpl*));
   MOCK_METHOD1(DownloadOpened, void(DownloadItemImpl*));
   MOCK_METHOD1(DownloadRemoved, void(DownloadItemImpl*));
   MOCK_METHOD1(ShowDownloadInBrowser, void(DownloadItemImpl*));
   MOCK_CONST_METHOD1(AssertStateConsistent, void(DownloadItemImpl*));
+
+  void VerifyAndClearExpectations() {
+    ::testing::Mock::VerifyAndClearExpectations(this);
+    SetDefaultExpectations();
+  }
+
+ private:
+  void SetDefaultExpectations() {
+    EXPECT_CALL(*this, AssertStateConsistent(_))
+        .WillRepeatedly(Return());
+    EXPECT_CALL(*this, ShouldOpenFileBasedOnExtension(_))
+        .WillRepeatedly(Return(false));
+    EXPECT_CALL(*this, ShouldOpenDownload(_, _))
+        .WillRepeatedly(Return(true));
+  }
 };
 
 class MockRequestHandle : public DownloadRequestHandleInterface {
@@ -88,9 +120,12 @@ class DownloadItemTest : public testing::Test {
    public:
     explicit MockObserver(DownloadItem* item)
       : item_(item),
+        last_state_(item->GetState()),
         removed_(false),
         destroyed_(false),
-        updated_(false) {
+        updated_(false),
+        interrupt_count_(0),
+        resume_count_(0) {
       item_->AddObserver(this);
     }
 
@@ -98,18 +133,36 @@ class DownloadItemTest : public testing::Test {
       if (item_) item_->RemoveObserver(this);
     }
 
-    virtual void OnDownloadRemoved(DownloadItem* download) {
+    virtual void OnDownloadRemoved(DownloadItem* download) OVERRIDE {
+      DVLOG(20) << " " << __FUNCTION__
+                << " download = " << download->DebugString(false);
       removed_ = true;
     }
 
-    virtual void OnDownloadUpdated(DownloadItem* download) {
+    virtual void OnDownloadUpdated(DownloadItem* download) OVERRIDE {
+      DVLOG(20) << " " << __FUNCTION__
+                << " download = " << download->DebugString(false);
       updated_ = true;
+      DownloadItem::DownloadState new_state = download->GetState();
+      if (last_state_ == DownloadItem::IN_PROGRESS &&
+          new_state == DownloadItem::INTERRUPTED) {
+        interrupt_count_++;
+      }
+      if (last_state_ == DownloadItem::INTERRUPTED &&
+          new_state == DownloadItem::IN_PROGRESS) {
+        resume_count_++;
+      }
+      last_state_ = new_state;
     }
 
-    virtual void OnDownloadOpened(DownloadItem* download) {
+    virtual void OnDownloadOpened(DownloadItem* download) OVERRIDE {
+      DVLOG(20) << " " << __FUNCTION__
+                << " download = " << download->DebugString(false);
     }
 
-    virtual void OnDownloadDestroyed(DownloadItem* download) {
+    virtual void OnDownloadDestroyed(DownloadItem* download) OVERRIDE {
+      DVLOG(20) << " " << __FUNCTION__
+                << " download = " << download->DebugString(false);
       destroyed_ = true;
       item_->RemoveObserver(this);
       item_ = NULL;
@@ -129,11 +182,22 @@ class DownloadItemTest : public testing::Test {
       return was_updated;
     }
 
+    int GetInterruptCount() {
+      return interrupt_count_;
+    }
+
+    int GetResumeCount() {
+      return resume_count_;
+    }
+
    private:
     DownloadItem* item_;
+    DownloadItem::DownloadState last_state_;
     bool removed_;
     bool destroyed_;
     bool updated_;
+    int interrupt_count_;
+    int resume_count_;
   };
 
   DownloadItemTest()
@@ -170,11 +234,8 @@ class DownloadItemTest : public testing::Test {
     info_->save_info->prompt_for_save_location = false;
     info_->url_chain.push_back(GURL());
 
-    scoped_ptr<DownloadRequestHandleInterface> request_handle(
-        new testing::NiceMock<MockRequestHandle>);
     DownloadItemImpl* download =
-        new DownloadItemImpl(&delegate_, *(info_.get()),
-                             request_handle.Pass(), net::BoundNetLog());
+        new DownloadItemImpl(&delegate_, *(info_.get()), net::BoundNetLog());
     allocated_downloads_.insert(download);
     return download;
   }
@@ -195,12 +256,20 @@ class DownloadItemTest : public testing::Test {
       EXPECT_CALL(*mock_delegate(), DetermineDownloadTarget(item, _));
     }
 
-    item->Start(download_file.Pass());
+    scoped_ptr<DownloadRequestHandleInterface> request_handle(
+        new NiceMock<MockRequestHandle>);
+    item->Start(download_file.Pass(), request_handle.Pass());
     loop_.RunUntilIdle();
 
     // So that we don't have a function writing to a stack variable
     // lying around if the above failed.
-    ::testing::Mock::VerifyAndClearExpectations(mock_delegate());
+    mock_delegate()->VerifyAndClearExpectations();
+    EXPECT_CALL(*mock_delegate(), AssertStateConsistent(_))
+        .WillRepeatedly(Return());
+    EXPECT_CALL(*mock_delegate(), ShouldOpenFileBasedOnExtension(_))
+        .WillRepeatedly(Return(false));
+    EXPECT_CALL(*mock_delegate(), ShouldOpenDownload(_, _))
+        .WillRepeatedly(Return(true));
 
     return mock_download_file;
   }
@@ -214,11 +283,13 @@ class DownloadItemTest : public testing::Test {
     DownloadItemImplDelegate::DownloadTargetCallback callback;
     MockDownloadFile* download_file =
         AddDownloadFileToDownloadItem(item, &callback);
-    FilePath target_path(kDummyPath);
-    FilePath intermediate_path(target_path.InsertBeforeExtensionASCII("x"));
+    base::FilePath target_path(kDummyPath);
+    base::FilePath intermediate_path(
+        target_path.InsertBeforeExtensionASCII("x"));
     EXPECT_CALL(*download_file, RenameAndUniquify(intermediate_path, _))
         .WillOnce(ScheduleRenameCallback(DOWNLOAD_INTERRUPT_REASON_NONE,
                                          intermediate_path));
+    EXPECT_CALL(*mock_delegate(), ShowDownloadInBrowser(_));
     callback.Run(target_path, DownloadItem::TARGET_DISPOSITION_OVERWRITE,
                  DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS, intermediate_path);
     RunAllPendingInMessageLoops();
@@ -226,13 +297,17 @@ class DownloadItemTest : public testing::Test {
   }
 
   // Cleanup a download item (specifically get rid of the DownloadFile on it).
-  // The item must be in the IN_PROGRESS state.
-  void CleanupItem(DownloadItemImpl* item, MockDownloadFile* download_file) {
-    EXPECT_EQ(DownloadItem::IN_PROGRESS, item->GetState());
+  // The item must be in the expected state.
+  void CleanupItem(DownloadItemImpl* item,
+                   MockDownloadFile* download_file,
+                   DownloadItem::DownloadState expected_state) {
+    EXPECT_EQ(expected_state, item->GetState());
 
-    EXPECT_CALL(*download_file, Cancel());
-    item->Cancel(true);
-    loop_.RunUntilIdle();
+    if (expected_state == DownloadItem::IN_PROGRESS) {
+      EXPECT_CALL(*download_file, Cancel());
+      item->Cancel(true);
+      loop_.RunUntilIdle();
+    }
   }
 
   // Destroy a previously created download item.
@@ -253,7 +328,7 @@ class DownloadItemTest : public testing::Test {
   MessageLoopForUI loop_;
   TestBrowserThread ui_thread_;    // UI thread
   TestBrowserThread file_thread_;  // FILE thread
-  testing::NiceMock<MockDelegate> delegate_;
+  StrictMock<MockDelegate> delegate_;
   std::set<DownloadItem*> allocated_downloads_;
 };
 
@@ -318,8 +393,11 @@ TEST_F(DownloadItemTest, NotificationAfterInterrupted) {
   EXPECT_CALL(*download_file, Cancel());
   MockObserver observer(item);
 
+  EXPECT_CALL(*mock_delegate(), MockResumeInterruptedDownload(_,_))
+      .Times(0);
+
   item->DestinationObserverAsWeakPtr()->DestinationError(
-      DOWNLOAD_INTERRUPT_REASON_NONE);
+      DOWNLOAD_INTERRUPT_REASON_FILE_FAILED);
   ASSERT_TRUE(observer.CheckUpdated());
 }
 
@@ -327,6 +405,7 @@ TEST_F(DownloadItemTest, NotificationAfterDelete) {
   DownloadItemImpl* item = CreateDownloadItem();
   MockDownloadFile* download_file = AddDownloadFileToDownloadItem(item, NULL);
   EXPECT_CALL(*download_file, Cancel());
+  EXPECT_CALL(*mock_delegate(), DownloadRemoved(_));
   MockObserver observer(item);
 
   item->Delete(DownloadItem::DELETE_DUE_TO_BROWSER_SHUTDOWN);
@@ -341,10 +420,97 @@ TEST_F(DownloadItemTest, NotificationAfterDestroyed) {
   ASSERT_TRUE(observer.CheckDestroyed());
 }
 
+TEST_F(DownloadItemTest, ContinueAfterInterrupted) {
+  DownloadItemImpl* item = CreateDownloadItem();
+  MockObserver observer(item);
+  DownloadItemImplDelegate::DownloadTargetCallback callback;
+  MockDownloadFile* download_file = DoIntermediateRename(item);
+
+  // Interrupt the download, using a continuable interrupt.
+  EXPECT_CALL(*download_file, Detach());
+  item->DestinationObserverAsWeakPtr()->DestinationError(
+      DOWNLOAD_INTERRUPT_REASON_FILE_TRANSIENT_ERROR);
+  ASSERT_TRUE(observer.CheckUpdated());
+  // Should attempt to auto-resume.  Because we don't have a mock WebContents,
+  // ResumeInterruptedDownload() will abort early, with another interrupt,
+  // which will be ignored.
+  ASSERT_EQ(1, observer.GetInterruptCount());
+  ASSERT_EQ(0, observer.GetResumeCount());
+  RunAllPendingInMessageLoops();
+
+  CleanupItem(item, download_file, DownloadItem::INTERRUPTED);
+}
+
+// Same as above, but with a non-continuable interrupt.
+TEST_F(DownloadItemTest, RestartAfterInterrupted) {
+  DownloadItemImpl* item = CreateDownloadItem();
+  MockObserver observer(item);
+  DownloadItemImplDelegate::DownloadTargetCallback callback;
+  MockDownloadFile* download_file = DoIntermediateRename(item);
+
+  // Interrupt the download, using a restartable interrupt.
+  EXPECT_CALL(*download_file, Cancel());
+  item->DestinationObserverAsWeakPtr()->DestinationError(
+      DOWNLOAD_INTERRUPT_REASON_FILE_FAILED);
+  ASSERT_TRUE(observer.CheckUpdated());
+  // Should not try to auto-resume.
+  ASSERT_EQ(1, observer.GetInterruptCount());
+  ASSERT_EQ(0, observer.GetResumeCount());
+  RunAllPendingInMessageLoops();
+
+  CleanupItem(item, download_file, DownloadItem::INTERRUPTED);
+}
+
+TEST_F(DownloadItemTest, LimitRestartsAfterInterrupted) {
+  CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kEnableDownloadResumption);
+
+  DownloadItemImpl* item = CreateDownloadItem();
+  base::WeakPtr<DownloadDestinationObserver> as_observer(
+      item->DestinationObserverAsWeakPtr());
+  MockObserver observer(item);
+  MockDownloadFile* mock_download_file(NULL);
+  scoped_ptr<DownloadFile> download_file;
+  MockRequestHandle* mock_request_handle(NULL);
+  scoped_ptr<DownloadRequestHandleInterface> request_handle;
+
+  EXPECT_CALL(*mock_delegate(), DetermineDownloadTarget(item, _))
+      .WillRepeatedly(Return());
+  for (int i = 0; i < (DownloadItemImpl::kMaxAutoResumeAttempts + 1); ++i) {
+    DVLOG(20) << "Loop iteration " << i;
+
+    mock_download_file = new NiceMock<MockDownloadFile>;
+    download_file.reset(mock_download_file);
+    mock_request_handle = new NiceMock<MockRequestHandle>;
+    request_handle.reset(mock_request_handle);
+
+    // It's too complicated to set up a WebContents instance that would cause
+    // the MockDownloadItemDelegate's ResumeInterruptedDownload() function
+    // to be callled, so we simply verify that GetWebContents() is called.
+    if (i < (DownloadItemImpl::kMaxAutoResumeAttempts - 1)) {
+      EXPECT_CALL(*mock_request_handle, GetWebContents())
+          .WillOnce(Return(static_cast<WebContents*>(NULL)));
+    }
+
+    item->Start(download_file.Pass(), request_handle.Pass());
+
+    ASSERT_EQ(i, observer.GetResumeCount());
+
+    // Use a continuable interrupt.
+    item->DestinationObserverAsWeakPtr()->DestinationError(
+        DOWNLOAD_INTERRUPT_REASON_FILE_TRANSIENT_ERROR);
+
+    ASSERT_EQ(i + 1, observer.GetInterruptCount());
+  }
+
+  CleanupItem(item, mock_download_file, DownloadItem::INTERRUPTED);
+}
+
 TEST_F(DownloadItemTest, NotificationAfterRemove) {
   DownloadItemImpl* item = CreateDownloadItem();
   MockDownloadFile* download_file = AddDownloadFileToDownloadItem(item, NULL);
   EXPECT_CALL(*download_file, Cancel());
+  EXPECT_CALL(*mock_delegate(), DownloadRemoved(_));
   MockObserver observer(item);
 
   item->Remove();
@@ -399,12 +565,14 @@ TEST_F(DownloadItemTest, NotificationAfterOnDownloadTargetDetermined) {
   MockDownloadFile* download_file =
       AddDownloadFileToDownloadItem(item, &callback);
   MockObserver observer(item);
-  FilePath target_path(kDummyPath);
-  FilePath intermediate_path(target_path.InsertBeforeExtensionASCII("x"));
-  FilePath new_intermediate_path(target_path.InsertBeforeExtensionASCII("y"));
+  base::FilePath target_path(kDummyPath);
+  base::FilePath intermediate_path(target_path.InsertBeforeExtensionASCII("x"));
+  base::FilePath new_intermediate_path(
+      target_path.InsertBeforeExtensionASCII("y"));
   EXPECT_CALL(*download_file, RenameAndUniquify(intermediate_path, _))
       .WillOnce(ScheduleRenameCallback(DOWNLOAD_INTERRUPT_REASON_NONE,
                                        new_intermediate_path));
+  EXPECT_CALL(*mock_delegate(), ShowDownloadInBrowser(_));
 
   // Currently, a notification would be generated if the danger type is anything
   // other than NOT_DANGEROUS.
@@ -415,12 +583,20 @@ TEST_F(DownloadItemTest, NotificationAfterOnDownloadTargetDetermined) {
   EXPECT_TRUE(observer.CheckUpdated());
   EXPECT_EQ(new_intermediate_path, item->GetFullPath());
 
-  CleanupItem(item, download_file);
+  CleanupItem(item, download_file, DownloadItem::IN_PROGRESS);
 }
 
 TEST_F(DownloadItemTest, NotificationAfterTogglePause) {
   DownloadItemImpl* item = CreateDownloadItem();
   MockObserver observer(item);
+  MockDownloadFile* mock_download_file(new MockDownloadFile);
+  scoped_ptr<DownloadFile> download_file(mock_download_file);
+  scoped_ptr<DownloadRequestHandleInterface> request_handle(
+      new NiceMock<MockRequestHandle>);
+
+  EXPECT_CALL(*mock_download_file, Initialize(_));
+  EXPECT_CALL(*mock_delegate(), DetermineDownloadTarget(_, _));
+  item->Start(download_file.Pass(), request_handle.Pass());
 
   item->Pause();
   ASSERT_TRUE(observer.CheckUpdated());
@@ -429,6 +605,10 @@ TEST_F(DownloadItemTest, NotificationAfterTogglePause) {
 
   item->Resume();
   ASSERT_TRUE(observer.CheckUpdated());
+
+  RunAllPendingInMessageLoops();
+
+  CleanupItem(item, mock_download_file, DownloadItem::IN_PROGRESS);
 }
 
 TEST_F(DownloadItemTest, DisplayName) {
@@ -436,8 +616,8 @@ TEST_F(DownloadItemTest, DisplayName) {
   DownloadItemImplDelegate::DownloadTargetCallback callback;
   MockDownloadFile* download_file =
       AddDownloadFileToDownloadItem(item, &callback);
-  FilePath target_path(FilePath(kDummyPath).AppendASCII("foo.bar"));
-  FilePath intermediate_path(target_path.InsertBeforeExtensionASCII("x"));
+  base::FilePath target_path(base::FilePath(kDummyPath).AppendASCII("foo.bar"));
+  base::FilePath intermediate_path(target_path.InsertBeforeExtensionASCII("x"));
   EXPECT_EQ(FILE_PATH_LITERAL(""),
             item->GetFileNameToReportUser().value());
   EXPECT_CALL(*download_file, RenameAndUniquify(_, _))
@@ -445,13 +625,14 @@ TEST_F(DownloadItemTest, DisplayName) {
                                        intermediate_path));
   callback.Run(target_path, DownloadItem::TARGET_DISPOSITION_OVERWRITE,
                DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS, intermediate_path);
+  EXPECT_CALL(*mock_delegate(), ShowDownloadInBrowser(_));
   RunAllPendingInMessageLoops();
   EXPECT_EQ(FILE_PATH_LITERAL("foo.bar"),
             item->GetFileNameToReportUser().value());
-  item->SetDisplayName(FilePath(FILE_PATH_LITERAL("new.name")));
+  item->SetDisplayName(base::FilePath(FILE_PATH_LITERAL("new.name")));
   EXPECT_EQ(FILE_PATH_LITERAL("new.name"),
             item->GetFileNameToReportUser().value());
-  CleanupItem(item, download_file);
+  CleanupItem(item, download_file, DownloadItem::IN_PROGRESS);
 }
 
 // Test to make sure that Start method calls DF initialize properly.
@@ -460,9 +641,12 @@ TEST_F(DownloadItemTest, Start) {
   scoped_ptr<DownloadFile> download_file(mock_download_file);
   DownloadItemImpl* item = CreateDownloadItem();
   EXPECT_CALL(*mock_download_file, Initialize(_));
-  item->Start(download_file.Pass());
+  scoped_ptr<DownloadRequestHandleInterface> request_handle(
+      new NiceMock<MockRequestHandle>);
+  EXPECT_CALL(*mock_delegate(), DetermineDownloadTarget(item, _));
+  item->Start(download_file.Pass(), request_handle.Pass());
 
-  CleanupItem(item, mock_download_file);
+  CleanupItem(item, mock_download_file, DownloadItem::IN_PROGRESS);
 }
 
 // Test that the delegate is invoked after the download file is renamed.
@@ -471,9 +655,10 @@ TEST_F(DownloadItemTest, CallbackAfterRename) {
   DownloadItemImplDelegate::DownloadTargetCallback callback;
   MockDownloadFile* download_file =
       AddDownloadFileToDownloadItem(item, &callback);
-  FilePath final_path(FilePath(kDummyPath).AppendASCII("foo.bar"));
-  FilePath intermediate_path(final_path.InsertBeforeExtensionASCII("x"));
-  FilePath new_intermediate_path(final_path.InsertBeforeExtensionASCII("y"));
+  base::FilePath final_path(base::FilePath(kDummyPath).AppendASCII("foo.bar"));
+  base::FilePath intermediate_path(final_path.InsertBeforeExtensionASCII("x"));
+  base::FilePath new_intermediate_path(
+      final_path.InsertBeforeExtensionASCII("y"));
   EXPECT_CALL(*download_file, RenameAndUniquify(intermediate_path, _))
       .WillOnce(ScheduleRenameCallback(DOWNLOAD_INTERRUPT_REASON_NONE,
                                        new_intermediate_path));
@@ -485,18 +670,18 @@ TEST_F(DownloadItemTest, CallbackAfterRename) {
   RunAllPendingInMessageLoops();
   // All the callbacks should have happened by now.
   ::testing::Mock::VerifyAndClearExpectations(download_file);
-  ::testing::Mock::VerifyAndClearExpectations(mock_delegate());
+  mock_delegate()->VerifyAndClearExpectations();
 
+  EXPECT_CALL(*mock_delegate(), ShouldCompleteDownload(item, _))
+      .WillOnce(Return(true));
   EXPECT_CALL(*download_file, RenameAndAnnotate(final_path, _))
       .WillOnce(ScheduleRenameCallback(DOWNLOAD_INTERRUPT_REASON_NONE,
                                        final_path));
-  EXPECT_CALL(*mock_delegate(), ShouldOpenDownload(item, _))
-      .WillOnce(Return(true));
   EXPECT_CALL(*download_file, Detach());
   item->DestinationObserverAsWeakPtr()->DestinationCompleted("");
   RunAllPendingInMessageLoops();
   ::testing::Mock::VerifyAndClearExpectations(download_file);
-  ::testing::Mock::VerifyAndClearExpectations(mock_delegate());
+  mock_delegate()->VerifyAndClearExpectations();
 }
 
 // Test that the delegate is invoked after the download file is renamed and the
@@ -506,9 +691,10 @@ TEST_F(DownloadItemTest, CallbackAfterInterruptedRename) {
   DownloadItemImplDelegate::DownloadTargetCallback callback;
   MockDownloadFile* download_file =
       AddDownloadFileToDownloadItem(item, &callback);
-  FilePath final_path(FilePath(kDummyPath).AppendASCII("foo.bar"));
-  FilePath intermediate_path(final_path.InsertBeforeExtensionASCII("x"));
-  FilePath new_intermediate_path(final_path.InsertBeforeExtensionASCII("y"));
+  base::FilePath final_path(base::FilePath(kDummyPath).AppendASCII("foo.bar"));
+  base::FilePath intermediate_path(final_path.InsertBeforeExtensionASCII("x"));
+  base::FilePath new_intermediate_path(
+      final_path.InsertBeforeExtensionASCII("y"));
   EXPECT_CALL(*download_file, RenameAndUniquify(intermediate_path, _))
       .WillOnce(ScheduleRenameCallback(DOWNLOAD_INTERRUPT_REASON_FILE_FAILED,
                                        new_intermediate_path));
@@ -522,7 +708,7 @@ TEST_F(DownloadItemTest, CallbackAfterInterruptedRename) {
   RunAllPendingInMessageLoops();
   // All the callbacks should have happened by now.
   ::testing::Mock::VerifyAndClearExpectations(download_file);
-  ::testing::Mock::VerifyAndClearExpectations(mock_delegate());
+  mock_delegate()->VerifyAndClearExpectations();
 }
 
 TEST_F(DownloadItemTest, Interrupted) {
@@ -539,9 +725,9 @@ TEST_F(DownloadItemTest, Interrupted) {
   EXPECT_EQ(DownloadItem::INTERRUPTED, item->GetState());
   EXPECT_EQ(reason, item->GetLastReason());
 
-  // Cancel should result in no change.
+  // Cancel should kill it.
   item->Cancel(true);
-  EXPECT_EQ(DownloadItem::INTERRUPTED, item->GetState());
+  EXPECT_EQ(DownloadItem::CANCELLED, item->GetState());
   EXPECT_EQ(DOWNLOAD_INTERRUPT_REASON_USER_CANCELED, item->GetLastReason());
 }
 
@@ -606,7 +792,7 @@ TEST_F(DownloadItemTest, DestinationError) {
   EXPECT_CALL(*download_file, Cancel());
   as_observer->DestinationError(
       DOWNLOAD_INTERRUPT_REASON_FILE_ACCESS_DENIED);
-  ::testing::Mock::VerifyAndClearExpectations(mock_delegate());
+  mock_delegate()->VerifyAndClearExpectations();
   EXPECT_TRUE(observer.CheckUpdated());
   EXPECT_EQ(DownloadItem::INTERRUPTED, item->GetState());
   EXPECT_EQ(DOWNLOAD_INTERRUPT_REASON_FILE_ACCESS_DENIED,
@@ -634,7 +820,7 @@ TEST_F(DownloadItemTest, DestinationCompleted) {
   EXPECT_FALSE(item->AllDataSaved());
 
   as_observer->DestinationCompleted("livebeef");
-  ::testing::Mock::VerifyAndClearExpectations(mock_delegate());
+  mock_delegate()->VerifyAndClearExpectations();
   EXPECT_EQ(DownloadItem::IN_PROGRESS, item->GetState());
   EXPECT_TRUE(observer.CheckUpdated());
   EXPECT_EQ("livebeef", item->GetHash());
@@ -655,8 +841,8 @@ TEST_F(DownloadItemTest, EnabledActionsForNormalDownload) {
   // Complete
   EXPECT_CALL(*download_file, RenameAndAnnotate(_, _))
       .WillOnce(ScheduleRenameCallback(DOWNLOAD_INTERRUPT_REASON_NONE,
-                                       FilePath(kDummyPath)));
-  EXPECT_CALL(*mock_delegate(), ShouldOpenDownload(item, _))
+                                       base::FilePath(kDummyPath)));
+  EXPECT_CALL(*mock_delegate(), ShouldCompleteDownload(item, _))
       .WillOnce(Return(true));
   EXPECT_CALL(*download_file, Detach());
   item->DestinationObserverAsWeakPtr()->DestinationCompleted("");
@@ -680,11 +866,11 @@ TEST_F(DownloadItemTest, EnabledActionsForTemporaryDownload) {
   EXPECT_FALSE(item->CanOpenDownload());
 
   // Complete Temporary
+  EXPECT_CALL(*mock_delegate(), ShouldCompleteDownload(item, _))
+      .WillOnce(Return(true));
   EXPECT_CALL(*download_file, RenameAndAnnotate(_, _))
       .WillOnce(ScheduleRenameCallback(DOWNLOAD_INTERRUPT_REASON_NONE,
-                                       FilePath(kDummyPath)));
-  EXPECT_CALL(*mock_delegate(), ShouldOpenDownload(item, _))
-      .WillOnce(Return(true));
+                                       base::FilePath(kDummyPath)));
   EXPECT_CALL(*download_file, Detach());
   item->DestinationObserverAsWeakPtr()->DestinationCompleted("");
   RunAllPendingInMessageLoops();
@@ -720,6 +906,154 @@ TEST_F(DownloadItemTest, EnabledActionsForCancelledDownload) {
   ASSERT_TRUE(item->IsCancelled());
   EXPECT_FALSE(item->CanShowInFolder());
   EXPECT_FALSE(item->CanOpenDownload());
+}
+
+// Test various aspects of the delegate completion blocker.
+
+// Just allowing completion.
+TEST_F(DownloadItemTest, CompleteDelegate_ReturnTrue) {
+  // Test to confirm that if we have a callback that returns true,
+  // we complete immediately.
+  DownloadItemImpl* item = CreateDownloadItem();
+  MockDownloadFile* download_file = DoIntermediateRename(item);
+
+  // Drive the delegate interaction.
+  EXPECT_CALL(*mock_delegate(), ShouldCompleteDownload(item, _))
+      .WillOnce(Return(true));
+  item->DestinationObserverAsWeakPtr()->DestinationCompleted("");
+  EXPECT_EQ(DownloadItem::IN_PROGRESS, item->GetState());
+  EXPECT_FALSE(item->IsDangerous());
+
+  // Make sure the download can complete.
+  EXPECT_CALL(*download_file, RenameAndAnnotate(base::FilePath(kDummyPath), _))
+      .WillOnce(ScheduleRenameCallback(DOWNLOAD_INTERRUPT_REASON_NONE,
+                                       base::FilePath(kDummyPath)));
+  EXPECT_CALL(*mock_delegate(), ShouldOpenDownload(item, _))
+      .WillOnce(Return(true));
+  EXPECT_CALL(*download_file, Detach());
+  RunAllPendingInMessageLoops();
+  EXPECT_EQ(DownloadItem::COMPLETE, item->GetState());
+}
+
+// Just delaying completion.
+TEST_F(DownloadItemTest, CompleteDelegate_BlockOnce) {
+  // Test to confirm that if we have a callback that returns true,
+  // we complete immediately.
+  DownloadItemImpl* item = CreateDownloadItem();
+  MockDownloadFile* download_file = DoIntermediateRename(item);
+
+  // Drive the delegate interaction.
+  base::Closure delegate_callback;
+  base::Closure copy_delegate_callback;
+  EXPECT_CALL(*mock_delegate(), ShouldCompleteDownload(item, _))
+      .WillOnce(DoAll(SaveArg<1>(&delegate_callback),
+                      Return(false)))
+      .WillOnce(Return(true));
+  item->DestinationObserverAsWeakPtr()->DestinationCompleted("");
+  ASSERT_FALSE(delegate_callback.is_null());
+  copy_delegate_callback = delegate_callback;
+  delegate_callback.Reset();
+  EXPECT_EQ(DownloadItem::IN_PROGRESS, item->GetState());
+  copy_delegate_callback.Run();
+  ASSERT_TRUE(delegate_callback.is_null());
+  EXPECT_EQ(DownloadItem::IN_PROGRESS, item->GetState());
+  EXPECT_FALSE(item->IsDangerous());
+
+  // Make sure the download can complete.
+  EXPECT_CALL(*download_file, RenameAndAnnotate(base::FilePath(kDummyPath), _))
+      .WillOnce(ScheduleRenameCallback(DOWNLOAD_INTERRUPT_REASON_NONE,
+                                       base::FilePath(kDummyPath)));
+  EXPECT_CALL(*mock_delegate(), ShouldOpenDownload(item, _))
+      .WillOnce(Return(true));
+  EXPECT_CALL(*download_file, Detach());
+  RunAllPendingInMessageLoops();
+  EXPECT_EQ(DownloadItem::COMPLETE, item->GetState());
+}
+
+// Delay and set danger.
+TEST_F(DownloadItemTest, CompleteDelegate_SetDanger) {
+  // Test to confirm that if we have a callback that returns true,
+  // we complete immediately.
+  DownloadItemImpl* item = CreateDownloadItem();
+  MockDownloadFile* download_file = DoIntermediateRename(item);
+
+  // Drive the delegate interaction.
+  base::Closure delegate_callback;
+  base::Closure copy_delegate_callback;
+  EXPECT_CALL(*mock_delegate(), ShouldCompleteDownload(item, _))
+      .WillOnce(DoAll(SaveArg<1>(&delegate_callback),
+                      Return(false)))
+      .WillOnce(Return(true));
+  item->DestinationObserverAsWeakPtr()->DestinationCompleted("");
+  ASSERT_FALSE(delegate_callback.is_null());
+  copy_delegate_callback = delegate_callback;
+  delegate_callback.Reset();
+  EXPECT_FALSE(item->IsDangerous());
+  item->OnContentCheckCompleted(
+      content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE);
+  EXPECT_EQ(DownloadItem::IN_PROGRESS, item->GetState());
+  copy_delegate_callback.Run();
+  ASSERT_TRUE(delegate_callback.is_null());
+  EXPECT_EQ(DownloadItem::IN_PROGRESS, item->GetState());
+  EXPECT_TRUE(item->IsDangerous());
+
+  // Make sure the download doesn't complete until we've validated it.
+  EXPECT_CALL(*download_file, RenameAndAnnotate(base::FilePath(kDummyPath), _))
+      .WillOnce(ScheduleRenameCallback(DOWNLOAD_INTERRUPT_REASON_NONE,
+                                       base::FilePath(kDummyPath)));
+  EXPECT_CALL(*mock_delegate(), ShouldOpenDownload(item, _))
+      .WillOnce(Return(true));
+  EXPECT_CALL(*download_file, Detach());
+  RunAllPendingInMessageLoops();
+  EXPECT_EQ(DownloadItem::IN_PROGRESS, item->GetState());
+  EXPECT_TRUE(item->IsDangerous());
+
+  item->DangerousDownloadValidated();
+  EXPECT_EQ(DOWNLOAD_DANGER_TYPE_USER_VALIDATED, item->GetDangerType());
+  RunAllPendingInMessageLoops();
+  EXPECT_EQ(DownloadItem::COMPLETE, item->GetState());
+}
+
+// Just delaying completion twice.
+TEST_F(DownloadItemTest, CompleteDelegate_BlockTwice) {
+  // Test to confirm that if we have a callback that returns true,
+  // we complete immediately.
+  DownloadItemImpl* item = CreateDownloadItem();
+  MockDownloadFile* download_file = DoIntermediateRename(item);
+
+  // Drive the delegate interaction.
+  base::Closure delegate_callback;
+  base::Closure copy_delegate_callback;
+  EXPECT_CALL(*mock_delegate(), ShouldCompleteDownload(item, _))
+      .WillOnce(DoAll(SaveArg<1>(&delegate_callback),
+                      Return(false)))
+      .WillOnce(DoAll(SaveArg<1>(&delegate_callback),
+                      Return(false)))
+      .WillOnce(Return(true));
+  item->DestinationObserverAsWeakPtr()->DestinationCompleted("");
+  ASSERT_FALSE(delegate_callback.is_null());
+  copy_delegate_callback = delegate_callback;
+  delegate_callback.Reset();
+  EXPECT_EQ(DownloadItem::IN_PROGRESS, item->GetState());
+  copy_delegate_callback.Run();
+  ASSERT_FALSE(delegate_callback.is_null());
+  copy_delegate_callback = delegate_callback;
+  delegate_callback.Reset();
+  EXPECT_EQ(DownloadItem::IN_PROGRESS, item->GetState());
+  copy_delegate_callback.Run();
+  ASSERT_TRUE(delegate_callback.is_null());
+  EXPECT_EQ(DownloadItem::IN_PROGRESS, item->GetState());
+  EXPECT_FALSE(item->IsDangerous());
+
+  // Make sure the download can complete.
+  EXPECT_CALL(*download_file, RenameAndAnnotate(base::FilePath(kDummyPath), _))
+      .WillOnce(ScheduleRenameCallback(DOWNLOAD_INTERRUPT_REASON_NONE,
+                                       base::FilePath(kDummyPath)));
+  EXPECT_CALL(*mock_delegate(), ShouldOpenDownload(item, _))
+      .WillOnce(Return(true));
+  EXPECT_CALL(*download_file, Detach());
+  RunAllPendingInMessageLoops();
+  EXPECT_EQ(DownloadItem::COMPLETE, item->GetState());
 }
 
 TEST(MockDownloadItem, Compiles) {

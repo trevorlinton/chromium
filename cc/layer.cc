@@ -35,8 +35,6 @@ Layer::Layer()
     , m_scrollable(false)
     , m_shouldScrollOnMainThread(false)
     , m_haveWheelEventHandlers(false)
-    , m_nonFastScrollableRegionChanged(false)
-    , m_touchEventHandlerRegionChanged(false)
     , m_anchorPoint(0.5, 0.5)
     , m_backgroundColor(0)
     , m_opacity(1.0)
@@ -76,8 +74,16 @@ Layer::~Layer()
 
     m_layerAnimationController->removeObserver(this);
 
-    // Remove the parent reference from all children.
+    // Remove the parent reference from all children and dependents.
     removeAllChildren();
+    if (m_maskLayer) {
+        DCHECK_EQ(this, m_maskLayer->parent());
+        m_maskLayer->removeFromParent();
+    }
+    if (m_replicaLayer) {
+        DCHECK_EQ(this, m_replicaLayer->parent());
+        m_replicaLayer->removeFromParent();
+    }
 }
 
 void Layer::setLayerTreeHost(LayerTreeHost* host)
@@ -99,6 +105,9 @@ void Layer::setLayerTreeHost(LayerTreeHost* host)
 
     if (host && m_layerAnimationController->hasAnyAnimation())
         host->setNeedsCommit();
+    if (host && (!m_filters.isEmpty() || !m_backgroundFilters.isEmpty() || m_filter))
+        m_layerTreeHost->setNeedsFilterContext();
+
 }
 
 void Layer::setNeedsCommit()
@@ -129,6 +138,27 @@ bool Layer::blocksPendingCommit() const
     return false;
 }
 
+bool Layer::canClipSelf() const
+{
+    return false;
+}
+
+bool Layer::blocksPendingCommitRecursive() const
+{
+    if (blocksPendingCommit())
+        return true;
+    if (maskLayer() && maskLayer()->blocksPendingCommitRecursive())
+        return true;
+    if (replicaLayer() && replicaLayer()->blocksPendingCommitRecursive())
+        return true;
+    for (size_t i = 0; i < m_children.size(); ++i)
+    {
+        if (m_children[i]->blocksPendingCommitRecursive())
+            return true;
+    }
+    return false;
+}
+
 void Layer::setParent(Layer* layer)
 {
     DCHECK(!layer || !layer->hasAncestor(this));
@@ -136,6 +166,10 @@ void Layer::setParent(Layer* layer)
     setLayerTreeHost(m_parent ? m_parent->layerTreeHost() : 0);
 
     forceAutomaticRasterScaleToBeRecomputed();
+    if (m_maskLayer)
+        m_maskLayer->forceAutomaticRasterScaleToBeRecomputed();
+    if (m_replicaLayer && m_replicaLayer->m_maskLayer)
+        m_replicaLayer->m_maskLayer->forceAutomaticRasterScaleToBeRecomputed();
 }
 
 bool Layer::hasAncestor(Layer* ancestor) const
@@ -149,7 +183,7 @@ bool Layer::hasAncestor(Layer* ancestor) const
 
 void Layer::addChild(scoped_refptr<Layer> child)
 {
-    insertChild(child, numChildren());
+    insertChild(child, m_children.size());
 }
 
 void Layer::insertChild(scoped_refptr<Layer> child, size_t index)
@@ -159,19 +193,31 @@ void Layer::insertChild(scoped_refptr<Layer> child, size_t index)
     child->m_stackingOrderChanged = true;
 
     index = std::min(index, m_children.size());
-    LayerList::iterator iter = m_children.begin();
-    m_children.insert(iter + index, child);
+    m_children.insert(m_children.begin() + index, child);
     setNeedsFullTreeSync();
 }
 
 void Layer::removeFromParent()
 {
     if (m_parent)
-        m_parent->removeChild(this);
+        m_parent->removeChildOrDependent(this);
 }
 
-void Layer::removeChild(Layer* child)
+void Layer::removeChildOrDependent(Layer* child)
 {
+    if (m_maskLayer == child) {
+        m_maskLayer->setParent(NULL);
+        m_maskLayer = NULL;
+        setNeedsFullTreeSync();
+        return;
+    }
+    if (m_replicaLayer == child) {
+        m_replicaLayer->setParent(NULL);
+        m_replicaLayer = NULL;
+        setNeedsFullTreeSync();
+        return;
+    }
+
     for (LayerList::iterator iter = m_children.begin(); iter != m_children.end(); ++iter)
     {
         if (*iter != child)
@@ -208,7 +254,7 @@ void Layer::replaceChild(Layer* reference, scoped_refptr<Layer> newLayer)
 
 int Layer::indexOfChild(const Layer* reference)
 {
-    for (size_t i = 0; i < m_children.size(); i++) {
+    for (size_t i = 0; i < m_children.size(); ++i) {
         if (m_children[i] == reference)
             return i;
     }
@@ -224,17 +270,10 @@ void Layer::setBounds(const gfx::Size& size)
 
     m_bounds = size;
 
-    didUpdateBounds();
-
     if (firstResize)
         setNeedsDisplay();
     else
         setNeedsCommit();
-}
-
-void Layer::didUpdateBounds()
-{
-    m_drawProperties.content_bounds = bounds();
 }
 
 Layer* Layer::rootLayer()
@@ -249,7 +288,7 @@ void Layer::removeAllChildren()
 {
     while (m_children.size()) {
         Layer* layer = m_children[0].get();
-        DCHECK(layer->parent());
+        DCHECK_EQ(this, layer->parent());
         layer->removeFromParent();
     }
 }
@@ -260,9 +299,14 @@ void Layer::setChildren(const LayerList& children)
         return;
 
     removeAllChildren();
-    size_t listSize = children.size();
-    for (size_t i = 0; i < listSize; i++)
+    for (size_t i = 0; i < children.size(); ++i)
         addChild(children[i]);
+}
+
+Layer* Layer::childAt(size_t index)
+{
+  DCHECK_LT(index, m_children.size());
+  return m_children[index].get();
 }
 
 void Layer::setAnchorPoint(const gfx::PointF& anchorPoint)
@@ -291,6 +335,7 @@ void Layer::setBackgroundColor(SkColor backgroundColor)
 
 void Layer::calculateContentsScale(
     float idealContentsScale,
+    bool animatingTransformToScreen,
     float* contentsScaleX,
     float* contentsScaleY,
     gfx::Size* contentBounds)
@@ -312,11 +357,15 @@ void Layer::setMaskLayer(Layer* maskLayer)
 {
     if (m_maskLayer == maskLayer)
         return;
-    if (m_maskLayer)
-        m_maskLayer->setLayerTreeHost(0);
+    if (m_maskLayer) {
+        DCHECK_EQ(this, m_maskLayer->parent());
+        m_maskLayer->removeFromParent();
+    }
     m_maskLayer = maskLayer;
     if (m_maskLayer) {
-        m_maskLayer->setLayerTreeHost(m_layerTreeHost);
+        DCHECK(!m_maskLayer->parent());
+        m_maskLayer->removeFromParent();
+        m_maskLayer->setParent(this);
         m_maskLayer->setIsMask(true);
     }
     setNeedsFullTreeSync();
@@ -326,11 +375,16 @@ void Layer::setReplicaLayer(Layer* layer)
 {
     if (m_replicaLayer == layer)
         return;
-    if (m_replicaLayer)
-        m_replicaLayer->setLayerTreeHost(0);
+    if (m_replicaLayer) {
+        DCHECK_EQ(this, m_replicaLayer->parent());
+        m_replicaLayer->removeFromParent();
+    }
     m_replicaLayer = layer;
-    if (m_replicaLayer)
-        m_replicaLayer->setLayerTreeHost(m_layerTreeHost);
+    if (m_replicaLayer) {
+        DCHECK(!m_replicaLayer->parent());
+        m_replicaLayer->removeFromParent();
+        m_replicaLayer->setParent(this);
+    }
     setNeedsFullTreeSync();
 }
 
@@ -341,8 +395,8 @@ void Layer::setFilters(const WebKit::WebFilterOperations& filters)
     DCHECK(!m_filter);
     m_filters = filters;
     setNeedsCommit();
-    if (!filters.isEmpty())
-        LayerTreeHost::setNeedsFilterContext(true);
+    if (!filters.isEmpty() && m_layerTreeHost)
+        m_layerTreeHost->setNeedsFilterContext();
 }
 
 void Layer::setFilter(const skia::RefPtr<SkImageFilter>& filter)
@@ -352,8 +406,8 @@ void Layer::setFilter(const skia::RefPtr<SkImageFilter>& filter)
     DCHECK(m_filters.isEmpty());
     m_filter = filter;
     setNeedsCommit();
-    if (filter)
-        LayerTreeHost::setNeedsFilterContext(true);
+    if (filter && m_layerTreeHost)
+        m_layerTreeHost->setNeedsFilterContext();
 }
 
 void Layer::setBackgroundFilters(const WebKit::WebFilterOperations& backgroundFilters)
@@ -362,13 +416,8 @@ void Layer::setBackgroundFilters(const WebKit::WebFilterOperations& backgroundFi
         return;
     m_backgroundFilters = backgroundFilters;
     setNeedsCommit();
-    if (!backgroundFilters.isEmpty())
-        LayerTreeHost::setNeedsFilterContext(true);
-}
-
-bool Layer::needsDisplay() const
-{
-    return m_needsDisplay;
+    if (!backgroundFilters.isEmpty() && m_layerTreeHost)
+        m_layerTreeHost->setNeedsFilterContext();
 }
 
 void Layer::setOpacity(float opacity)
@@ -394,7 +443,7 @@ void Layer::setContentsOpaque(bool opaque)
     if (m_contentsOpaque == opaque)
         return;
     m_contentsOpaque = opaque;
-    setNeedsDisplay();
+    setNeedsCommit();
 }
 
 void Layer::setPosition(const gfx::PointF& position)
@@ -438,7 +487,7 @@ void Layer::setScrollOffset(gfx::Vector2d scrollOffset)
     m_scrollOffset = scrollOffset;
     if (m_layerScrollClient)
         m_layerScrollClient->didScroll();
-    setNeedsFullTreeSync();
+    setNeedsCommit();
 }
 
 void Layer::setMaxScrollOffset(gfx::Vector2d maxScrollOffset)
@@ -478,7 +527,6 @@ void Layer::setNonFastScrollableRegion(const Region& region)
     if (m_nonFastScrollableRegion == region)
         return;
     m_nonFastScrollableRegion = region;
-    m_nonFastScrollableRegionChanged = true;
     setNeedsCommit();
 }
 
@@ -487,7 +535,6 @@ void Layer::setTouchEventHandlerRegion(const Region& region)
     if (m_touchEventHandlerRegion == region)
         return;
     m_touchEventHandlerRegion = region;
-    m_touchEventHandlerRegionChanged = true;
 }
 
 void Layer::setDrawCheckerboardForMissingTiles(bool checkerboard)
@@ -534,14 +581,12 @@ void Layer::setIsDrawable(bool isDrawable)
 void Layer::setNeedsDisplayRect(const gfx::RectF& dirtyRect)
 {
     m_updateRect.Union(dirtyRect);
+    m_needsDisplay = true;
 
     // Simply mark the contents as dirty. For non-root layers, the call to
     // setNeedsCommit will schedule a fresh compositing pass.
     // For the root layer, setNeedsCommit has no effect.
-    if (!dirtyRect.IsEmpty())
-        m_needsDisplay = true;
-
-    if (drawsContent())
+    if (drawsContent() && !m_updateRect.IsEmpty())
         setNeedsCommit();
 }
 
@@ -593,19 +638,10 @@ void Layer::pushPropertiesTo(LayerImpl* layer)
     layer->setFilter(filter());
     layer->setBackgroundFilters(backgroundFilters());
     layer->setMasksToBounds(m_masksToBounds);
-    layer->setScrollable(m_scrollable);
     layer->setShouldScrollOnMainThread(m_shouldScrollOnMainThread);
     layer->setHaveWheelEventHandlers(m_haveWheelEventHandlers);
-    // Copying a Region is more expensive than most layer properties, since it involves copying two Vectors that may be
-    // arbitrarily large depending on page content, so we only push the property if it's changed.
-    if (m_nonFastScrollableRegionChanged) {
-        layer->setNonFastScrollableRegion(m_nonFastScrollableRegion);
-        m_nonFastScrollableRegionChanged = false;
-    }
-    if (m_touchEventHandlerRegionChanged) {
-        layer->setTouchEventHandlerRegion(m_touchEventHandlerRegion);
-        m_touchEventHandlerRegionChanged = false;
-    }
+    layer->setNonFastScrollableRegion(m_nonFastScrollableRegion);
+    layer->setTouchEventHandlerRegion(m_touchEventHandlerRegion);
     layer->setContentsOpaque(m_contentsOpaque);
     if (!opacityIsAnimating())
         layer->setOpacity(m_opacity);
@@ -614,11 +650,13 @@ void Layer::pushPropertiesTo(LayerImpl* layer)
     layer->setFixedToContainerLayer(m_fixedToContainerLayer);
     layer->setPreserves3D(preserves3D());
     layer->setUseParentBackfaceVisibility(m_useParentBackfaceVisibility);
-    layer->setScrollOffset(m_scrollOffset);
-    layer->setMaxScrollOffset(m_maxScrollOffset);
     layer->setSublayerTransform(m_sublayerTransform);
     if (!transformIsAnimating())
         layer->setTransform(m_transform);
+
+    layer->setScrollable(m_scrollable);
+    layer->setScrollOffset(m_scrollOffset);
+    layer->setMaxScrollOffset(m_maxScrollOffset);
 
     // If the main thread commits multiple times before the impl thread actually draws, then damage tracking
     // will become incorrect if we simply clobber the updateRect here. The LayerImpl's updateRect needs to
@@ -642,11 +680,6 @@ void Layer::pushPropertiesTo(LayerImpl* layer)
     }
 
     layer->setStackingOrderChanged(m_stackingOrderChanged);
-
-    if (maskLayer())
-        maskLayer()->pushPropertiesTo(layer->maskLayer());
-    if (replicaLayer())
-        replicaLayer()->pushPropertiesTo(layer->replicaLayer());
 
     m_layerAnimationController->pushAnimationUpdatesTo(layer->layerAnimationController());
 
@@ -704,8 +737,10 @@ void Layer::forceAutomaticRasterScaleToBeRecomputed()
 {
     if (!m_automaticallyComputeRasterScale)
         return;
+    if (!m_rasterScale)
+        return;
     m_rasterScale = 0;
-    setNeedsDisplay();
+    setNeedsCommit();
 }
 
 void Layer::setBoundsContainPageScale(bool boundsContainPageScale)

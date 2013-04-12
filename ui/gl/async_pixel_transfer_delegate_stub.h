@@ -36,7 +36,9 @@ class AsyncPixelTransferDelegateStub : public AsyncPixelTransferDelegate {
   virtual ~AsyncPixelTransferDelegateStub();
 
   // implement AsyncPixelTransferDelegate:
-  virtual void AsyncNotifyCompletion(const base::Closure& task) OVERRIDE;
+  virtual void AsyncNotifyCompletion(
+      const AsyncMemoryParams& mem_params,
+      const CompletionCallback& callback) OVERRIDE;
   virtual void AsyncTexImage2D(
       AsyncPixelTransferState* transfer_state,
       const AsyncTexImage2DParams& tex_params,
@@ -45,10 +47,15 @@ class AsyncPixelTransferDelegateStub : public AsyncPixelTransferDelegate {
       AsyncPixelTransferState* transfer_state,
       const AsyncTexSubImage2DParams& tex_params,
       const AsyncMemoryParams& mem_params) OVERRIDE;
+  virtual uint32 GetTextureUploadCount() OVERRIDE;
+  virtual base::TimeDelta GetTotalTextureUploadTime() OVERRIDE;
  private:
   // implement AsyncPixelTransferDelegate:
   virtual AsyncPixelTransferState*
       CreateRawPixelTransferState(GLuint texture_id) OVERRIDE;
+
+  int texture_upload_count_;
+  base::TimeDelta total_texture_upload_time_;
 
   DISALLOW_COPY_AND_ASSIGN(AsyncPixelTransferDelegateStub);
 };

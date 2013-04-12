@@ -63,9 +63,27 @@
         "title": "Notifications",
         "toggleable": true,
         "items": [
-          {
-            "title": "Google Cloud Messaging for Chrome",
-            "fileName": "cloudMessaging.html"
+            {
+            "title": "Cloud Messaging",
+            "toggleable": true,
+            "items": [
+              {
+                "title": "About Cloud Messaging",
+                "fileName": "cloudMessaging.html"
+              },
+              {
+                "title": "Client Reference",
+                "fileName": "pushMessaging.html"
+              },
+              {
+                "title": "Service Reference",
+                "fileName": "gcm_server.html"
+              },
+              {
+                "title": "Terms of Service",
+                "fileName": "gcm_tos.html"
+              }
+            ]
           },
           {
             "title": "Desktop Notifications",
@@ -84,18 +102,17 @@
           {
             "title": "Access Hardware Devices",
             "fileName": "app_hardware.html"
-          },
-          {
-            "title": "Connect Apps with Web Intents",
-            "fileName": "app_intents.html"
           }
         ]
       },
       {
         "title": "MVC Architecture",
-        "fileName": "app_frameworks.html",
         "toggleable": true,
         "items": [
+          {
+            "title": "About MVC Architecture",
+            "fileName": "app_frameworks.html"
+          },
           {
             "title": "Build Apps with AngularJS",
             "fileName": "angular_framework.html"
@@ -127,6 +144,10 @@
       {
         "title": "Chrome JavaScript APIs",
         "fileName": "api_index.html"
+      },
+      {
+        "title": "Webview Tag API",
+        "fileName": "webview_tag.html"
       },
       {
         "title": "Supported Libraries",

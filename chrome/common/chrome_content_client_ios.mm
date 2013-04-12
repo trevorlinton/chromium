@@ -42,10 +42,6 @@ void ChromeContentClient::AddAdditionalSchemes(
   // No additional schemes for iOS.
 }
 
-bool ChromeContentClient::HasWebUIScheme(const GURL& url) const {
-  return url.SchemeIs(chrome::kChromeUIScheme);
-}
-
 bool ChromeContentClient::CanHandleWhileSwappedOut(
     const IPC::Message& msg) {
   NOTIMPLEMENTED();
@@ -73,6 +69,11 @@ base::StringPiece ChromeContentClient::GetDataResource(
     ui::ScaleFactor scale_factor) const {
   return ResourceBundle::GetSharedInstance().GetRawDataResourceForScale(
       resource_id, scale_factor);
+}
+
+base::RefCountedStaticMemory* ChromeContentClient::GetDataResourceBytes(
+    int resource_id) const {
+  return ResourceBundle::GetSharedInstance().LoadDataResourceBytes(resource_id);
 }
 
 gfx::Image& ChromeContentClient::GetNativeImageNamed(int resource_id) const {

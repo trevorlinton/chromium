@@ -7,16 +7,18 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/message_loop.h"
+#include "base/prefs/pref_service.h"
 #include "chrome/browser/policy/cloud_policy_client.h"
 #include "chrome/browser/policy/cloud_policy_refresh_scheduler.h"
 #include "chrome/browser/policy/cloud_policy_service.h"
 #include "chrome/browser/policy/cloud_policy_store.h"
-#include "chrome/browser/prefs/pref_service.h"
 
 namespace policy {
 
-CloudPolicyCore::CloudPolicyCore(CloudPolicyStore* store)
-    : store_(store) {}
+CloudPolicyCore::CloudPolicyCore(const PolicyNamespaceKey& key,
+                                 CloudPolicyStore* store)
+    : policy_ns_key_(key),
+      store_(store) {}
 
 CloudPolicyCore::~CloudPolicyCore() {}
 
@@ -24,7 +26,7 @@ void CloudPolicyCore::Connect(scoped_ptr<CloudPolicyClient> client) {
   CHECK(!client_.get());
   CHECK(client.get());
   client_ = client.Pass();
-  service_.reset(new CloudPolicyService(client_.get(), store_));
+  service_.reset(new CloudPolicyService(policy_ns_key_, client_.get(), store_));
 }
 
 void CloudPolicyCore::Disconnect() {

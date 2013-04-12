@@ -71,6 +71,8 @@ class DeviceLocalAccountPolicyServiceTest
         true);
     device_local_account_policy_.policy_data().set_policy_type(
         dm_protocol::kChromePublicAccountPolicyType);
+    device_local_account_policy_.policy_data().set_settings_entity_id(
+        PolicyBuilder::kFakeUsername);
     device_local_account_policy_.Build();
 
     device_policy_.payload().mutable_device_local_accounts()->add_account()->
@@ -245,6 +247,33 @@ TEST_F(DeviceLocalAccountPolicyServiceTest, DevicePolicyChange) {
   Mock::VerifyAndClearExpectations(&service_observer_);
 }
 
+TEST_F(DeviceLocalAccountPolicyServiceTest, DuplicateAccounts) {
+  InstallDevicePolicy();
+  DeviceLocalAccountPolicyBroker* broker =
+      service_.GetBrokerForAccount(PolicyBuilder::kFakeUsername);
+  ASSERT_TRUE(broker);
+
+  // Add a second entry with a duplicate account name to device policy.
+  device_policy_.payload().mutable_device_local_accounts()->add_account()->
+      set_id(PolicyBuilder::kFakeUsername);
+  device_policy_.Build();
+  device_settings_test_helper_.set_device_local_account_policy_blob(
+      PolicyBuilder::kFakeUsername, device_local_account_policy_.GetBlob());
+  device_settings_test_helper_.set_policy_blob(device_policy_.GetBlob());
+
+  EXPECT_CALL(service_observer_, OnDeviceLocalAccountsChanged());
+  EXPECT_CALL(service_observer_, OnPolicyUpdated(PolicyBuilder::kFakeUsername));
+  device_settings_service_.PropertyChangeComplete(true);
+  FlushDeviceSettings();
+  Mock::VerifyAndClearExpectations(&service_observer_);
+
+  // Make sure the broker is accessible and policy got loaded.
+  broker = service_.GetBrokerForAccount(PolicyBuilder::kFakeUsername);
+  ASSERT_TRUE(broker);
+  EXPECT_EQ(PolicyBuilder::kFakeUsername, broker->account_id());
+  EXPECT_TRUE(broker->core()->store()->policy());
+}
+
 TEST_F(DeviceLocalAccountPolicyServiceTest, FetchPolicy) {
   device_settings_test_helper_.set_device_local_account_policy_blob(
       PolicyBuilder::kFakeUsername, device_local_account_policy_.GetBlob());
@@ -372,7 +401,7 @@ class DeviceLocalAccountPolicyProviderTest
 };
 
 TEST_F(DeviceLocalAccountPolicyProviderTest, Initialization) {
-  EXPECT_FALSE(provider_.IsInitializationComplete());
+  EXPECT_FALSE(provider_.IsInitializationComplete(POLICY_DOMAIN_CHROME));
 
   // Policy change should complete initialization.
   EXPECT_CALL(provider_observer_, OnUpdatePolicy(&provider_)).Times(AtLeast(1));
@@ -382,7 +411,7 @@ TEST_F(DeviceLocalAccountPolicyProviderTest, Initialization) {
   ReloadDeviceSettings();
   Mock::VerifyAndClearExpectations(&provider_observer_);
 
-  EXPECT_TRUE(provider_.IsInitializationComplete());
+  EXPECT_TRUE(provider_.IsInitializationComplete(POLICY_DOMAIN_CHROME));
 
   // The account disappearing should *not* flip the initialization flag back.
   EXPECT_CALL(provider_observer_, OnUpdatePolicy(&provider_))
@@ -393,7 +422,7 @@ TEST_F(DeviceLocalAccountPolicyProviderTest, Initialization) {
   ReloadDeviceSettings();
   Mock::VerifyAndClearExpectations(&provider_observer_);
 
-  EXPECT_TRUE(provider_.IsInitializationComplete());
+  EXPECT_TRUE(provider_.IsInitializationComplete(POLICY_DOMAIN_CHROME));
 }
 
 TEST_F(DeviceLocalAccountPolicyProviderTest, Policy) {
@@ -406,8 +435,8 @@ TEST_F(DeviceLocalAccountPolicyProviderTest, Policy) {
   Mock::VerifyAndClearExpectations(&provider_observer_);
 
   PolicyBundle expected_policy_bundle;
-  expected_policy_bundle.Get(POLICY_DOMAIN_CHROME, "").CopyFrom(
-      expected_policy_map_);
+  expected_policy_bundle.Get(PolicyNamespace(
+      POLICY_DOMAIN_CHROME, std::string())).CopyFrom(expected_policy_map_);
   EXPECT_TRUE(expected_policy_bundle.Equals(provider_.policies()));
 
   // Policy change should be reported.
@@ -424,9 +453,12 @@ TEST_F(DeviceLocalAccountPolicyProviderTest, Policy) {
   FlushDeviceSettings();
   Mock::VerifyAndClearExpectations(&provider_observer_);
 
-  expected_policy_bundle.Get(POLICY_DOMAIN_CHROME, "").Set(
-      key::kDisableSpdy, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-      Value::CreateBooleanValue(false));
+  expected_policy_bundle.Get(
+      PolicyNamespace(POLICY_DOMAIN_CHROME, std::string()))
+      .Set(key::kDisableSpdy,
+           POLICY_LEVEL_MANDATORY,
+           POLICY_SCOPE_USER,
+           Value::CreateBooleanValue(false));
   EXPECT_TRUE(expected_policy_bundle.Equals(provider_.policies()));
 
   // Any values set for the |ShelfAutoHideBehavior|, |ShowLogoutButtonInTray|
@@ -502,7 +534,7 @@ TEST_F(DeviceLocalAccountPolicyProviderTest, RefreshPolicies) {
   ReloadDeviceSettings();
   Mock::VerifyAndClearExpectations(&provider_observer_);
   Mock::VerifyAndClearExpectations(&mock_device_management_service_);
-  EXPECT_TRUE(provider_.IsInitializationComplete());
+  EXPECT_TRUE(provider_.IsInitializationComplete(POLICY_DOMAIN_CHROME));
 
   // When the response comes in, it should propagate and fire the notification.
   EXPECT_CALL(provider_observer_, OnUpdatePolicy(&provider_)).Times(AtLeast(1));

@@ -1,11 +1,11 @@
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
+from perf_tools import smoothness_measurement
+from telemetry.core import util
+from telemetry.page import page_benchmark
 
-from telemetry import multi_page_benchmark
-from telemetry import util
-
-class DidNotScrollException(multi_page_benchmark.MeasurementFailure):
+class DidNotScrollException(page_benchmark.MeasurementFailure):
   def __init__(self):
     super(DidNotScrollException, self).__init__('Page did not scroll')
 
@@ -101,15 +101,15 @@ def CalcFirstPaintTimeResults(results, tab):
     results.Add('first_paint', 'ms', 'unsupported')
     return
 
-  tab.runtime.Execute("""
+  tab.ExecuteJavaScript("""
       window.__rafFired = false;
       window.webkitRequestAnimationFrame(function() {
           window.__rafFired  = true;
       });
   """)
-  util.WaitFor(lambda: tab.runtime.Evaluate('window.__rafFired'), 60)
+  util.WaitFor(lambda: tab.EvaluateJavaScript('window.__rafFired'), 60)
 
-  first_paint_secs = tab.runtime.Evaluate(
+  first_paint_secs = tab.EvaluateJavaScript(
       'window.chrome.loadTimes().firstPaintTime - ' +
       'window.chrome.loadTimes().startLoadTime')
 
@@ -142,11 +142,12 @@ def CalcImageDecodingResults(rendering_stats_deltas, results):
               totalDeferredImageDecodeTimeInSeconds,
               data_type='unimportant')
 
-class SmoothnessBenchmark(multi_page_benchmark.MultiPageBenchmark):
+class SmoothnessBenchmark(page_benchmark.PageBenchmark):
   def __init__(self):
     super(SmoothnessBenchmark, self).__init__('smoothness')
     self.force_enable_threaded_compositing = False
     self.use_gpu_benchmarking_extension = True
+    self._measurement = None
 
   def AddCommandLineOptions(self, parser):
     parser.add_option('--report-all-results', dest='report_all_results',
@@ -162,12 +163,33 @@ class SmoothnessBenchmark(multi_page_benchmark.MultiPageBenchmark):
   def CanRunForPage(self, page):
     return hasattr(page, 'smoothness')
 
+  def WillRunAction(self, page, tab, action):
+    self._measurement = smoothness_measurement.SmoothnessMeasurement(tab)
+    if action.CanBeBound():
+      self._measurement.BindToAction(action)
+    else:
+      self._measurement.Start()
+
+  def DidRunAction(self, page, tab, action):
+    if not action.CanBeBound():
+      self._measurement.Stop()
+
   def MeasurePage(self, page, tab, results):
-    rendering_stats_deltas = tab.runtime.Evaluate(
-      'window.__renderingStatsDeltas')
+    rendering_stats_deltas = self._measurement.deltas
 
     if not (rendering_stats_deltas['numFramesSentToScreen'] > 0):
       raise DidNotScrollException()
+
+    load_timings = tab.EvaluateJavaScript("window.performance.timing")
+    load_time_seconds = (
+      float(load_timings['loadEventStart']) -
+      load_timings['navigationStart']) / 1000
+    dom_content_loaded_time_seconds = (
+      float(load_timings['domContentLoadedEventStart']) -
+      load_timings['navigationStart']) / 1000
+    results.Add('load_time', 'seconds', load_time_seconds)
+    results.Add('dom_content_loaded_time', 'seconds',
+                dom_content_loaded_time_seconds)
 
     CalcFirstPaintTimeResults(results, tab)
     CalcScrollResults(rendering_stats_deltas, results)

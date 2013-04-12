@@ -11,6 +11,7 @@
 #include "cc/cc_export.h"
 #include "cc/frame_rate_controller.h"
 #include "cc/layer_tree_host.h"
+#include "cc/scheduler_settings.h"
 #include "cc/scheduler_state_machine.h"
 
 namespace cc {
@@ -38,6 +39,8 @@ public:
     virtual ScheduledActionDrawAndSwapResult scheduledActionDrawAndSwapIfPossible() = 0;
     virtual ScheduledActionDrawAndSwapResult scheduledActionDrawAndSwapForced() = 0;
     virtual void scheduledActionCommit() = 0;
+    virtual void scheduledActionCheckForCompletedTileUploads() = 0;
+    virtual void scheduledActionActivatePendingTreeIfNeeded() = 0;
     virtual void scheduledActionBeginContextRecreation() = 0;
     virtual void scheduledActionAcquireLayerTexturesForMainThread() = 0;
     virtual void didAnticipatedDrawTimeChange(base::TimeTicks) = 0;
@@ -48,9 +51,11 @@ protected:
 
 class CC_EXPORT Scheduler : FrameRateControllerClient {
 public:
-    static scoped_ptr<Scheduler> create(SchedulerClient* client, scoped_ptr<FrameRateController> frameRateController)
+    static scoped_ptr<Scheduler> create(SchedulerClient* client,
+                                        scoped_ptr<FrameRateController> frameRateController,
+                                        const SchedulerSettings& schedulerSettings)
     {
-        return make_scoped_ptr(new Scheduler(client, frameRateController.Pass()));
+        return make_scoped_ptr(new Scheduler(client, frameRateController.Pass(), schedulerSettings));
     }
 
     virtual ~Scheduler();
@@ -73,10 +78,14 @@ public:
     // Like setNeedsRedraw(), but ensures the draw will definitely happen even if we are not visible.
     void setNeedsForcedRedraw();
 
+    void didSwapUseIncompleteTile();
+
     void beginFrameComplete();
     void beginFrameAborted();
 
     void setMaxFramesPending(int);
+    int maxFramesPending() const;
+
     void setSwapBuffersCompleteSupported(bool);
     void didSwapBuffersComplete();
 
@@ -94,10 +103,12 @@ public:
     virtual void vsyncTick(bool throttled) OVERRIDE;
 
 private:
-    Scheduler(SchedulerClient*, scoped_ptr<FrameRateController>);
+    Scheduler(SchedulerClient*, scoped_ptr<FrameRateController>,
+              const SchedulerSettings& schedulerSettings);
 
     void processScheduledActions();
 
+    const SchedulerSettings m_settings;
     SchedulerClient* m_client;
     scoped_ptr<FrameRateController> m_frameRateController;
     SchedulerStateMachine m_stateMachine;

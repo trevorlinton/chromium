@@ -4,7 +4,8 @@
 
 #include "chromeos/network/onc/onc_test_utils.h"
 
-#include "base/file_path.h"
+#include "base/file_util.h"
+#include "base/files/file_path.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/logging.h"
 #include "base/path_service.h"
@@ -22,10 +23,24 @@ const char kNetworkComponentDirectory[] = "network";
 
 }  // namespace
 
+std::string ReadTestData(const std::string& filename) {
+  base::FilePath path;
+  if (!chromeos::test_utils::GetTestDataPath(kNetworkComponentDirectory,
+                                             filename,
+                                             &path)) {
+    NOTREACHED() << "Unable to get test data path for "
+                 << kNetworkComponentDirectory << "/" << filename;
+    return "";
+  }
+  std::string result;
+  file_util::ReadFileToString(path, &result);
+  return result;
+}
+
 scoped_ptr<base::DictionaryValue> ReadTestDictionary(
     const std::string& filename) {
   base::DictionaryValue* dict = NULL;
-  FilePath path;
+  base::FilePath path;
   if (!chromeos::test_utils::GetTestDataPath(kNetworkComponentDirectory,
                                              filename,
                                              &path)) {

@@ -4,15 +4,22 @@
 
 package org.chromium.android_webview;
 
+import android.graphics.Bitmap;
+import android.graphics.Picture;
 import android.graphics.Rect;
 import android.graphics.RectF;
+import android.net.http.SslError;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.util.Log;
 import android.view.KeyEvent;
+import android.view.View;
 import android.webkit.ConsoleMessage;
 import android.webkit.GeolocationPermissions;
+import android.webkit.SslErrorHandler;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
 
 import org.chromium.content.browser.ContentViewClient;
 import org.chromium.content.browser.ContentViewCore;
@@ -35,39 +42,17 @@ public abstract class AwContentsClient extends ContentViewClient {
     private final WebContentsDelegateAdapter mWebContentsDelegateAdapter =
             new WebContentsDelegateAdapter();
 
+    private final AwContentsClientCallbackHelper mCallbackHelper =
+        new AwContentsClientCallbackHelper(this);
+
     private AwWebContentsObserver mWebContentsObserver;
+
+    private double mDIPScale;
 
     //--------------------------------------------------------------------------------------------
     //                        Adapter for WebContentsDelegate methods.
     //--------------------------------------------------------------------------------------------
-
-    // TODO(mkosiba): Merge with handler in AwContents.
     class WebContentsDelegateAdapter extends AwWebContentsDelegate {
-
-        // The message ids.
-        public final static int CONTINUE_PENDING_RELOAD = 1;
-        public final static int CANCEL_PENDING_RELOAD = 2;
-
-        // Handler associated with this adapter.
-        // TODO(sgurun) Remember the URL to cancel the resend behavior
-        // if it is different than the most recent NavigationController entry.
-        private final Handler mHandler = new Handler(Looper.getMainLooper()) {
-
-            @Override
-            public void handleMessage(Message msg) {
-                switch (msg.what) {
-                    case CONTINUE_PENDING_RELOAD:
-                        ((ContentViewCore) msg.obj).continuePendingReload();
-                        break;
-                    case CANCEL_PENDING_RELOAD:
-                        ((ContentViewCore) msg.obj).cancelPendingReload();
-                        break;
-                    default:
-                        Log.w(TAG, "Unknown message " + msg.what);
-                        break;
-                }
-            }
-        };
 
         @Override
         public void onLoadProgressChanged(int progress) {
@@ -128,9 +113,38 @@ public abstract class AwContentsClient extends ContentViewClient {
         }
 
         @Override
-        public void showRepostFormWarningDialog(ContentViewCore contentViewCore) {
-            Message dontResend = mHandler.obtainMessage(CANCEL_PENDING_RELOAD, contentViewCore);
-            Message resend = mHandler.obtainMessage(CONTINUE_PENDING_RELOAD, contentViewCore);
+        public void showRepostFormWarningDialog(final ContentViewCore contentViewCore) {
+            // This is intentionally not part of mCallbackHelper as that class is intended for
+            // callbacks going the other way (to the embedder, not from the embedder).
+            // TODO(mkosiba) We should be using something akin to the JsResultReceiver as the
+            // callback parameter (instead of ContentViewCore) and implement a way of converting
+            // that to a pair of messages.
+            final int MSG_CONTINUE_PENDING_RELOAD = 1;
+            final int MSG_CANCEL_PENDING_RELOAD = 2;
+
+            // TODO(sgurun) Remember the URL to cancel the reload behavior
+            // if it is different than the most recent NavigationController entry.
+            final Handler handler = new Handler(Looper.getMainLooper()) {
+                @Override
+                public void handleMessage(Message msg) {
+                    switch(msg.what) {
+                        case MSG_CONTINUE_PENDING_RELOAD: {
+                            contentViewCore.continuePendingReload();
+                            break;
+                        }
+                        case MSG_CANCEL_PENDING_RELOAD: {
+                            contentViewCore.cancelPendingReload();
+                            break;
+                        }
+                        default:
+                            throw new IllegalStateException(
+                                    "WebContentsDelegateAdapter: unhandled message " + msg.what);
+                    }
+                }
+            };
+
+            Message resend = handler.obtainMessage(MSG_CONTINUE_PENDING_RELOAD);
+            Message dontResend = handler.obtainMessage(MSG_CANCEL_PENDING_RELOAD);
             AwContentsClient.this.onFormResubmission(dontResend, resend);
         }
 
@@ -189,16 +203,25 @@ public abstract class AwContentsClient extends ContentViewClient {
         mWebContentsObserver = new AwWebContentsObserver(contentViewCore);
     }
 
-    final AwWebContentsDelegate getWebContentsDelegate()  {
+    void setDIPScale(double dipScale) {
+        mDIPScale = dipScale;
+    }
+
+    final AwWebContentsDelegate getWebContentsDelegate() {
         return mWebContentsDelegateAdapter;
+    }
+
+    final AwContentsClientCallbackHelper getCallbackHelper() {
+        return mCallbackHelper;
     }
 
     //--------------------------------------------------------------------------------------------
     //             WebView specific methods that map directly to WebViewClient / WebChromeClient
     //--------------------------------------------------------------------------------------------
 
-    // TODO(boliu): Make this abstract.
-    public void doUpdateVisitedHistory(String url, boolean isReload) {}
+    public abstract void getVisitedHistory(ValueCallback<String[]> callback);
+
+    public abstract void doUpdateVisitedHistory(String url, boolean isReload);
 
     public abstract void onProgressChanged(int progress);
 
@@ -215,6 +238,10 @@ public abstract class AwContentsClient extends ContentViewClient {
     public abstract void onReceivedHttpAuthRequest(AwHttpAuthHandler handler,
             String host, String realm);
 
+    public abstract void onReceivedSslError(ValueCallback<Boolean> callback, SslError error);
+
+    public abstract void onReceivedLoginRequest(String realm, String account, String args);
+
     public abstract void onFormResubmission(Message dontResend, Message resend);
 
     public abstract void onDownloadStart(String url, String userAgent, String contentDisposition,
@@ -224,6 +251,15 @@ public abstract class AwContentsClient extends ContentViewClient {
             GeolocationPermissions.Callback callback);
 
     public abstract void onGeolocationPermissionsHidePrompt();
+
+    // TODO(mnaganov): Make final after updating the glue layer.
+    public /*final*/ void onScaleChanged(float oldScale, float newScale) {
+        onScaleChangedScaled((float)(oldScale * mDIPScale), (float)(newScale * mDIPScale));
+    }
+
+    // TODO(mnaganov): Make abstract after updating the glue layer.
+    public /*abstract*/ void onScaleChangedScaled(float oldScale, float newScale) {
+    }
 
     protected abstract void handleJsAlert(String url, String message, JsResultReceiver receiver);
 
@@ -239,6 +275,12 @@ public abstract class AwContentsClient extends ContentViewClient {
 
     protected abstract void onCloseWindow();
 
+    // TODO(acleung): Make abstract when landed in Android
+    public void onReceivedTouchIconUrl(String url, boolean precomposed) { }
+
+    // TODO(acleung): Make abstract when landed in Android
+    public void onReceivedIcon(Bitmap bitmap) { }
+
     protected abstract void onRequestFocus();
 
     //--------------------------------------------------------------------------------------------
@@ -249,11 +291,20 @@ public abstract class AwContentsClient extends ContentViewClient {
     public abstract void onFindResultReceived(int activeMatchOrdinal, int numberOfMatches,
             boolean isDoneCounting);
 
+    /**
+     * Called whenever there is a new content picture available.
+     * @param picture New picture.
+     */
+    public abstract void onNewPicture(Picture picture);
+
     public abstract void onPageStarted(String url);
 
     public abstract void onPageFinished(String url);
 
     public abstract void onReceivedError(int errorCode, String description, String failingUrl);
+
+    public abstract void onShowCustomView(View view,
+           int requestedOrientation, WebChromeClient.CustomViewCallback callback);
 
     //--------------------------------------------------------------------------------------------
     //             Stuff that we ignore since it only makes sense for Chrome browser

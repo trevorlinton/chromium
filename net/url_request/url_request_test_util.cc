@@ -44,12 +44,14 @@ const int kStageDestruction = 1 << 10;
 
 TestURLRequestContext::TestURLRequestContext()
     : initialized_(false),
+      client_socket_factory_(NULL),
       ALLOW_THIS_IN_INITIALIZER_LIST(context_storage_(this)) {
   Init();
 }
 
 TestURLRequestContext::TestURLRequestContext(bool delay_initialization)
     : initialized_(false),
+      client_socket_factory_(NULL),
       ALLOW_THIS_IN_INITIALIZER_LIST(context_storage_(this)) {
   if (!delay_initialization)
     Init();
@@ -92,17 +94,20 @@ void TestURLRequestContext::Init() {
     context_storage_.set_transport_security_state(
         new TransportSecurityState());
   }
-  HttpNetworkSession::Params params;
-  params.host_resolver = host_resolver();
-  params.cert_verifier = cert_verifier();
-  params.proxy_service = proxy_service();
-  params.ssl_config_service = ssl_config_service();
-  params.http_auth_handler_factory = http_auth_handler_factory();
-  params.network_delegate = network_delegate();
-  params.http_server_properties = http_server_properties();
-  params.net_log = net_log();
-
-  if (!http_transaction_factory()) {
+  if (http_transaction_factory()) {
+    // Make sure we haven't been passed an object we're not going to use.
+    EXPECT_FALSE(client_socket_factory_);
+  } else {
+    HttpNetworkSession::Params params;
+    params.client_socket_factory = client_socket_factory();
+    params.host_resolver = host_resolver();
+    params.cert_verifier = cert_verifier();
+    params.proxy_service = proxy_service();
+    params.ssl_config_service = ssl_config_service();
+    params.http_auth_handler_factory = http_auth_handler_factory();
+    params.network_delegate = network_delegate();
+    params.http_server_properties = http_server_properties();
+    params.net_log = net_log();
     context_storage_.set_http_transaction_factory(new HttpCache(
         new HttpNetworkSession(params),
         HttpCache::DefaultBackend::InMemory(0)));
@@ -293,7 +298,9 @@ TestNetworkDelegate::TestNetworkDelegate()
       cookie_options_bit_mask_(0),
       blocked_get_cookies_count_(0),
       blocked_set_cookie_count_(0),
-      set_cookie_count_(0) {
+      set_cookie_count_(0),
+      has_load_timing_info_before_redirect_(false),
+      has_load_timing_info_before_auth_(false) {
 }
 
 TestNetworkDelegate::~TestNetworkDelegate() {
@@ -302,6 +309,18 @@ TestNetworkDelegate::~TestNetworkDelegate() {
     event_order_[i->first] += "~TestNetworkDelegate\n";
     EXPECT_TRUE(i->second & kStageDestruction) << event_order_[i->first];
   }
+}
+
+bool TestNetworkDelegate::GetLoadTimingInfoBeforeRedirect(
+    LoadTimingInfo* load_timing_info_before_redirect) const {
+  *load_timing_info_before_redirect = load_timing_info_before_redirect_;
+  return has_load_timing_info_before_redirect_;
+}
+
+bool TestNetworkDelegate::GetLoadTimingInfoBeforeAuth(
+    LoadTimingInfo* load_timing_info_before_auth) const {
+  *load_timing_info_before_auth = load_timing_info_before_auth_;
+  return has_load_timing_info_before_auth_;
 }
 
 void TestNetworkDelegate::InitRequestStatesIfNew(int request_id) {
@@ -384,6 +403,12 @@ int TestNetworkDelegate::OnHeadersReceived(
 
 void TestNetworkDelegate::OnBeforeRedirect(URLRequest* request,
                                            const GURL& new_location) {
+  load_timing_info_before_redirect_ = LoadTimingInfo();
+  request->GetLoadTimingInfo(&load_timing_info_before_redirect_);
+  has_load_timing_info_before_redirect_ = true;
+  EXPECT_FALSE(load_timing_info_before_redirect_.request_start_time.is_null());
+  EXPECT_FALSE(load_timing_info_before_redirect_.request_start.is_null());
+
   int req_id = request->identifier();
   InitRequestStatesIfNew(req_id);
   event_order_[req_id] += "OnBeforeRedirect\n";
@@ -401,6 +426,11 @@ void TestNetworkDelegate::OnBeforeRedirect(URLRequest* request,
 }
 
 void TestNetworkDelegate::OnResponseStarted(URLRequest* request) {
+  LoadTimingInfo load_timing_info;
+  request->GetLoadTimingInfo(&load_timing_info);
+  EXPECT_FALSE(load_timing_info.request_start_time.is_null());
+  EXPECT_FALSE(load_timing_info.request_start.is_null());
+
   int req_id = request->identifier();
   InitRequestStatesIfNew(req_id);
   event_order_[req_id] += "OnResponseStarted\n";
@@ -457,6 +487,12 @@ NetworkDelegate::AuthRequiredResponse TestNetworkDelegate::OnAuthRequired(
     const AuthChallengeInfo& auth_info,
     const AuthCallback& callback,
     AuthCredentials* credentials) {
+  load_timing_info_before_auth_ = LoadTimingInfo();
+  request->GetLoadTimingInfo(&load_timing_info_before_auth_);
+  has_load_timing_info_before_auth_ = true;
+  EXPECT_FALSE(load_timing_info_before_auth_.request_start_time.is_null());
+  EXPECT_FALSE(load_timing_info_before_auth_.request_start.is_null());
+
   int req_id = request->identifier();
   InitRequestStatesIfNew(req_id);
   event_order_[req_id] += "OnAuthRequired\n";
@@ -501,7 +537,7 @@ bool TestNetworkDelegate::OnCanSetCookie(const URLRequest& request,
 }
 
 bool TestNetworkDelegate::OnCanAccessFile(const URLRequest& request,
-                                          const FilePath& path) const {
+                                          const base::FilePath& path) const {
   return true;
 }
 

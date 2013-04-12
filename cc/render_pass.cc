@@ -4,6 +4,9 @@
 
 #include "cc/render_pass.h"
 
+#include "cc/draw_quad.h"
+#include "cc/shared_quad_state.h"
+
 namespace cc {
 
 scoped_ptr<RenderPass> RenderPass::Create() {
@@ -44,8 +47,8 @@ void RenderPass::SetNew(Id id,
   this->damage_rect = damage_rect;
   this->transform_to_root_target = transform_to_root_target;
 
-  DCHECK(quad_list.isEmpty());
-  DCHECK(shared_quad_state_list.isEmpty());
+  DCHECK(quad_list.empty());
+  DCHECK(shared_quad_state_list.empty());
 }
 
 void RenderPass::SetAll(Id id,
@@ -65,8 +68,8 @@ void RenderPass::SetAll(Id id,
   this->has_occlusion_from_outside_target_surface =
       has_occlusion_from_outside_target_surface;
 
-  DCHECK(quad_list.isEmpty());
-  DCHECK(shared_quad_state_list.isEmpty());
+  DCHECK(quad_list.empty());
+  DCHECK(shared_quad_state_list.empty());
 }
 
 }  // namespace cc

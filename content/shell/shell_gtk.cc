@@ -54,7 +54,7 @@ GtkWidget* CreateMenuBar(Shell* shell) {
 
 }  // namespace
 
-void Shell::PlatformInitialize() {
+void Shell::PlatformInitialize(const gfx::Size& default_window_size) {
 }
 
 void Shell::PlatformCleanUp() {
@@ -101,6 +101,8 @@ void Shell::PlatformSetIsLoading(bool loading) {
 }
 
 void Shell::PlatformCreateWindow(int width, int height) {
+  SizeTo(width, height);
+
   if (headless_)
     return;
 
@@ -194,8 +196,6 @@ void Shell::PlatformCreateWindow(int width, int height) {
 
   gtk_container_add(GTK_CONTAINER(window_), vbox_);
   gtk_widget_show_all(GTK_WIDGET(window_));
-
-  SizeTo(width, height);
 }
 
 void Shell::PlatformSetContents() {
@@ -209,8 +209,10 @@ void Shell::PlatformSetContents() {
 void Shell::SizeTo(int width, int height) {
   content_width_ = width;
   content_height_ = height;
-  if (web_contents_.get())
-    gtk_widget_set_size_request(web_contents_->GetNativeView(), width, height);
+  if (web_contents_.get()) {
+    gtk_widget_set_size_request(web_contents_->GetView()->GetNativeView(),
+                                width, height);
+  }
 }
 
 void Shell::PlatformResizeSubViews() {
@@ -275,7 +277,7 @@ gboolean Shell::OnNewWindowKeyPressed(GtkAccelGroup* accel_group,
                          GURL(),
                          NULL,
                          MSG_ROUTING_NONE,
-                         NULL);
+                         gfx::Size());
   return TRUE;
 }
 

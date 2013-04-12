@@ -20,6 +20,7 @@
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia_operations.h"
+#include "ui/gfx/skbitmap_operations.h"
 #include "ui/views/controls/image_view.h"
 
 namespace {
@@ -59,12 +60,12 @@ class LauncherButton::BarView : public views::ImageView,
   }
 
   // View overrides.
-  bool HitTestRect(const gfx::Rect& rect) const OVERRIDE {
+  virtual bool HitTestRect(const gfx::Rect& rect) const OVERRIDE {
     // Allow Mouse...() messages to go to the parent view.
     return false;
   }
 
-  void OnPaint(gfx::Canvas* canvas) OVERRIDE {
+  virtual void OnPaint(gfx::Canvas* canvas) OVERRIDE {
     if (animation_.is_animating()) {
       int alpha = animation_.CurrentValueBetween(0, 255);
       canvas->SaveLayerAlpha(alpha);
@@ -76,7 +77,7 @@ class LauncherButton::BarView : public views::ImageView,
   }
 
   // ui::AnimationDelegate overrides.
-  void AnimationProgressed(const ui::Animation* animation) OVERRIDE {
+  virtual void AnimationProgressed(const ui::Animation* animation) OVERRIDE {
     SchedulePaint();
   }
 
@@ -275,22 +276,23 @@ void LauncherButton::Layout() {
   int x_offset = 0, y_offset = 0;
   gfx::Rect icon_bounds;
 
-  if (shelf_layout_manager_->GetAlignment() == SHELF_ALIGNMENT_BOTTOM) {
+  if (shelf_layout_manager_->IsHorizontalAlignment()) {
     icon_bounds.SetRect(
         button_bounds.x(), button_bounds.y() + kIconPad,
         button_bounds.width(), kIconSize);
-    if (ShouldHop(state_))
-      y_offset -= kHopSpacing;
   } else {
     icon_bounds.SetRect(
         button_bounds.x() + kIconPad, button_bounds.y(),
         kIconSize, button_bounds.height());
-    if (!ShouldHop(state_))
-      x_offset += kHopSpacing;
   }
 
-  if (shelf_layout_manager_->GetAlignment() == SHELF_ALIGNMENT_LEFT)
-    x_offset = -x_offset;
+  if (ShouldHop(state_)) {
+    x_offset += shelf_layout_manager_->SelectValueForShelfAlignment(
+        0, kHopSpacing, -kHopSpacing, 0);
+    y_offset += shelf_layout_manager_->SelectValueForShelfAlignment(
+        -kHopSpacing, 0, 0, kHopSpacing);
+  }
+
   icon_bounds.Offset(x_offset, y_offset);
   icon_view_->SetBoundsRect(icon_bounds);
   bar_->SetBoundsRect(GetContentsBounds());
@@ -362,23 +364,23 @@ void LauncherButton::UpdateState() {
   } else {
     int bar_id;
     if (state_ & STATE_ACTIVE) {
-      bar_id = shelf_layout_manager_->SelectValueForShelfAlignment(
-          IDR_AURA_LAUNCHER_UNDERLINE_BOTTOM_ACTIVE,
-          IDR_AURA_LAUNCHER_UNDERLINE_LEFT_ACTIVE,
-          IDR_AURA_LAUNCHER_UNDERLINE_RIGHT_ACTIVE);
+      bar_id = IDR_AURA_LAUNCHER_UNDERLINE_ACTIVE;
     } else if (state_ & (STATE_HOVERED | STATE_FOCUSED | STATE_ATTENTION)) {
-      bar_id = shelf_layout_manager_->SelectValueForShelfAlignment(
-          IDR_AURA_LAUNCHER_UNDERLINE_BOTTOM_HOVER,
-          IDR_AURA_LAUNCHER_UNDERLINE_LEFT_HOVER,
-          IDR_AURA_LAUNCHER_UNDERLINE_RIGHT_HOVER);
+      bar_id = IDR_AURA_LAUNCHER_UNDERLINE_HOVER;
     } else {
-      bar_id = shelf_layout_manager_->SelectValueForShelfAlignment(
-          IDR_AURA_LAUNCHER_UNDERLINE_BOTTOM_RUNNING,
-          IDR_AURA_LAUNCHER_UNDERLINE_LEFT_RUNNING,
-          IDR_AURA_LAUNCHER_UNDERLINE_RIGHT_RUNNING);
+      bar_id = IDR_AURA_LAUNCHER_UNDERLINE_RUNNING;
     }
     ResourceBundle& rb = ResourceBundle::GetSharedInstance();
-    bar_->SetImage(rb.GetImageNamed(bar_id).ToImageSkia());
+    const gfx::ImageSkia* image = rb.GetImageNamed(bar_id).ToImageSkia();
+    if(SHELF_ALIGNMENT_BOTTOM == shelf_layout_manager_->GetAlignment())
+      bar_->SetImage(*image);
+    else
+      bar_->SetImage(gfx::ImageSkiaOperations::CreateRotatedImage(*image,
+          shelf_layout_manager_->SelectValueForShelfAlignment(
+              SkBitmapOperations::ROTATION_270_CW,
+              SkBitmapOperations::ROTATION_270_CW,
+              SkBitmapOperations::ROTATION_90_CW,
+              SkBitmapOperations::ROTATION_180_CW)));
     bar_->SetVisible(true);
   }
   bool rtl = base::i18n::IsRTL();
@@ -386,31 +388,14 @@ void LauncherButton::UpdateState() {
       shelf_layout_manager_->SelectValueForShelfAlignment(
           views::ImageView::CENTER,
           rtl ? views::ImageView::TRAILING : views::ImageView::LEADING,
-          rtl ? views::ImageView::LEADING : views::ImageView::TRAILING));
+          rtl ? views::ImageView::LEADING : views::ImageView::TRAILING,
+          views::ImageView::CENTER));
   bar_->SetVerticalAlignment(
       shelf_layout_manager_->SelectValueForShelfAlignment(
           views::ImageView::TRAILING,
           views::ImageView::CENTER,
-          views::ImageView::CENTER));
-
-  switch (shelf_layout_manager_->GetAlignment()) {
-    case SHELF_ALIGNMENT_BOTTOM:
-      bar_->SetHorizontalAlignment(views::ImageView::CENTER);
-      bar_->SetVerticalAlignment(views::ImageView::TRAILING);
-      break;
-    case SHELF_ALIGNMENT_LEFT:
-      bar_->SetHorizontalAlignment(
-          base::i18n::IsRTL() ? views::ImageView::TRAILING :
-                                views::ImageView::LEADING);
-      bar_->SetVerticalAlignment(views::ImageView::CENTER);
-      break;
-    case SHELF_ALIGNMENT_RIGHT:
-      bar_->SetHorizontalAlignment(
-          base::i18n::IsRTL() ? views::ImageView::LEADING :
-                                views::ImageView::TRAILING);
-      bar_->SetVerticalAlignment(views::ImageView::CENTER);
-      break;
-  }
+          views::ImageView::CENTER,
+          views::ImageView::LEADING));
 
   // Force bar to layout as alignment may have changed but not bounds.
   bar_->Layout();

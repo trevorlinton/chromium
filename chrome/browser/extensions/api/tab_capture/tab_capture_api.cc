@@ -13,7 +13,7 @@
 #include "chrome/browser/extensions/api/tab_capture/tab_capture_registry_factory.h"
 #include "chrome/browser/extensions/browser_event_router.h"
 #include "chrome/browser/extensions/event_names.h"
-#include "chrome/browser/extensions/extension_tab_id_map.h"
+#include "chrome/browser/extensions/extension_renderer_state.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -117,7 +117,7 @@ bool TabCaptureCaptureFunction::RunImpl() {
           std::make_pair(render_process_id, routing_id),
           TabCaptureRegistry::TabCaptureRequest(
               GetExtension()->id(), tab_id,
-              tab_capture::TAB_CAPTURE_TAB_CAPTURE_STATE_NONE))) {
+              tab_capture::TAB_CAPTURE_STATE_NONE))) {
     error_ = kCapturingSameTab;
     return false;
   }
@@ -148,8 +148,8 @@ bool TabCaptureGetCapturedTabsFunction::RunImpl() {
   for (TabCaptureRegistry::CaptureRequestList::const_iterator it =
        captured_tabs.begin(); it != captured_tabs.end(); ++it) {
     scoped_ptr<tab_capture::CaptureInfo> info(new tab_capture::CaptureInfo());
-    info->tab_id = it->tab_id;
-    info->status = it->status;
+    info->tab_id = (*it)->tab_id;
+    info->status = (*it)->status;
     list->Append(info->ToValue().release());
   }
 

@@ -233,74 +233,20 @@ static AudioDeviceID GetAudioDeviceIdByUId(bool is_input,
   return audio_device_id;
 }
 
-// Property address to monitor for device changes.
-static const AudioObjectPropertyAddress kDeviceChangePropertyAddress = {
-  kAudioHardwarePropertyDefaultOutputDevice,
-  kAudioObjectPropertyScopeGlobal,
-  kAudioObjectPropertyElementMaster
-};
-
-// Callback from the system when the default device changes; this must be called
-// on the MessageLoop that created the AudioManager.
-static OSStatus OnDefaultDeviceChangedCallback(
-    AudioObjectID object,
-    UInt32 num_addresses,
-    const AudioObjectPropertyAddress addresses[],
-    void* context) {
-  if (object != kAudioObjectSystemObject)
-    return noErr;
-
-  for (UInt32 i = 0; i < num_addresses; ++i) {
-    if (addresses[i].mSelector == kDeviceChangePropertyAddress.mSelector &&
-        addresses[i].mScope == kDeviceChangePropertyAddress.mScope &&
-        addresses[i].mElement == kDeviceChangePropertyAddress.mElement &&
-        context) {
-      static_cast<AudioManagerMac*>(context)->OnDeviceChange();
-      break;
-    }
-  }
-
-  return noErr;
-}
-
-AudioManagerMac::AudioManagerMac()
-    : listener_registered_(false),
-      creating_message_loop_(base::MessageLoopProxy::current()) {
+AudioManagerMac::AudioManagerMac() {
   SetMaxOutputStreamsAllowed(kMaxOutputStreams);
 
-  // AudioManagerMac is expected to be created by the root platform thread, this
-  // is generally BrowserMainLoop, it's MessageLoop will drive the NSApplication
-  // pump which in turn fires the property listener callbacks.
-  if (!creating_message_loop_)
-    return;
-
-  OSStatus result = AudioObjectAddPropertyListener(
-      kAudioObjectSystemObject,
-      &kDeviceChangePropertyAddress,
-      &OnDefaultDeviceChangedCallback,
-      this);
-
-  if (result != noErr) {
-    OSSTATUS_DLOG(ERROR, result) << "AudioObjectAddPropertyListener() failed!";
-    return;
-  }
-
-  listener_registered_ = true;
+  // Task must be posted last to avoid races from handing out "this" to the
+  // audio thread.
+  GetMessageLoop()->PostTask(FROM_HERE, base::Bind(
+      &AudioManagerMac::CreateDeviceListener, base::Unretained(this)));
 }
 
 AudioManagerMac::~AudioManagerMac() {
-  if (listener_registered_) {
-    // TODO(dalecurtis): CHECK destruction happens on |creating_message_loop_|,
-    // should be true, but currently several unit tests perform destruction in
-    // odd places so we can't CHECK here currently.
-    OSStatus result = AudioObjectRemovePropertyListener(
-        kAudioObjectSystemObject,
-        &kDeviceChangePropertyAddress,
-        &OnDefaultDeviceChangedCallback,
-        this);
-    OSSTATUS_DLOG_IF(ERROR, result != noErr, result)
-        << "AudioObjectRemovePropertyListener() failed!";
-  }
+  // It's safe to post a task here since Shutdown() will wait for all tasks to
+  // complete before returning.
+  GetMessageLoop()->PostTask(FROM_HERE, base::Bind(
+      &AudioManagerMac::DestroyDeviceListener, base::Unretained(this)));
 
   Shutdown();
 }
@@ -337,9 +283,12 @@ AudioOutputStream* AudioManagerMac::MakeLowLatencyOutputStream(
     const AudioParameters& params) {
   DCHECK_EQ(AudioParameters::AUDIO_PCM_LOW_LATENCY, params.format());
 
-  // TODO(crogers): remove once we properly handle input device selection.
-  if (CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kEnableWebAudioInput)) {
+  // TODO(crogers): support more than stereo input.
+  // TODO(crogers): remove flag once we handle input device selection.
+  // https://code.google.com/p/chromium/issues/detail?id=147327
+  if (params.input_channels() == 2 &&
+      CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kEnableWebAudioInput)) {
     if (HasUnifiedDefaultIO())
       return new AudioHardwareUnifiedStream(this, params);
 
@@ -381,7 +330,8 @@ AudioParameters AudioManagerMac::GetPreferredLowLatencyOutputStreamParameters(
     // Specifically, this is a limitation of AudioSynchronizedStream which
     // can be removed as part of the work to consolidate these back-ends.
     return AudioParameters(
-        AudioParameters::AUDIO_PCM_LOW_LATENCY, CHANNEL_LAYOUT_STEREO,
+        AudioParameters::AUDIO_PCM_LOW_LATENCY,
+        CHANNEL_LAYOUT_STEREO, input_params.input_channels(),
         GetAudioHardwareSampleRate(), 16, GetAudioHardwareBufferSize());
   }
 
@@ -389,14 +339,24 @@ AudioParameters AudioManagerMac::GetPreferredLowLatencyOutputStreamParameters(
       input_params);
 }
 
-void AudioManagerMac::OnDeviceChange() {
-  // Post the task to the |creating_message_loop_| to execute our listener
-  // callback.  The callback is created using BindToLoop() so will hop over
-  // to the audio thread upon execution.
-  creating_message_loop_->PostTask(FROM_HERE, BindToLoop(
-      GetMessageLoop(), base::Bind(
-          &AudioManagerMac::NotifyAllOutputDeviceChangeListeners,
-          base::Unretained(this))));
+void AudioManagerMac::CreateDeviceListener() {
+  DCHECK(GetMessageLoop()->BelongsToCurrentThread());
+  output_device_listener_.reset(new AudioDeviceListenerMac(base::Bind(
+      &AudioManagerMac::DelayedDeviceChange, base::Unretained(this))));
+}
+
+void AudioManagerMac::DestroyDeviceListener() {
+  DCHECK(GetMessageLoop()->BelongsToCurrentThread());
+  output_device_listener_.reset();
+}
+
+void AudioManagerMac::DelayedDeviceChange() {
+  // TODO(dalecurtis): This is ridiculous, but we need to delay device changes
+  // to workaround threading issues with OSX property listener callbacks.  See
+  // http://crbug.com/158170
+  GetMessageLoop()->PostDelayedTask(FROM_HERE, base::Bind(
+      &AudioManagerMac::NotifyAllOutputDeviceChangeListeners,
+      base::Unretained(this)), base::TimeDelta::FromSeconds(2));
 }
 
 AudioManager* CreateAudioManager() {

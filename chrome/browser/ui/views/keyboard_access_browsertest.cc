@@ -10,15 +10,16 @@
 #include "base/message_loop.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/toolbar_view.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "chrome/test/base/ui_controls.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "ui/base/events/event_constants.h"
 #include "ui/base/keycodes/keyboard_codes.h"
-#include "ui/ui_controls/ui_controls.h"
 #include "ui/views/controls/menu/menu_listener.h"
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/view.h"
@@ -59,11 +60,11 @@ class ViewFocusChangeWaiter : public views::FocusChangeListener {
  private:
   // Inherited from FocusChangeListener
   virtual void OnWillChangeFocus(views::View* focused_before,
-                                 views::View* focused_now) {
+                                 views::View* focused_now) OVERRIDE {
   }
 
   virtual void OnDidChangeFocus(views::View* focused_before,
-                                views::View* focused_now) {
+                                views::View* focused_now) OVERRIDE {
     if (focused_now && focused_now->id() != previous_view_id_) {
       MessageLoop::current()->PostTask(FROM_HERE, MessageLoop::QuitClosure());
     }
@@ -141,7 +142,7 @@ void KeyboardAccessTest::TestMenuKeyboardAccess(bool alternate_key_sequence,
   ui_test_utils::NavigateToURL(browser(), GURL("about:"));
 
   // The initial tab index should be 0.
-  ASSERT_EQ(0, browser()->active_index());
+  ASSERT_EQ(0, browser()->tab_strip_model()->active_index());
 
   ASSERT_TRUE(ui_test_utils::BringBrowserWindowToFront(browser()));
 
@@ -194,7 +195,7 @@ void KeyboardAccessTest::TestMenuKeyboardAccess(bool alternate_key_sequence,
   new_tab_observer.Wait();
 
   // Make sure that the new tab index is 1.
-  ASSERT_EQ(1, browser()->active_index());
+  ASSERT_EQ(1, browser()->tab_strip_model()->active_index());
 }
 
 // http://crbug.com/62310.
@@ -250,16 +251,45 @@ IN_PROC_BROWSER_TEST_F(KeyboardAccessTest, ReserveKeyboardAccelerators) {
 
   ASSERT_TRUE(ui_test_utils::SendKeyPressSync(
       browser(), ui::VKEY_TAB, true, false, false, false));
-  ASSERT_EQ(0, browser()->active_index());
+  ASSERT_EQ(0, browser()->tab_strip_model()->active_index());
 
   ui_test_utils::NavigateToURLWithDisposition(
       browser(), url, NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
-  ASSERT_EQ(2, browser()->active_index());
+  ASSERT_EQ(2, browser()->tab_strip_model()->active_index());
 
   ASSERT_TRUE(ui_test_utils::SendKeyPressSync(
       browser(), ui::VKEY_W, true, false, false, false));
-  ASSERT_EQ(0, browser()->active_index());
+  ASSERT_EQ(0, browser()->tab_strip_model()->active_index());
 }
+
+#if defined(OS_WIN)  // These keys are Windows-only.
+IN_PROC_BROWSER_TEST_F(KeyboardAccessTest, BackForwardKeys) {
+  // Navigate to create some history.
+  ui_test_utils::NavigateToURL(browser(), GURL("chrome://version/"));
+  ui_test_utils::NavigateToURL(browser(), GURL("chrome://about/"));
+
+  string16 before_back;
+  ASSERT_TRUE(ui_test_utils::GetCurrentTabTitle(browser(), &before_back));
+
+  // Navigate back.
+  ASSERT_TRUE(ui_test_utils::SendKeyPressSync(
+      browser(), ui::VKEY_BROWSER_BACK, false, false, false, false));
+
+  string16 after_back;
+  ASSERT_TRUE(ui_test_utils::GetCurrentTabTitle(browser(), &after_back));
+
+  EXPECT_NE(before_back, after_back);
+
+  // And then forward.
+  ASSERT_TRUE(ui_test_utils::SendKeyPressSync(
+      browser(), ui::VKEY_BROWSER_FORWARD, false, false, false, false));
+
+  string16 after_forward;
+  ASSERT_TRUE(ui_test_utils::GetCurrentTabTitle(browser(), &after_forward));
+
+  EXPECT_EQ(before_back, after_forward);
+}
+#endif
 
 }  // namespace

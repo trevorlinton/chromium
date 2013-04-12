@@ -8,6 +8,7 @@
 #include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/time.h"
+#include "cc/ring_buffer.h"
 
 namespace cc {
 
@@ -17,29 +18,29 @@ class FrameRateCounter {
 public:
     static scoped_ptr<FrameRateCounter> create(bool hasImplThread);
 
-    void markBeginningOfFrame(base::TimeTicks timestamp);
-    void markEndOfFrame();
-    int currentFrameNumber() const { return m_currentFrameNumber; }
-    double getAverageFPS() const;
-    int timeStampHistorySize() const { return kTimeStampHistorySize; }
+    int currentFrameNumber() const { return m_ringBuffer.CurrentIndex(); }
+    int droppedFrameCount() const { return m_droppedFrameCount; }
+    size_t timeStampHistorySize() const { return m_ringBuffer.BufferSize(); }
 
-    // n = 0 returns the oldest frame retained in the history,
-    // while n = timeStampHistorySize() - 1 returns the timestamp most recent frame.
-    // FIXME: Returns most recent timestamp for n = 0 when called between markBeginningOfFrame and markEndOfFrame calls.
-    base::TimeTicks timeStampOfRecentFrame(int n) const;
+    void saveTimeStamp(base::TimeTicks timestamp);
+
+    // n = 0 returns the oldest frame interval retained in the history,
+    // while n = timeStampHistorySize() - 1 returns the most recent frame interval.
+    base::TimeDelta recentFrameInterval(size_t n) const;
 
     // This is a heuristic that can be used to ignore frames in a reasonable way. Returns
     // true if the given frame interval is too fast or too slow, based on constant thresholds.
     bool isBadFrameInterval(base::TimeDelta intervalBetweenConsecutiveFrames) const;
 
-    int droppedFrameCount() const { return m_droppedFrameCount; }
+    void getMinAndMaxFPS(double& minFPS, double& maxFPS) const;
+    double getAverageFPS() const;
+
+    typedef RingBuffer<base::TimeTicks, 136> RingBufferType;
+    RingBufferType::Iterator begin() const { return m_ringBuffer.Begin(); }
+    RingBufferType::Iterator end() const { return m_ringBuffer.End(); }
 
 private:
     explicit FrameRateCounter(bool hasImplThread);
-
-    base::TimeDelta frameInterval(int frameNumber) const;
-    int frameIndex(int frameNumber) const;
-    bool isBadFrame(int frameNumber) const;
 
     // Two thresholds (measured in seconds) that describe what is considered to be a "no-op frame" that should not be counted.
     // - if the frame is too fast, then given our compositor implementation, the frame probably was a no-op and did not draw.
@@ -52,13 +53,9 @@ private:
     // FIXME: Determine this threshold based on monitor refresh rate, crbug.com/138642.
     static const double kDroppedFrameTime;
 
-    static const int kTimeStampHistorySize = 130;
+    RingBufferType m_ringBuffer;
 
     bool m_hasImplThread;
-
-    int m_currentFrameNumber;
-    base::TimeTicks m_timeStampHistory[kTimeStampHistorySize];
-
     int m_droppedFrameCount;
 
     DISALLOW_COPY_AND_ASSIGN(FrameRateCounter);

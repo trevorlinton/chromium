@@ -1929,19 +1929,19 @@ TEST_F(GestureRecognizerTest, GestureEventTouchLockSelectsCorrectWindow) {
   ui::GestureConsumer* target;
   const int kNumWindows = 4;
 
-  scoped_array<GestureEventConsumeDelegate*> delegates(
+  scoped_ptr<GestureEventConsumeDelegate*[]> delegates(
       new GestureEventConsumeDelegate*[kNumWindows]);
 
   ui::GestureConfiguration::
       set_max_separation_for_gesture_touches_in_pixels(499);
 
-  scoped_array<gfx::Rect> window_bounds(new gfx::Rect[kNumWindows]);
+  scoped_ptr<gfx::Rect[]> window_bounds(new gfx::Rect[kNumWindows]);
   window_bounds[0] = gfx::Rect(0, 0, 1, 1);
   window_bounds[1] = gfx::Rect(500, 0, 1, 1);
   window_bounds[2] = gfx::Rect(0, 500, 1, 1);
   window_bounds[3] = gfx::Rect(500, 500, 1, 1);
 
-  scoped_array<aura::Window*> windows(new aura::Window*[kNumWindows]);
+  scoped_ptr<aura::Window*[]> windows(new aura::Window*[kNumWindows]);
 
   // Instantiate windows with |window_bounds| and touch each window at
   // its origin.
@@ -2074,34 +2074,42 @@ TEST_F(GestureRecognizerTest, PinchScrollWithPreventDefaultedRelease) {
       delegate.get(), -1234, bounds, root_window()));
   delegate->set_window(window.get());
 
-  delegate->Reset();
+  {
+    delegate->Reset();
+    ui::TouchEvent press(ui::ET_TOUCH_PRESSED, gfx::Point(15, 25), kTouchId1,
+                         tes.Now());
+    ui::TouchEvent move(ui::ET_TOUCH_MOVED, gfx::Point(20, 95), kTouchId1,
+                        tes.LeapForward(200));
+    ui::TouchEvent release(ui::ET_TOUCH_RELEASED, gfx::Point(15, 25), kTouchId1,
+                           tes.LeapForward(50));
+    root_window()->AsRootWindowHostDelegate()->OnHostTouchEvent(&press);
+    root_window()->AsRootWindowHostDelegate()->OnHostTouchEvent(&move);
+    root_window()->AsRootWindowHostDelegate()->OnHostTouchEvent(&release);
+    delegate->Reset();
+
+    // Ack the press event.
+    delegate->ReceivedAck();
+    EXPECT_TRUE(delegate->tap_down());
+    delegate->Reset();
+
+    // Ack the move event.
+    delegate->ReceivedAck();
+    EXPECT_TRUE(delegate->tap_cancel());
+    EXPECT_TRUE(delegate->scroll_begin());
+    delegate->Reset();
+
+    // Ack the release event. Although the release event has been processed, it
+    // should still generate a scroll-end event.
+    delegate->ReceivedAckPreventDefaulted();
+    EXPECT_TRUE(delegate->scroll_end());
+  }
+
   ui::TouchEvent press(ui::ET_TOUCH_PRESSED, gfx::Point(15, 25), kTouchId1,
                        tes.Now());
   ui::TouchEvent move(ui::ET_TOUCH_MOVED, gfx::Point(20, 95), kTouchId1,
                       tes.LeapForward(200));
   ui::TouchEvent release(ui::ET_TOUCH_RELEASED, gfx::Point(15, 25), kTouchId1,
                          tes.LeapForward(50));
-  root_window()->AsRootWindowHostDelegate()->OnHostTouchEvent(&press);
-  root_window()->AsRootWindowHostDelegate()->OnHostTouchEvent(&move);
-  root_window()->AsRootWindowHostDelegate()->OnHostTouchEvent(&release);
-  delegate->Reset();
-
-  // Ack the press event.
-  delegate->ReceivedAck();
-  EXPECT_TRUE(delegate->tap_down());
-  delegate->Reset();
-
-  // Ack the move event.
-  delegate->ReceivedAck();
-  EXPECT_TRUE(delegate->tap_cancel());
-  EXPECT_TRUE(delegate->scroll_begin());
-  delegate->Reset();
-
-  // Ack the release event. Although the release event has been processed, it
-  // should still generate a scroll-end event.
-  delegate->ReceivedAckPreventDefaulted();
-  EXPECT_TRUE(delegate->scroll_end());
-
   ui::TouchEvent press2(ui::ET_TOUCH_PRESSED, gfx::Point(55, 25), kTouchId2,
                         tes.Now());
   ui::TouchEvent move2(ui::ET_TOUCH_MOVED, gfx::Point(45, 85), kTouchId2,

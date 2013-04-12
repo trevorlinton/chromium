@@ -11,6 +11,7 @@ function AudioPlayer(container) {
   this.metadataCache_ = MetadataCache.createFull();
   this.currentTrack_ = -1;
   this.playlistGeneration_ = 0;
+  this.volumeManager_ = VolumeManager.getInstance();
 
   this.container_.classList.add('collapsed');
 
@@ -46,6 +47,9 @@ function AudioPlayer(container) {
     AudioPlayer.TrackInfo.DEFAULT_ARTIST =
         strings['AUDIO_PLAYER_DEFAULT_ARTIST'];
   }.bind(this));
+
+  this.volumeManager_.addEventListener('externally-unmounted',
+      this.onExternallyUnmounted_.bind(this));
 }
 
 /**
@@ -194,7 +198,7 @@ AudioPlayer.prototype.load = function(playlist) {
 
 /**
  * Load metadata for a track.
- * @param {number} track Track number
+ * @param {number} track Track number.
  * @private
  */
 AudioPlayer.prototype.loadMetadata_ = function(track) {
@@ -205,8 +209,8 @@ AudioPlayer.prototype.loadMetadata_ = function(track) {
 /**
  * Display track's metadata.
  * @param {number} track Track number.
- * @param {object} metadata Metadata object.
- * @param {string} opt_error Error message.
+ * @param {Object} metadata Metadata object.
+ * @param {string=} opt_error Error message.
  * @private
  */
 AudioPlayer.prototype.displayMetadata_ = function(track, metadata, opt_error) {
@@ -217,9 +221,21 @@ AudioPlayer.prototype.displayMetadata_ = function(track, metadata, opt_error) {
 };
 
 /**
+ * Closes audio player when a volume containing the selected item is unmounted.
+ * @param {Event} event The unmount event.
+ * @private
+ */
+AudioPlayer.prototype.onExternallyUnmounted_ = function(event) {
+  if (!this.selectedItemFilesystemPath_)
+    return;
+  if (this.selectedItemFilesystemPath_.indexOf(event.mountPath) == 0)
+    util.platform.closeWindow();
+};
+
+/**
  * Select a new track to play.
  * @param {number} newTrack New track number.
- * @param {boolean} opt_restoreState True if restoring the play state from URL.
+ * @param {boolean=} opt_restoreState True if restoring the play state from URL.
  * @private
  */
 AudioPlayer.prototype.select_ = function(newTrack, opt_restoreState) {
@@ -240,13 +256,25 @@ AudioPlayer.prototype.select_ = function(newTrack, opt_restoreState) {
 
   this.scrollToCurrent_(false);
 
-  var url = this.urls_[this.currentTrack_];
+  var currentTrack = this.currentTrack_;
+  var url = this.urls_[currentTrack];
   this.fetchMetadata_(url, function(metadata) {
+    if (this.currentTrack_ != currentTrack)
+      return;
     // Do not try no stream when offline.
     var src =
         (navigator.onLine && metadata.streaming && metadata.streaming.url) ||
         url;
     this.audioControls_.load(src, opt_restoreState);
+
+    // Resolve real filesystem path of the current audio file.
+    this.selectedItemFilesystemPath_ = null;
+    webkitResolveLocalFileSystemURL(src,
+      function(entry) {
+        if (this.currentTrack_ != currentTrack)
+          return;
+        this.selectedItemFilesystemPath_ = entry.fullPath;
+      }.bind(this));
   }.bind(this));
 };
 
@@ -326,7 +354,7 @@ AudioPlayer.prototype.isCompact_ = function() {
 /**
  * Go to the previous or the next track.
  * @param {boolean} forward True if next, false if previous.
- * @param {boolean} opt_onlyIfValid True if invalid tracks should be selected.
+ * @param {boolean=} opt_onlyIfValid True if invalid tracks should be selected.
  * @private
  */
 AudioPlayer.prototype.advance_ = function(forward, opt_onlyIfValid) {
@@ -553,6 +581,8 @@ function FullWindowAudioControls(container, advanceTrack, onError) {
       e.preventDefault();
     }
   }.bind(this));
+
+  util.disableBrowserShortcutKeys(document);
 }
 
 FullWindowAudioControls.prototype = { __proto__: AudioControls.prototype };

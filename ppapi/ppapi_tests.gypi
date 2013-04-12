@@ -55,6 +55,8 @@
             '_CRT_NONSTDC_NO_DEPRECATE',
             '_SCL_SECURE_NO_DEPRECATE',
           ],
+          # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+          'msvs_disabled_warnings': [ 4267, ],
         }],
         ['OS=="mac"', {
           'mac_bundle': 1,
@@ -62,6 +64,8 @@
           'product_extension': 'plugin',
         }],
       ],
+      # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+      'msvs_disabled_warnings': [ 4267, ],
 # TODO(dmichael):  Figure out what is wrong with the script on Windows and add
 #                  it as an automated action.
 #      'actions': [
@@ -158,6 +162,7 @@
         'proxy/serialized_var_unittest.cc',
         'proxy/websocket_resource_unittest.cc',
         'shared_impl/resource_tracker_unittest.cc',
+        'shared_impl/thread_aware_callback_unittest.cc',
         'shared_impl/time_conversion_unittest.cc',
         'shared_impl/tracked_callback_unittest.cc',
         'shared_impl/var_tracker_unittest.cc',
@@ -173,6 +178,8 @@
           ],
         }],
       ],
+      # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+      'msvs_disabled_warnings': [ 4267, ],          
     },
     {
       'target_name': 'ppapi_example_skeleton',
@@ -236,6 +243,8 @@
       'sources': [
         'examples/gamepad/gamepad.cc',
       ],
+      # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+      'msvs_disabled_warnings': [ 4267, ],
     },
 
     {
@@ -307,6 +316,8 @@
       'sources': [
         'examples/ime/ime.cc',
       ],
+      # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+      'msvs_disabled_warnings': [ 4267, ],
     },
     {
       'target_name': 'ppapi_example_paint_manager',
@@ -408,6 +419,8 @@
         'examples/video_decode/video_decode.cc',
         'examples/video_decode/testdata.h',
       ],
+      # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+      'msvs_disabled_warnings': [ 4267, ],
     },
     {
       'target_name': 'ppapi_example_vc',
@@ -453,6 +466,8 @@
       'sources': [
         'examples/printing/printing.cc',
       ],
+      # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+      'msvs_disabled_warnings': [ 4267, ],
     },
   ],
 }

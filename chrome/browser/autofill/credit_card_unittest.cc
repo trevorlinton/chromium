@@ -95,6 +95,16 @@ TEST(CreditCardTest, PreviewSummaryAndObfuscatedNumberStrings) {
   EXPECT_EQ(ASCIIToUTF16("************5100, Exp: 01/2010"), summary4);
   string16 obfuscated4 = credit_card4.ObfuscatedNumber();
   EXPECT_EQ(ASCIIToUTF16("************5100"), obfuscated4);
+
+  // Case 5: Very long credit card
+  CreditCard credit_card5;
+  autofill_test::SetCreditCardInfo(&credit_card5,
+      "John Dillinger",
+      "0123456789 0123456789 0123456789 5105 1051 0510 5100", "01", "2010");
+  string16 summary5 = credit_card5.Label();
+  EXPECT_EQ(ASCIIToUTF16("********************5100, Exp: 01/2010"), summary5);
+  string16 obfuscated5 = credit_card5.ObfuscatedNumber();
+  EXPECT_EQ(ASCIIToUTF16("********************5100"), obfuscated5);
 }
 
 TEST(CreditCardTest, AssignmentOperator) {
@@ -109,19 +119,6 @@ TEST(CreditCardTest, AssignmentOperator) {
   // Assignment to self should not change the profile value.
   a = a;
   EXPECT_TRUE(a == b);
-}
-
-TEST(CreditCardTest, IsValidCreditCardNumber) {
-  for (size_t i = 0; i < arraysize(kValidNumbers); ++i) {
-    SCOPED_TRACE(kValidNumbers[i]);
-    EXPECT_TRUE(
-        CreditCard::IsValidCreditCardNumber(ASCIIToUTF16(kValidNumbers[i])));
-  }
-  for (size_t i = 0; i < arraysize(kInvalidNumbers); ++i) {
-    SCOPED_TRACE(kInvalidNumbers[i]);
-    EXPECT_FALSE(
-        CreditCard::IsValidCreditCardNumber(ASCIIToUTF16(kInvalidNumbers[i])));
-  }
 }
 
 TEST(CreditCardTest, IsComplete) {
@@ -164,7 +161,7 @@ TEST(CreditCardTest, SetRawInfoCreditCardNumber) {
 }
 
 // Verify that we can handle both numeric and named months.
-TEST(CreditCardTest, SetRawInfoExpirationMonth) {
+TEST(CreditCardTest, SetExpirationMonth) {
   CreditCard card;
 
   card.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("05"));
@@ -173,10 +170,14 @@ TEST(CreditCardTest, SetRawInfoExpirationMonth) {
   card.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("7"));
   EXPECT_EQ(ASCIIToUTF16("07"), card.GetRawInfo(CREDIT_CARD_EXP_MONTH));
 
+  // This should fail, and preserve the previous value.
   card.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("January"));
+  EXPECT_EQ(ASCIIToUTF16("07"), card.GetRawInfo(CREDIT_CARD_EXP_MONTH));
+
+  card.SetInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("January"), "en-US");
   EXPECT_EQ(ASCIIToUTF16("01"), card.GetRawInfo(CREDIT_CARD_EXP_MONTH));
 
-  card.SetRawInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("Apr"));
+  card.SetInfo(CREDIT_CARD_EXP_MONTH, ASCIIToUTF16("Apr"), "en-US");
   EXPECT_EQ(ASCIIToUTF16("04"), card.GetRawInfo(CREDIT_CARD_EXP_MONTH));
 }
 

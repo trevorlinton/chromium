@@ -14,10 +14,6 @@ namespace gfx {
 class Rect;
 }
 
-namespace ui_controls {
-class UIControlsAura;
-}
-
 namespace ash {
 class FramePainter;
 namespace internal {
@@ -33,10 +29,21 @@ class RootWindowController;
 extern const aura::WindowProperty<internal::AlwaysOnTopController*>* const
     kAlwaysOnTopControllerKey;
 
+// A property key to disable the frame painter policy for solo windows.
+// It is only available for root windows.
+ASH_EXPORT extern const aura::WindowProperty<bool>* const
+    kIgnoreSoloWindowFramePainterPolicy;
+
 // True if the window is ignored by the shelf layout manager for purposes of
 // darkening the shelf.
 extern const aura::WindowProperty<bool>* const
     kIgnoredByShelfKey;
+
+// True if this is a browser window in immersive mode.
+ASH_EXPORT extern const aura::WindowProperty<bool>* const kImmersiveModeKey;
+
+// True if this window is an attached panel.
+ASH_EXPORT extern const aura::WindowProperty<bool>* const kPanelAttachedKey;
 
 // Used to remember the show state before the window was minimized.
 extern const aura::WindowProperty<ui::WindowShowState>* const
@@ -55,10 +62,6 @@ ASH_EXPORT extern const aura::WindowProperty<ash::FramePainter*>* const
 // This is exported as it's used in the tests.
 ASH_EXPORT extern const aura::WindowProperty<bool>* const
     kStayInSameRootWindowKey;
-
-// Used to store a ui_controls for each root window.
-extern const aura::WindowProperty<ui_controls::UIControlsAura*>* const
-    kUIControlsKey;
 
 // A property key to remember if a windows position or size was changed by a
 // user.

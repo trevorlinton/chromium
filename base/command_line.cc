@@ -8,10 +8,10 @@
 #include <ostream>
 
 #include "base/basictypes.h"
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/string_split.h"
 #include "base/string_util.h"
+#include "base/strings/string_split.h"
 #include "base/utf_string_conversions.h"
 #include "build/build_config.h"
 
@@ -20,7 +20,10 @@
 #include <shellapi.h>
 #endif
 
+using base::FilePath;
+
 CommandLine* CommandLine::current_process_commandline_ = NULL;
+
 
 namespace {
 const CommandLine::CharType kSwitchTerminator[] = FILE_PATH_LITERAL("--");
@@ -42,7 +45,9 @@ size_t GetSwitchPrefixLength(const CommandLine::StringType& string) {
   }
   return 0;
 }
-} // anonymous namespace
+
+} // namespace
+
 // Fills in |switch_string| and |switch_value| if |string| is a switch.
 // This will preserve the input switch prefix in the output |switch_string|.
 bool IsSwitch(const CommandLine::StringType& string,
@@ -62,6 +67,7 @@ bool IsSwitch(const CommandLine::StringType& string,
 }
 
 namespace {
+
 // Append switches and arguments, keeping switches before arguments.
 void AppendSwitchesAndArguments(CommandLine& command_line,
                                 const CommandLine::StringVector& argv) {
@@ -84,6 +90,7 @@ void AppendSwitchesAndArguments(CommandLine& command_line,
     }
   }
 }
+
 
 // Lowercase switches for backwards compatiblity *on Windows*.
 std::string LowerASCIIOnWindows(const std::string& string) {

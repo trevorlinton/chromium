@@ -23,6 +23,7 @@
 #include "googleurl/src/url_util.h"
 #include "net/base/cert_verifier.h"
 #include "net/base/io_buffer.h"
+#include "net/base/load_timing_info.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_delegate.h"
 #include "net/base/ssl_config_service_defaults.h"
@@ -57,8 +58,18 @@ class TestURLRequestContext : public URLRequestContext {
 
   void Init();
 
+  ClientSocketFactory* client_socket_factory() {
+    return client_socket_factory_;
+  }
+  void set_client_socket_factory(ClientSocketFactory* factory) {
+    client_socket_factory_ = factory;
+  }
+
  private:
   bool initialized_;
+
+  // Not owned:
+  ClientSocketFactory* client_socket_factory_;
 
  protected:
   URLRequestContextStorage context_storage_;
@@ -195,6 +206,15 @@ class TestNetworkDelegate : public NetworkDelegate {
   TestNetworkDelegate();
   virtual ~TestNetworkDelegate();
 
+  // Writes the LoadTimingInfo during the most recent call to OnBeforeRedirect.
+  bool GetLoadTimingInfoBeforeRedirect(
+      LoadTimingInfo* load_timing_info_before_redirect) const;
+
+  // Same as GetLoadTimingInfoBeforeRedirect, except for calls to
+  // AuthRequiredResponse.
+  bool GetLoadTimingInfoBeforeAuth(
+      LoadTimingInfo* load_timing_info_before_auth) const;
+
   void set_cookie_options(int o) {cookie_options_bit_mask_ = o; }
 
   int last_error() const { return last_error_; }
@@ -241,7 +261,7 @@ class TestNetworkDelegate : public NetworkDelegate {
                               const std::string& cookie_line,
                               CookieOptions* options) OVERRIDE;
   virtual bool OnCanAccessFile(const URLRequest& request,
-                               const FilePath& path) const OVERRIDE;
+                               const base::FilePath& path) const OVERRIDE;
   virtual bool OnCanThrottleRequest(
       const URLRequest& request) const OVERRIDE;
   virtual int OnBeforeSocketStreamConnect(
@@ -271,6 +291,12 @@ class TestNetworkDelegate : public NetworkDelegate {
   // A log that records for each request id (key) the order in which On...
   // functions were called.
   std::map<int, std::string> event_order_;
+
+  LoadTimingInfo load_timing_info_before_redirect_;
+  bool has_load_timing_info_before_redirect_;
+
+  LoadTimingInfo load_timing_info_before_auth_;
+  bool has_load_timing_info_before_auth_;
 };
 
 // Overrides the host used by the LocalHttpTestServer in

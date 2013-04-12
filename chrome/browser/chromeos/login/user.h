@@ -43,15 +43,19 @@ class User {
     USER_TYPE_RETAIL_MODE,
     // Public account user, logs in without authentication. Available only if
     // enabled through policy.
-    USER_TYPE_PUBLIC_ACCOUNT
+    USER_TYPE_PUBLIC_ACCOUNT,
+    // Locally managed user, logs in only with local authentication.
+    USER_TYPE_LOCALLY_MANAGED
   } UserType;
 
   // User OAuth token status according to the last check.
+  // Please note that enum values 1 and 2 were used for OAuth1 status and are
+  // deprecated now.
   typedef enum {
-    OAUTH_TOKEN_STATUS_UNKNOWN = 0,
-    OAUTH_TOKEN_STATUS_INVALID = 1,
-    OAUTH_TOKEN_STATUS_VALID   = 2,
-  } OAuthTokenStatus;
+     OAUTH_TOKEN_STATUS_UNKNOWN  = 0,
+     OAUTH2_TOKEN_STATUS_INVALID = 3,
+     OAUTH2_TOKEN_STATUS_VALID   = 4,
+   } OAuthTokenStatus;
 
   // Returned as |image_index| when user-selected file or photo is used as
   // user image.
@@ -121,7 +125,7 @@ class User {
   string16 display_name() const { return display_name_; }
 
   // The displayed (non-canonical) user email.
-  std::string display_email() const { return display_email_; }
+  virtual std::string display_email() const;
 
   // True if the user's session can be locked (i.e. the user has a password with
   // which to unlock the session).
@@ -136,6 +140,7 @@ class User {
   // Do not allow anyone else to create new User instances.
   static User* CreateRegularUser(const std::string& email);
   static User* CreateGuestUser();
+  static User* CreateLocallyManagedUser(const std::string& username);
   static User* CreateRetailModeUser();
   static User* CreatePublicAccountUser(const std::string& email);
 

@@ -70,20 +70,6 @@ static void AdjustVolume(Format* buf_out,
   }
 }
 
-static const int kChannel_L = 0;
-static const int kChannel_R = 1;
-static const int kChannel_C = 2;
-
-template<class Fixed, int min_value, int max_value>
-static int AddSaturated(int val, int adder) {
-  Fixed sum = static_cast<Fixed>(val) + static_cast<Fixed>(adder);
-  if (sum > max_value)
-    return max_value;
-  if (sum < min_value)
-    return min_value;
-  return static_cast<int>(sum);
-}
-
 // AdjustVolume() does an in place audio sample change.
 bool AdjustVolume(void* buf,
                   size_t buflen,
@@ -122,72 +108,6 @@ bool AdjustVolume(void* buf,
   return false;
 }
 
-// TODO(enal): use template specialization and size-specific intrinsics.
-//             Call is on the time-critical path, and by using SSE/AVX
-//             instructions we can speed things up by ~4-8x, more for the case
-//             when we have to adjust volume as well.
-template<class Format, class Fixed, int min_value, int max_value, int bias>
-static void MixStreams(Format* dst, Format* src, int count, float volume) {
-  if (volume == 0.0f)
-    return;
-  if (volume == 1.0f) {
-    // Most common case -- no need to adjust volume.
-    for (int i = 0; i < count; ++i) {
-      Fixed value = AddSaturated<Fixed, min_value, max_value>(dst[i] - bias,
-                                                              src[i] - bias);
-      dst[i] = static_cast<Format>(value + bias);
-    }
-  } else {
-    // General case -- have to adjust volume before mixing.
-    const int fixed_volume = static_cast<int>(volume * 65536);
-    for (int i = 0; i < count; ++i) {
-      Fixed adjusted_src = ScaleChannel<Fixed>(src[i] - bias, fixed_volume);
-      Fixed value = AddSaturated<Fixed, min_value, max_value>(dst[i] - bias,
-                                                              adjusted_src);
-      dst[i] = static_cast<Format>(value + bias);
-    }
-  }
-}
-
-void MixStreams(void* dst,
-                void* src,
-                size_t buflen,
-                int bytes_per_sample,
-                float volume) {
-  DCHECK(dst);
-  DCHECK(src);
-  DCHECK_GE(volume, 0.0f);
-  DCHECK_LE(volume, 1.0f);
-  switch (bytes_per_sample) {
-    case 1:
-      MixStreams<uint8, int32, kint8min, kint8max, 128>(
-          static_cast<uint8*>(dst),
-          static_cast<uint8*>(src),
-          buflen,
-          volume);
-      break;
-    case 2:
-      DCHECK_EQ(0u, buflen % 2);
-      MixStreams<int16, int32, kint16min, kint16max, 0>(
-          static_cast<int16*>(dst),
-          static_cast<int16*>(src),
-          buflen / 2,
-          volume);
-      break;
-    case 4:
-      DCHECK_EQ(0u, buflen % 4);
-      MixStreams<int32, int64, kint32min, kint32max, 0>(
-          static_cast<int32*>(dst),
-          static_cast<int32*>(src),
-          buflen / 4,
-          volume);
-      break;
-    default:
-      NOTREACHED() << "Illegal bytes per sample";
-      break;
-  }
-}
-
 int GetAudioHardwareSampleRate() {
 #if defined(OS_MACOSX)
   // Hardware sample-rate on the Mac can be configured, so we must query.
@@ -212,14 +132,12 @@ int GetAudioHardwareSampleRate() {
 
   // Hardware sample-rate on Windows can be configured, so we must query.
   // TODO(henrika): improve possibility to specify an audio endpoint.
-  // Use the default device (same as for Wave) for now to be compatible
-  // or possibly remove the ERole argument completely until it is in use.
-  return WASAPIAudioOutputStream::HardwareSampleRate(eConsole);
+  // Use the default device (same as for Wave) for now to be compatible.
+  return WASAPIAudioOutputStream::HardwareSampleRate();
 #elif defined(OS_ANDROID)
+  // TODO(leozwang): return native sampling rate on Android.
   return 16000;
 #else
-  // Hardware for Linux is nearly always 48KHz.
-  // TODO(crogers) : return correct value in rare non-48KHz cases.
   return 48000;
 #endif
 }
@@ -237,6 +155,8 @@ int GetAudioInputHardwareSampleRate(const std::string& device_id) {
 #elif defined(OS_ANDROID)
   return 16000;
 #else
+  // Hardware for Linux is nearly always 48KHz.
+  // TODO(crogers) : return correct value in rare non-48KHz cases.
   return 48000;
 #endif
 }
@@ -256,8 +176,12 @@ size_t GetAudioHardwareBufferSize() {
 #if defined(OS_MACOSX)
   return 128;
 #elif defined(OS_WIN)
+  // TODO(henrika): resolve conflict with GetUserBufferSize().
+  // If the user tries to set a buffer size using GetUserBufferSize() it will
+  // most likely fail since only the native/perfect buffer size is allowed.
+
   // Buffer size to use when a proper size can't be determined from the system.
-  static const int kFallbackBufferSize = 4096;
+  static const int kFallbackBufferSize = 2048;
 
   if (!CoreAudioUtil::IsSupported()) {
     // Fall back to Windows Wave implementation on Windows XP or lower
@@ -273,42 +197,12 @@ size_t GetAudioHardwareBufferSize() {
     return 256;
   }
 
-  // TODO(henrika): remove when the --enable-webaudio-input flag is no longer
-  // utilized.
-  if (cmd_line->HasSwitch(switches::kEnableWebAudioInput)) {
-    AudioParameters params;
-    HRESULT hr = CoreAudioUtil::GetPreferredAudioParameters(eRender, eConsole,
-                                                            &params);
-    return FAILED(hr) ? kFallbackBufferSize : params.frames_per_buffer();
-  }
-
-  // This call must be done on a COM thread configured as MTA.
-  // TODO(tommi): http://code.google.com/p/chromium/issues/detail?id=103835.
-  int mixing_sample_rate =
-      WASAPIAudioOutputStream::HardwareSampleRate(eConsole);
-
-  // Windows will return a sample rate of 0 when no audio output is available
-  // (i.e. via RemoteDesktop with remote audio disabled), but we should never
-  // return a buffer size of zero.
-  if (mixing_sample_rate == 0)
-    return kFallbackBufferSize;
-
-  // Use different buffer sizes depening on the sample rate . The existing
-  // WASAPI implementation is tuned to provide the most stable callback
-  // sequence using these combinations.
-  if (mixing_sample_rate % 11025 == 0)
-    // Use buffer size of ~10.15873 ms.
-    return (112 * (mixing_sample_rate / 11025));
-
-  if (mixing_sample_rate % 8000 == 0)
-    // Use buffer size of 10ms.
-    return (80 * (mixing_sample_rate / 8000));
-
-  // Ensure we always return a buffer size which is somewhat appropriate.
-  LOG(ERROR) << "Unknown sample rate " << mixing_sample_rate << " detected.";
-  if (mixing_sample_rate > limits::kMinSampleRate)
-    return (mixing_sample_rate / 100);
-  return kFallbackBufferSize;
+  AudioParameters params;
+  HRESULT hr = CoreAudioUtil::GetPreferredAudioParameters(eRender, eConsole,
+                                                          &params);
+  return FAILED(hr) ? kFallbackBufferSize : params.frames_per_buffer();
+#elif defined(OS_LINUX)
+  return 512;
 #else
   return 2048;
 #endif
@@ -371,6 +265,14 @@ size_t GetHighLatencyOutputBufferSize(int sample_rate) {
 #if defined(OS_WIN)
 
 int NumberOfWaveOutBuffers() {
+  // Use the user provided buffer count if provided.
+  int buffers = 0;
+  std::string buffers_str(CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+      switches::kWaveOutBuffers));
+  if (base::StringToInt(buffers_str, &buffers) && buffers > 0) {
+    return buffers;
+  }
+
   // Use 4 buffers for Vista, 3 for everyone else:
   //  - The entire Windows audio stack was rewritten for Windows Vista and wave
   //    out performance was degraded compared to XP.

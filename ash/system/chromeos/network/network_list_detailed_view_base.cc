@@ -6,6 +6,7 @@
 
 #include "ash/shell.h"
 #include "ash/shell_window_ids.h"
+#include "ash/system/tray/hover_highlight_view.h"
 #include "ash/system/tray/system_tray.h"
 #include "ash/system/tray/system_tray_delegate.h"
 #include "ash/system/tray/system_tray_item.h"
@@ -26,11 +27,22 @@ namespace {
 
 // Create a label with the font size and color used in the network info bubble.
 views::Label* CreateInfoBubbleLabel(const string16& text) {
-  const SkColor text_color = SkColorSetARGB(127, 0, 0, 0);
   views::Label* label = new views::Label(text);
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   label->SetFont(rb.GetFont(ui::ResourceBundle::SmallFont));
-  label->SetEnabledColor(text_color);
+  label->SetEnabledColor(SkColorSetARGB(127, 0, 0, 0));
+  return label;
+}
+
+// Create a label formatted for info items in the menu
+views::Label* CreateMenuInfoLabel(const string16& text) {
+  views::Label* label = new views::Label(text);
+  label->set_border(views::Border::CreateEmptyBorder(
+      ash::kTrayPopupPaddingBetweenItems,
+      ash::kTrayPopupPaddingHorizontal,
+      ash::kTrayPopupPaddingBetweenItems, 0));
+  label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+  label->SetEnabledColor(SkColorSetARGB(192, 0, 0, 0));
   return label;
 }
 
@@ -91,7 +103,6 @@ NetworkListDetailedViewBase::NetworkListDetailedViewBase(
       info_icon_(NULL),
       settings_(NULL),
       proxy_settings_(NULL),
-      scanning_view_(NULL),
       info_bubble_(NULL) {
 }
 
@@ -118,8 +129,7 @@ void NetworkListDetailedViewBase::ManagerChanged() {
   Update();
 }
 
-void NetworkListDetailedViewBase::NetworkListChanged(
-    const NetworkStateList& networks) {
+void NetworkListDetailedViewBase::NetworkListChanged() {
   Update();
 }
 
@@ -200,94 +210,65 @@ void NetworkListDetailedViewBase::UpdateAvailableNetworkList() {
   GetAvailableNetworkList(&network_list_);
 }
 
-void NetworkListDetailedViewBase::RefreshNetworkScrollWithUpdatedNetworkList() {
+bool NetworkListDetailedViewBase::CreateOrUpdateInfoLabel(
+    int index, const string16& text, views::Label** label) {
+  if (*label == NULL) {
+    *label = CreateMenuInfoLabel(text);
+    scroll_content()->AddChildViewAt(*label, index);
+    return true;
+  } else {
+    (*label)->SetText(text);
+    return OrderChild(*label, index);
+  }
+}
+
+bool NetworkListDetailedViewBase::UpdateNetworkChild(
+    int index, const NetworkIconInfo* info) {
+  bool needs_relayout = false;
+  HoverHighlightView* container = NULL;
+  ServicePathMap::const_iterator found =
+      service_path_map_.find(info->service_path);
+  gfx::Font::FontStyle font =
+      info->highlight() ? gfx::Font::BOLD : gfx::Font::NORMAL;
+  string16 desc = info->description.empty() ? info->name : info->description;
+  if (found == service_path_map_.end()) {
+    container = new HoverHighlightView(this);
+    container->AddIconAndLabel(info->image, desc, font);
+    scroll_content()->AddChildViewAt(container, index);
+    container->set_border(views::Border::CreateEmptyBorder(
+        0, kTrayPopupPaddingHorizontal, 0, 0));
+    needs_relayout = true;
+  } else {
+    container = found->second;
+    container->RemoveAllChildViews(true);
+    container->AddIconAndLabel(info->image, desc, font);
+    container->Layout();
+    container->SchedulePaint();
+    needs_relayout = OrderChild(container, index);
+  }
+
+  network_map_[container] = info->service_path;
+  service_path_map_[info->service_path] = container;
+  return needs_relayout;
+}
+
+bool NetworkListDetailedViewBase::OrderChild(views::View* view, int index) {
+  if (scroll_content()->child_at(index) != view) {
+    scroll_content()->ReorderChildView(view, index);
+    return true;
+  }
+  return false;
+}
+
+void NetworkListDetailedViewBase::RefreshNetworkList() {
   network_map_.clear();
   std::set<std::string> new_service_paths;
+  bool needs_relayout = UpdateNetworkListEntries(&new_service_paths);
 
-  bool needs_relayout = false;
-  views::View* highlighted_view = NULL;
-
-  if (service_path_map_.empty()) {
-    scroll_content()->RemoveAllChildViews(true);
-    scanning_view_ = NULL;
-  }
-
-  // Insert child views. Order is:
-  // * Highlit networks (connected and connecting)
-  // * "Scanning..."
-  // * Un-highlit networks (not connected). Usually empty while scanning.
-
-  bool wifi_scanning =
-      Shell::GetInstance()->system_tray_delegate()->GetWifiScanning();
-  if (wifi_scanning && scanning_view_ == NULL) {
-    scanning_view_ = new views::Label(
-        ui::ResourceBundle::GetSharedInstance().
-        GetLocalizedString(IDS_ASH_STATUS_TRAY_WIFI_SCANNING_MESSAGE));
-    scanning_view_->set_border(views::Border::CreateEmptyBorder(20, 0, 10, 0));
-    scanning_view_->SetFont(
-        scanning_view_->font().DeriveFont(0, gfx::Font::ITALIC));
-    // Initially insert "scanning" first.
-    scroll_content()->AddChildViewAt(scanning_view_, 0);
-    needs_relayout = true;
-  } else if (!wifi_scanning && scanning_view_ != NULL) {
-    scroll_content()->RemoveChildView(scanning_view_);
-    scanning_view_ = NULL;
-    needs_relayout = true;
-  }
-
-  int child_index_offset = 0;
-  for (size_t i = 0; i < network_list_.size(); ++i) {
-    const bool highlight =
-        network_list_[i].connected || network_list_[i].connecting;
-    if (scanning_view_ && child_index_offset == 0 && !highlight)
-      child_index_offset = 1;
-    // |child_index| determines the position of the view, which is the same
-    // as the list index for highlit views, and offset by one for any
-    // non-highlit views when scanning.
-    const int child_index = i + child_index_offset;
-    HoverHighlightView* container = NULL;
-    std::map<std::string, HoverHighlightView*>::const_iterator it =
-        service_path_map_.find(network_list_[i].service_path);
-    if (it == service_path_map_.end()) {
-      // Create a new view.
-      container = new HoverHighlightView(this);
-      container->set_fixed_height(kTrayPopupItemHeight);
-      container->AddIconAndLabel(network_list_[i].image,
-          network_list_[i].description.empty() ?
-              network_list_[i].name : network_list_[i].description,
-          highlight ? gfx::Font::BOLD : gfx::Font::NORMAL);
-      scroll_content()->AddChildViewAt(container, child_index);
-      container->set_border(views::Border::CreateEmptyBorder(0,
-          kTrayPopupPaddingHorizontal, 0, 0));
-      needs_relayout = true;
-    } else {
-      container = it->second;
-      container->RemoveAllChildViews(true);
-      container->AddIconAndLabel(network_list_[i].image,
-          network_list_[i].description.empty() ?
-              network_list_[i].name : network_list_[i].description,
-          highlight ? gfx::Font::BOLD : gfx::Font::NORMAL);
-      container->Layout();
-      container->SchedulePaint();
-
-      // Reordering the view if necessary.
-      views::View* child = scroll_content()->child_at(child_index);
-      if (child != container) {
-        scroll_content()->ReorderChildView(container, child_index);
-        needs_relayout = true;
-      }
-    }
-
-    if (highlight)
-      highlighted_view = container;
-    network_map_[container] = network_list_[i].service_path;
-    service_path_map_[network_list_[i].service_path] = container;
-    new_service_paths.insert(network_list_[i].service_path);
-  }
-
+  // Remove old children
   std::set<std::string> remove_service_paths;
-  for (std::map<std::string, HoverHighlightView*>::const_iterator it =
-           service_path_map_.begin(); it != service_path_map_.end(); ++it) {
+  for (ServicePathMap::const_iterator it = service_path_map_.begin();
+       it != service_path_map_.end(); ++it) {
     if (new_service_paths.find(it->first) == new_service_paths.end()) {
       remove_service_paths.insert(it->first);
       scroll_content()->RemoveChildView(it->second);
@@ -302,24 +283,23 @@ void NetworkListDetailedViewBase::RefreshNetworkScrollWithUpdatedNetworkList() {
   }
 
   if (needs_relayout) {
+    views::View* selected_view = NULL;
+    for (ServicePathMap::const_iterator iter = service_path_map_.begin();
+         iter != service_path_map_.end(); ++iter) {
+      if (iter->second->hover()) {
+        selected_view = iter->second;
+        break;
+      }
+    }
     scroll_content()->SizeToPreferredSize();
     static_cast<views::View*>(scroller())->Layout();
-    if (highlighted_view)
-      scroll_content()->ScrollRectToVisible(highlighted_view->bounds());
+    if (selected_view)
+      scroll_content()->ScrollRectToVisible(selected_view->bounds());
   }
 }
 
-void NetworkListDetailedViewBase::ClearNetworkScrollWithEmptyNetworkList() {
-  service_path_map_.clear();
-  network_map_.clear();
-  scroll_content()->RemoveAllChildViews(true);
-}
-
 void NetworkListDetailedViewBase::RefreshNetworkScrollWithUpdatedNetworkData() {
-  if (network_list_.size() > 0 )
-    RefreshNetworkScrollWithUpdatedNetworkList();
-  else
-    RefreshNetworkScrollWithEmptyNetworkList();
+  RefreshNetworkList();
 }
 
 bool NetworkListDetailedViewBase::IsNetworkListEmpty() const {
@@ -345,7 +325,7 @@ void NetworkListDetailedViewBase::ButtonPressed(views::Button* sender,
     CustomButtonPressed(sender, event);
 }
 
-void NetworkListDetailedViewBase::ClickedOn(views::View* sender) {
+void NetworkListDetailedViewBase::OnViewClicked(views::View* sender) {
   SystemTrayDelegate* delegate = Shell::GetInstance()->system_tray_delegate();
   // If the info bubble was visible, close it when some other item is clicked
   // on.
@@ -360,8 +340,7 @@ void NetworkListDetailedViewBase::ClickedOn(views::View* sender) {
     return;
 
   if (!CustomLinkClickedOn(sender)) {
-    std::map<views::View*, std::string>::iterator find;
-    find = network_map_.find(sender);
+    NetworkMap::iterator find = network_map_.find(sender);
     if (find != network_map_.end()) {
       std::string network_id = find->second;
       delegate->ConnectToNetwork(network_id);

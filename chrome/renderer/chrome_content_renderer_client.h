@@ -18,9 +18,12 @@ class ExtensionSet;
 class RendererNetPredictor;
 class SpellCheck;
 class SpellCheckProvider;
-class VisitedLinkSlave;
 
 struct ChromeViewHostMsg_GetPluginInfo_Output;
+
+namespace components {
+class VisitedLinkSlave;
+}
 
 namespace extensions {
 class Dispatcher;
@@ -63,7 +66,7 @@ class ChromeContentRendererClient : public content::ContentRendererClient {
       WebKit::WebPlugin** plugin) OVERRIDE;
   virtual WebKit::WebPlugin* CreatePluginReplacement(
       content::RenderView* render_view,
-      const FilePath& plugin_path) OVERRIDE;
+      const base::FilePath& plugin_path) OVERRIDE;
   virtual bool HasErrorPage(int http_status_code,
                             std::string* error_domain) OVERRIDE;
   virtual void GetNavigationErrorStrings(
@@ -81,6 +84,7 @@ class ChromeContentRendererClient : public content::ContentRendererClient {
   virtual bool AllowPopup() OVERRIDE;
   virtual bool ShouldFork(WebKit::WebFrame* frame,
                           const GURL& url,
+                          const std::string& http_method,
                           bool is_initial_navigation,
                           bool* send_referrer) OVERRIDE;
   virtual bool WillSendRequest(WebKit::WebFrame* frame,
@@ -111,6 +115,8 @@ class ChromeContentRendererClient : public content::ContentRendererClient {
                                       const GURL& url,
                                       const GURL& first_party_for_cookies,
                                       const std::string& value) OVERRIDE;
+  virtual bool AllowBrowserPlugin(WebKit::WebPluginContainer* container) const
+      OVERRIDE;
 
   // TODO(mpcomplete): remove after we collect histogram data.
   // http://crbug.com/100411
@@ -167,7 +173,7 @@ class ChromeContentRendererClient : public content::ContentRendererClient {
   scoped_ptr<extensions::Dispatcher> extension_dispatcher_;
   scoped_ptr<RendererNetPredictor> net_predictor_;
   scoped_ptr<SpellCheck> spellcheck_;
-  scoped_ptr<VisitedLinkSlave> visited_link_slave_;
+  scoped_ptr<components::VisitedLinkSlave> visited_link_slave_;
   scoped_ptr<safe_browsing::PhishingClassifierFilter> phishing_classifier_;
   scoped_ptr<prerender::PrerenderDispatcher> prerender_dispatcher_;
 };

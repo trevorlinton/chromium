@@ -93,6 +93,21 @@
       case ::syncer::EXPERIMENTS: \
         PER_DATA_TYPE_MACRO("Experiments"); \
         break; \
+      case ::syncer::PRIORITY_PREFERENCES :\
+        PER_DATA_TYPE_MACRO("PriorityPreferences"); \
+        break; \
+      case ::syncer::DICTIONARY: \
+        PER_DATA_TYPE_MACRO("Dictionary"); \
+        break; \
+      case ::syncer::FAVICON_IMAGES: \
+        PER_DATA_TYPE_MACRO("FaviconImages"); \
+        break; \
+      case ::syncer::FAVICON_TRACKING: \
+        PER_DATA_TYPE_MACRO("FaviconTracking"); \
+        break; \
+      case ::syncer::PROXY_TABS :\
+        PER_DATA_TYPE_MACRO("Tabs"); \
+        break; \
       default: \
         NOTREACHED() << "Unknown datatype " \
                      << ::syncer::ModelTypeToString(datatype);  \

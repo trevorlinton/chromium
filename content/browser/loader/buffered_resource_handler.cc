@@ -17,6 +17,7 @@
 #include "content/browser/loader/resource_request_info_impl.h"
 #include "content/browser/plugin_service_impl.h"
 #include "content/public/browser/content_browser_client.h"
+#include "content/public/browser/download_id.h"
 #include "content/public/browser/download_save_info.h"
 #include "content/public/browser/resource_context.h"
 #include "content/public/browser/resource_dispatcher_host_delegate.h"
@@ -36,24 +37,24 @@ namespace {
 void RecordSnifferMetrics(bool sniffing_blocked,
                           bool we_would_like_to_sniff,
                           const std::string& mime_type) {
-  static base::Histogram* nosniff_usage(NULL);
+  static base::HistogramBase* nosniff_usage(NULL);
   if (!nosniff_usage)
     nosniff_usage = base::BooleanHistogram::FactoryGet(
-        "nosniff.usage", base::Histogram::kUmaTargetedHistogramFlag);
+        "nosniff.usage", base::HistogramBase::kUmaTargetedHistogramFlag);
   nosniff_usage->AddBoolean(sniffing_blocked);
 
   if (sniffing_blocked) {
-    static base::Histogram* nosniff_otherwise(NULL);
+    static base::HistogramBase* nosniff_otherwise(NULL);
     if (!nosniff_otherwise)
       nosniff_otherwise = base::BooleanHistogram::FactoryGet(
-          "nosniff.otherwise", base::Histogram::kUmaTargetedHistogramFlag);
+          "nosniff.otherwise", base::HistogramBase::kUmaTargetedHistogramFlag);
     nosniff_otherwise->AddBoolean(we_would_like_to_sniff);
 
-    static base::Histogram* nosniff_empty_mime_type(NULL);
+    static base::HistogramBase* nosniff_empty_mime_type(NULL);
     if (!nosniff_empty_mime_type)
       nosniff_empty_mime_type = base::BooleanHistogram::FactoryGet(
           "nosniff.empty_mime_type",
-          base::Histogram::kUmaTargetedHistogramFlag);
+          base::HistogramBase::kUmaTargetedHistogramFlag);
     nosniff_empty_mime_type->AddBoolean(mime_type.empty());
   }
 }
@@ -67,7 +68,7 @@ class DependentIOBuffer : public net::WrappedIOBuffer {
   }
 
  private:
-  ~DependentIOBuffer() {}
+  virtual ~DependentIOBuffer() {}
 
   scoped_refptr<net::IOBuffer> buf_;
 };
@@ -342,6 +343,7 @@ bool BufferedResourceHandler::SelectNextHandler(bool* defer) {
           request_,
           true,  // is_content_initiated
           must_download,
+          DownloadId(),
           scoped_ptr<DownloadSaveInfo>(new DownloadSaveInfo()),
           DownloadResourceHandler::OnStartedCallback()));
   return UseAlternateNextHandler(handler.Pass());

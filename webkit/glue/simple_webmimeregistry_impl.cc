@@ -8,7 +8,7 @@
 #include "base/sys_string_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "net/base/mime_util.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebString.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
 #include "webkit/base/file_path_string_conversions.h"
 #include "webkit/media/crypto/key_systems.h"
 
@@ -139,7 +139,7 @@ WebString SimpleWebMimeRegistryImpl::mimeTypeFromFile(
 
 WebString SimpleWebMimeRegistryImpl::preferredExtensionForMIMEType(
     const WebString& mime_type) {
-  FilePath::StringType file_extension;
+  base::FilePath::StringType file_extension;
   net::GetPreferredExtensionForMimeType(ToASCIIOrEmpty(mime_type),
                                         &file_extension);
   return webkit_base::FilePathStringToWebString(file_extension);

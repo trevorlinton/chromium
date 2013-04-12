@@ -8,6 +8,7 @@
 #include "base/metrics/histogram.h"
 #include "chrome/browser/extensions/extension_prefs.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/platform_app_launcher.h"
 #include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/profiles/profile.h"
@@ -16,17 +17,24 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
+#include "chrome/common/extensions/manifest_url_handler.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
 #include "content/public/common/renderer_preferences.h"
+#include "ui/base/window_open_disposition.h"
 #include "ui/gfx/rect.h"
+
+#if defined(OS_MACOSX)
+#include "chrome/browser/ui/browser_commands_mac.h"
+#endif
 
 #if defined(OS_WIN)
 #include "win8/util/win8_util.h"
@@ -57,7 +65,7 @@ GURL UrlForExtension(const Extension* extension,
 
   // For extensions lacking launch urls, determine a reasonable fallback.
   if (!url.is_valid()) {
-    url = extension->options_url();
+    url = extensions::ManifestURL::GetOptionsPage(extension);
     if (!url.is_valid())
       url = GURL(chrome::kChromeUIExtensionsURL);
   }
@@ -99,8 +107,10 @@ WebContents* OpenApplicationWindow(
       container == extension_misc::LAUNCH_WINDOW) {
     // In ash, LAUNCH_FULLSCREEN launches in a maximized app window and
     // LAUNCH_WINDOW launches in a normal app window.
+    ExtensionService* service =
+        extensions::ExtensionSystem::Get(profile)->extension_service();
     ExtensionPrefs::LaunchType launch_type =
-        profile->GetExtensionService()->extension_prefs()->GetLaunchType(
+        service->extension_prefs()->GetLaunchType(
             extension, ExtensionPrefs::LAUNCH_DEFAULT);
     if (launch_type == ExtensionPrefs::LAUNCH_FULLSCREEN)
       params.initial_show_state = ui::SHOW_STATE_MAXIMIZED;
@@ -142,9 +152,9 @@ WebContents* OpenApplicationTab(Profile* profile,
                                 const Extension* extension,
                                 const GURL& override_url,
                                 WindowOpenDisposition disposition) {
-  Browser* browser = browser::FindTabbedBrowser(profile,
-                                                false,
-                                                chrome::GetActiveDesktop());
+  Browser* browser = chrome::FindTabbedBrowser(profile,
+                                               false,
+                                               chrome::GetActiveDesktop());
   WebContents* contents = NULL;
   if (!browser) {
     // No browser for this profile, need to open a new one.
@@ -155,12 +165,14 @@ WebContents* OpenApplicationTab(Profile* profile,
     // There's no current tab in this browser window, so add a new one.
     disposition = NEW_FOREGROUND_TAB;
   } else {
-    // For existing browser, ensure its window is activated.
+    // For existing browser, ensure its window is shown and activated.
+    browser->window()->Show();
     browser->window()->Activate();
   }
 
   // Check the prefs for overridden mode.
-  ExtensionService* extension_service = profile->GetExtensionService();
+  ExtensionService* extension_service =
+      extensions::ExtensionSystem::Get(profile)->extension_service();
   DCHECK(extension_service);
 
   ExtensionPrefs::LaunchType launch_type =
@@ -181,7 +193,8 @@ WebContents* OpenApplicationTab(Profile* profile,
   params.disposition = disposition;
 
   if (disposition == CURRENT_TAB) {
-    WebContents* existing_tab = chrome::GetActiveWebContents(browser);
+    WebContents* existing_tab =
+        browser->tab_strip_model()->GetActiveWebContents();
     TabStripModel* model = browser->tab_strip_model();
     int tab_index = model->GetIndexOfWebContents(existing_tab);
 
@@ -191,7 +204,7 @@ WebContents* OpenApplicationTab(Profile* profile,
                             WebKit::WebReferrerPolicyDefault),
           disposition, content::PAGE_TRANSITION_LINK, false));
     // Reset existing_tab as OpenURL() may have clobbered it.
-    existing_tab = chrome::GetActiveWebContents(browser);
+    existing_tab = browser->tab_strip_model()->GetActiveWebContents();
     if (params.tabstrip_add_types & TabStripModel::ADD_PINNED) {
       model->SetTabPinned(tab_index, true);
       // Pinning may have moved the tab.
@@ -206,32 +219,38 @@ WebContents* OpenApplicationTab(Profile* profile,
     contents = params.target_contents;
   }
 
-#if defined(USE_ASH)
-  // In ash, LAUNCH_FULLSCREEN launches in a maximized app window and it should
-  // not reach here.
-  DCHECK(launch_type != ExtensionPrefs::LAUNCH_FULLSCREEN);
+  // On Chrome OS the host desktop type for a browser window is always set to
+  // HOST_DESKTOP_TYPE_ASH. On Windows 8 it is only the case for Chrome ASH
+  // in metro mode.
+  if (browser->host_desktop_type() == chrome::HOST_DESKTOP_TYPE_ASH) {
+    // In ash, LAUNCH_FULLSCREEN launches in the OpenApplicationWindow function
+    // i.e. it should not reach here.
+    DCHECK(launch_type != ExtensionPrefs::LAUNCH_FULLSCREEN);
+  } else {
+    // TODO(skerner):  If we are already in full screen mode, and the user
+    // set the app to open as a regular or pinned tab, what should happen?
+    // Today we open the tab, but stay in full screen mode.  Should we leave
+    // full screen mode in this case?
+    if (launch_type == ExtensionPrefs::LAUNCH_FULLSCREEN &&
+        !browser->window()->IsFullscreen()) {
+#if defined(OS_MACOSX)
+      chrome::ToggleFullscreenWithChromeOrFallback(browser);
 #else
-  // TODO(skerner):  If we are already in full screen mode, and the user
-  // set the app to open as a regular or pinned tab, what should happen?
-  // Today we open the tab, but stay in full screen mode.  Should we leave
-  // full screen mode in this case?
-  if (launch_type == ExtensionPrefs::LAUNCH_FULLSCREEN &&
-      !browser->window()->IsFullscreen()) {
-    chrome::ToggleFullscreenMode(browser);
-  }
+      chrome::ToggleFullscreenMode(browser);
 #endif
-
+    }
+  }
   return contents;
 }
 
 }  // namespace
 
-namespace application_launch {
+namespace chrome {
 
-LaunchParams::LaunchParams(Profile* profile,
-                           const extensions::Extension* extension,
-                           extension_misc::LaunchContainer container,
-                           WindowOpenDisposition disposition)
+AppLaunchParams::AppLaunchParams(Profile* profile,
+                                 const extensions::Extension* extension,
+                                 extension_misc::LaunchContainer container,
+                                 WindowOpenDisposition disposition)
     : profile(profile),
       extension(extension),
       container(container),
@@ -239,14 +258,60 @@ LaunchParams::LaunchParams(Profile* profile,
       override_url(),
       command_line(NULL) {}
 
-WebContents* OpenApplication(const LaunchParams& params) {
+AppLaunchParams::AppLaunchParams(Profile* profile,
+                                 const extensions::Extension* extension,
+                                 WindowOpenDisposition disposition)
+    : profile(profile),
+      extension(extension),
+      container(extension_misc::LAUNCH_NONE),
+      disposition(disposition),
+      override_url(),
+      command_line(NULL) {
+  ExtensionService* service =
+      extensions::ExtensionSystem::Get(profile)->extension_service();
+  DCHECK(service);
+
+  // Look up the app preference to find out the right launch container. Default
+  // is to launch as a regular tab.
+  container = service->extension_prefs()->GetLaunchContainer(
+      extension, extensions::ExtensionPrefs::LAUNCH_REGULAR);
+}
+
+AppLaunchParams::AppLaunchParams(Profile* profile,
+                                 const extensions::Extension* extension,
+                                 int event_flags)
+    : profile(profile),
+      extension(extension),
+      container(extension_misc::LAUNCH_NONE),
+      disposition(ui::DispositionFromEventFlags(event_flags)),
+      override_url(),
+      command_line(NULL) {
+  if (disposition == NEW_FOREGROUND_TAB || disposition == NEW_BACKGROUND_TAB) {
+    container = extension_misc::LAUNCH_TAB;
+  } else if (disposition == NEW_WINDOW) {
+    container = extension_misc::LAUNCH_WINDOW;
+  } else {
+    ExtensionService* service =
+        extensions::ExtensionSystem::Get(profile)->extension_service();
+    DCHECK(service);
+
+    // Look at preference to find the right launch container.  If no preference
+    // is set, launch as a regular tab.
+    container = service->extension_prefs()->GetLaunchContainer(
+        extension, extensions::ExtensionPrefs::LAUNCH_DEFAULT);
+    disposition = NEW_FOREGROUND_TAB;
+  }
+}
+
+WebContents* OpenApplication(const AppLaunchParams& params) {
   Profile* profile = params.profile;
   const extensions::Extension* extension = params.extension;
   extension_misc::LaunchContainer container = params.container;
   const GURL& override_url = params.override_url;
 
   WebContents* tab = NULL;
-  ExtensionPrefs* prefs = profile->GetExtensionService()->extension_prefs();
+  ExtensionPrefs* prefs = extensions::ExtensionSystem::Get(profile)->
+      extension_service()->extension_prefs();
   prefs->SetActiveBit(extension->id(), true);
 
   UMA_HISTOGRAM_ENUMERATION("Extensions.AppLaunchContainer", container, 100);
@@ -306,4 +371,4 @@ WebContents* OpenAppShortcutWindow(Profile* profile,
   return tab;
 }
 
-}  // namespace application_launch
+}  // namespace chrome

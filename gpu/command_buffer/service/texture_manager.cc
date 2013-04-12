@@ -63,7 +63,7 @@ TextureManager::~TextureManager() {
   DCHECK(texture_infos_.empty());
 
   // If this triggers, that means something is keeping a reference to
-  // a TextureInfo belonging to this.
+  // a Texture belonging to this.
   CHECK_EQ(texture_info_count_, 0u);
 
   DCHECK_EQ(0, num_unrenderable_textures_);
@@ -84,11 +84,9 @@ void TextureManager::Destroy(bool have_context) {
 
   DCHECK_EQ(0u, memory_tracker_managed_->GetMemRepresented());
   DCHECK_EQ(0u, memory_tracker_unmanaged_->GetMemRepresented());
-  memory_tracker_managed_->UpdateMemRepresented();
-  memory_tracker_unmanaged_->UpdateMemRepresented();
 }
 
-TextureManager::TextureInfo::TextureInfo(TextureManager* manager,
+Texture::Texture(TextureManager* manager,
                                          GLuint service_id)
     : manager_(manager),
       service_id_(service_id),
@@ -117,7 +115,7 @@ TextureManager::TextureInfo::TextureInfo(TextureManager* manager,
   }
 }
 
-TextureManager::TextureInfo::~TextureInfo() {
+Texture::~Texture() {
   if (manager_) {
     if (owned_ && manager_->have_context_) {
       GLuint id = service_id();
@@ -129,7 +127,7 @@ TextureManager::TextureInfo::~TextureInfo() {
   }
 }
 
-TextureManager::TextureInfo::LevelInfo::LevelInfo()
+Texture::LevelInfo::LevelInfo()
     : cleared(true),
       target(0),
       level(-1),
@@ -143,7 +141,7 @@ TextureManager::TextureInfo::LevelInfo::LevelInfo()
       estimated_size(0) {
 }
 
-TextureManager::TextureInfo::LevelInfo::LevelInfo(const LevelInfo& rhs)
+Texture::LevelInfo::LevelInfo(const LevelInfo& rhs)
     : cleared(rhs.cleared),
       target(rhs.target),
       level(rhs.level),
@@ -158,10 +156,10 @@ TextureManager::TextureInfo::LevelInfo::LevelInfo(const LevelInfo& rhs)
       estimated_size(rhs.estimated_size) {
 }
 
-TextureManager::TextureInfo::LevelInfo::~LevelInfo() {
+Texture::LevelInfo::~LevelInfo() {
 }
 
-bool TextureManager::TextureInfo::CanRender(
+bool Texture::CanRender(
     const FeatureInfo* feature_info) const {
   if (target_ == 0) {
     return false;
@@ -184,7 +182,7 @@ bool TextureManager::TextureInfo::CanRender(
   }
 }
 
-void TextureManager::TextureInfo::AddToSignature(
+void Texture::AddToSignature(
     const FeatureInfo* feature_info,
     GLenum target,
     GLint level,
@@ -196,7 +194,7 @@ void TextureManager::TextureInfo::AddToSignature(
             level_infos_.size());
   DCHECK_LT(static_cast<size_t>(level),
             level_infos_[GLTargetToFaceIndex(target)].size());
-  const TextureInfo::LevelInfo& info =
+  const Texture::LevelInfo& info =
       level_infos_[GLTargetToFaceIndex(target)][level];
   *signature += base::StringPrintf(
       "|Texture|target=%04x|level=%d|internal_format=%04x"
@@ -212,19 +210,19 @@ void TextureManager::TextureInfo::AddToSignature(
       usage_);
 }
 
-bool TextureManager::TextureInfo::MarkMipmapsGenerated(
+bool Texture::MarkMipmapsGenerated(
     const FeatureInfo* feature_info) {
   if (!CanGenerateMipmaps(feature_info)) {
     return false;
   }
   for (size_t ii = 0; ii < level_infos_.size(); ++ii) {
-    const TextureInfo::LevelInfo& info1 = level_infos_[ii][0];
+    const Texture::LevelInfo& info1 = level_infos_[ii][0];
     GLsizei width = info1.width;
     GLsizei height = info1.height;
     GLsizei depth = info1.depth;
     GLenum target = target_ == GL_TEXTURE_2D ? GL_TEXTURE_2D :
                                FaceIndexToGLTarget(ii);
-    int num_mips = ComputeMipMapCount(width, height, depth);
+    int num_mips = TextureManager::ComputeMipMapCount(width, height, depth);
     for (int level = 1; level < num_mips; ++level) {
       width = std::max(1, width >> 1);
       height = std::max(1, height >> 1);
@@ -246,7 +244,7 @@ bool TextureManager::TextureInfo::MarkMipmapsGenerated(
   return true;
 }
 
-void TextureManager::TextureInfo::SetTarget(GLenum target, GLint max_levels) {
+void Texture::SetTarget(GLenum target, GLint max_levels) {
   DCHECK_EQ(0u, target_);  // you can only set this once.
   target_ = target;
   size_t num_faces = (target == GL_TEXTURE_CUBE_MAP) ? 6 : 1;
@@ -261,7 +259,7 @@ void TextureManager::TextureInfo::SetTarget(GLenum target, GLint max_levels) {
   }
 }
 
-bool TextureManager::TextureInfo::CanGenerateMipmaps(
+bool Texture::CanGenerateMipmaps(
     const FeatureInfo* feature_info) const {
   if ((npot() && !feature_info->feature_flags().npot_ok) ||
       level_infos_.empty() ||
@@ -271,7 +269,7 @@ bool TextureManager::TextureInfo::CanGenerateMipmaps(
   }
 
   // Can't generate mips for depth or stencil textures.
-  const TextureInfo::LevelInfo& first = level_infos_[0][0];
+  const Texture::LevelInfo& first = level_infos_[0][0];
   uint32 channels = GLES2Util::GetChannelsForFormat(first.format);
   if (channels & (GLES2Util::kDepth | GLES2Util::kStencil)) {
     return false;
@@ -296,7 +294,7 @@ bool TextureManager::TextureInfo::CanGenerateMipmaps(
   return true;
 }
 
-void TextureManager::TextureInfo::SetLevelCleared(GLenum target,
+void Texture::SetLevelCleared(GLenum target,
                                                   GLint level,
                                                   bool cleared) {
   DCHECK_GE(level, 0);
@@ -304,7 +302,7 @@ void TextureManager::TextureInfo::SetLevelCleared(GLenum target,
             level_infos_.size());
   DCHECK_LT(static_cast<size_t>(level),
             level_infos_[GLTargetToFaceIndex(target)].size());
-  TextureInfo::LevelInfo& info =
+  Texture::LevelInfo& info =
       level_infos_[GLTargetToFaceIndex(target)][level];
   if (!info.cleared) {
     DCHECK_NE(0, num_uncleared_mips_);
@@ -316,18 +314,18 @@ void TextureManager::TextureInfo::SetLevelCleared(GLenum target,
   UpdateCleared();
 }
 
-void TextureManager::TextureInfo::UpdateCleared() {
+void Texture::UpdateCleared() {
   if (level_infos_.empty()) {
     return;
   }
 
-  const TextureInfo::LevelInfo& first_face = level_infos_[0][0];
-  int levels_needed = ComputeMipMapCount(
+  const Texture::LevelInfo& first_face = level_infos_[0][0];
+  int levels_needed = TextureManager::ComputeMipMapCount(
       first_face.width, first_face.height, first_face.depth);
   cleared_ = true;
   for (size_t ii = 0; ii < level_infos_.size(); ++ii) {
     for (GLint jj = 0; jj < levels_needed; ++jj) {
-      const TextureInfo::LevelInfo& info = level_infos_[ii][jj];
+      const Texture::LevelInfo& info = level_infos_[ii][jj];
       if (info.width > 0 && info.height > 0 && info.depth > 0 &&
           !info.cleared) {
         cleared_ = false;
@@ -337,7 +335,7 @@ void TextureManager::TextureInfo::UpdateCleared() {
   }
 }
 
-void TextureManager::TextureInfo::SetLevelInfo(
+void Texture::SetLevelInfo(
     const FeatureInfo* feature_info,
     GLenum target,
     GLint level,
@@ -357,7 +355,7 @@ void TextureManager::TextureInfo::SetLevelInfo(
   DCHECK_GE(width, 0);
   DCHECK_GE(height, 0);
   DCHECK_GE(depth, 0);
-  TextureInfo::LevelInfo& info =
+  Texture::LevelInfo& info =
       level_infos_[GLTargetToFaceIndex(target)][level];
   info.target = target;
   info.level = level;
@@ -388,8 +386,8 @@ void TextureManager::TextureInfo::SetLevelInfo(
   UpdateCleared();
 }
 
-bool TextureManager::TextureInfo::ValidForTexture(
-    GLint face,
+bool Texture::ValidForTexture(
+    GLint target,
     GLint level,
     GLint xoffset,
     GLint yoffset,
@@ -397,10 +395,10 @@ bool TextureManager::TextureInfo::ValidForTexture(
     GLsizei height,
     GLenum format,
     GLenum type) const {
-  size_t face_index = GLTargetToFaceIndex(face);
+  size_t face_index = GLTargetToFaceIndex(target);
   if (level >= 0 && face_index < level_infos_.size() &&
       static_cast<size_t>(level) < level_infos_[face_index].size()) {
-    const LevelInfo& info = level_infos_[GLTargetToFaceIndex(face)][level];
+    const LevelInfo& info = level_infos_[GLTargetToFaceIndex(target)][level];
     int32 right;
     int32 top;
     return SafeAddInt32(xoffset, width, &right) &&
@@ -415,14 +413,14 @@ bool TextureManager::TextureInfo::ValidForTexture(
   return false;
 }
 
-bool TextureManager::TextureInfo::GetLevelSize(
-    GLint face, GLint level, GLsizei* width, GLsizei* height) const {
+bool Texture::GetLevelSize(
+    GLint target, GLint level, GLsizei* width, GLsizei* height) const {
   DCHECK(width);
   DCHECK(height);
-  size_t face_index = GLTargetToFaceIndex(face);
+  size_t face_index = GLTargetToFaceIndex(target);
   if (level >= 0 && face_index < level_infos_.size() &&
       static_cast<size_t>(level) < level_infos_[face_index].size()) {
-    const LevelInfo& info = level_infos_[GLTargetToFaceIndex(face)][level];
+    const LevelInfo& info = level_infos_[GLTargetToFaceIndex(target)][level];
     if (info.target != 0) {
       *width = info.width;
       *height = info.height;
@@ -432,14 +430,14 @@ bool TextureManager::TextureInfo::GetLevelSize(
   return false;
 }
 
-bool TextureManager::TextureInfo::GetLevelType(
-    GLint face, GLint level, GLenum* type, GLenum* internal_format) const {
+bool Texture::GetLevelType(
+    GLint target, GLint level, GLenum* type, GLenum* internal_format) const {
   DCHECK(type);
   DCHECK(internal_format);
-  size_t face_index = GLTargetToFaceIndex(face);
+  size_t face_index = GLTargetToFaceIndex(target);
   if (level >= 0 && face_index < level_infos_.size() &&
       static_cast<size_t>(level) < level_infos_[face_index].size()) {
-    const LevelInfo& info = level_infos_[GLTargetToFaceIndex(face)][level];
+    const LevelInfo& info = level_infos_[GLTargetToFaceIndex(target)][level];
     if (info.target != 0) {
       *type = info.type;
       *internal_format = info.internal_format;
@@ -449,7 +447,7 @@ bool TextureManager::TextureInfo::GetLevelType(
   return false;
 }
 
-GLenum TextureManager::TextureInfo::SetParameter(
+GLenum Texture::SetParameter(
     const FeatureInfo* feature_info, GLenum pname, GLint param) {
   DCHECK(feature_info);
 
@@ -516,7 +514,7 @@ GLenum TextureManager::TextureInfo::SetParameter(
   return GL_NO_ERROR;
 }
 
-void TextureManager::TextureInfo::Update(const FeatureInfo* feature_info) {
+void Texture::Update(const FeatureInfo* feature_info) {
   // Update npot status.
   npot_ = false;
 
@@ -528,7 +526,7 @@ void TextureManager::TextureInfo::Update(const FeatureInfo* feature_info) {
 
   // checks that the first mip of any face is npot.
   for (size_t ii = 0; ii < level_infos_.size(); ++ii) {
-    const TextureInfo::LevelInfo& info = level_infos_[ii][0];
+    const Texture::LevelInfo& info = level_infos_[ii][0];
     if (GLES2Util::IsNPOT(info.width) ||
         GLES2Util::IsNPOT(info.height) ||
         GLES2Util::IsNPOT(info.depth)) {
@@ -538,8 +536,8 @@ void TextureManager::TextureInfo::Update(const FeatureInfo* feature_info) {
   }
 
   // Update texture_complete and cube_complete status.
-  const TextureInfo::LevelInfo& first_face = level_infos_[0][0];
-  int levels_needed = ComputeMipMapCount(
+  const Texture::LevelInfo& first_face = level_infos_[0][0];
+  int levels_needed = TextureManager::ComputeMipMapCount(
       first_face.width, first_face.height, first_face.depth);
   texture_complete_ =
       max_level_set_ >= (levels_needed - 1) && max_level_set_ >= 0;
@@ -562,7 +560,7 @@ void TextureManager::TextureInfo::Update(const FeatureInfo* feature_info) {
   for (size_t ii = 0;
        ii < level_infos_.size() && (cube_complete_ || texture_complete_);
        ++ii) {
-    const TextureInfo::LevelInfo& level0 = level_infos_[ii][0];
+    const Texture::LevelInfo& level0 = level_infos_[ii][0];
     if (level0.target == 0 ||
         level0.width != first_face.width ||
         level0.height != first_face.height ||
@@ -581,7 +579,7 @@ void TextureManager::TextureInfo::Update(const FeatureInfo* feature_info) {
       width = std::max(1, width >> 1);
       height = std::max(1, height >> 1);
       depth = std::max(1, depth >> 1);
-      const TextureInfo::LevelInfo& info = level_infos_[ii][jj];
+      const Texture::LevelInfo& info = level_infos_[ii][jj];
       if (info.target == 0 ||
           info.width != width ||
           info.height != height ||
@@ -596,19 +594,19 @@ void TextureManager::TextureInfo::Update(const FeatureInfo* feature_info) {
   }
 }
 
-bool TextureManager::TextureInfo::ClearRenderableLevels(GLES2Decoder* decoder) {
+bool Texture::ClearRenderableLevels(GLES2Decoder* decoder) {
   DCHECK(decoder);
   if (SafeToRenderFrom()) {
     return true;
   }
 
-  const TextureInfo::LevelInfo& first_face = level_infos_[0][0];
-  int levels_needed = ComputeMipMapCount(
+  const Texture::LevelInfo& first_face = level_infos_[0][0];
+  int levels_needed = TextureManager::ComputeMipMapCount(
       first_face.width, first_face.height, first_face.depth);
 
   for (size_t ii = 0; ii < level_infos_.size(); ++ii) {
     for (GLint jj = 0; jj < levels_needed; ++jj) {
-      TextureInfo::LevelInfo& info = level_infos_[ii][jj];
+      Texture::LevelInfo& info = level_infos_[ii][jj];
       if (info.target != 0) {
         if (!ClearLevel(decoder, info.target, jj)) {
           return false;
@@ -620,19 +618,19 @@ bool TextureManager::TextureInfo::ClearRenderableLevels(GLES2Decoder* decoder) {
   return true;
 }
 
-bool TextureManager::TextureInfo::IsLevelCleared(GLenum target, GLint level) {
+bool Texture::IsLevelCleared(GLenum target, GLint level) {
   size_t face_index = GLTargetToFaceIndex(target);
   if (face_index >= level_infos_.size() ||
       level >= static_cast<GLint>(level_infos_[face_index].size())) {
     return true;
   }
 
-  TextureInfo::LevelInfo& info = level_infos_[face_index][level];
+  Texture::LevelInfo& info = level_infos_[face_index][level];
 
   return info.cleared;
 }
 
-bool TextureManager::TextureInfo::ClearLevel(
+bool Texture::ClearLevel(
     GLES2Decoder* decoder, GLenum target, GLint level) {
   DCHECK(decoder);
   size_t face_index = GLTargetToFaceIndex(target);
@@ -641,7 +639,7 @@ bool TextureManager::TextureInfo::ClearLevel(
     return true;
   }
 
-  TextureInfo::LevelInfo& info = level_infos_[face_index][level];
+  Texture::LevelInfo& info = level_infos_[face_index][level];
 
   DCHECK(target == info.target);
 
@@ -668,7 +666,7 @@ bool TextureManager::TextureInfo::ClearLevel(
   return info.cleared;
 }
 
-void TextureManager::TextureInfo::SetLevelImage(
+void Texture::SetLevelImage(
     const FeatureInfo* feature_info,
     GLenum target,
     GLint level,
@@ -678,19 +676,19 @@ void TextureManager::TextureInfo::SetLevelImage(
             level_infos_.size());
   DCHECK_LT(static_cast<size_t>(level),
             level_infos_[GLTargetToFaceIndex(target)].size());
-  TextureInfo::LevelInfo& info =
+  Texture::LevelInfo& info =
       level_infos_[GLTargetToFaceIndex(target)][level];
   DCHECK_EQ(info.target, target);
   DCHECK_EQ(info.level, level);
   info.image = image;
 }
 
-gfx::GLImage* TextureManager::TextureInfo::GetLevelImage(
-  GLint face, GLint level) const {
-  size_t face_index = GLTargetToFaceIndex(face);
+gfx::GLImage* Texture::GetLevelImage(
+  GLint target, GLint level) const {
+  size_t face_index = GLTargetToFaceIndex(target);
   if (level >= 0 && face_index < level_infos_.size() &&
       static_cast<size_t>(level) < level_infos_[face_index].size()) {
-    const LevelInfo& info = level_infos_[GLTargetToFaceIndex(face)][level];
+    const LevelInfo& info = level_infos_[GLTargetToFaceIndex(target)][level];
     if (info.target != 0) {
       return info.image;
     }
@@ -727,9 +725,6 @@ TextureManager::TextureManager(
 }
 
 bool TextureManager::Initialize() {
-  memory_tracker_managed_->UpdateMemRepresented();
-  memory_tracker_unmanaged_->UpdateMemRepresented();
-
   // TODO(gman): The default textures have to be real textures, not the 0
   // texture because we simulate non shared resources on top of shared
   // resources and all contexts that share resource share the same default
@@ -752,9 +747,10 @@ bool TextureManager::Initialize() {
   return true;
 }
 
-TextureManager::TextureInfo::Ref TextureManager::CreateDefaultAndBlackTextures(
-    GLenum target,
-    GLuint* black_texture) {
+scoped_refptr<Texture>
+    TextureManager::CreateDefaultAndBlackTextures(
+        GLenum target,
+        GLuint* black_texture) {
   static uint8 black[] = {0, 0, 0, 255};
 
   // Sampling a texture not associated with any EGLImage sibling will return
@@ -784,8 +780,7 @@ TextureManager::TextureInfo::Ref TextureManager::CreateDefaultAndBlackTextures(
   // Since we are manually setting up these textures
   // we need to manually manipulate some of the their bookkeeping.
   ++num_unrenderable_textures_;
-  TextureInfo::Ref default_texture = TextureInfo::Ref(
-      new TextureInfo(this, ids[1]));
+  scoped_refptr<Texture> default_texture(new Texture(this, ids[1]));
   SetInfoTarget(default_texture, target);
   if (needs_faces) {
     for (int ii = 0; ii < GLES2Util::kNumFaces; ++ii) {
@@ -829,7 +824,7 @@ bool TextureManager::ValidForTarget(
 }
 
 void TextureManager::SetInfoTarget(
-    TextureManager::TextureInfo* info, GLenum target) {
+    Texture* info, GLenum target) {
   DCHECK(info);
   if (!info->CanRender(feature_info_)) {
     DCHECK_NE(0, num_unrenderable_textures_);
@@ -841,7 +836,7 @@ void TextureManager::SetInfoTarget(
   }
 }
 
-void TextureManager::SetLevelCleared(TextureManager::TextureInfo* info,
+void TextureManager::SetLevelCleared(Texture* info,
                                      GLenum target,
                                      GLint level,
                                      bool cleared) {
@@ -860,7 +855,7 @@ void TextureManager::SetLevelCleared(TextureManager::TextureInfo* info,
 }
 
 bool TextureManager::ClearRenderableLevels(
-    GLES2Decoder* decoder,TextureManager::TextureInfo* info) {
+    GLES2Decoder* decoder,Texture* info) {
   DCHECK(info);
   if (info->SafeToRenderFrom()) {
     return true;
@@ -878,7 +873,7 @@ bool TextureManager::ClearRenderableLevels(
 }
 
 bool TextureManager::ClearTextureLevel(
-    GLES2Decoder* decoder,TextureManager::TextureInfo* info,
+    GLES2Decoder* decoder,Texture* info,
     GLenum target, GLint level) {
   DCHECK(info);
   if (info->num_uncleared_mips() == 0) {
@@ -900,7 +895,7 @@ bool TextureManager::ClearTextureLevel(
 }
 
 void TextureManager::SetLevelInfo(
-    TextureManager::TextureInfo* info,
+    Texture* info,
     GLenum target,
     GLint level,
     GLenum internal_format,
@@ -928,7 +923,6 @@ void TextureManager::SetLevelInfo(
       feature_info_, target, level, internal_format, width, height, depth,
       border, format, type, cleared);
   GetMemTracker(info->pool_)->TrackMemAlloc(info->estimated_size());
-  GetMemTracker(info->pool_)->UpdateMemRepresented();
 
   num_uncleared_mips_ += info->num_uncleared_mips();
   if (!info->CanRender(feature_info_)) {
@@ -939,7 +933,7 @@ void TextureManager::SetLevelInfo(
   }
 }
 
-TextureDefinition* TextureManager::Save(TextureInfo* info) {
+TextureDefinition* TextureManager::Save(Texture* info) {
   DCHECK(info->owned_);
 
   if (info->IsAttachedToFramebuffer())
@@ -950,7 +944,7 @@ TextureDefinition* TextureManager::Save(TextureInfo* info) {
     GLenum target = info->target() == GL_TEXTURE_2D ?
         GL_TEXTURE_2D : FaceIndexToGLTarget(face);
     for (size_t level = 0; level < info->level_infos_[face].size(); ++level) {
-      const TextureInfo::LevelInfo& level_info =
+      const Texture::LevelInfo& level_info =
           info->level_infos_[face][level];
       level_infos[face].push_back(
           TextureDefinition::LevelInfo(target,
@@ -996,7 +990,7 @@ TextureDefinition* TextureManager::Save(TextureInfo* info) {
                                level_infos);
 }
 
-bool TextureManager::Restore(TextureInfo* info,
+bool TextureManager::Restore(Texture* info,
                              TextureDefinition* definition) {
   DCHECK(info->owned_);
 
@@ -1048,7 +1042,7 @@ bool TextureManager::Restore(TextureInfo* info,
 }
 
 GLenum TextureManager::SetParameter(
-    TextureManager::TextureInfo* info, GLenum pname, GLint param) {
+    Texture* info, GLenum pname, GLint param) {
   DCHECK(info);
   if (!info->CanRender(feature_info_)) {
     DCHECK_NE(0, num_unrenderable_textures_);
@@ -1068,7 +1062,7 @@ GLenum TextureManager::SetParameter(
   return result;
 }
 
-bool TextureManager::MarkMipmapsGenerated(TextureManager::TextureInfo* info) {
+bool TextureManager::MarkMipmapsGenerated(Texture* info) {
   DCHECK(info);
   if (!info->CanRender(feature_info_)) {
     DCHECK_NE(0, num_unrenderable_textures_);
@@ -1083,7 +1077,6 @@ bool TextureManager::MarkMipmapsGenerated(TextureManager::TextureInfo* info) {
   GetMemTracker(info->pool_)->TrackMemFree(info->estimated_size());
   bool result = info->MarkMipmapsGenerated(feature_info_);
   GetMemTracker(info->pool_)->TrackMemAlloc(info->estimated_size());
-  GetMemTracker(info->pool_)->UpdateMemRepresented();
 
   num_uncleared_mips_ += info->num_uncleared_mips();
   if (!info->CanRender(feature_info_)) {
@@ -1095,10 +1088,10 @@ bool TextureManager::MarkMipmapsGenerated(TextureManager::TextureInfo* info) {
   return result;
 }
 
-TextureManager::TextureInfo* TextureManager::CreateTextureInfo(
+Texture* TextureManager::CreateTexture(
     GLuint client_id, GLuint service_id) {
   DCHECK_NE(0u, service_id);
-  TextureInfo::Ref info(new TextureInfo(this, service_id));
+  scoped_refptr<Texture> info(new Texture(this, service_id));
   std::pair<TextureInfoMap::iterator, bool> result =
       texture_infos_.insert(std::make_pair(client_id, info));
   DCHECK(result.second);
@@ -1112,26 +1105,26 @@ TextureManager::TextureInfo* TextureManager::CreateTextureInfo(
   return info.get();
 }
 
-TextureManager::TextureInfo* TextureManager::GetTextureInfo(
-    GLuint client_id) {
-  TextureInfoMap::iterator it = texture_infos_.find(client_id);
+Texture* TextureManager::GetTexture(
+    GLuint client_id) const {
+  TextureInfoMap::const_iterator it = texture_infos_.find(client_id);
   return it != texture_infos_.end() ? it->second : NULL;
 }
 
-void TextureManager::RemoveTextureInfo(GLuint client_id) {
+void TextureManager::RemoveTexture(GLuint client_id) {
   TextureInfoMap::iterator it = texture_infos_.find(client_id);
   if (it != texture_infos_.end()) {
-    TextureInfo* info = it->second;
+    Texture* info = it->second;
     info->MarkAsDeleted();
     texture_infos_.erase(it);
   }
 }
 
-void TextureManager::StartTracking(TextureManager::TextureInfo* /* texture */) {
+void TextureManager::StartTracking(Texture* /* texture */) {
   ++texture_info_count_;
 }
 
-void TextureManager::StopTracking(TextureManager::TextureInfo* texture) {
+void TextureManager::StopTracking(Texture* texture) {
   --texture_info_count_;
   if (!texture->CanRender(feature_info_)) {
     DCHECK_NE(0, num_unrenderable_textures_);
@@ -1144,7 +1137,6 @@ void TextureManager::StopTracking(TextureManager::TextureInfo* texture) {
   num_uncleared_mips_ -= texture->num_uncleared_mips();
   DCHECK_GE(num_uncleared_mips_, 0);
   GetMemTracker(texture->pool_)->TrackMemFree(texture->estimated_size());
-  GetMemTracker(texture->pool_)->UpdateMemRepresented();
 }
 
 MemoryTypeTracker* TextureManager::GetMemTracker(GLenum tracking_pool) {
@@ -1180,7 +1172,7 @@ GLsizei TextureManager::ComputeMipMapCount(
 }
 
 void TextureManager::SetLevelImage(
-    TextureManager::TextureInfo* info,
+    Texture* info,
     GLenum target,
     GLint level,
     gfx::GLImage* image) {
@@ -1203,7 +1195,7 @@ void TextureManager::SetLevelImage(
 }
 
 void TextureManager::AddToSignature(
-    TextureInfo* info,
+    Texture* info,
     GLenum target,
     GLint level,
     std::string* signature) const {
@@ -1211,7 +1203,7 @@ void TextureManager::AddToSignature(
 }
 
 void TextureManager::AddPendingAsyncPixelTransfer(
-    base::WeakPtr<gfx::AsyncPixelTransferState> state, TextureInfo* info) {
+    base::WeakPtr<gfx::AsyncPixelTransferState> state, Texture* info) {
   pending_async_transfers_.push_back(PendingAsyncTransfer(state,info));
 }
 
@@ -1227,8 +1219,8 @@ void TextureManager::BindFinishedAsyncPixelTransfers(
   while(!pending_async_transfers_.empty()) {
     PendingAsyncTransfer state_info = pending_async_transfers_.front();
     if (!state_info.first.get()) {
-      // The AsyncState is owned by the TextureInfo. So if the
-      // async state is deleted, so is the TextureInfo.
+      // The AsyncState is owned by the Texture. So if the
+      // async state is deleted, so is the Texture.
       pending_async_transfers_.pop_front();
       continue;
     }
@@ -1236,7 +1228,7 @@ void TextureManager::BindFinishedAsyncPixelTransfers(
     if (state_info.first->TransferIsInProgress())
       break;
     // If the transfer is finished, bind it to the texture,
-    // update the TextureInfo, and remove it from pending list.
+    // update the Texture, and remove it from pending list.
     *texture_dirty = true;
     *framebuffer_dirty |= state_info.second->IsAttachedToFramebuffer();
     gfx::AsyncTexImage2DParams tex_define_params;

@@ -117,6 +117,10 @@ bool URLRequestJob::GetCharset(std::string* charset) {
 void URLRequestJob::GetResponseInfo(HttpResponseInfo* info) {
 }
 
+void URLRequestJob::GetLoadTimingInfo(LoadTimingInfo* load_timing_info) const {
+  // Only certain request types return more than just request start times.
+}
+
 bool URLRequestJob::GetResponseCookies(std::vector<std::string>* cookies) {
   return false;
 }
@@ -279,6 +283,9 @@ void URLRequestJob::NotifyHeadersComplete() {
   // immediately if it has been destroyed.  self_preservation ensures our
   // survival until we can get out of this method.
   scoped_refptr<URLRequestJob> self_preservation(this);
+
+  if (request_)
+    request_->OnHeadersComplete();
 
   GURL new_location;
   int http_status_code;

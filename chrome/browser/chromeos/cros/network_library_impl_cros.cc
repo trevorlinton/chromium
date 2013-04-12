@@ -155,6 +155,10 @@ void NetworkLibraryImplCros::UpdateNetworkDeviceStatus(
       VLOG(1) << "UpdateNetworkDeviceStatus: Failed to update: "
               << path << "." << key;
     }
+    if (device->type() == TYPE_WIFI && device->scanning() != wifi_scanning_) {
+      wifi_scanning_ = device->scanning();
+      NotifyNetworkManagerChanged(false);  // Not forced.
+    }
     // Notify only observers on device property change.
     NotifyNetworkDeviceChanged(device, index);
     // If a device's power state changes, new properties may become defined.
@@ -435,6 +439,15 @@ void NetworkLibraryImplCros::SetCarrier(
   CrosSetCarrier(cellular->device_path(), carrier, completed);
 }
 
+void NetworkLibraryImplCros::ResetModem() {
+  const NetworkDevice* cellular = FindCellularDevice();
+  if (!cellular) {
+    NOTREACHED() << "Calling ResetModem method w/o cellular device.";
+    return;
+  }
+  CrosReset(cellular->device_path());
+}
+
 bool NetworkLibraryImplCros::IsCellularAlwaysInRoaming() {
   const NetworkDevice* cellular = FindCellularDevice();
   if (!cellular) {
@@ -446,12 +459,8 @@ bool NetworkLibraryImplCros::IsCellularAlwaysInRoaming() {
 }
 
 void NetworkLibraryImplCros::RequestNetworkScan() {
-  if (wifi_enabled() && !wifi_scanning_) {
-    VLOG(1) << "Wifi network scan requested";
-    wifi_scanning_ = true;
-    wifi_scan_request_time_ = base::Time::Now();
+  if (wifi_enabled())
     CrosRequestNetworkScan(flimflam::kTypeWifi);
-  }
 
   if (wimax_enabled())
     CrosRequestNetworkScan(flimflam::kTypeWimax);
@@ -461,12 +470,6 @@ void NetworkLibraryImplCros::RequestNetworkScan() {
   CrosRequestNetworkManagerProperties(
       base::Bind(&NetworkLibraryImplCros::NetworkManagerUpdate,
                  weak_ptr_factory_.GetWeakPtr()));
-}
-
-bool NetworkLibraryImplCros::GetWifiAccessPoints(
-    WifiAccessPointVector* result) {
-  CHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  return CrosGetWifiAccessPoints(result);
 }
 
 void NetworkLibraryImplCros::RefreshIPConfig(Network* network) {
@@ -660,18 +663,18 @@ bool NetworkLibraryImplCros::NetworkManagerStatusChanged(
       UpdateAvailableTechnologies(vlist);
       break;
     }
+    case PROPERTY_INDEX_UNINITIALIZED_TECHNOLOGIES: {
+      const ListValue* vlist = NULL;
+      if (!value->GetAsList(&vlist))
+        return false;
+      UpdateTechnologies(vlist, &uninitialized_devices_);
+      break;
+    }
     case PROPERTY_INDEX_ENABLED_TECHNOLOGIES: {
       const ListValue* vlist = NULL;
       if (!value->GetAsList(&vlist))
         return false;
       UpdateEnabledTechnologies(vlist);
-      break;
-    }
-    case PROPERTY_INDEX_CONNECTED_TECHNOLOGIES: {
-      const ListValue* vlist = NULL;
-      if (!value->GetAsList(&vlist))
-        return false;
-      UpdateConnectedTechnologies(vlist);
       break;
     }
     case PROPERTY_INDEX_DEFAULT_TECHNOLOGY:
@@ -751,15 +754,11 @@ void NetworkLibraryImplCros::NetworkManagerUpdate(
   }
   VLOG(1) << "Received NetworkManagerUpdate.";
 
-  for (DictionaryValue::key_iterator iter = properties->begin_keys();
-       iter != properties->end_keys(); ++iter) {
-    const std::string& key = *iter;
-    const Value* value;
-    bool res = properties->GetWithoutPathExpansion(key, &value);
-    CHECK(res);
-    if (!NetworkManagerStatusChanged(key, value)) {
-      LOG(ERROR) << "Invalid key-value pair, key: " << key << " type: "
-                 << value->GetType();
+  for (DictionaryValue::Iterator iter(*properties); !iter.IsAtEnd();
+       iter.Advance()) {
+    if (!NetworkManagerStatusChanged(iter.key(), &iter.value())) {
+      LOG(ERROR) << "Invalid key-value pair, key: " << iter.key() << " type: "
+                 << iter.value().GetType();
     }
   }
   // If there is no Profiles entry, request remembered networks here.
@@ -811,11 +810,6 @@ void NetworkLibraryImplCros::UpdateEnabledTechnologies(
   }
 }
 
-void NetworkLibraryImplCros::UpdateConnectedTechnologies(
-    const ListValue* technologies) {
-  UpdateTechnologies(technologies, &connected_devices_);
-}
-
 ////////////////////////////////////////////////////////////////////////////
 
 // Update all network lists, and request associated service updates.
@@ -853,20 +847,6 @@ void NetworkLibraryImplCros::UpdateNetworkServiceList(
           base::Bind(&NetworkLibraryImplCros::NetworkServiceUpdate,
                      weak_ptr_factory_.GetWeakPtr()));
     }
-  }
-
-  if (wifi_enabled()) {
-    if (wifi_scanning_) {
-      // If we haven't requested a scan recently, set scanning to false.
-      const int kMaxScanTimeSeconds = 15;
-      base::TimeDelta dtime = base::Time::Now() - wifi_scan_request_time_;
-      if (dtime.InSeconds() > kMaxScanTimeSeconds) {
-        VLOG(1) << "Wifi scan timeout";
-        wifi_scanning_ = false;  // Timeout, assume no wifi networks found
-      }
-    }
-  } else {
-    wifi_scanning_ = false;
   }
 
   // Iterate through list of remaining networks that are no longer in the
@@ -976,10 +956,6 @@ Network* NetworkLibraryImplCros::ParseNetwork(
     //              << service_path;
   }
 
-  if (wifi_scanning_ && network->type() == TYPE_WIFI) {
-    VLOG(1) << "Wifi scan completed";
-    wifi_scanning_ = false;
-  }
   VLOG(2) << "ParseNetwork: " << network->name()
           << " path: " << network->service_path()
           << " profile: " << network->profile_path_;
@@ -1242,6 +1218,9 @@ void NetworkLibraryImplCros::ParseNetworkDevice(const std::string& device_path,
   // Re-synchronize the roaming setting with the device property if required.
   if (device && device->type() == TYPE_CELLULAR)
     UpdateCellularDeviceStatus(device, PROPERTY_INDEX_CELLULAR_ALLOW_ROAMING);
+
+  if (device && device->type() == TYPE_WIFI)
+    wifi_scanning_ = device->scanning();
 
   NotifyNetworkManagerChanged(false);  // Not forced.
   AddNetworkDeviceObserver(device_path, network_device_observer_.get());

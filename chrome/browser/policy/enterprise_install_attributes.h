@@ -5,10 +5,12 @@
 #ifndef CHROME_BROWSER_POLICY_ENTERPRISE_INSTALL_ATTRIBUTES_H_
 #define CHROME_BROWSER_POLICY_ENTERPRISE_INSTALL_ATTRIBUTES_H_
 
+#include <map>
 #include <string>
 
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/files/file_path.h"
 #include "chrome/browser/policy/cloud_policy_constants.h"
 
 namespace chromeos {
@@ -29,7 +31,29 @@ class EnterpriseInstallAttributes {
     LOCK_WRONG_USER,
   };
 
+  // Constants for the possible device modes that can be stored in the lockbox.
+  static const char kConsumerDeviceMode[];
+  static const char kEnterpiseDeviceMode[];
+  static const char kKioskDeviceMode[];
+  static const char kUnknownDeviceMode[];
+
+  // Field names in the lockbox.
+  static const char kAttrEnterpriseDeviceId[];
+  static const char kAttrEnterpriseDomain[];
+  static const char kAttrEnterpriseMode[];
+  static const char kAttrEnterpriseOwned[];
+  static const char kAttrEnterpriseUser[];
+
   explicit EnterpriseInstallAttributes(chromeos::CryptohomeLibrary* cryptohome);
+
+  // Reads data from the cache file. The cache file is used to work around slow
+  // cryptohome startup, which takes a while to register its DBus interface.
+  // See http://crosbug.com/37367 for background on this.
+  void ReadCacheFile(const base::FilePath& cache_file);
+
+  // Makes sure the local caches for enterprise-related install attributes are
+  // up-to-date with what cryptohome has.
+  void ReadImmutableAttributes();
 
   // Locks the device to be an enterprise device registered by the given user.
   // This can also be called after the lock has already been taken, in which
@@ -59,9 +83,9 @@ class EnterpriseInstallAttributes {
   DeviceMode GetMode();
 
  private:
-  // Makes sure the local caches for enterprise-related install attributes are
-  // up-to-date with what cryptohome has.
-  void ReadImmutableAttributes();
+  // Decodes the install attributes provided in |attr_map|.
+  void DecodeInstallAttributes(
+      const std::map<std::string, std::string>& attr_map);
 
   chromeos::CryptohomeLibrary* cryptohome_;
 

@@ -7,6 +7,7 @@
 
 #include "content/renderer/browser_plugin/browser_plugin_manager.h"
 #include "googleurl/src/gurl.h"
+#include "ui/gfx/size.h"
 
 struct BrowserPluginMsg_UpdateRect_Params;
 class WebCursor;
@@ -26,6 +27,7 @@ class BrowserPluginManagerImpl : public BrowserPluginManager {
       RenderViewImpl* render_view,
       WebKit::WebFrame* frame,
       const WebKit::WebPluginParams& params) OVERRIDE;
+  virtual void AllocateInstanceID(BrowserPlugin* browser_plugin) OVERRIDE;
 
   // IPC::Sender implementation.
   virtual bool Send(IPC::Message* msg) OVERRIDE;
@@ -35,12 +37,24 @@ class BrowserPluginManagerImpl : public BrowserPluginManager {
  private:
   virtual ~BrowserPluginManagerImpl();
 
+  void OnAllocateInstanceIDACK(const IPC::Message& message,
+                               int request_id,
+                               int instance_id);
   void OnPluginAtPositionRequest(const IPC::Message& message,
                                  int request_id,
                                  const gfx::Point& position);
+  void OnUnhandledSwap(const IPC::Message& message,
+                       int instance_id,
+                       const gfx::Size& size,
+                       std::string mailbox_name,
+                       int gpu_route_id,
+                       int gpu_host_id);
 
   // Returns whether a message should be forwarded to BrowserPlugins.
   static bool ShouldForwardToBrowserPlugin(const IPC::Message& message);
+
+  int request_id_counter_;
+  IDMap<BrowserPlugin> pending_allocate_instance_id_requests_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserPluginManagerImpl);
 };

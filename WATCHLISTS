@@ -35,6 +35,9 @@
     'appcache': {
       'filepath': 'appcache/',
     },
+    'apps': {
+      'filepath': '^apps/',
+    },
     'aura': {
       'filepath': 'ui/aura/|'\
                   'ash/',
@@ -71,6 +74,13 @@
     'base_memory': {
       'filepath': '^base/memory',
     },
+    'bookmarks': {
+      'filepath': 'chrome/browser/bookmarks/' \
+                  '|chrome/browser/ui/bookmarks/' \
+                  '|chrome/browser/ui/cocoa/bookmarks/' \
+                  '|chrome/browser/ui/gtk/bookmarks/' \
+                  '|chrome/browser/ui/views/bookmarks/'
+    },
     'browser': {
       'filepath': 'chrome/browser/',
     },
@@ -82,7 +92,8 @@
                   '|chrome/browser/bookmarks/' \
                   '|chrome/browser/common/' \
                   '|chrome/browser/favicon/' \
-                  '|chrome/browser/history/'
+                  '|chrome/browser/history/' \
+                  '|chrome/browser/visitedlink/'
     },
     'browser_compositor': {
       'filepath': 'ui/compositor/'
@@ -126,6 +137,11 @@
       'filepath': 'chromeos/network/|'\
                   'chrome/browser/chromeos/cros/|'\
                   'chrome/browser/chromeos/net/',
+    },
+    'chromeos_power': {
+      'filepath': 'chromeos/dbus/power_.*|'\
+                  'chromeos/power/|'\
+                  'chrome/browser/chromeos/power/',
     },
     'chromeos_webui': {
       'filepath': 'chrome/browser/ui/webui/chromeos/|'\
@@ -176,7 +192,7 @@
     },
     'downloads_ext': {
       'filepath': 'chrome/browser/extensions/api/downloads/|'\
-                  'chrome/common/extensions/api/downloads.idl',
+                  'chrome/common/extensions/api/downloads.*.idl',
     },
     'downloads_ui': {
       'filepath': 'chrome/browser/resources/downloads/|' \
@@ -238,7 +254,7 @@
       'filepath': 'chrome/installer/',
     },
     'instant': {
-      'filepath': 'instant|searchbox',
+      'filepath': 'instant|searchbox|/ui/search/',
     },
     'ipc': {
       'filepath': 'ipc/ipc',
@@ -259,6 +275,12 @@
     'locale_settings': {
       'filepath': 'chrome/app/resources/locale_settings',
     },
+    'managed_users': {
+      'filepath': 'chrome/browser/managed_mode'\
+                  '|chrome/browser/extensions/api/managed_mode'\
+                  '|chrome/browser/resources/options/manage'\
+                  '|chrome/browser/ui/webui/options/manage',
+        },
     'mac': {
       'filepath': 'cocoa|\.mm$|(_mac|_posix)\.(cc|h)$',
     },
@@ -288,6 +310,9 @@
       'filepath': 'chrome/nacl/|chrome/test/nacl/|'\
         'chrome/browser/nacl_host/|chrome/common/nacl',
     },
+    'native_client_sdk': {
+      'filepath': '^native_client_sdk/',
+    },
     'net': {
       'filepath': 'net/',
     },
@@ -306,7 +331,7 @@
     },
     'ntp': {
       'filepath': 'chrome/browser/resources/ntp4/|'\
-        'chrome/browser/resources/ntp_search/|'\
+        'chrome/browser/resources/ntp_android/|'\
         'chrome/browser/ui/webui/ntp/',
     },
     'omnibox': {
@@ -340,6 +365,9 @@
     },
     'prerender': {
       'filepath': 'prerender'
+    },
+    'profiles': {
+      'filepath': 'chrome/browser/profiles/'
     },
     'pyauto': {
       'filepath': 'chrome/test/pyautolib' \
@@ -378,10 +406,15 @@
                    '|chrome/browser/tab_contents/spelling_menu'\
                    '|chrome/common/spellcheck_'\
                    '|chrome/renderer/spellchecker/'\
+                   '|third_party/hunspell/'\
+                   '|third_party/hunspell_dictionaries/'\
                    '|webkit/tools/test_shell/mock_spellcheck'
     },
     'sync': {
       'filepath': 'chrome/browser/sync/|sync/',
+    },
+    'sync_promo': {
+      'filepath': 'chrome/browser/ui/webui/sync_promo/',
     },
     'tab_contents': {
       'filepath': 'chrome/browser/tab_contents/|'\
@@ -502,8 +535,7 @@
                       'hashimoto+watch@chromium.org',
                       'yoshiki+watch@chromium.org',
                       'yuzo+watch@chromium.org'],
-    'android_infra': ['peter+watch@chromium.org',
-                      'bulach+watch@chromium.org',
+    'android_infra': ['bulach+watch@chromium.org',
                       'yfriedman+watch@chromium.org',
                       'ilevy+watch@chromium.org',
                       'klundberg+watch@chromium.org',
@@ -511,6 +543,7 @@
     'android_webview': ['android-webview-reviews@chromium.org'],
     'app_list': ['tfarina@chromium.org'],
     'appcache': ['michaeln@chromium.org'],
+    'apps': ['tfarina@chromium.org', 'chromium-apps-reviews@chromium.org'],
     'aura': ['ben+watch@chromium.org', 'sadrul@chromium.org'],
     'autofill': ['dhollowa+watch@chromium.org', 'isherman@chromium.org',
                  'dyu@chromium.org', 'abodenha@chromium.org',
@@ -523,13 +556,14 @@
     'base': ['erikwright+watch@chromium.org'],
     'base_allocator': ['dmikurube+memory@chromium.org'],
     'base_memory': ['gavinp+memory@chromium.org'],
+    'bookmarks': ['tfarina@chromium.org'],
     'browser_chromeos': ['davemoore+watch@chromium.org',
                          'stevenjb+watch@chromium.org',
                          'nkostylev+watch@chromium.org'],
     'browser_components': ['browser-components-watch@chromium.org'],
     'browser_compositor': ['backer@chromium.org', 'vollick@chromium.org',
                            'piman+watch@chromium.org'],
-    'browser_resources': ['arv@chromium.org'],
+    'browser_resources': ['arv+watch@chromium.org'],
     'browsing_data': ['markusheintz@chromium.org'],
     'bubble': ['alicet@chromium.org', 'msw+watch@chromium.org'],
     'cc': ['cc-bugs@chromium.org'],
@@ -543,10 +577,13 @@
     'chromeos_net' : ['gauravsh+watch@chromium.org',
                       'gspencer+watch@chromium.org',
                       'stevenjb+watch@chromium.org'],
+    'chromeos_power' : ['derat+watch@chromium.org'],
     'chromeos_webui': ['nkostylev+watch@chromium.org'],
-    'clang_update': ['fischman+watch@chromium.org', 'ukai+watch@chromium.org',
+    'clang_update': ['ukai+watch@chromium.org',
                      'glotov+watch@chromium.org',
-                     'dmikurube+clang@chromium.org'],
+                     'dmikurube+clang@chromium.org',
+                     'eugenis+clang@chromium.org',
+                     'glider+clang@chromium.org'],
     'clipboard': ['dcheng@chromium.org'],
     'contacts': ['derat+watch@chromium.org'],
     'content': ['jam@chromium.org', 'joi+watch-content@chromium.org',
@@ -571,14 +608,14 @@
     'gfx_geometry': ['cc-bugs@chromium.org'],
     'gfx_image': ['rsesek+watch@chromium.org'],
     'gpu': ['apatrick@chromium.org'],
-    'history_ui': ['dubroy@chromium.org'],
+    'history_ui': ['dubroy@chromium.org', 'pam+watch@chromium.org'],
     'i18n': ['jshin+watch@chromium.org'],
     'imageburner': ['achuith+watch@chromium.org', 'tbarzic+watch@chromium.org'],
     'importer': ['tfarina@chromium.org'],
     'installer': ['grt+watch@chromium.org'],
     'instant': ['sreeram@chromium.org', 'gideonwald@chromium.org',
                 'dcblack@chromium.org', 'jered@chromium.org',
-                'dominich@chromium.org', 'samarth@chromium.org',
+                'dominich@chromium.org', 'samarth+watch@chromium.org',
                 'melevin@chromium.org'],
     'ipc': ['jam@chromium.org', 'darin-cc@chromium.org'],
     'labs': ['thakis@chromium.org'],
@@ -586,6 +623,7 @@
     'linux-seccomp-bpf': ['jln+watch@chromium.org'],
     'locale_settings': ['finnur+watch@chromium.org'],
     'mac': ['sail+watch@chromium.org'],
+    'managed_users': ['pam+watch@chromium.org'],
     'media': ['feature-media-reviews@chromium.org'],
     'message_loop': ['sadrul@chromium.org'],
     'metrics': ['jar@chromium.org',
@@ -593,6 +631,7 @@
                 'mad@chromium.org'],
     'mouse_lock': ['scheib+watch@chromium.org'],
     'nacl': ['native-client-reviews@googlegroups.com'],
+    'native_client_sdk': ['sbc@chromium.org', 'binji@chromium.org'],
     'net': ['darin-cc@chromium.org', 'cbentzel+watch@chromium.org'],
     'net_error_list': ['mmenke@chromium.org'],
     'net_log': ['mmenke@chromium.org', 'eroman@chromium.org'],
@@ -613,6 +652,7 @@
     'prerender': ['cbentzel+watch@chromium.org', 'tburkard+watch@chromium.org',
                   'dominich+watch@chromium.org', 'mmenke@chromium.org',
                   'gavinp+prer@chromium.org'],
+    'profiles': ['sail+watch@chromium.org'],
     'pyauto': ['anantha@chromium.org',
                'dyu@chromium.org',
                'dennisjeffrey@chromium.org'],
@@ -634,11 +674,13 @@
     'shell_window': ['jeremya+watch@chromium.org'],
     'site_instance': ['creis+watch@chromium.org', 'ajwong+watch@chromium.org'],
     'spellcheck': ['groby+spellwatch@chromium.org',
-                   'rlp@chromium.org'],
+                   'rlp@chromium.org',
+                   'rouslan+spellwatch@chromium.org'],
     'sync': ['akalin@chromium.org',
              'haitaol@chromium.org',
              'rsimha@chromium.org',
              'tim@chromium.org'],
+    'sync_promo': ['sail+watch@chromium.org'],
     'tab_contents': ['avi@chromium.org',
                      'creis+watch@chromium.org', 'ajwong+watch@chromium.org'],
     'task_manager': ['yoshiki+watch@chromium.org'],
@@ -649,7 +691,6 @@
                   'suzhe@chromium.org',
                   'yusukes+watch@chromium.org'],
     'textinput_chromeos': ['yusukes+watch@chromium.org'],
-    'tools': ['pam+watch@chromium.org'],
     'tools_emacs': ['fischman+watch@chromium.org',
                     'dhollowa+watch@chromium.org'],
     'ui_compositor': ['cc-bugs@chromium.org'],

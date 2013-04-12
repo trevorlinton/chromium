@@ -122,6 +122,24 @@ void TimerExpiredTask::KillProcess() {
 }  // namespace
 
 void RouteStdioToConsole() {
+  // Don't change anything if stdout or stderr already point to a
+  // valid stream.
+  //
+  // If we are running under Buildbot or under Cygwin's default
+  // terminal (mintty), stderr and stderr will be pipe handles.  In
+  // that case, we don't want to open CONOUT$, because its output
+  // likely does not go anywhere.
+  //
+  // We don't use GetStdHandle() to check stdout/stderr here because
+  // it can return dangling IDs of handles that were never inherited
+  // by this process.  These IDs could have been reused by the time
+  // this function is called.  The CRT checks the validity of
+  // stdout/stderr on startup (before the handle IDs can be reused).
+  // _fileno(stdout) will return -2 (_NO_CONSOLE_FILENO) if stdout was
+  // invalid.
+  if (_fileno(stdout) >= 0 || _fileno(stderr) >= 0)
+    return;
+
   if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
     unsigned int result = GetLastError();
     // Was probably already attached.
@@ -142,10 +160,19 @@ void RouteStdioToConsole() {
   // log-lines in output.
   enum { kOutputBufferSize = 64 * 1024 };
 
-  if (freopen("CONOUT$", "w", stdout))
+  if (freopen("CONOUT$", "w", stdout)) {
     setvbuf(stdout, NULL, _IOLBF, kOutputBufferSize);
-  if (freopen("CONOUT$", "w", stderr))
+    // Overwrite FD 1 for the benefit of any code that uses this FD
+    // directly.  This is safe because the CRT allocates FDs 0, 1 and
+    // 2 at startup even if they don't have valid underlying Windows
+    // handles.  This means we won't be overwriting an FD created by
+    // _open() after startup.
+    _dup2(_fileno(stdout), 1);
+  }
+  if (freopen("CONOUT$", "w", stderr)) {
     setvbuf(stderr, NULL, _IOLBF, kOutputBufferSize);
+    _dup2(_fileno(stderr), 2);
+  }
 
   // Fix all cout, wcout, cin, wcin, cerr, wcerr, clog and wclog.
   std::ios::sync_with_stdio();
@@ -252,7 +279,7 @@ bool GetProcessIntegrityLevel(ProcessHandle process, IntegrityLevel *level) {
       GetLastError() != ERROR_INSUFFICIENT_BUFFER)
     return false;
 
-  scoped_array<char> token_label_bytes(new char[token_info_length]);
+  scoped_ptr<char[]> token_label_bytes(new char[token_info_length]);
   if (!token_label_bytes.get())
     return false;
 
@@ -391,8 +418,7 @@ bool KillProcessById(ProcessId process_id, int exit_code, bool wait) {
                                FALSE,  // Don't inherit handle
                                process_id);
   if (!process) {
-    DLOG(ERROR) << "Unable to open process " << process_id << " : "
-                << GetLastError();
+    DLOG_GETLASTERROR(ERROR) << "Unable to open process " << process_id;
     return false;
   }
   bool ret = KillProcess(process, exit_code, wait);
@@ -475,9 +501,9 @@ bool KillProcess(ProcessHandle process, int exit_code, bool wait) {
   if (result && wait) {
     // The process may not end immediately due to pending I/O
     if (WAIT_OBJECT_0 != WaitForSingleObject(process, 60 * 1000))
-      DLOG(ERROR) << "Error waiting for process exit: " << GetLastError();
+      DLOG_GETLASTERROR(ERROR) << "Error waiting for process exit";
   } else if (!result) {
-    DLOG(ERROR) << "Unable to terminate process: " << GetLastError();
+    DLOG_GETLASTERROR(ERROR) << "Unable to terminate process";
   }
   return result;
 }
@@ -486,7 +512,7 @@ TerminationStatus GetTerminationStatus(ProcessHandle handle, int* exit_code) {
   DWORD tmp_exit_code = 0;
 
   if (!::GetExitCodeProcess(handle, &tmp_exit_code)) {
-    NOTREACHED();
+    DLOG_GETLASTERROR(FATAL) << "GetExitCodeProcess() failed";
     if (exit_code) {
       // This really is a random number.  We haven't received any
       // information about the exit code, presumably because this
@@ -511,10 +537,14 @@ TerminationStatus GetTerminationStatus(ProcessHandle handle, int* exit_code) {
       return TERMINATION_STATUS_STILL_RUNNING;
     }
 
-    DCHECK_EQ(WAIT_OBJECT_0, wait_result);
+    if (wait_result == WAIT_FAILED) {
+      DLOG_GETLASTERROR(ERROR) << "WaitForSingleObject() failed";
+    } else {
+      DCHECK_EQ(WAIT_OBJECT_0, wait_result);
 
-    // Strange, the process used 0x103 (STILL_ACTIVE) as exit code.
-    NOTREACHED();
+      // Strange, the process used 0x103 (STILL_ACTIVE) as exit code.
+      NOTREACHED();
+    }
 
     return TERMINATION_STATUS_ABNORMAL_TERMINATION;
   }
@@ -921,7 +951,7 @@ bool EnableLowFragmentationHeap() {
   // Gives us some extra space in the array in case a thread is creating heaps
   // at the same time we're querying them.
   static const int MARGIN = 8;
-  scoped_array<HANDLE> heaps(new HANDLE[number_heaps + MARGIN]);
+  scoped_ptr<HANDLE[]> heaps(new HANDLE[number_heaps + MARGIN]);
   number_heaps = GetProcessHeaps(number_heaps + MARGIN, heaps.get());
   if (!number_heaps)
     return false;

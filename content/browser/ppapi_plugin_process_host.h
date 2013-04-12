@@ -5,14 +5,15 @@
 #ifndef CONTENT_BROWSER_PPAPI_PLUGIN_PROCESS_HOST_H_
 #define CONTENT_BROWSER_PPAPI_PLUGIN_PROCESS_HOST_H_
 
-#include <string>
 #include <queue>
+#include <vector>
 
 #include "base/basictypes.h"
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/process.h"
+#include "base/string16.h"
 #include "content/browser/renderer_host/pepper/browser_ppapi_host_impl.h"
 #include "content/browser/renderer_host/pepper/pepper_message_filter.h"
 #include "content/public/browser/browser_child_process_host_delegate.h"
@@ -75,7 +76,7 @@ class PpapiPluginProcessHost : public BrowserChildProcessHostDelegate,
 
   static PpapiPluginProcessHost* CreatePluginHost(
       const PepperPluginInfo& info,
-      const FilePath& profile_data_directory,
+      const base::FilePath& profile_data_directory,
       net::HostResolver* host_resolver);
   static PpapiPluginProcessHost* CreateBrokerHost(
       const PepperPluginInfo& info);
@@ -94,6 +95,11 @@ class PpapiPluginProcessHost : public BrowserChildProcessHostDelegate,
   static void DidDeleteOutOfProcessInstance(int plugin_process_id,
                                             int32 pp_instance);
 
+  // Returns the instances that match the specified process name.
+  // It can only be called on the IO thread.
+  static void FindByName(const string16& name,
+                         std::vector<PpapiPluginProcessHost*>* hosts);
+
   // IPC::Sender implementation:
   virtual bool Send(IPC::Message* message) OVERRIDE;
 
@@ -101,8 +107,8 @@ class PpapiPluginProcessHost : public BrowserChildProcessHostDelegate,
   // channel is ready or if there's an error.
   void OpenChannelToPlugin(Client* client);
 
-  const FilePath& plugin_path() const { return plugin_path_; }
-  const FilePath& profile_data_directory() const {
+  const base::FilePath& plugin_path() const { return plugin_path_; }
+  const base::FilePath& profile_data_directory() const {
     return profile_data_directory_;
   }
 
@@ -114,7 +120,7 @@ class PpapiPluginProcessHost : public BrowserChildProcessHostDelegate,
   // Constructors for plugin and broker process hosts, respectively.
   // You must call Init before doing anything else.
   PpapiPluginProcessHost(const PepperPluginInfo& info,
-                         const FilePath& profile_data_directory,
+                         const base::FilePath& profile_data_directory,
                          net::HostResolver* host_resolver);
   PpapiPluginProcessHost();
 
@@ -154,10 +160,10 @@ class PpapiPluginProcessHost : public BrowserChildProcessHostDelegate,
   std::queue<Client*> sent_requests_;
 
   // Path to the plugin library.
-  FilePath plugin_path_;
+  base::FilePath plugin_path_;
 
   // Path to the top-level plugin data directory (differs based upon profile).
-  FilePath profile_data_directory_;
+  base::FilePath profile_data_directory_;
 
   const bool is_broker_;
 

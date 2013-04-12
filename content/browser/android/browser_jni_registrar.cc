@@ -12,12 +12,14 @@
 #include "content/browser/android/content_view_core_impl.h"
 #include "content/browser/android/content_view_render_view.h"
 #include "content/browser/android/content_view_statics.h"
+#include "content/browser/android/date_time_chooser_android.h"
 #include "content/browser/android/download_controller_android_impl.h"
 #include "content/browser/android/interstitial_page_delegate_android.h"
 #include "content/browser/android/load_url_params.h"
 #include "content/browser/android/sandboxed_process_launcher.h"
 #include "content/browser/android/surface_texture_peer_browser_impl.h"
 #include "content/browser/android/touch_point.h"
+#include "content/browser/android/tracing_intent_handler.h"
 #include "content/browser/android/web_contents_observer_android.h"
 #include "content/browser/geolocation/location_api_adapter_android.h"
 #include "content/browser/renderer_host/ime_adapter_android.h"
@@ -37,6 +39,7 @@ base::android::RegistrationMethod kContentRegisteredMethods[] = {
     content::ContentViewRenderView::RegisterContentViewRenderView },
   { "ContentVideoView", content::ContentVideoView::RegisterContentVideoView },
   { "ContentViewCore", content::RegisterContentViewCore },
+  { "DateTimePickerAndroid", content::RegisterDateTimeChooserAndroid},
   { "DownloadControllerAndroidImpl",
     content::DownloadControllerAndroidImpl::RegisterDownloadController },
   { "InterstitialPageDelegateAndroid",
@@ -46,6 +49,7 @@ base::android::RegistrationMethod kContentRegisteredMethods[] = {
   { "RegisterImeAdapter", content::RegisterImeAdapter },
   { "SandboxedProcessLauncher", content::RegisterSandboxedProcessLauncher },
   { "TouchPoint", content::RegisterTouchPoint },
+  { "TracingIntentHandler", content::RegisterTracingIntentHandler },
   { "WebContentsObserverAndroid", content::RegisterWebContentsObserverAndroid },
   { "WebViewStatics", content::RegisterWebViewStatics },
 };

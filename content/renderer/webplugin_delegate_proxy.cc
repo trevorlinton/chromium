@@ -20,8 +20,8 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/process.h"
-#include "base/string_split.h"
 #include "base/string_util.h"
+#include "base/strings/string_split.h"
 #include "base/utf_string_conversions.h"
 #include "base/version.h"
 #include "content/common/child_process.h"
@@ -37,13 +37,13 @@
 #include "ipc/ipc_channel_handle.h"
 #include "net/base/mime_util.h"
 #include "skia/ext/platform_canvas.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebDragData.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebBindings.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebCursorInfo.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebDocument.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebFrame.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebView.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebDragData.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebString.h"
 #include "ui/gfx/blit.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/native_widget_types.h"
@@ -106,7 +106,7 @@ class ResourceClientProxy : public webkit::npapi::WebPluginResourceClient {
       multibyte_response_expected_(false) {
   }
 
-  ~ResourceClientProxy() {
+  virtual ~ResourceClientProxy() {
   }
 
   void Initialize(unsigned long resource_id, const GURL& url, int notify_id) {
@@ -124,17 +124,17 @@ class ResourceClientProxy : public webkit::npapi::WebPluginResourceClient {
   }
 
   // PluginResourceClient implementation:
-  void WillSendRequest(const GURL& url, int http_status_code) {
+  virtual void WillSendRequest(const GURL& url, int http_status_code) OVERRIDE {
     DCHECK(channel_ != NULL);
     channel_->Send(new PluginMsg_WillSendRequest(instance_id_, resource_id_,
                                                  url, http_status_code));
   }
 
-  void DidReceiveResponse(const std::string& mime_type,
-                          const std::string& headers,
-                          uint32 expected_length,
-                          uint32 last_modified,
-                          bool request_is_seekable) {
+  virtual void DidReceiveResponse(const std::string& mime_type,
+                                  const std::string& headers,
+                                  uint32 expected_length,
+                                  uint32 last_modified,
+                                  bool request_is_seekable) OVERRIDE {
     DCHECK(channel_ != NULL);
     PluginMsg_DidReceiveResponseParams params;
     params.id = resource_id_;
@@ -149,7 +149,9 @@ class ResourceClientProxy : public webkit::npapi::WebPluginResourceClient {
     channel_->Send(new PluginMsg_DidReceiveResponse(instance_id_, params));
   }
 
-  void DidReceiveData(const char* buffer, int length, int data_offset) {
+  virtual void DidReceiveData(const char* buffer,
+                              int length,
+                              int data_offset) OVERRIDE {
     DCHECK(channel_ != NULL);
     DCHECK_GT(length, 0);
     std::vector<char> data;
@@ -162,25 +164,25 @@ class ResourceClientProxy : public webkit::npapi::WebPluginResourceClient {
                                                 data, data_offset));
   }
 
-  void DidFinishLoading() {
+  virtual void DidFinishLoading() OVERRIDE {
     DCHECK(channel_ != NULL);
     channel_->Send(new PluginMsg_DidFinishLoading(instance_id_, resource_id_));
     channel_ = NULL;
     MessageLoop::current()->DeleteSoon(FROM_HERE, this);
   }
 
-  void DidFail() {
+  virtual void DidFail() OVERRIDE {
     DCHECK(channel_ != NULL);
     channel_->Send(new PluginMsg_DidFail(instance_id_, resource_id_));
     channel_ = NULL;
     MessageLoop::current()->DeleteSoon(FROM_HERE, this);
   }
 
-  bool IsMultiByteResponseExpected() {
+  virtual bool IsMultiByteResponseExpected() OVERRIDE {
     return multibyte_response_expected_;
   }
 
-  int ResourceId() {
+  virtual int ResourceId() OVERRIDE {
     return resource_id_;
   }
 
@@ -316,7 +318,7 @@ bool WebPluginDelegateProxy::Initialize(
       // shouldn't happen, since if we got here the plugin should exist) or the
       // plugin crashed on initialization.
       if (!info_.path.empty()) {
-        render_view_->PluginCrashed(info_.path);
+        render_view_->PluginCrashed(info_.path, base::kNullProcessId);
         LOG(ERROR) << "Plug-in crashed on start";
 
         // Return true so that the plugin widget is created and we can paint the
@@ -499,7 +501,7 @@ void WebPluginDelegateProxy::OnChannelError() {
     plugin_->Invalidate();
   }
   if (!channel_host_->expecting_shutdown())
-    render_view_->PluginCrashed(info_.path);
+    render_view_->PluginCrashed(info_.path, channel_host_->peer_pid());
 
 #if defined(OS_MACOSX) || defined(OS_WIN)
   // Ensure that the renderer doesn't think the plugin still has focus.
@@ -941,10 +943,14 @@ void WebPluginDelegateProxy::OnNotifyIMEStatus(int input_type,
       render_view_->routing_id(),
       params));
 
+  ViewHostMsg_SelectionBounds_Params bounds_params;
+  bounds_params.anchor_rect = bounds_params.focus_rect = caret_rect;
+  bounds_params.anchor_dir = bounds_params.focus_dir =
+      WebKit::WebTextDirectionLeftToRight;
+  bounds_params.is_anchor_first = true;
   render_view_->Send(new ViewHostMsg_SelectionBoundsChanged(
       render_view_->routing_id(),
-      caret_rect, WebKit::WebTextDirectionLeftToRight,
-      caret_rect, WebKit::WebTextDirectionLeftToRight));
+      bounds_params));
 }
 #endif
 

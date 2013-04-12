@@ -42,6 +42,10 @@
 	path = chrome_frame/tools/test/reference_build/chrome_win
 	url = https://chromium.googlesource.com/chromium/reference_builds/chrome_win.git
 	os = win
+[submodule "content/test/data/layout_tests/LayoutTests/editing/pasteboard/resources"]
+	path = content/test/data/layout_tests/LayoutTests/editing/pasteboard/resources
+	url = 
+	os = ios
 [submodule "content/test/data/layout_tests/LayoutTests/fast/events"]
 	path = content/test/data/layout_tests/LayoutTests/fast/events
 	url = 
@@ -214,6 +218,10 @@
 	path = third_party/freetype
 	url = https://chromium.googlesource.com/chromium/src/third_party/freetype.git
 	os = android
+[submodule "third_party/freetype2/src"]
+	path = third_party/freetype2/src
+	url = https://chromium.googlesource.com/chromium/src/third_party/freetype2.git
+	os = unix
 [submodule "third_party/gnu_binutils"]
 	path = third_party/gnu_binutils
 	url = https://chromium.googlesource.com/native_client/deps/third_party/gnu_binutils.git

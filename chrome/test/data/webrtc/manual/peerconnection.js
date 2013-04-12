@@ -54,25 +54,25 @@ function hangUpFromHere() {
 
 function toggleRemoteVideoFromHere() {
   toggleRemoteStream(function(remoteStream) {
-    return remoteStream.videoTracks[0];
+    return remoteStream.getVideoTracks()[0];
   }, 'video');
 }
 
 function toggleRemoteAudioFromHere() {
   toggleRemoteStream(function(remoteStream) {
-    return remoteStream.audioTracks[0];
+    return remoteStream.getAudioTracks()[0];
   }, 'audio');
 }
 
 function toggleLocalVideoFromHere() {
   toggleLocalStream(function(localStream) {
-    return localStream.videoTracks[0];
+    return localStream.getVideoTracks()[0];
   }, 'video');
 }
 
 function toggleLocalAudioFromHere() {
   toggleLocalStream(function(localStream) {
-    return localStream.audioTracks[0];
+    return localStream.getAudioTracks()[0];
   }, 'audio');
 }
 
@@ -93,6 +93,18 @@ function closeDataChannelFromHere() {
 function sendDataFromHere() {
   var data = $('data-channel-send').value;
   sendDataOnChannel(data);
+}
+
+function createDtmfSenderFromHere() {
+  ensureHasPeerConnection_();
+  createDtmfSenderOnPeerConnection();
+}
+
+function insertDtmfFromHere() {
+  var tones = $('dtmf-tones').value;
+  var duration = $('dtmf-tones-duration').value;
+  var gap = $('dtmf-tones-gap').value;
+  insertDtmfOnSender(tones, duration, gap);
 }
 
 function forceOpusChanged() {
@@ -153,6 +165,7 @@ window.onload = function() {
   updateGetUserMediaConstraints();
   doNotAutoAddLocalStreamWhenCalled();
   hookupDataChannelCallbacks_();
+  hookupDtmfSenderCallback_();
 };
 
 /**
@@ -274,6 +287,15 @@ function hookupDataChannelCallbacks_() {
     debug('Received ' + data_message.data);
     $('data-channel-receive').value =
       data_message.data + '\n' + $('data-channel-receive').value;
+  });
+}
+
+/** @private */
+function hookupDtmfSenderCallback_() {
+  setOnToneChange(function(tone) {
+    debug('Sent DTMF tone: ' + tone.tone);
+    $('dtmf-tones-sent').value =
+      tone.tone + '\n' + $('dtmf-tones-sent').value;
   });
 }
 

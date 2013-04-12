@@ -10,7 +10,6 @@
 namespace gfx {
 namespace switches {
 
-UI_EXPORT extern const char kDisableScalingInImageSkiaOperations[];
 UI_EXPORT extern const char kEnableBrowserTextSubpixelPositioning[];
 UI_EXPORT extern const char kEnableWebkitTextSubpixelPositioning[];
 

@@ -23,7 +23,8 @@ namespace mp4 {
 // TODO(xhwang): Figure out the init data type appropriately once it's spec'ed.
 static const char kMp4InitDataType[] = "video/mp4";
 
-MP4StreamParser::MP4StreamParser(bool has_sbr)
+MP4StreamParser::MP4StreamParser(const std::set<int>& audio_object_types,
+                                 bool has_sbr)
     : state_(kWaitingForInit),
       moof_head_(0),
       mdat_tail_(0),
@@ -31,7 +32,10 @@ MP4StreamParser::MP4StreamParser(bool has_sbr)
       has_video_(false),
       audio_track_id_(0),
       video_track_id_(0),
-      has_sbr_(has_sbr) {
+      audio_object_types_(audio_object_types),
+      has_sbr_(has_sbr),
+      is_audio_track_encrypted_(false),
+      is_video_track_encrypted_(false) {
 }
 
 MP4StreamParser::~MP4StreamParser() {}
@@ -200,11 +204,21 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
                            << std::hex << entry.format << " in stsd box.";
         return false;
       }
-      // Check if it is MPEG4 AAC defined in ISO 14496 Part 3.
-      if (entry.esds.object_type != kISO_14496_3) {
+
+      int audio_type = entry.esds.object_type;
+      DVLOG(1) << "audio_type " << std::hex << audio_type;
+      if (audio_object_types_.find(audio_type) == audio_object_types_.end()) {
+        MEDIA_LOG(log_cb_) << "audio object type 0x" << std::hex << audio_type
+                           << " does not match what is specified in the"
+                           << " mimetype.";
+        return false;
+      }
+
+      // Check if it is MPEG4 AAC defined in ISO 14496 Part 3 or
+      // supported MPEG2 AAC varients.
+      if (audio_type != kISO_14496_3 && audio_type != kISO_13818_7_AAC_LC) {
         MEDIA_LOG(log_cb_) << "Unsupported audio object type 0x" << std::hex
-                           << static_cast<int>(entry.esds.object_type)
-                           << " in esds.";
+                           << audio_type << " in esds.";
         return false;
       }
 
@@ -220,11 +234,12 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
         return false;
       }
 
-      bool is_encrypted = entry.sinf.info.track_encryption.is_encrypted;
+      is_audio_track_encrypted_ = entry.sinf.info.track_encryption.is_encrypted;
+      DVLOG(1) << "is_audio_track_encrypted_: " << is_audio_track_encrypted_;
       audio_config.Initialize(kCodecAAC, sample_format,
                               aac.channel_layout(),
                               aac.GetOutputSamplesPerSecond(has_sbr_),
-                              NULL, 0, is_encrypted, false);
+                              NULL, 0, is_audio_track_encrypted_, false);
       has_audio_ = true;
       audio_track_id_ = track->header.track_id;
     }
@@ -248,12 +263,13 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
       gfx::Size natural_size = GetNaturalSize(visible_rect.size(),
                                               entry.pixel_aspect.h_spacing,
                                               entry.pixel_aspect.v_spacing);
-      bool is_encrypted = entry.sinf.info.track_encryption.is_encrypted;
+      is_video_track_encrypted_ = entry.sinf.info.track_encryption.is_encrypted;
+      DVLOG(1) << "is_video_track_encrypted_: " << is_video_track_encrypted_;
       video_config.Initialize(kCodecH264, H264PROFILE_MAIN,  VideoFrame::YV12,
                               coded_size, visible_rect, natural_size,
                               // No decoder-specific buffer needed for AVC;
                               // SPS/PPS are embedded in the video stream
-                              NULL, 0, is_encrypted, true);
+                              NULL, 0, is_video_track_encrypted_, true);
       has_video_ = true;
       video_track_id_ = track->header.track_id;
     }
@@ -446,19 +462,29 @@ bool MP4StreamParser::EnqueueSample(BufferQueue* audio_buffers,
     }
   }
 
-  if (decrypt_config.get() != NULL && !subsamples.empty()) {
+  if (decrypt_config) {
+    if (!subsamples.empty()) {
+    // Create a new config with the updated subsamples.
     decrypt_config.reset(new DecryptConfig(
         decrypt_config->key_id(),
         decrypt_config->iv(),
         decrypt_config->data_offset(),
         subsamples));
+    }
+    // else, use the existing config.
+  } else if ((audio && is_audio_track_encrypted_) ||
+             (video && is_video_track_encrypted_)) {
+    // The media pipeline requires a DecryptConfig with an empty |iv|.
+    // TODO(ddorwin): Refactor so we do not need a fake key ID ("1");
+    decrypt_config.reset(
+        new DecryptConfig("1", "", 0, std::vector<SubsampleEntry>()));
   }
 
   scoped_refptr<StreamParserBuffer> stream_buf =
     StreamParserBuffer::CopyFrom(&frame_buf[0], frame_buf.size(),
                                  runs_->is_keyframe());
 
-  if (runs_->is_encrypted())
+  if (decrypt_config)
     stream_buf->SetDecryptConfig(decrypt_config.Pass());
 
   stream_buf->SetDuration(runs_->duration());

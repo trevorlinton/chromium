@@ -90,7 +90,8 @@ void BrowserTabStripModelDelegate::WillAddWebContents(
 
 int BrowserTabStripModelDelegate::GetDragActions() const {
   return TabStripModelDelegate::TAB_TEAROFF_ACTION |
-      (browser_->tab_count() > 1 ? TabStripModelDelegate::TAB_MOVE_ACTION : 0);
+      (browser_->tab_strip_model()->count() > 1
+          ? TabStripModelDelegate::TAB_MOVE_ACTION : 0);
 }
 
 bool BrowserTabStripModelDelegate::CanDuplicateContentsAt(int index) {
@@ -144,8 +145,9 @@ void BrowserTabStripModelDelegate::BookmarkAllTabs() {
   chrome::BookmarkAllTabs(browser_);
 }
 
-bool BrowserTabStripModelDelegate::CanRestoreTab() {
-  return chrome::CanRestoreTab(browser_);
+TabStripModelDelegate::RestoreTabType
+BrowserTabStripModelDelegate::GetRestoreTabType() {
+  return chrome::GetRestoreTabType(browser_);
 }
 
 void BrowserTabStripModelDelegate::RestoreTab() {

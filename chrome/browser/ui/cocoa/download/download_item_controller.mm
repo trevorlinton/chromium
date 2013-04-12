@@ -15,6 +15,7 @@
 #include "chrome/browser/download/download_item_model.h"
 #include "chrome/browser/download/download_shelf_context_menu.h"
 #include "chrome/browser/download/download_util.h"
+#import "chrome/browser/themes/theme_properties.h"
 #import "chrome/browser/themes/theme_service.h"
 #import "chrome/browser/ui/cocoa/download/download_item_button.h"
 #import "chrome/browser/ui/cocoa/download/download_item_cell.h"
@@ -74,9 +75,9 @@ void WidenView(NSView* view, CGFloat widthChange) {
 
 class DownloadShelfContextMenuMac : public DownloadShelfContextMenu {
  public:
-  DownloadShelfContextMenuMac(DownloadItemModel* model,
+  DownloadShelfContextMenuMac(DownloadItem* downloadItem,
                               content::PageNavigator* navigator)
-      : DownloadShelfContextMenu(model, navigator) { }
+      : DownloadShelfContextMenu(downloadItem, navigator) { }
 
   using DownloadShelfContextMenu::ExecuteCommand;
   using DownloadShelfContextMenu::IsCommandIdChecked;
@@ -99,14 +100,14 @@ class DownloadShelfContextMenuMac : public DownloadShelfContextMenu {
 
 @implementation DownloadItemController
 
-- (id)initWithModel:(DownloadItemModel*)downloadModel
-              shelf:(DownloadShelfController*)shelf
-          navigator:(content::PageNavigator*)navigator {
+- (id)initWithDownload:(DownloadItem*)downloadItem
+                 shelf:(DownloadShelfController*)shelf
+             navigator:(content::PageNavigator*)navigator {
   if ((self = [super initWithNibName:@"DownloadItem"
                               bundle:base::mac::FrameworkBundle()])) {
     // Must be called before [self view], so that bridge_ is set in awakeFromNib
-    bridge_.reset(new DownloadItemMac(downloadModel, self));
-    menuBridge_.reset(new DownloadShelfContextMenuMac(downloadModel,
+    bridge_.reset(new DownloadItemMac(downloadItem, self));
+    menuBridge_.reset(new DownloadShelfContextMenuMac(downloadItem,
                                                       navigator));
 
     NSNotificationCenter* defaultCenter = [NSNotificationCenter defaultCenter];
@@ -164,7 +165,7 @@ class DownloadShelfContextMenuMac : public DownloadShelfContextMenu {
 }
 
 - (void)setStateFromDownload:(DownloadItemModel*)downloadModel {
-  DCHECK_EQ(bridge_->download_model(), downloadModel);
+  DCHECK_EQ([self download], downloadModel->download());
 
   // Handle dangerous downloads.
   if (downloadModel->IsDangerous()) {
@@ -196,7 +197,7 @@ class DownloadShelfContextMenuMac : public DownloadShelfContextMenu {
   // Set correct popup menu. Also, set draggable download on completion.
   if (downloadModel->download()->IsComplete()) {
     [progressView_ setMenu:completeDownloadMenu_];
-    [progressView_ setDownload:downloadModel->download()->GetFullPath()];
+    [progressView_ setDownload:downloadModel->download()->GetTargetFilePath()];
   } else {
     [progressView_ setMenu:activeDownloadMenu_];
   }
@@ -295,7 +296,7 @@ class DownloadShelfContextMenuMac : public DownloadShelfContextMenu {
     return;
 
   NSColor* color =
-      themeProvider->GetNSColor(ThemeService::COLOR_TAB_TEXT, true);
+      themeProvider->GetNSColor(ThemeProperties::COLOR_TAB_TEXT, true);
   [dangerousDownloadLabel_ setTextColor:color];
 }
 

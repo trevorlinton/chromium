@@ -253,7 +253,7 @@ virtual void ShaderBinary(
     GLsizei length) OVERRIDE;
 
 virtual void ShaderSource(
-    GLuint shader, GLsizei count, const char** str,
+    GLuint shader, GLsizei count, const GLchar* const* str,
     const GLint* length) OVERRIDE;
 
 virtual void StencilFunc(GLenum func, GLint ref, GLuint mask) OVERRIDE;
@@ -523,6 +523,8 @@ virtual void DiscardFramebufferEXT(
     GLenum target, GLsizei count, const GLenum* attachments) OVERRIDE;
 
 virtual void LoseContextCHROMIUM(GLenum current, GLenum other) OVERRIDE;
+
+virtual void WaitSyncPointCHROMIUM(GLuint sync_point) OVERRIDE;
 
 #endif  // GPU_COMMAND_BUFFER_CLIENT_GLES2_IMPLEMENTATION_AUTOGEN_H_
 

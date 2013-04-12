@@ -31,6 +31,8 @@ void PageInfoHelper::ProcessEvent(const ui::LocatedEvent& event) {
     return;
 
   WebContents* tab = location_bar_->GetWebContents();
+  if (!tab)
+    return;
   const NavigationController& controller = tab->GetController();
   NavigationEntry* nav_entry = controller.GetActiveEntry();
   if (!nav_entry) {
@@ -38,6 +40,6 @@ void PageInfoHelper::ProcessEvent(const ui::LocatedEvent& event) {
     return;
   }
 
-  location_bar_->delegate()->ShowPageInfo(
+  location_bar_->delegate()->ShowWebsiteSettings(
       tab, nav_entry->GetURL(), nav_entry->GetSSL(), true);
 }

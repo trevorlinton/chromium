@@ -70,16 +70,22 @@ chromeHidden.registerCustomHook('extension',
   });
 
   // Alias several messaging deprecated APIs to their runtime counterparts.
-  chrome.extension.connect = chrome.runtime.connect;
-  chrome.extension.sendMessage = chrome.runtime.sendMessage;
-  chrome.extension.onConnect = chrome.runtime.onConnect;
-  chrome.extension.onMessage = chrome.runtime.onMessage;
-  if (contextType == 'BLESSED_EXTENSION') {
-    chrome.extension.connectNative = chrome.runtime.connectNative;
-    chrome.extension.sendNativeMessage = chrome.runtime.sendNativeMessage;
-    chrome.extension.onConnectExternal = chrome.runtime.onConnectExternal;
-    chrome.extension.onMessageExternal = chrome.runtime.onMessageExternal;
-  }
+  var mayNeedAlias = [
+    // Types
+    'Port',
+    // Functions
+    'connect', 'sendMessage', 'connectNative', 'sendNativeMessage',
+    // Events
+    'onConnect', 'onConnectExternal', 'onMessage', 'onMessageExternal'
+  ];
+  mayNeedAlias.forEach(function(alias) {
+    // Checking existence isn't enough since some functions are disabled via
+    // getters that throw exceptions. Assume that any getter is such a function.
+    if (chrome.runtime.hasOwnProperty(alias) &&
+        chrome.runtime.__lookupGetter__(alias) === undefined) {
+      chrome.extension[alias] = chrome.runtime[alias];
+    }
+  });
 
   apiFunctions.setUpdateArgumentsPreValidate('sendRequest',
       sendMessageUpdateArguments.bind(null, 'sendRequest'));

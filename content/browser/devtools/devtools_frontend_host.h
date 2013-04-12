@@ -10,7 +10,7 @@
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "content/public/browser/devtools_client_host.h"
-#include "content/public/browser/render_view_host_observer.h"
+#include "content/public/browser/web_contents_observer.h"
 
 namespace content {
 
@@ -22,7 +22,7 @@ class WebContentsImpl;
 // embedder. This allows us to avoid exposing DevTools client messages through
 // the content public API.
 class DevToolsFrontendHost : public DevToolsClientHost,
-                             public RenderViewHostObserver {
+                             public WebContentsObserver {
  public:
   DevToolsFrontendHost(WebContentsImpl* web_contents,
                        DevToolsFrontendHostDelegate* delegate);
@@ -35,19 +35,22 @@ class DevToolsFrontendHost : public DevToolsClientHost,
   virtual void InspectedContentsClosing() OVERRIDE;
   virtual void ReplacedWithAnotherClient() OVERRIDE;
 
-  // RenderViewHostObserver overrides.
+  // WebContentsObserver overrides.
   virtual bool OnMessageReceived(const IPC::Message& message) OVERRIDE;
 
   void OnDispatchOnInspectorBackend(const std::string& message);
   void OnActivateWindow();
+  void OnChangeAttachedWindowHeight(unsigned height);
   void OnCloseWindow();
   void OnMoveWindow(int x, int y);
   void OnRequestSetDockSide(const std::string& side);
   void OnOpenInNewTab(const std::string& url);
   void OnSave(const std::string& url, const std::string& content, bool save_as);
   void OnAppend(const std::string& url, const std::string& content);
+  void OnRequestFileSystems();
+  void OnAddFileSystem();
+  void OnRemoveFileSystem(const std::string& file_system_path);
 
-  WebContentsImpl* web_contents_;
   DevToolsFrontendHostDelegate* delegate_;
   DISALLOW_COPY_AND_ASSIGN(DevToolsFrontendHost);
 };

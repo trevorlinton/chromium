@@ -9,8 +9,8 @@
 
 #include "base/basictypes.h"
 #include "base/bind.h"
-#include "base/file_path.h"
 #include "base/file_util.h"
+#include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop.h"
@@ -126,7 +126,7 @@ class UploadDataStreamTest : public PlatformTest {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
   }
 
-  void FileChangedHelper(const FilePath& file_path,
+  void FileChangedHelper(const base::FilePath& file_path,
                          const base::Time& time,
                          bool error_expected);
 
@@ -162,13 +162,14 @@ TEST_F(UploadDataStreamTest, ConsumeAllBytes) {
 }
 
 TEST_F(UploadDataStreamTest, File) {
-  FilePath temp_file_path;
+  base::FilePath temp_file_path;
   ASSERT_TRUE(file_util::CreateTemporaryFileInDir(temp_dir_.path(),
                                                   &temp_file_path));
   ASSERT_EQ(static_cast<int>(kTestDataSize),
             file_util::WriteFile(temp_file_path, kTestData, kTestDataSize));
 
   element_readers_.push_back(new UploadFileElementReader(
+      base::MessageLoopProxy::current(),
       temp_file_path, 0, kuint64max, base::Time()));
 
   TestCompletionCallback init_callback;
@@ -191,7 +192,7 @@ TEST_F(UploadDataStreamTest, File) {
 }
 
 TEST_F(UploadDataStreamTest, FileSmallerThanLength) {
-  FilePath temp_file_path;
+  base::FilePath temp_file_path;
   ASSERT_TRUE(file_util::CreateTemporaryFileInDir(temp_dir_.path(),
                                                   &temp_file_path));
   ASSERT_EQ(static_cast<int>(kTestDataSize),
@@ -202,6 +203,7 @@ TEST_F(UploadDataStreamTest, FileSmallerThanLength) {
       overriding_content_length(kFakeSize);
 
   element_readers_.push_back(new UploadFileElementReader(
+      base::MessageLoopProxy::current(),
       temp_file_path, 0, kuint64max, base::Time()));
 
   TestCompletionCallback init_callback;
@@ -304,7 +306,7 @@ TEST_F(UploadDataStreamTest, ReadErrorAsync) {
 }
 
 TEST_F(UploadDataStreamTest, FileAndBytes) {
-  FilePath temp_file_path;
+  base::FilePath temp_file_path;
   ASSERT_TRUE(file_util::CreateTemporaryFileInDir(temp_dir_.path(),
                                                   &temp_file_path));
   ASSERT_EQ(static_cast<int>(kTestDataSize),
@@ -313,6 +315,7 @@ TEST_F(UploadDataStreamTest, FileAndBytes) {
   const uint64 kFileRangeOffset = 1;
   const uint64 kFileRangeLength = 4;
   element_readers_.push_back(new UploadFileElementReader(
+      base::MessageLoopProxy::current(),
       temp_file_path, kFileRangeOffset, kFileRangeLength, base::Time()));
 
   element_readers_.push_back(new UploadBytesElementReader(
@@ -503,13 +506,14 @@ TEST_F(UploadDataStreamTest, ReadAsync) {
   EXPECT_EQ(static_cast<int>(kTestDataSize*2), read_callback3.WaitForResult());
 }
 
-void UploadDataStreamTest::FileChangedHelper(const FilePath& file_path,
+void UploadDataStreamTest::FileChangedHelper(const base::FilePath& file_path,
                                              const base::Time& time,
                                              bool error_expected) {
   // Don't use element_readers_ here, as this function is called twice, and
   // reusing element_readers_ is wrong.
   ScopedVector<UploadElementReader> element_readers;
-  element_readers.push_back(new UploadFileElementReader(file_path, 1, 2, time));
+  element_readers.push_back(new UploadFileElementReader(
+      base::MessageLoopProxy::current(), file_path, 1, 2, time));
 
   TestCompletionCallback init_callback;
   UploadDataStream stream(&element_readers, 0);
@@ -522,7 +526,7 @@ void UploadDataStreamTest::FileChangedHelper(const FilePath& file_path,
 }
 
 TEST_F(UploadDataStreamTest, FileChanged) {
-  FilePath temp_file_path;
+  base::FilePath temp_file_path;
   ASSERT_TRUE(file_util::CreateTemporaryFileInDir(temp_dir_.path(),
                                                   &temp_file_path));
   ASSERT_EQ(static_cast<int>(kTestDataSize),
@@ -541,7 +545,7 @@ TEST_F(UploadDataStreamTest, FileChanged) {
 }
 
 TEST_F(UploadDataStreamTest, MultipleInit) {
-  FilePath temp_file_path;
+  base::FilePath temp_file_path;
   ASSERT_TRUE(file_util::CreateTemporaryFileInDir(temp_dir_.path(),
                                                   &temp_file_path));
   ASSERT_EQ(static_cast<int>(kTestDataSize),
@@ -551,6 +555,7 @@ TEST_F(UploadDataStreamTest, MultipleInit) {
   element_readers_.push_back(new UploadBytesElementReader(
       kTestData, kTestDataSize));
   element_readers_.push_back(new UploadFileElementReader(
+      base::MessageLoopProxy::current(),
       temp_file_path, 0, kuint64max, base::Time()));
   UploadDataStream stream(&element_readers_, 0);
 
@@ -581,7 +586,7 @@ TEST_F(UploadDataStreamTest, MultipleInit) {
 }
 
 TEST_F(UploadDataStreamTest, MultipleInitAsync) {
-  FilePath temp_file_path;
+  base::FilePath temp_file_path;
   ASSERT_TRUE(file_util::CreateTemporaryFileInDir(temp_dir_.path(),
                                                   &temp_file_path));
   ASSERT_EQ(static_cast<int>(kTestDataSize),
@@ -592,6 +597,7 @@ TEST_F(UploadDataStreamTest, MultipleInitAsync) {
   element_readers_.push_back(new UploadBytesElementReader(
       kTestData, kTestDataSize));
   element_readers_.push_back(new UploadFileElementReader(
+      base::MessageLoopProxy::current(),
       temp_file_path, 0, kuint64max, base::Time()));
   UploadDataStream stream(&element_readers_, 0);
 
@@ -620,7 +626,7 @@ TEST_F(UploadDataStreamTest, MultipleInitAsync) {
 }
 
 TEST_F(UploadDataStreamTest, InitToReset) {
-  FilePath temp_file_path;
+  base::FilePath temp_file_path;
   ASSERT_TRUE(file_util::CreateTemporaryFileInDir(temp_dir_.path(),
                                                   &temp_file_path));
   ASSERT_EQ(static_cast<int>(kTestDataSize),
@@ -630,6 +636,7 @@ TEST_F(UploadDataStreamTest, InitToReset) {
   element_readers_.push_back(new UploadBytesElementReader(
       kTestData, kTestDataSize));
   element_readers_.push_back(new UploadFileElementReader(
+      base::MessageLoopProxy::current(),
       temp_file_path, 0, kuint64max, base::Time()));
   UploadDataStream stream(&element_readers_, 0);
 
@@ -671,7 +678,7 @@ TEST_F(UploadDataStreamTest, InitToReset) {
 }
 
 TEST_F(UploadDataStreamTest, InitDuringAsyncInit) {
-  FilePath temp_file_path;
+  base::FilePath temp_file_path;
   ASSERT_TRUE(file_util::CreateTemporaryFileInDir(temp_dir_.path(),
                                                   &temp_file_path));
   ASSERT_EQ(static_cast<int>(kTestDataSize),
@@ -681,6 +688,7 @@ TEST_F(UploadDataStreamTest, InitDuringAsyncInit) {
   element_readers_.push_back(new UploadBytesElementReader(
       kTestData, kTestDataSize));
   element_readers_.push_back(new UploadFileElementReader(
+      base::MessageLoopProxy::current(),
       temp_file_path, 0, kuint64max, base::Time()));
   UploadDataStream stream(&element_readers_, 0);
 
@@ -714,7 +722,7 @@ TEST_F(UploadDataStreamTest, InitDuringAsyncInit) {
 }
 
 TEST_F(UploadDataStreamTest, InitDuringAsyncRead) {
-  FilePath temp_file_path;
+  base::FilePath temp_file_path;
   ASSERT_TRUE(file_util::CreateTemporaryFileInDir(temp_dir_.path(),
                                                   &temp_file_path));
   ASSERT_EQ(static_cast<int>(kTestDataSize),
@@ -724,6 +732,7 @@ TEST_F(UploadDataStreamTest, InitDuringAsyncRead) {
   element_readers_.push_back(new UploadBytesElementReader(
       kTestData, kTestDataSize));
   element_readers_.push_back(new UploadFileElementReader(
+      base::MessageLoopProxy::current(),
       temp_file_path, 0, kuint64max, base::Time()));
   UploadDataStream stream(&element_readers_, 0);
 

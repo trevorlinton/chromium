@@ -4,12 +4,13 @@
 
 #include "chrome/browser/ui/browser_command_controller.h"
 
+#include "base/prefs/pref_service.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
-#include "chrome/browser/prefs/pref_service.h"
+#include "chrome/browser/profiles/avatar_menu_model.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/sessions/tab_restore_service.h"
@@ -20,7 +21,6 @@
 #include "chrome/browser/ui/bookmarks/bookmark_tab_helper.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -32,16 +32,20 @@
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
-#include "content/public/browser/notification_details.h"
-#include "content/public/browser/notification_source.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/content_restriction.h"
 #include "content/public/common/url_constants.h"
 #include "ui/base/keycodes/keyboard_codes.h"
 
+#if defined(OS_MACOSX)
+#include "chrome/browser/ui/browser_commands_mac.h"
+#endif
+
 #if defined(OS_WIN)
 #include "base/win/metro.h"
+#include "base/win/windows_version.h"
 #endif
 
 #if defined(USE_ASH)
@@ -106,7 +110,7 @@ class SwichToMetroUIHandler
       case ShellIntegration::STATE_UNKNOWN :
         break;
       case ShellIntegration::STATE_IS_DEFAULT:
-        browser::AttemptRestartWithModeSwitch();
+        chrome::AttemptRestartWithModeSwitch();
         break;
       case ShellIntegration::STATE_NOT_DEFAULT:
         if (first_check_) {
@@ -196,6 +200,11 @@ BrowserCommandController::BrowserCommandController(
       prefs::kPrintingEnabled,
       base::Bind(&BrowserCommandController::UpdatePrintingState,
                  base::Unretained(this)));
+  pref_signin_allowed_.Init(
+      prefs::kSigninAllowed,
+      profile()->GetOriginalProfile()->GetPrefs(),
+      base::Bind(&BrowserCommandController::OnSigninAllowedPrefChange,
+                 base::Unretained(this)));
 
   InitCommandState();
 
@@ -205,19 +214,9 @@ BrowserCommandController::BrowserCommandController(
     tab_restore_service->AddObserver(this);
     TabRestoreServiceChanged(tab_restore_service);
   }
-
-  ProfileSyncService* service =
-      ProfileSyncServiceFactory::GetInstance()->GetForProfile(profile());
-  if (service)
-    service->AddObserver(this);
 }
 
 BrowserCommandController::~BrowserCommandController() {
-  ProfileSyncService* service =
-      ProfileSyncServiceFactory::GetInstance()->GetForProfile(profile());
-  if (service)
-    service->RemoveObserver(this);
-
   // TabRestoreService may have been shutdown by the time we get here. Don't
   // trigger creating it.
   TabRestoreService* tab_restore_service =
@@ -422,7 +421,11 @@ void BrowserCommandController::ExecuteCommandWithDisposition(
       ConvertPopupToTabbedBrowser(browser_);
       break;
     case IDC_FULLSCREEN:
+#if defined(OS_MACOSX)
+      chrome::ToggleFullscreenWithChromeOrFallback(browser_);
+#else
       chrome::ToggleFullscreenMode(browser_);
+#endif
       break;
 
 #if defined(USE_ASH)
@@ -440,7 +443,7 @@ void BrowserCommandController::ExecuteCommandWithDisposition(
       browser_->SetMetroSnapMode(false);
       break;
     case IDC_WIN8_DESKTOP_RESTART:
-      browser::AttemptRestartWithModeSwitch();
+      chrome::AttemptRestartWithModeSwitch();
       content::RecordAction(content::UserMetricsAction("Win8DesktopRestart"));
       break;
     case IDC_WIN8_METRO_RESTART:
@@ -451,7 +454,7 @@ void BrowserCommandController::ExecuteCommandWithDisposition(
 
 #if defined(OS_MACOSX)
     case IDC_PRESENTATION_MODE:
-      browser_->TogglePresentationMode();
+      chrome::ToggleFullscreenMode(browser_);
       break;
 #endif
     case IDC_EXIT:
@@ -643,7 +646,7 @@ void BrowserCommandController::ExecuteCommandWithDisposition(
       ShowDownloads(browser_);
       break;
     case IDC_MANAGE_EXTENSIONS:
-      ShowExtensions(browser_);
+      ShowExtensions(browser_, std::string());
       break;
     case IDC_OPTIONS:
       ShowSettings(browser_);
@@ -678,8 +681,8 @@ void BrowserCommandController::ExecuteCommandWithDisposition(
     case IDC_HELP_PAGE_VIA_MENU:
       ShowHelp(browser_, HELP_SOURCE_MENU);
       break;
-    case IDC_SHOW_SYNC_SETUP:
-      ShowSyncSetup(browser_, SyncPromoUI::SOURCE_MENU);
+    case IDC_SHOW_SIGNIN:
+      ShowBrowserSignin(browser_, SyncPromoUI::SOURCE_MENU);
       break;
     case IDC_TOGGLE_SPEECH_INPUT:
       ToggleSpeechInput(browser_);
@@ -692,68 +695,42 @@ void BrowserCommandController::ExecuteCommandWithDisposition(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// BrowserCommandController, content::NotificationObserver implementation:
-
-void BrowserCommandController::Observe(
-    int type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
-  switch (type) {
-    case content::NOTIFICATION_INTERSTITIAL_ATTACHED:
-      UpdateCommandsForTabState();
-      break;
-
-    case content::NOTIFICATION_INTERSTITIAL_DETACHED:
-      UpdateCommandsForTabState();
-      break;
-
-    default:
-      NOTREACHED() << "Got a notification we didn't register for.";
-  }
-}
-
-
-////////////////////////////////////////////////////////////////////////////////
 // BrowserCommandController, ProfileInfoCacheObserver implementation:
 
-void BrowserCommandController::OnProfileAdded(const FilePath& profile_path) {
+void BrowserCommandController::OnProfileAdded(
+    const base::FilePath& profile_path) {
   UpdateCommandsForMultipleProfiles();
 }
 
 void BrowserCommandController::OnProfileWasRemoved(
-    const FilePath& profile_path,
+    const base::FilePath& profile_path,
     const string16& profile_name) {
   UpdateCommandsForMultipleProfiles();
 }
 
 void BrowserCommandController::OnProfileWillBeRemoved(
-    const FilePath& profile_path) {
+    const base::FilePath& profile_path) {
 }
 
 void BrowserCommandController::OnProfileNameChanged(
-    const FilePath& profile_path,
+    const base::FilePath& profile_path,
     const string16& old_profile_name) {
 }
 
 void BrowserCommandController::OnProfileAvatarChanged(
-    const FilePath& profile_path) {
+    const base::FilePath& profile_path) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// BrowserCommandController, ProfileSyncServiceObserver implementation:
+// BrowserCommandController, SigninPrefObserver implementation:
 
-void BrowserCommandController::OnStateChanged() {
-  DCHECK(ProfileSyncServiceFactory::GetInstance()->HasProfileSyncService(
-      profile()));
+void BrowserCommandController::OnSigninAllowedPrefChange() {
   // For unit tests, we don't have a window.
   if (!window())
     return;
-  const bool show_main_ui = IsShowingMainUI(window()->IsFullscreen());
-  command_updater_.UpdateCommandEnabled(IDC_SHOW_SYNC_SETUP,
-      show_main_ui && profile()->GetOriginalProfile()->IsSyncAccessible());
+  UpdateShowSyncState(IsShowingMainUI());
 }
 
-////////////////////////////////////////////////////////////////////////////////
 // BrowserCommandController, TabStripModelObserver implementation:
 
 void BrowserCommandController::TabInsertedAt(WebContents* contents,
@@ -787,8 +764,9 @@ void BrowserCommandController::TabBlockedStateChanged(
 
 void BrowserCommandController::TabRestoreServiceChanged(
     TabRestoreService* service) {
-  command_updater_.UpdateCommandEnabled(IDC_RESTORE_TAB,
-                                        CanRestoreTab(browser_));
+  command_updater_.UpdateCommandEnabled(
+      IDC_RESTORE_TAB,
+      GetRestoreTabType(browser_) != TabStripModelDelegate::RESTORE_NONE);
 }
 
 void BrowserCommandController::TabRestoreServiceDestroyed(
@@ -799,12 +777,34 @@ void BrowserCommandController::TabRestoreServiceDestroyed(
 ////////////////////////////////////////////////////////////////////////////////
 // BrowserCommandController, private:
 
-bool BrowserCommandController::IsShowingMainUI(bool is_fullscreen) {
-#if !defined(OS_MACOSX)
-  return browser_->is_type_tabbed() && !is_fullscreen;
-#else
-  return browser_->is_type_tabbed();
-#endif
+class BrowserCommandController::InterstitialObserver
+    : public content::WebContentsObserver {
+ public:
+  InterstitialObserver(BrowserCommandController* controller,
+                       content::WebContents* web_contents)
+      : WebContentsObserver(web_contents),
+        controller_(controller) {
+  }
+
+  using content::WebContentsObserver::web_contents;
+
+  virtual void DidAttachInterstitialPage() OVERRIDE {
+    controller_->UpdateCommandsForTabState();
+  }
+
+  virtual void DidDetachInterstitialPage() OVERRIDE {
+    controller_->UpdateCommandsForTabState();
+  }
+
+ private:
+  BrowserCommandController* controller_;
+
+  DISALLOW_COPY_AND_ASSIGN(InterstitialObserver);
+};
+
+bool BrowserCommandController::IsShowingMainUI() {
+  bool should_hide_ui = window() && window()->ShouldHideUIForFullscreen();
+  return browser_->is_type_tabbed() && !should_hide_ui;
 }
 
 void BrowserCommandController::InitCommandState() {
@@ -825,8 +825,9 @@ void BrowserCommandController::InitCommandState() {
   command_updater_.UpdateCommandEnabled(IDC_RESTORE_TAB, false);
   command_updater_.UpdateCommandEnabled(IDC_EXIT, true);
   command_updater_.UpdateCommandEnabled(IDC_DEBUG_FRAME_TOGGLE, true);
-#if defined(USE_ASH)
-  if (chrome::HOST_DESKTOP_TYPE_NATIVE != chrome::HOST_DESKTOP_TYPE_ASH)
+#if defined(OS_WIN) && defined(USE_ASH) && !defined(NDEBUG)
+  if (base::win::GetVersion() < base::win::VERSION_WIN8 &&
+      chrome::HOST_DESKTOP_TYPE_NATIVE != chrome::HOST_DESKTOP_TYPE_ASH)
     command_updater_.UpdateCommandEnabled(IDC_TOGGLE_ASH_DESKTOP, true);
 #endif
 
@@ -878,7 +879,7 @@ void BrowserCommandController::InitCommandState() {
   command_updater_.UpdateCommandEnabled(IDC_ZOOM_MINUS, true);
 
   // Show various bits of UI
-  UpdateOpenFileState();
+  UpdateOpenFileState(&command_updater_);
   command_updater_.UpdateCommandEnabled(IDC_CREATE_SHORTCUTS, false);
   UpdateCommandsForDevTools();
   command_updater_.UpdateCommandEnabled(IDC_TASK_MANAGER, CanOpenTaskManager());
@@ -893,8 +894,7 @@ void BrowserCommandController::InitCommandState() {
                                         !profile()->IsGuestSession() &&
                                         !profile()->IsOffTheRecord());
 
-  command_updater_.UpdateCommandEnabled(
-      IDC_SHOW_SYNC_SETUP, profile()->GetOriginalProfile()->IsSyncAccessible());
+  UpdateShowSyncState(true);
 
   // Initialize other commands based on the window type.
   bool normal_window = browser_->is_type_tabbed();
@@ -953,13 +953,16 @@ void BrowserCommandController::InitCommandState() {
   UpdateCommandsForIncognitoAvailability();
 }
 
-void BrowserCommandController::UpdateCommandsForIncognitoAvailability() {
+// static
+void BrowserCommandController::UpdateSharedCommandsForIncognitoAvailability(
+    CommandUpdater* command_updater,
+    Profile* profile) {
   IncognitoModePrefs::Availability incognito_availability =
-      IncognitoModePrefs::GetAvailability(profile()->GetPrefs());
-  command_updater_.UpdateCommandEnabled(
+      IncognitoModePrefs::GetAvailability(profile->GetPrefs());
+  command_updater->UpdateCommandEnabled(
       IDC_NEW_WINDOW,
       incognito_availability != IncognitoModePrefs::FORCED);
-  command_updater_.UpdateCommandEnabled(
+  command_updater->UpdateCommandEnabled(
       IDC_NEW_INCOGNITO_WINDOW,
       incognito_availability != IncognitoModePrefs::DISABLED);
 
@@ -967,25 +970,31 @@ void BrowserCommandController::UpdateCommandsForIncognitoAvailability() {
   // mode. For this reason we disable these commands when incognito is forced.
   const bool command_enabled =
       incognito_availability != IncognitoModePrefs::FORCED;
-  command_updater_.UpdateCommandEnabled(
+  command_updater->UpdateCommandEnabled(
       IDC_SHOW_BOOKMARK_MANAGER,
       browser_defaults::bookmarks_enabled && command_enabled);
-  ExtensionService* extension_service = profile()->GetExtensionService();
+  ExtensionService* extension_service = profile->GetExtensionService();
   bool enable_extensions =
       extension_service && extension_service->extensions_enabled();
-  command_updater_.UpdateCommandEnabled(IDC_MANAGE_EXTENSIONS,
+  command_updater->UpdateCommandEnabled(IDC_MANAGE_EXTENSIONS,
                                         enable_extensions && command_enabled);
 
-  const bool show_main_ui =
-      IsShowingMainUI(window() && window()->IsFullscreen());
-  command_updater_.UpdateCommandEnabled(IDC_IMPORT_SETTINGS,
-                                        show_main_ui && command_enabled);
-  command_updater_.UpdateCommandEnabled(IDC_OPTIONS,
-                                        show_main_ui && command_enabled);
+  command_updater->UpdateCommandEnabled(IDC_IMPORT_SETTINGS, command_enabled);
+  command_updater->UpdateCommandEnabled(IDC_OPTIONS, command_enabled);
+}
+
+void BrowserCommandController::UpdateCommandsForIncognitoAvailability() {
+  UpdateSharedCommandsForIncognitoAvailability(&command_updater_, profile());
+
+  if (!IsShowingMainUI()) {
+    command_updater_.UpdateCommandEnabled(IDC_IMPORT_SETTINGS, false);
+    command_updater_.UpdateCommandEnabled(IDC_OPTIONS, false);
+  }
 }
 
 void BrowserCommandController::UpdateCommandsForTabState() {
-  WebContents* current_web_contents = chrome::GetActiveWebContents(browser_);
+  WebContents* current_web_contents =
+      browser_->tab_strip_model()->GetActiveWebContents();
   if (!current_web_contents)  // May be NULL during tab restore.
     return;
 
@@ -1074,23 +1083,20 @@ void BrowserCommandController::UpdateCommandsForBookmarkEditing() {
 }
 
 void BrowserCommandController::UpdateCommandsForBookmarkBar() {
-  const bool show_main_ui =
-      IsShowingMainUI(window() && window()->IsFullscreen());
   command_updater_.UpdateCommandEnabled(IDC_SHOW_BOOKMARK_BAR,
       browser_defaults::bookmarks_enabled &&
       !profile()->GetPrefs()->IsManagedPreference(prefs::kShowBookmarkBar) &&
-      show_main_ui);
+      IsShowingMainUI());
 }
 
 void BrowserCommandController::UpdateCommandsForFileSelectionDialogs() {
   UpdateSaveAsState();
-  UpdateOpenFileState();
+  UpdateOpenFileState(&command_updater_);
 }
 
 void BrowserCommandController::UpdateCommandsForFullscreenMode(
     FullScreenMode fullscreen_mode) {
-  const bool show_main_ui =
-      IsShowingMainUI(fullscreen_mode != FULLSCREEN_DISABLED);
+  bool show_main_ui = IsShowingMainUI();
   bool main_not_fullscreen = show_main_ui &&
                              (fullscreen_mode == FULLSCREEN_DISABLED);
 
@@ -1118,8 +1124,7 @@ void BrowserCommandController::UpdateCommandsForFullscreenMode(
   // Show various bits of UI
   command_updater_.UpdateCommandEnabled(IDC_DEVELOPER_MENU, show_main_ui);
   command_updater_.UpdateCommandEnabled(IDC_FEEDBACK, show_main_ui);
-  command_updater_.UpdateCommandEnabled(IDC_SHOW_SYNC_SETUP,
-      show_main_ui && profile()->GetOriginalProfile()->IsSyncAccessible());
+  UpdateShowSyncState(show_main_ui);
 
   // Settings page/subpages are forced to open in normal mode. We disable these
   // commands when incognito is forced.
@@ -1159,14 +1164,12 @@ void BrowserCommandController::UpdateCommandsForFullscreenMode(
 }
 
 void BrowserCommandController::UpdateCommandsForMultipleProfiles() {
-  bool show_main_ui = IsShowingMainUI(window() && window()->IsFullscreen());
-  bool has_multiple_profiles = profile_manager_ &&
-                               profile_manager_->GetNumberOfProfiles() > 1;
-  command_updater_.UpdateCommandEnabled(IDC_SHOW_AVATAR_MENU,
-      show_main_ui &&
+  bool enable = IsShowingMainUI() &&
       !profile()->IsOffTheRecord() &&
-      ProfileManager::IsMultipleProfilesEnabled() &&
-      has_multiple_profiles);
+      profile_manager_ &&
+      AvatarMenuModel::ShouldShowAvatarMenu();
+  command_updater_.UpdateCommandEnabled(IDC_SHOW_AVATAR_MENU,
+                                        enable);
 }
 
 void BrowserCommandController::UpdatePrintingState() {
@@ -1193,13 +1196,20 @@ void BrowserCommandController::UpdateSaveAsState() {
   command_updater_.UpdateCommandEnabled(IDC_SAVE_PAGE, CanSavePage(browser_));
 }
 
-void BrowserCommandController::UpdateOpenFileState() {
+void BrowserCommandController::UpdateShowSyncState(bool show_main_ui) {
+  command_updater_.UpdateCommandEnabled(
+      IDC_SHOW_SYNC_SETUP, show_main_ui && pref_signin_allowed_.GetValue());
+}
+
+// static
+void BrowserCommandController::UpdateOpenFileState(
+    CommandUpdater* command_updater) {
   bool enabled = true;
   PrefService* local_state = g_browser_process->local_state();
   if (local_state)
     enabled = local_state->GetBoolean(prefs::kAllowFileSelectionDialogs);
 
-  command_updater_.UpdateCommandEnabled(IDC_OPEN_FILE, enabled);
+  command_updater->UpdateCommandEnabled(IDC_OPEN_FILE, enabled);
 }
 
 void BrowserCommandController::UpdateReloadStopState(bool is_loading,
@@ -1219,18 +1229,19 @@ void BrowserCommandController::UpdateCommandsForFind() {
 }
 
 void BrowserCommandController::AddInterstitialObservers(WebContents* contents) {
-  registrar_.Add(this, content::NOTIFICATION_INTERSTITIAL_ATTACHED,
-                 content::Source<WebContents>(contents));
-  registrar_.Add(this, content::NOTIFICATION_INTERSTITIAL_DETACHED,
-                 content::Source<WebContents>(contents));
+  interstitial_observers_.push_back(new InterstitialObserver(this, contents));
 }
 
 void BrowserCommandController::RemoveInterstitialObservers(
     WebContents* contents) {
-  registrar_.Remove(this, content::NOTIFICATION_INTERSTITIAL_ATTACHED,
-                    content::Source<WebContents>(contents));
-  registrar_.Remove(this, content::NOTIFICATION_INTERSTITIAL_DETACHED,
-                    content::Source<WebContents>(contents));
+  for (size_t i = 0; i < interstitial_observers_.size(); i++) {
+    if (interstitial_observers_[i]->web_contents() != contents)
+      continue;
+
+    delete interstitial_observers_[i];
+    interstitial_observers_.erase(interstitial_observers_.begin() + i);
+    return;
+  }
 }
 
 BrowserWindow* BrowserCommandController::window() {

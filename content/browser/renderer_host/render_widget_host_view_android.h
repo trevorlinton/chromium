@@ -16,6 +16,7 @@
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebGraphicsContext3D.h"
 #include "ui/gfx/size.h"
+#include "ui/gfx/vector2d_f.h"
 
 struct ViewHostMsg_TextInputState_Params;
 
@@ -50,6 +51,7 @@ class RenderWidgetHostViewAndroid : public RenderWidgetHostViewBase {
   virtual ~RenderWidgetHostViewAndroid();
 
   // RenderWidgetHostView implementation.
+  virtual bool OnMessageReceived(const IPC::Message& msg) OVERRIDE;
   virtual void InitAsChild(gfx::NativeView parent_view) OVERRIDE;
   virtual void InitAsPopup(RenderWidgetHostView* parent_host_view,
                            const gfx::Rect& pos) OVERRIDE;
@@ -74,11 +76,15 @@ class RenderWidgetHostViewAndroid : public RenderWidgetHostViewBase {
   virtual void Hide() OVERRIDE;
   virtual bool IsShowing() OVERRIDE;
   virtual gfx::Rect GetViewBounds() const OVERRIDE;
+  virtual gfx::Size GetPhysicalBackingSize() const OVERRIDE;
   virtual void UpdateCursor(const WebCursor& cursor) OVERRIDE;
   virtual void SetIsLoading(bool is_loading) OVERRIDE;
   virtual void TextInputStateChanged(
       const ViewHostMsg_TextInputState_Params& params) OVERRIDE;
   virtual void ImeCancelComposition() OVERRIDE;
+  virtual void ImeCompositionRangeChanged(
+      const ui::Range& range,
+      const std::vector<gfx::Rect>& character_bounds) OVERRIDE;
   virtual void DidUpdateBackingStore(
       const gfx::Rect& scroll_rect,
       const gfx::Vector2d& scroll_delta,
@@ -91,10 +97,9 @@ class RenderWidgetHostViewAndroid : public RenderWidgetHostViewBase {
                                 size_t offset,
                                 const ui::Range& range) OVERRIDE;
   virtual void SelectionBoundsChanged(
-      const gfx::Rect& start_rect,
-      WebKit::WebTextDirection start_direction,
-      const gfx::Rect& end_rect,
-      WebKit::WebTextDirection end_direction) OVERRIDE;
+      const ViewHostMsg_SelectionBounds_Params& params) OVERRIDE;
+  virtual void ScrollOffsetChanged() OVERRIDE;
+  virtual BackingStore* AllocBackingStore(const gfx::Size& size) OVERRIDE;
   virtual void OnAcceleratedCompositingStateChange() OVERRIDE;
   virtual void AcceleratedSurfaceBuffersSwapped(
       const GpuHostMsg_AcceleratedSurfaceBuffersSwapped_Params& params,
@@ -109,32 +114,36 @@ class RenderWidgetHostViewAndroid : public RenderWidgetHostViewBase {
   virtual void CopyFromCompositingSurface(
       const gfx::Rect& src_subrect,
       const gfx::Size& dst_size,
-      const base::Callback<void(bool)>& callback,
-      skia::PlatformBitmap* output) OVERRIDE;
-  virtual BackingStore* AllocBackingStore(const gfx::Size& size) OVERRIDE;
-  virtual gfx::GLSurfaceHandle GetCompositingSurface() OVERRIDE;
+      const base::Callback<void(bool, const SkBitmap&)>& callback) OVERRIDE;
+  virtual void CopyFromCompositingSurfaceToVideoFrame(
+      const gfx::Rect& src_subrect,
+      const scoped_refptr<media::VideoFrame>& target,
+      const base::Callback<void(bool)>& callback) OVERRIDE;
+  virtual bool CanCopyToVideoFrame() const OVERRIDE;
   virtual void GetScreenInfo(WebKit::WebScreenInfo* results) OVERRIDE;
   virtual gfx::Rect GetBoundsInRootWindow() OVERRIDE;
-  virtual void UnhandledWheelEvent(
-      const WebKit::WebMouseWheelEvent& event) OVERRIDE;
+  virtual gfx::GLSurfaceHandle GetCompositingSurface() OVERRIDE;
   virtual void ProcessAckedTouchEvent(const WebKit::WebTouchEvent& touch,
                                       InputEventAckState ack_result) OVERRIDE;
   virtual void SetHasHorizontalScrollbar(
       bool has_horizontal_scrollbar) OVERRIDE;
   virtual void SetScrollOffsetPinning(
       bool is_pinned_to_left, bool is_pinned_to_right) OVERRIDE;
+  virtual void UnhandledWheelEvent(
+      const WebKit::WebMouseWheelEvent& event) OVERRIDE;
+  virtual void OnAccessibilityNotifications(
+      const std::vector<AccessibilityHostMsg_NotificationParams>&
+          params) OVERRIDE;
   virtual bool LockMouse() OVERRIDE;
   virtual void UnlockMouse() OVERRIDE;
-  virtual void StartContentIntent(const GURL& content_url) OVERRIDE;
   virtual void HasTouchEventHandlers(bool need_touch_events) OVERRIDE;
-  virtual void SetCachedBackgroundColor(SkColor color) OVERRIDE;
-  virtual void SetCachedPageScaleFactorLimits(float minimum_scale,
-                                              float maximum_scale) OVERRIDE;
-  virtual void UpdateFrameInfo(const gfx::Vector2d& scroll_offset,
+  virtual void UpdateFrameInfo(const gfx::Vector2dF& scroll_offset,
                                float page_scale_factor,
-                               float min_page_scale_factor,
-                               float max_page_scale_factor,
-                               const gfx::Size& content_size) OVERRIDE;
+                               const gfx::Vector2dF& page_scale_factor_limits,
+                               const gfx::SizeF& content_size,
+                               const gfx::SizeF& viewport_size,
+                               const gfx::Vector2dF& controls_offset,
+                               const gfx::Vector2dF& content_offset) OVERRIDE;
   virtual void ShowDisambiguationPopup(const gfx::Rect& target_rect,
                                        const SkBitmap& zoomed_bitmap) OVERRIDE;
 
@@ -147,7 +156,13 @@ class RenderWidgetHostViewAndroid : public RenderWidgetHostViewBase {
   void SendMouseWheelEvent(const WebKit::WebMouseWheelEvent& event);
   void SendGestureEvent(const WebKit::WebGestureEvent& event);
 
+  void OnProcessImeBatchStateAck(bool is_begin);
+  void OnDidChangeBodyBackgroundColor(SkColor color);
+  void OnStartContentIntent(const GURL& content_url);
+
   int GetNativeImeAdapter();
+
+  void WasResized();
 
   WebKit::WebGLId GetScaledContentTexture(float scale, gfx::Size* out_size);
   bool PopulateBitmapWithContents(jobject jbitmap);
@@ -156,6 +171,8 @@ class RenderWidgetHostViewAndroid : public RenderWidgetHostViewBase {
 
   // Select all text between the given coordinates.
   void SelectRange(const gfx::Point& start, const gfx::Point& end);
+
+  void MoveCaret(const gfx::Point& point);
 
  private:
   // The model object.

@@ -59,7 +59,8 @@ class AudioParameters;
 
 namespace content {
 
-class MediaObserver;
+class AudioMirroringManager;
+class MediaInternals;
 class ResourceContext;
 
 class CONTENT_EXPORT AudioRendererHost
@@ -67,8 +68,10 @@ class CONTENT_EXPORT AudioRendererHost
       public media::AudioOutputController::EventHandler {
  public:
   // Called from UI thread from the owner of this object.
-  AudioRendererHost(media::AudioManager* audio_manager,
-                    MediaObserver* media_observer);
+  AudioRendererHost(int render_process_id,
+                    media::AudioManager* audio_manager,
+                    AudioMirroringManager* mirroring_manager,
+                    MediaInternals* media_internals);
 
   // BrowserMessageFilter implementation.
   virtual void OnChannelClosing() OVERRIDE;
@@ -82,6 +85,9 @@ class CONTENT_EXPORT AudioRendererHost
   virtual void OnPaused(media::AudioOutputController* controller) OVERRIDE;
   virtual void OnError(media::AudioOutputController* controller,
                        int error_code) OVERRIDE;
+  virtual void OnDeviceChange(media::AudioOutputController* controller,
+                              int new_buffer_size,
+                              int new_sample_rate) OVERRIDE;
 
  private:
   friend class AudioRendererHostTest;
@@ -103,8 +109,7 @@ class CONTENT_EXPORT AudioRendererHost
   // successful this object would keep an internal entry of the stream for the
   // required properties.
   void OnCreateStream(int stream_id,
-                      const media::AudioParameters& params,
-                      int input_channels);
+                      const media::AudioParameters& params);
 
   // Track that the data for the audio stream referenced by |stream_id| is
   // produced by an entity in the render view referenced by |render_view_id|.
@@ -132,6 +137,8 @@ class CONTENT_EXPORT AudioRendererHost
   // Send a state change message to the renderer.
   void DoSendPlayingMessage(media::AudioOutputController* controller);
   void DoSendPausedMessage(media::AudioOutputController* controller);
+  void DoSendDeviceChangeMessage(media::AudioOutputController* controller,
+                                 int new_buffer_size, int new_sample_rate);
 
   // Handle error coming from audio stream.
   void DoHandleError(media::AudioOutputController* controller, int error_code);
@@ -164,11 +171,15 @@ class CONTENT_EXPORT AudioRendererHost
 
   media::AudioOutputController* LookupControllerByIdForTesting(int stream_id);
 
+  // ID of the RenderProcessHost that owns this instance.
+  const int render_process_id_;
+
+  media::AudioManager* const audio_manager_;
+  AudioMirroringManager* const mirroring_manager_;
+  MediaInternals* const media_internals_;
+
   // A map of stream IDs to audio sources.
   AudioEntryMap audio_entries_;
-
-  media::AudioManager* audio_manager_;
-  MediaObserver* media_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(AudioRendererHost);
 };

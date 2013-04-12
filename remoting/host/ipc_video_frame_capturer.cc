@@ -4,8 +4,8 @@
 
 #include "remoting/host/ipc_video_frame_capturer.h"
 
-#include "remoting/capturer/capture_data.h"
-#include "remoting/capturer/mouse_cursor_shape.h"
+#include "media/video/capture/screen/mouse_cursor_shape.h"
+#include "media/video/capture/screen/screen_capture_data.h"
 #include "remoting/host/desktop_session_proxy.h"
 
 namespace remoting {
@@ -13,8 +13,7 @@ namespace remoting {
 IpcVideoFrameCapturer::IpcVideoFrameCapturer(
     scoped_refptr<DesktopSessionProxy> desktop_session_proxy)
     : delegate_(NULL),
-      desktop_session_proxy_(desktop_session_proxy),
-      size_most_recent_(SkISize::Make(0, 0)) {
+      desktop_session_proxy_(desktop_session_proxy) {
 }
 
 IpcVideoFrameCapturer::~IpcVideoFrameCapturer() {
@@ -38,21 +37,14 @@ void IpcVideoFrameCapturer::CaptureFrame() {
   desktop_session_proxy_->CaptureFrame();
 }
 
-const SkISize& IpcVideoFrameCapturer::size_most_recent() const {
-  return size_most_recent_;
-}
-
 void IpcVideoFrameCapturer::OnCaptureCompleted(
-    scoped_refptr<CaptureData> capture_data) {
-  if (capture_data)
-    size_most_recent_ = capture_data->size();
-
+    scoped_refptr<media::ScreenCaptureData> capture_data) {
   if (delegate_)
     delegate_->OnCaptureCompleted(capture_data);
 }
 
 void IpcVideoFrameCapturer::OnCursorShapeChanged(
-    scoped_ptr<MouseCursorShape> cursor_shape) {
+    scoped_ptr<media::MouseCursorShape> cursor_shape) {
   if (delegate_)
     delegate_->OnCursorShapeChanged(cursor_shape.Pass());
 }

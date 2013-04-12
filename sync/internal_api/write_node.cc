@@ -198,6 +198,13 @@ void WriteNode::SetExperimentsSpecifics(
   SetEntitySpecifics(entity_specifics);
 }
 
+void WriteNode::SetPriorityPreferenceSpecifics(
+    const sync_pb::PriorityPreferenceSpecifics& new_value) {
+  sync_pb::EntitySpecifics entity_specifics;
+  entity_specifics.mutable_priority_preference()->CopyFrom(new_value);
+  SetEntitySpecifics(entity_specifics);
+}
+
 void WriteNode::SetEntitySpecifics(
     const sync_pb::EntitySpecifics& new_value) {
   ModelType new_specifics_type =
@@ -205,12 +212,7 @@ void WriteNode::SetEntitySpecifics(
   DCHECK_NE(new_specifics_type, UNSPECIFIED);
   DVLOG(1) << "Writing entity specifics of type "
            << ModelTypeToString(new_specifics_type);
-  // GetModelType() can be unspecified if this is the first time this
-  // node is being initialized (see PutModelType()).  Otherwise, it
-  // should match |new_specifics_type|.
-  if (GetModelType() != UNSPECIFIED) {
-    DCHECK_EQ(new_specifics_type, GetModelType());
-  }
+  DCHECK_EQ(new_specifics_type, GetModelType());
 
   // Preserve unknown fields.
   const sync_pb::EntitySpecifics& old_specifics = entry_->Get(SPECIFICS);
@@ -320,22 +322,10 @@ BaseNode::InitByLookupResult WriteNode::InitByTagLookup(
   return INIT_OK;
 }
 
-void WriteNode::PutModelType(ModelType model_type) {
-  // Set an empty specifics of the appropriate datatype.  The presence
-  // of the specific field will identify the model type.
-  DCHECK(GetModelType() == model_type ||
-         GetModelType() == UNSPECIFIED);  // Immutable once set.
-
-  sync_pb::EntitySpecifics specifics;
-  AddDefaultFieldValue(model_type, &specifics);
-  SetEntitySpecifics(specifics);
-}
-
 // Create a new node with default properties, and bind this WriteNode to it.
 // Return true on success.
-bool WriteNode::InitByCreation(ModelType model_type,
-                               const BaseNode& parent,
-                               const BaseNode* predecessor) {
+bool WriteNode::InitBookmarkByCreation(const BaseNode& parent,
+                                       const BaseNode* predecessor) {
   DCHECK(!entry_) << "Init called twice";
   // |predecessor| must be a child of |parent| or NULL.
   if (predecessor && predecessor->GetParentId() != parent.GetId()) {
@@ -350,15 +340,14 @@ bool WriteNode::InitByCreation(ModelType model_type,
   string dummy(kDefaultNameForNewNodes);
 
   entry_ = new syncable::MutableEntry(transaction_->GetWrappedWriteTrans(),
-                                      syncable::CREATE, parent_id, dummy);
+                                      syncable::CREATE, BOOKMARKS,
+                                      parent_id, dummy);
 
   if (!entry_->good())
     return false;
 
   // Entries are untitled folders by default.
   entry_->Put(syncable::IS_DIR, true);
-
-  PutModelType(model_type);
 
   // Now set the predecessor, which sets IS_UNSYNCED as necessary.
   return PutPredecessor(predecessor);
@@ -427,7 +416,8 @@ WriteNode::InitUniqueByCreationResult WriteNode::InitUniqueByCreation(
     }
   } else {
     entry_ = new syncable::MutableEntry(transaction_->GetWrappedWriteTrans(),
-                                        syncable::CREATE, parent_id, dummy);
+                                        syncable::CREATE,
+                                        model_type, parent_id, dummy);
     if (!entry_->good())
       return INIT_FAILED_COULD_NOT_CREATE_ENTRY;
 
@@ -437,9 +427,6 @@ WriteNode::InitUniqueByCreationResult WriteNode::InitUniqueByCreation(
 
   // We don't support directory and tag combinations.
   entry_->Put(syncable::IS_DIR, false);
-
-  // Will clear specifics data.
-  PutModelType(model_type);
 
   // Now set the predecessor, which sets IS_UNSYNCED as necessary.
   bool success = PutPredecessor(NULL);
@@ -461,7 +448,7 @@ bool WriteNode::SetPosition(const BaseNode& new_parent,
 
   // Filter out redundant changes if both the parent and the predecessor match.
   if (new_parent_id == entry_->Get(syncable::PARENT_ID)) {
-    const syncable::Id& old = entry_->Get(syncable::PREV_ID);
+    const syncable::Id& old = entry_->GetPredecessorId();
     if ((!predecessor && old.IsRoot()) ||
         (predecessor && (old == predecessor->GetEntry()->Get(syncable::ID)))) {
       return true;
@@ -489,12 +476,18 @@ syncable::MutableEntry* WriteNode::GetMutableEntryForTest() {
   return entry_;
 }
 
-void WriteNode::Remove() {
+void WriteNode::Tombstone() {
   // These lines must be in this order.  The call to Put(IS_DEL) might choose to
   // unset the IS_UNSYNCED bit if the item was not known to the server at the
   // time of deletion.  It's important that the bit not be reset in that case.
   MarkForSyncing();
   entry_->Put(syncable::IS_DEL, true);
+}
+
+void WriteNode::Drop() {
+  if (entry_->Get(syncable::ID).ServerKnows()) {
+    entry_->Put(syncable::IS_DEL, true);
+  }
 }
 
 bool WriteNode::PutPredecessor(const BaseNode* predecessor) {

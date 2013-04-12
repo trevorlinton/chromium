@@ -59,6 +59,7 @@ class TestBrowserWindow : public BrowserWindow {
   virtual void UpdateFullscreenExitBubbleContent(
       const GURL& url,
       FullscreenExitBubbleType bubble_type) OVERRIDE {}
+  virtual bool ShouldHideUIForFullscreen() const OVERRIDE;
   virtual bool IsFullscreen() const OVERRIDE;
 #if defined(OS_WIN)
   virtual void SetMetroSnapMode(bool enable) OVERRIDE {}
@@ -94,14 +95,14 @@ class TestBrowserWindow : public BrowserWindow {
                                         Profile* profile) OVERRIDE {}
   virtual void ToggleBookmarkBar() OVERRIDE {}
   virtual void ShowUpdateChromeDialog() OVERRIDE {}
-  virtual void ShowTaskManager(chrome::HostDesktopType desktop_type) OVERRIDE {}
-  virtual void ShowBackgroundPages(
-      chrome::HostDesktopType desktop_type) OVERRIDE {}
+  virtual void ShowTaskManager() OVERRIDE {}
+  virtual void ShowBackgroundPages() OVERRIDE {}
   virtual void ShowBookmarkBubble(const GURL& url,
                                   bool already_bookmarked) OVERRIDE {}
   virtual void ShowChromeToMobileBubble() OVERRIDE {}
 #if defined(ENABLE_ONE_CLICK_SIGNIN)
   virtual void ShowOneClickSigninBubble(
+      OneClickSigninBubbleType type,
       const StartSyncCallback& start_sync_callback) OVERRIDE {}
 #endif
   virtual bool IsDownloadShelfVisible() const OVERRIDE;
@@ -110,10 +111,6 @@ class TestBrowserWindow : public BrowserWindow {
   virtual void UserChangedTheme() OVERRIDE {}
   virtual int GetExtraRenderViewHeight() const OVERRIDE;
   virtual void WebContentsFocused(content::WebContents* contents) OVERRIDE {}
-  virtual void ShowPageInfo(content::WebContents* web_contents,
-                            const GURL& url,
-                            const content::SSLStatus& ssl,
-                            bool show_history) OVERRIDE {}
   virtual void ShowWebsiteSettings(Profile* profile,
                                    content::WebContents* web_contents,
                                    const GURL& url,
@@ -124,15 +121,12 @@ class TestBrowserWindow : public BrowserWindow {
   virtual void Paste() OVERRIDE {}
 #if defined(OS_MACOSX)
   virtual void OpenTabpose() OVERRIDE {}
-  virtual void EnterPresentationMode(
-      const GURL& url,
-      FullscreenExitBubbleType bubble_type) OVERRIDE {}
-  virtual void ExitPresentationMode() OVERRIDE {}
-  virtual bool InPresentationMode() OVERRIDE;
+  virtual void EnterFullscreenWithChrome() OVERRIDE {}
+  virtual bool IsFullscreenWithChrome() OVERRIDE;
+  virtual bool IsFullscreenWithoutChrome() OVERRIDE;
 #endif
 
   virtual gfx::Rect GetInstantBounds() OVERRIDE;
-  virtual bool IsInstantTabShowing() OVERRIDE;
   virtual WindowOpenDisposition GetDispositionForPopupBounds(
       const gfx::Rect& bounds) OVERRIDE;
   virtual FindBar* CreateFindBar() OVERRIDE;
@@ -157,8 +151,7 @@ class TestBrowserWindow : public BrowserWindow {
 
 namespace chrome {
 
-// Helpers that handle the lifetime of TestBrowserWindow instances.
-Browser* CreateBrowserWithTestWindowForProfile(Profile* profile);
+// Helper that handle the lifetime of TestBrowserWindow instances.
 Browser* CreateBrowserWithTestWindowForParams(Browser::CreateParams* params);
 
 }  // namespace chrome

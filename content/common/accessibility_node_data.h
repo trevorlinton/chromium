@@ -45,8 +45,9 @@ struct CONTENT_EXPORT AccessibilityNodeData {
     ROLE_COLUMN,
     ROLE_COLUMN_HEADER,
     ROLE_COMBO_BOX,
-    ROLE_DEFINITION_LIST_DEFINITION,
-    ROLE_DEFINITION_LIST_TERM,
+    ROLE_DEFINITION,
+    ROLE_DESCRIPTION_LIST_DETAIL,
+    ROLE_DESCRIPTION_LIST_TERM,
     ROLE_DIALOG,
     ROLE_DIRECTORY,
     ROLE_DISCLOSURE_TRIANGLE,
@@ -115,6 +116,7 @@ struct CONTENT_EXPORT AccessibilityNodeData {
     ROLE_SPLIT_GROUP,
     ROLE_STATIC_TEXT,
     ROLE_STATUS,
+    ROLE_SVG_ROOT,
     ROLE_SYSTEM_WIDE,
     ROLE_TAB,
     ROLE_TABLE,
@@ -224,6 +226,11 @@ struct CONTENT_EXPORT AccessibilityNodeData {
 
     // Relationships between this element and other elements.
     ATTR_TITLE_UI_ELEMENT,
+
+    // Color value for ROLE_COLOR_WELL, each component is 0..255
+    ATTR_COLOR_VALUE_RED,
+    ATTR_COLOR_VALUE_GREEN,
+    ATTR_COLOR_VALUE_BLUE
   };
 
   enum FloatAttribute {
@@ -259,9 +266,9 @@ struct CONTENT_EXPORT AccessibilityNodeData {
   AccessibilityNodeData();
   ~AccessibilityNodeData();
 
-#ifndef NDEBUG
+  #ifndef NDEBUG
   std::string DebugString(bool recursive) const;
-#endif
+  #endif
 
   // This is a simple serializable struct. All member variables should be
   // public and copyable.

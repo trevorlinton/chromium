@@ -19,12 +19,12 @@
 #include "content/renderer/paint_aggregator.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sender.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebRect.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebCompositionUnderline.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebPopupType.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebTextDirection.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebTextInputInfo.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebWidgetClient.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebRect.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/ime/text_input_type.h"
 #include "ui/base/range/range.h"
@@ -50,6 +50,8 @@ struct WebPoint;
 class WebTouchEvent;
 }
 
+namespace cc { class OutputSurface; }
+
 namespace ui {
 class Range;
 }
@@ -66,6 +68,7 @@ class PluginInstance;
 
 namespace content {
 struct GpuRenderingStats;
+class RenderWidgetCompositor;
 class RenderWidgetTest;
 
 // RenderWidget provides a communication bridge between a WebWidget and
@@ -114,6 +117,7 @@ class CONTENT_EXPORT RenderWidget
   virtual bool Send(IPC::Message* msg) OVERRIDE;
 
   // WebKit::WebWidgetClient
+  virtual void suppressCompositorScheduling(bool enable);
   virtual void willBeginCompositorFrame();
   virtual void didInvalidateRect(const WebKit::WebRect&);
   virtual void didScrollRect(int dx, int dy,
@@ -121,6 +125,11 @@ class CONTENT_EXPORT RenderWidget
   virtual void didAutoResize(const WebKit::WebSize& new_size);
   virtual void didActivateCompositor(int input_handler_identifier);
   virtual void didDeactivateCompositor();
+  virtual void initializeLayerTreeView(
+      WebKit::WebLayerTreeViewClient* client,
+      const WebKit::WebLayer& root_layer,
+      const WebKit::WebLayerTreeView::Settings& settings);
+  virtual WebKit::WebLayerTreeView* layerTreeView();
   virtual void didBecomeReadyForAdditionalInput();
   virtual void didCommitAndDrawCompositorFrame();
   virtual void didCompleteSwapBuffers();
@@ -141,6 +150,8 @@ class CONTENT_EXPORT RenderWidget
   virtual WebKit::WebScreenInfo screenInfo();
   virtual float deviceScaleFactor();
   virtual void resetInputMethod();
+  virtual void didHandleGestureEvent(const WebKit::WebGestureEvent& event,
+                                     bool event_cancelled);
 
   // Called when a plugin is moved.  These events are queued up and sent with
   // the next paint or scroll message to the host.
@@ -162,6 +173,8 @@ class CONTENT_EXPORT RenderWidget
   // This call is relatively expensive as it blocks on the GPU process
   bool GetGpuRenderingStats(GpuRenderingStats*) const;
 
+  virtual scoped_ptr<cc::OutputSurface> CreateOutputSurface();
+
   // Callback for use with BeginSmoothScroll.
   typedef base::Callback<void()> SmoothScrollCompletionCallback;
 
@@ -177,6 +190,9 @@ class CONTENT_EXPORT RenderWidget
   // Close the underlying WebWidget.
   virtual void Close();
 
+  // Notifies about a compositor frame commit operation having finished.
+  virtual void DidCommitCompositorFrame();
+
   float filtered_time_per_frame() const {
     return filtered_time_per_frame_;
   }
@@ -185,6 +201,11 @@ class CONTENT_EXPORT RenderWidget
     DO_NOT_SHOW_IME,
     SHOW_IME_IF_NEEDED
   };
+
+  virtual void InstrumentWillBeginFrame() {}
+  virtual void InstrumentDidBeginFrame() {}
+  virtual void InstrumentDidCancelFrame() {}
+  virtual void InstrumentWillComposite() {}
 
  protected:
   // Friend RefCounted so that the dtor can be non-public. Using this class
@@ -239,6 +260,7 @@ class CONTENT_EXPORT RenderWidget
   void DoDeferredUpdate();
   void DoDeferredClose();
   void DoDeferredSetWindowRect(const WebKit::WebRect& pos);
+  virtual void Composite();
 
   // Set the background of the render widget to a bitmap. The bitmap will be
   // tiled in both directions if it isn't big enough to fill the area. This is
@@ -247,6 +269,7 @@ class CONTENT_EXPORT RenderWidget
 
   // Resizes the render widget.
   void Resize(const gfx::Size& new_size,
+              const gfx::Size& physical_backing_size,
               const gfx::Rect& resizer_rect,
               bool is_fullscreen,
               ResizeAck resize_ack);
@@ -255,6 +278,7 @@ class CONTENT_EXPORT RenderWidget
   void OnClose();
   void OnCreatingNewAck();
   virtual void OnResize(const gfx::Size& new_size,
+                        const gfx::Size& physical_backing_size,
                         const gfx::Rect& resizer_rect,
                         bool is_fullscreen);
   void OnChangeResizeRect(const gfx::Rect& resizer_rect);
@@ -288,6 +312,10 @@ class CONTENT_EXPORT RenderWidget
   void OnScreenInfoChanged(const WebKit::WebScreenInfo& screen_info);
   void OnUpdateScreenRects(const gfx::Rect& view_screen_rect,
                            const gfx::Rect& window_screen_rect);
+#if defined(OS_ANDROID)
+  void OnImeBatchStateChanged(bool is_begin);
+  void OnShowImeIfNeeded();
+#endif
 
   virtual void SetDeviceScaleFactor(float device_scale_factor);
 
@@ -437,10 +465,6 @@ class CONTENT_EXPORT RenderWidget
   // at the given point.
   virtual bool HasTouchEventHandlersAt(const gfx::Point& point) const;
 
-  // Should return true if the underlying WebWidget is responsible for
-  // the scheduling of compositing requests.
-  virtual bool WebWidgetHandlesCompositorScheduling() const;
-
   // Routing ID that allows us to communicate to the parent browser process
   // RenderWidgetHost. When MSG_ROUTING_NONE, no messages may be sent.
   int32 routing_id_;
@@ -449,6 +473,9 @@ class CONTENT_EXPORT RenderWidget
 
   // We are responsible for destroying this object via its Close method.
   WebKit::WebWidget* webwidget_;
+
+  // This is lazily constructed and must not outlive webwidget_.
+  scoped_ptr<RenderWidgetCompositor> compositor_;
 
   // Set to the ID of the view that initiated creating this view, if any. When
   // the view was initiated by the browser (the common case), this will be
@@ -475,6 +502,9 @@ class CONTENT_EXPORT RenderWidget
   TransportDIB* current_paint_buf_;
 
   PaintAggregator paint_aggregator_;
+
+  // The size of the view's backing surface in non-DPI-adjusted pixels.
+  gfx::Size physical_backing_size_;
 
   // The area that must be reserved for drawing the resize corner.
   gfx::Rect resizer_rect_;
@@ -530,6 +560,9 @@ class CONTENT_EXPORT RenderWidget
   // Are we currently handling an input event?
   bool handling_input_event_;
 
+  // Are we currently handling an ime event?
+  bool handling_ime_event_;
+
   // True if we have requested this widget be closed.  No more messages will
   // be sent, except for a Close.
   bool closing_;
@@ -552,8 +585,8 @@ class CONTENT_EXPORT RenderWidget
   bool can_compose_inline_;
 
   // Stores the current selection bounds.
-  gfx::Rect selection_start_rect_;
-  gfx::Rect selection_end_rect_;
+  gfx::Rect selection_focus_rect_;
+  gfx::Rect selection_anchor_rect_;
 
   // Stores the current composition character bounds.
   std::vector<gfx::Rect> composition_character_bounds_;

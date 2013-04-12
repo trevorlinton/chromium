@@ -8,10 +8,11 @@ import sys
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-import telemetry
+from telemetry.core import browser_finder
+from telemetry.core import browser_options
 
 def Main(args):
-  options = telemetry.BrowserOptions()
+  options = browser_options.BrowserOptions()
   parser = options.CreateParser('rendering_microbenchmark_test.py <sitelist>')
   # TODO(nduca): Add test specific options here, if any.
   options, args = parser.parse_args(args)
@@ -28,23 +29,23 @@ def Main(args):
       urls.append(url)
 
   options.extra_browser_args.append('--enable-gpu-benchmarking')
-  browser_to_create = telemetry.FindBrowser(options)
+  browser_to_create = browser_finder.FindBrowser(options)
   if not browser_to_create:
     sys.stderr.write('No browser found! Supported types: %s' %
-        telemetry.GetAllAvailableBrowserTypes(options))
+        browser_finder.GetAllAvailableBrowserTypes(options))
     return 255
   with browser_to_create.Create() as b:
     tab = b.tabs[0]
     # Check browser for benchmark API. Can only be done on non-chrome URLs.
-    tab.page.Navigate('http://www.google.com')
+    tab.Navigate('http://www.google.com')
     import time
     time.sleep(2)
     tab.WaitForDocumentReadyStateToBeComplete()
-    if tab.runtime.Evaluate('window.chrome.gpuBenchmarking === undefined'):
+    if tab.EvaluateJavaScript('window.chrome.gpuBenchmarking === undefined'):
       print 'Browser does not support gpu benchmarks API.'
       return 255
 
-    if tab.runtime.Evaluate(
+    if tab.EvaluateJavaScript(
         'window.chrome.gpuBenchmarking.runRenderingBenchmarks === undefined'):
       print 'Browser does not support rendering benchmarks API.'
       return 255
@@ -64,9 +65,9 @@ def Main(args):
       print ','.join(cols)
 
     for u in urls:
-      tab.page.Navigate(u)
+      tab.Navigate(u)
       tab.WaitForDocumentReadyStateToBeInteractiveOrBetter()
-      results = tab.runtime.Evaluate(
+      results = tab.EvaluateJavaScript(
           'window.chrome.gpuBenchmarking.runRenderingBenchmarks();')
       DumpResults(url, results)
 

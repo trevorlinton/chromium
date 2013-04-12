@@ -15,6 +15,7 @@ namespace gfx {
 class Font;
 class Point;
 class Rect;
+class RectF;
 }
 
 // This interface provides data to an AutofillPopupView.
@@ -43,15 +44,7 @@ class AutofillPopupController {
   virtual int GetIconResourceID(const string16& resource_name) = 0;
 
   // Returns true if the given index refers to an element that can be deleted.
-  virtual bool CanDelete(size_t index) = 0;
-
-#if !defined(OS_ANDROID)
-  // Calculates the width of the popup based on its contents.
-  virtual int GetPopupRequiredWidth() = 0;
-
-  // Calculates the height of the popup based on its contents.
-  virtual int GetPopupRequiredHeight() = 0;
-#endif
+  virtual bool CanDelete(size_t index) const = 0;
 
   // Updates the bounds of the popup and initiates a redraw.
   virtual void SetPopupBounds(const gfx::Rect& bounds) = 0;
@@ -67,8 +60,11 @@ class AutofillPopupController {
   virtual gfx::NativeView container_view() const = 0;
 
   // The bounds of the form field element (screen coordinates).
-  virtual const gfx::Rect& element_bounds() const = 0;
+  virtual const gfx::RectF& element_bounds() const = 0;
 
+  // TODO(csharp): The names, subtexts and icon getters can probably be adjusted
+  // to take in the row index and return a single element, instead of the
+  // whole vector.
   // The main labels for each autofill item.
   virtual const std::vector<string16>& names() const = 0;
 
@@ -82,7 +78,9 @@ class AutofillPopupController {
   virtual const std::vector<int>& identifiers() const = 0;
 
 #if !defined(OS_ANDROID)
-  virtual const gfx::Font& name_font() const = 0;
+  // The same font can vary based on the type of data it is showing,
+  // so we need to know the row.
+  virtual const gfx::Font& GetNameFontForRow(size_t index) const = 0;
   virtual const gfx::Font& subtext_font() const = 0;
 #endif
 

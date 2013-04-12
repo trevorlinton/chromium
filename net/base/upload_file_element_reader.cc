@@ -8,7 +8,6 @@
 #include "base/file_util.h"
 #include "base/location.h"
 #include "base/task_runner_util.h"
-#include "base/threading/worker_pool.h"
 #include "net/base/file_stream.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -22,11 +21,12 @@ namespace {
 uint64 overriding_content_length = 0;
 
 // This function is used to implement Init().
-int InitInternal(const FilePath& path,
+template<typename FileStreamDeleter>
+int InitInternal(const base::FilePath& path,
                  uint64 range_offset,
                  uint64 range_length,
                  const base::Time& expected_modification_time,
-                 UploadFileElementReader::ScopedFileStreamPtr* out_file_stream,
+                 scoped_ptr<FileStream, FileStreamDeleter>* out_file_stream,
                  uint64* out_content_length) {
   scoped_ptr<FileStream> file_stream(new FileStream(NULL));
   int64 rv = file_stream->OpenSync(
@@ -92,28 +92,38 @@ int ReadInternal(scoped_refptr<IOBuffer> buf,
 
 }  // namespace
 
+UploadFileElementReader::FileStreamDeleter::FileStreamDeleter(
+    base::TaskRunner* task_runner) : task_runner_(task_runner) {
+  DCHECK(task_runner_);
+}
+
+UploadFileElementReader::FileStreamDeleter::~FileStreamDeleter() {}
+
 void UploadFileElementReader::FileStreamDeleter::operator() (
     FileStream* file_stream) const {
   if (file_stream) {
-    base::WorkerPool::PostTask(FROM_HERE,
-                               base::Bind(&base::DeletePointer<FileStream>,
-                                          file_stream),
-                               true /* task_is_slow */);
+    task_runner_->PostTask(FROM_HERE,
+                           base::Bind(&base::DeletePointer<FileStream>,
+                                      file_stream));
   }
 }
 
 UploadFileElementReader::UploadFileElementReader(
-    const FilePath& path,
+    base::TaskRunner* task_runner,
+    const base::FilePath& path,
     uint64 range_offset,
     uint64 range_length,
     const base::Time& expected_modification_time)
-    : path_(path),
+    : task_runner_(task_runner),
+      path_(path),
       range_offset_(range_offset),
       range_length_(range_length),
       expected_modification_time_(expected_modification_time),
+      file_stream_(NULL, FileStreamDeleter(task_runner_)),
       content_length_(0),
       bytes_remaining_(0),
       ALLOW_THIS_IN_INITIALIZER_LIST(weak_ptr_factory_(this)) {
+  DCHECK(task_runner_);
 }
 
 UploadFileElementReader::~UploadFileElementReader() {
@@ -127,12 +137,13 @@ int UploadFileElementReader::Init(const CompletionCallback& callback) {
   DCHECK(!callback.is_null());
   Reset();
 
-  ScopedFileStreamPtr* file_stream = new ScopedFileStreamPtr;
+  ScopedFileStreamPtr* file_stream =
+      new ScopedFileStreamPtr(NULL, FileStreamDeleter(task_runner_));
   uint64* content_length = new uint64;
   const bool posted = base::PostTaskAndReplyWithResult(
-      base::WorkerPool::GetTaskRunner(true /* task_is_slow */),
+      task_runner_,
       FROM_HERE,
-      base::Bind(&InitInternal,
+      base::Bind(&InitInternal<FileStreamDeleter>,
                  path_,
                  range_offset_,
                  range_length_,
@@ -171,7 +182,7 @@ int UploadFileElementReader::Read(IOBuffer* buf,
   // Pass the ownership of file_stream_ to the worker pool to safely perform
   // operation even when |this| is destructed before the read completes.
   const bool posted = base::PostTaskAndReplyWithResult(
-      base::WorkerPool::GetTaskRunner(true /* task_is_slow */),
+      task_runner_,
       FROM_HERE,
       base::Bind(&ReadInternal,
                  scoped_refptr<IOBuffer>(buf),
@@ -211,7 +222,7 @@ void UploadFileElementReader::OnReadCompleted(
     int result) {
   file_stream_.swap(file_stream);
   if (result > 0) {
-    DCHECK_GE(static_cast<int>(bytes_remaining_), result);
+    DCHECK_GE(bytes_remaining_, static_cast<uint64>(result));
     bytes_remaining_ -= result;
   }
   if (!callback.is_null())
@@ -229,7 +240,7 @@ UploadFileElementReader::ScopedOverridingContentLengthForTests::
 }
 
 UploadFileElementReaderSync::UploadFileElementReaderSync(
-    const FilePath& path,
+    const base::FilePath& path,
     uint64 range_offset,
     uint64 range_length,
     const base::Time& expected_modification_time)
@@ -249,12 +260,9 @@ int UploadFileElementReaderSync::Init(const CompletionCallback& callback) {
   content_length_ = 0;
   file_stream_.reset();
 
-  UploadFileElementReader::ScopedFileStreamPtr file_stream;
-
   const int result = InitInternal(path_, range_offset_, range_length_,
                                   expected_modification_time_,
-                                  &file_stream, &content_length_);
-  file_stream_.reset(file_stream.release());
+                                  &file_stream_, &content_length_);
   bytes_remaining_ = GetContentLength();
   return result;
 }
@@ -273,7 +281,7 @@ int UploadFileElementReaderSync::Read(IOBuffer* buf,
   const int result = ReadInternal(buf, buf_length, BytesRemaining(),
                                   file_stream_.get());
   if (result > 0) {
-    DCHECK_GE(static_cast<int>(bytes_remaining_), result);
+    DCHECK_GE(bytes_remaining_, static_cast<uint64>(result));
     bytes_remaining_ -= result;
   }
   return result;

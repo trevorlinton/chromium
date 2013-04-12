@@ -13,7 +13,7 @@ gfx::ImageSkia CreateTestImage(int width, int height) {
   SkBitmap bitmap;
   bitmap.setConfig(SkBitmap::kARGB_8888_Config, width, height);
   bitmap.allocPixels();
-  return gfx::ImageSkia(bitmap);
+  return gfx::ImageSkia::CreateFrom1xBitmap(bitmap);
 }
 
 }  // namespace
@@ -78,6 +78,32 @@ TEST_F(ImageButtonTest, Basics) {
   // Reset the overlay image.
   button.SetOverlayImage(NULL);
   EXPECT_TRUE(button.overlay_image_.isNull());
+}
+
+TEST_F(ImageButtonTest, SetAndGetImage) {
+  ImageButton button(NULL);
+
+  // Images start as null.
+  EXPECT_TRUE(button.GetImage(Button::STATE_NORMAL).isNull());
+  EXPECT_TRUE(button.GetImage(Button::STATE_HOVERED).isNull());
+  EXPECT_TRUE(button.GetImage(Button::STATE_PRESSED).isNull());
+  EXPECT_TRUE(button.GetImage(Button::STATE_DISABLED).isNull());
+
+  // Setting images works as expected.
+  gfx::ImageSkia image1 = CreateTestImage(10, 11);
+  gfx::ImageSkia image2 = CreateTestImage(20, 21);
+  button.SetImage(Button::STATE_NORMAL, &image1);
+  button.SetImage(Button::STATE_HOVERED, &image2);
+  EXPECT_TRUE(
+      button.GetImage(Button::STATE_NORMAL).BackedBySameObjectAs(image1));
+  EXPECT_TRUE(
+      button.GetImage(Button::STATE_HOVERED).BackedBySameObjectAs(image2));
+  EXPECT_TRUE(button.GetImage(Button::STATE_PRESSED).isNull());
+  EXPECT_TRUE(button.GetImage(Button::STATE_DISABLED).isNull());
+
+  // ImageButton supports NULL image pointers.
+  button.SetImage(Button::STATE_NORMAL, NULL);
+  EXPECT_TRUE(button.GetImage(Button::STATE_NORMAL).isNull());
 }
 
 TEST_F(ImageButtonTest, ImagePositionWithBorder) {

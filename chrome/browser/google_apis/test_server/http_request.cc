@@ -5,21 +5,17 @@
 #include "chrome/browser/google_apis/test_server/http_request.h"
 
 #include <algorithm>
-#include <map>
-#include <string>
 
-#include "base/basictypes.h"
 #include "base/logging.h"
-#include "base/string_number_conversions.h"
-#include "base/string_split.h"
 #include "base/string_util.h"
-#include "googleurl/src/gurl.h"
-
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_split.h"
 
 namespace google_apis {
 namespace test_server {
 
 namespace {
+
 size_t kRequestSizeLimit = 64 * 1024 * 1024;  // 64 mb.
 
 // Helper function used to trim tokens in http request headers.
@@ -195,6 +191,8 @@ HttpMethod HttpRequestParser::GetMethodType(const std::string& token) const {
     return METHOD_PUT;
   } else if (token == "delete") {
     return METHOD_DELETE;
+  } else if (token == "patch") {
+    return METHOD_PATCH;
   }
   NOTREACHED() << "Method not implemented: " << token;
   return METHOD_UNKNOWN;

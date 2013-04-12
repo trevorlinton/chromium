@@ -17,6 +17,11 @@ void AppListControllerDelegateAsh::DismissView() {
     ash::Shell::GetInstance()->ToggleAppList(NULL);
 }
 
+gfx::NativeWindow AppListControllerDelegateAsh::GetAppListWindow() {
+  DCHECK(ash::Shell::HasInstance());
+  return ash::Shell::GetInstance()->GetAppListWindow();
+}
+
 bool AppListControllerDelegateAsh::IsAppPinned(
     const std::string& extension_id) {
   return ChromeLauncherController::instance()->IsAppPinned(extension_id);
@@ -45,26 +50,20 @@ void AppListControllerDelegateAsh::CreateNewWindow(bool incognito) {
     ChromeLauncherController::instance()->CreateNewWindow();
 }
 
-void AppListControllerDelegateAsh::ActivateApp(Profile* profile,
-                                               const std::string& extension_id,
-                                               int event_flags) {
-  ChromeLauncherController::instance()->ActivateApp(extension_id, event_flags);
+void AppListControllerDelegateAsh::ActivateApp(
+    Profile* profile, const extensions::Extension* extension, int event_flags) {
+  ChromeLauncherController::instance()->ActivateApp(extension->id(),
+                                                    event_flags);
   DismissView();
 }
 
-void AppListControllerDelegateAsh::LaunchApp(Profile* profile,
-                                             const std::string& extension_id,
-                                             int event_flags) {
-  ChromeLauncherController::instance()->LaunchApp(extension_id, event_flags);
+void AppListControllerDelegateAsh::LaunchApp(
+    Profile* profile, const extensions::Extension* extension, int event_flags) {
+  ChromeLauncherController::instance()->LaunchApp(extension->id(),
+                                                  event_flags);
   DismissView();
 }
 
-namespace app_list_controller {
-
-#if defined(OS_CHROMEOS)
-void ShowAppList() {
-  ash::Shell::GetInstance()->ToggleAppList(NULL);
-}
-#endif
-
+bool AppListControllerDelegateAsh::ShouldShowUserIcon() {
+  return false;
 }

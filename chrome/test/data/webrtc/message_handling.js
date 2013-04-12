@@ -62,6 +62,12 @@ var gAutoAddLocalToPeerConnectionStreamWhenCalled = true;
 var gDataChannel = null;
 
 /**
+ * The DTMF sender.
+ * @private
+ */
+var gDtmfSender = null;
+
+/**
  * We need a STUN server for some API calls.
  * @private
  */
@@ -188,11 +194,11 @@ function toggleRemoteStream(selectAudioOrVideoTrack, typeToToggle) {
   if (gPeerConnection == null)
     throw failTest('Tried to toggle remote stream, ' +
                    'but have no peer connection.');
-  if (gPeerConnection.remoteStreams.length == 0)
+  if (gPeerConnection.getRemoteStreams().length == 0)
     throw failTest('Tried to toggle remote stream, ' +
                    'but not receiving any stream.');
 
-  var track = selectAudioOrVideoTrack(gPeerConnection.remoteStreams[0]);
+  var track = selectAudioOrVideoTrack(gPeerConnection.getRemoteStreams()[0]);
   toggle_(track, 'remote', typeToToggle);
 }
 
@@ -204,11 +210,11 @@ function toggleLocalStream(selectAudioOrVideoTrack, typeToToggle) {
   if (gPeerConnection == null)
     throw failTest('Tried to toggle local stream, ' +
                    'but have no peer connection.');
-  if (gPeerConnection.localStreams.length == 0)
+  if (gPeerConnection.getLocalStreams().length == 0)
     throw failTest('Tried to toggle local stream, but there is no local ' +
                    'stream in the call.');
 
-  var track = selectAudioOrVideoTrack(gPeerConnection.localStreams[0]);
+  var track = selectAudioOrVideoTrack(gPeerConnection.getLocalStreams()[0]);
   toggle_(track, 'local', typeToToggle);
 }
 
@@ -283,6 +289,32 @@ function closeDataChannelOnPeerConnection() {
   returnToTest('ok-datachannel-close');
 }
 
+/**
+ * Creates a DTMF sender on the current PeerConnection.
+ * Returns ok-dtmfsender-created on success.
+ */
+function createDtmfSenderOnPeerConnection() {
+  if (gPeerConnection == null)
+    throw failTest('Tried to create DTMF sender, ' +
+        'but have no peer connection.');
+
+  createDtmfSender(gPeerConnection);
+  returnToTest('ok-dtmfsender-created');
+}
+
+/**
+ * Send DTMF tones on the gDtmfSender.
+ * Returns ok-dtmf-sent on success.
+ */
+function insertDtmfOnSender(tones, duration, interToneGap) {
+  if (gDtmfSender == null)
+    throw failTest('Tried to insert DTMF tones, ' +
+        'but have no DTMF sender.');
+
+  insertDtmf(tones, duration, interToneGap);
+  returnToTest('ok-dtmf-sent');
+}
+
 // Public interface to signaling implementations, such as JSEP.
 
 /**
@@ -309,12 +341,16 @@ function isDisconnected() {
 /**
  * @return {!string} The current peer connection's ready state, or
  *     'no-peer-connection' if there is no peer connection up.
+ *
+ * NOTE: The PeerConnection states are changing and until chromium has
+ *       implemented the new states we have to use this interim solution of
+ *       always assuming that the PeerConnection is 'active'.
  */
 function getReadyState() {
   if (gPeerConnection == null)
     return 'no-peer-connection';
-  else
-    return gPeerConnection.readyState;
+
+  return 'active';
 }
 
 // Internals.

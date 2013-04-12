@@ -9,8 +9,8 @@
 #include <iterator>
 
 #include "base/logging.h"
-#include "base/prefs/public/pref_service_base.h"
-#include "base/string_number_conversions.h"
+#include "base/prefs/pref_service.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/browser/api/sync/profile_sync_service_base.h"
 #include "chrome/browser/api/webdata/autofill_web_data_service.h"
@@ -18,12 +18,12 @@
 #include "chrome/browser/autofill/autofill_country.h"
 #include "chrome/browser/autofill/autofill_field.h"
 #include "chrome/browser/autofill/autofill_metrics.h"
-#include "chrome/browser/autofill/autofill_regexes.h"
 #include "chrome/browser/autofill/form_group.h"
 #include "chrome/browser/autofill/form_structure.h"
 #include "chrome/browser/autofill/personal_data_manager_observer.h"
 #include "chrome/browser/autofill/phone_number.h"
 #include "chrome/browser/autofill/phone_number_i18n.h"
+#include "chrome/browser/autofill/validation.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/browser_context.h"
@@ -32,6 +32,8 @@
 using content::BrowserContext;
 
 namespace {
+
+const string16::value_type kCreditCardPrefix[] = {'*', 0};
 
 template<typename T>
 class FormGroupMatchesByGUIDFunctor {
@@ -74,20 +76,6 @@ T* address_of(T& v) {
   return &v;
 }
 
-bool IsValidEmail(const string16& value) {
-  // This regex is more permissive than the official rfc2822 spec on the
-  // subject, but it does reject obvious non-email addresses.
-  const string16 kEmailPattern = ASCIIToUTF16("^[^@]+@[^@]+\\.[a-z]{2,6}$");
-  return autofill::MatchesPattern(value, kEmailPattern);
-}
-
-// Valid for US zip codes only.
-bool IsValidZip(const string16& value) {
-  // Basic US zip code matching.
-  const string16 kZipPattern = ASCIIToUTF16("^\\d{5}(-\\d{4})?$");
-  return autofill::MatchesPattern(value, kZipPattern);
-}
-
 // Returns true if minimum requirements for import of a given |profile| have
 // been met.  An address submitted via a form must have at least these fields
 // filled.  No verification of validity of the contents is preformed.  This is
@@ -113,13 +101,41 @@ bool IsValidFieldTypeAndValue(const std::set<AutofillFieldType>& types_seen,
 
   // Abandon the import if an email address value shows up in a field that is
   // not an email address.
-  if (field_type != EMAIL_ADDRESS && IsValidEmail(value))
+  if (field_type != EMAIL_ADDRESS && autofill::IsValidEmailAddress(value))
     return false;
 
   return true;
 }
 
 }  // namespace
+
+PersonalDataManager::PersonalDataManager()
+    : browser_context_(NULL),
+      is_data_loaded_(false),
+      pending_profiles_query_(0),
+      pending_creditcards_query_(0),
+      metric_logger_(new AutofillMetrics),
+      has_logged_profile_count_(false) {}
+
+void PersonalDataManager::Init(BrowserContext* browser_context) {
+  browser_context_ = browser_context;
+  metric_logger_->LogIsAutofillEnabledAtStartup(IsAutofillEnabled());
+
+  scoped_ptr<AutofillWebDataService> autofill_data(
+      AutofillWebDataService::FromBrowserContext(browser_context_));
+
+  // WebDataService may not be available in tests.
+  if (!autofill_data.get())
+    return;
+
+  LoadProfiles();
+  LoadCreditCards();
+
+  notification_registrar_.Add(
+      this,
+      chrome::NOTIFICATION_AUTOFILL_MULTIPLE_CHANGED,
+      autofill_data->GetNotificationSource());
+}
 
 PersonalDataManager::~PersonalDataManager() {
   CancelPendingQuery(&pending_profiles_query_);
@@ -166,10 +182,7 @@ void PersonalDataManager::OnWebDataServiceRequestDone(
   }
 }
 
-void PersonalDataManager::SetObserver(PersonalDataManagerObserver* observer) {
-  // TODO(dhollowa): RemoveObserver is for compatibility with old code, it
-  // should be nuked.
-  observers_.RemoveObserver(observer);
+void PersonalDataManager::AddObserver(PersonalDataManagerObserver* observer) {
   observers_.AddObserver(observer);
 }
 
@@ -202,12 +215,6 @@ void PersonalDataManager::OnStateChanged() {
     autofill_data->EmptyMigrationTrash(true);
     sync_service->RemoveObserver(this);
   }
-}
-
-void PersonalDataManager::Shutdown() {
-  CancelPendingQuery(&pending_profiles_query_);
-  CancelPendingQuery(&pending_creditcards_query_);
-  notification_registrar_.RemoveAll();
 }
 
 void PersonalDataManager::Observe(int type,
@@ -294,8 +301,7 @@ bool PersonalDataManager::ImportFormData(
   // Construct the phone number. Reject the profile if the number is invalid.
   if (imported_profile.get() && !home.IsEmpty()) {
     string16 constructed_number;
-    if (!home.ParseNumber(imported_profile->CountryCode(),
-                          &constructed_number) ||
+    if (!home.ParseNumber(*imported_profile, app_locale, &constructed_number) ||
         !imported_profile->SetInfo(PHONE_HOME_WHOLE_NUMBER, constructed_number,
                                    app_locale)) {
       imported_profile.reset();
@@ -511,7 +517,7 @@ bool PersonalDataManager::IsDataLoaded() const {
 }
 
 const std::vector<AutofillProfile*>& PersonalDataManager::GetProfiles() {
-  if (!PrefServiceBase::FromBrowserContext(browser_context_)->GetBoolean(
+  if (!PrefServiceFromBrowserContext(browser_context_)->GetBoolean(
           prefs::kAutofillAuxiliaryProfilesEnabled)) {
     return web_profiles();
   }
@@ -545,12 +551,12 @@ void PersonalDataManager::GetProfileSuggestions(
     const string16& field_contents,
     bool field_is_autofilled,
     std::vector<AutofillFieldType> other_field_types,
+    std::vector<string16>* values,
     std::vector<string16>* labels,
-    std::vector<string16>* sub_labels,
     std::vector<string16>* icons,
     std::vector<GUIDPair>* guid_pairs) {
+  values->clear();
   labels->clear();
-  sub_labels->clear();
   icons->clear();
   guid_pairs->clear();
 
@@ -571,7 +577,7 @@ void PersonalDataManager::GetProfileSuggestions(
         if (!multi_values[i].empty() &&
             StartsWith(multi_values[i], field_contents, false)) {
           matched_profiles.push_back(profile);
-          labels->push_back(multi_values[i]);
+          values->push_back(multi_values[i]);
           guid_pairs->push_back(GUIDPair(profile->guid(), i));
         }
       } else {
@@ -595,7 +601,7 @@ void PersonalDataManager::GetProfileSuggestions(
             profile_value_lower_case == field_value_lower_case) {
           for (size_t j = 0; j < multi_values.size(); ++j) {
             if (!multi_values[j].empty()) {
-              labels->push_back(multi_values[j]);
+              values->push_back(multi_values[j]);
               guid_pairs->push_back(GUIDPair(profile->guid(), j));
             }
           }
@@ -611,46 +617,54 @@ void PersonalDataManager::GetProfileSuggestions(
   if (!field_is_autofilled) {
     AutofillProfile::CreateInferredLabels(
         &matched_profiles, &other_field_types,
-        type, 1, sub_labels);
+        type, 1, labels);
   } else {
     // No sub-labels for previously filled fields.
-    sub_labels->resize(labels->size());
+    labels->resize(values->size());
   }
 
   // No icons for profile suggestions.
-  icons->resize(labels->size());
+  icons->resize(values->size());
 }
 
-PersonalDataManager::PersonalDataManager()
-    : browser_context_(NULL),
-      is_data_loaded_(false),
-      pending_profiles_query_(0),
-      pending_creditcards_query_(0),
-      metric_logger_(new AutofillMetrics),
-      has_logged_profile_count_(false) {
-}
+void PersonalDataManager::GetCreditCardSuggestions(
+    AutofillFieldType type,
+    const string16& field_contents,
+    std::vector<string16>* values,
+    std::vector<string16>* labels,
+    std::vector<string16>* icons,
+    std::vector<GUIDPair>* guid_pairs) {
+  const std::string app_locale = AutofillCountry::ApplicationLocale();
+  for (std::vector<CreditCard*>::const_iterator iter = credit_cards().begin();
+       iter != credit_cards().end(); ++iter) {
+    CreditCard* credit_card = *iter;
 
-void PersonalDataManager::Init(BrowserContext* browser_context) {
-  browser_context_ = browser_context;
-  metric_logger_->LogIsAutofillEnabledAtStartup(IsAutofillEnabled());
+    // The value of the stored data for this field type in the |credit_card|.
+    string16 creditcard_field_value = credit_card->GetInfo(type, app_locale);
+    if (!creditcard_field_value.empty() &&
+        StartsWith(creditcard_field_value, field_contents, false)) {
+      if (type == CREDIT_CARD_NUMBER)
+        creditcard_field_value = credit_card->ObfuscatedNumber();
 
-  // WebDataService may not be available in tests.
-  scoped_ptr<AutofillWebDataService> autofill_data(
-      AutofillWebDataService::FromBrowserContext(browser_context_));
-  if (!autofill_data.get())
-    return;
+      string16 label;
+      if (credit_card->number().empty()) {
+        // If there is no CC number, return name to show something.
+        label = credit_card->GetInfo(CREDIT_CARD_NAME, app_locale);
+      } else {
+        label = kCreditCardPrefix;
+        label.append(credit_card->LastFourDigits());
+      }
 
-  LoadProfiles();
-  LoadCreditCards();
-
-  notification_registrar_.Add(
-      this,
-      chrome::NOTIFICATION_AUTOFILL_MULTIPLE_CHANGED,
-      autofill_data->GetNotificationSource());
+      values->push_back(creditcard_field_value);
+      labels->push_back(label);
+      icons->push_back(UTF8ToUTF16(credit_card->type()));
+      guid_pairs->push_back(GUIDPair(credit_card->guid(), 0));
+    }
+  }
 }
 
 bool PersonalDataManager::IsAutofillEnabled() const {
-  return PrefServiceBase::FromBrowserContext(browser_context_)->GetBoolean(
+  return PrefServiceFromBrowserContext(browser_context_)->GetBoolean(
       prefs::kAutofillEnabled);
 }
 
@@ -661,7 +675,7 @@ bool PersonalDataManager::IsValidLearnableProfile(
     return false;
 
   string16 email = profile.GetRawInfo(EMAIL_ADDRESS);
-  if (!email.empty() && !IsValidEmail(email))
+  if (!email.empty() && !autofill::IsValidEmailAddress(email))
     return false;
 
   // Reject profiles with invalid US state information.
@@ -673,7 +687,8 @@ bool PersonalDataManager::IsValidLearnableProfile(
 
   // Reject profiles with invalid US zip information.
   string16 zip = profile.GetRawInfo(ADDRESS_HOME_ZIP);
-  if (profile.CountryCode() == "US" && !zip.empty() && !IsValidZip(zip))
+  if (profile.CountryCode() == "US" && !zip.empty() &&
+      !autofill::IsValidZip(zip))
     return false;
 
   return true;

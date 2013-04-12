@@ -9,6 +9,7 @@
 #include "base/message_loop.h"
 #include "base/values.h"
 #include "chromeos/dbus/ibus/ibus_constants.h"
+#include "chromeos/dbus/ibus/ibus_input_context_client.h"
 #include "chromeos/dbus/ibus/ibus_lookup_table.h"
 #include "chromeos/dbus/ibus/ibus_property.h"
 #include "chromeos/dbus/ibus/ibus_text.h"
@@ -25,8 +26,6 @@ using testing::Return;
 using testing::_;
 
 namespace chromeos {
-// TODO(nona): Remove ibus namespace after complete libibus removal.
-namespace ibus {
 
 namespace {
 
@@ -34,7 +33,7 @@ class MockIBusPanelCandidateWindowHandler
     : public IBusPanelCandidateWindowHandlerInterface {
  public:
   MockIBusPanelCandidateWindowHandler() {}
-  MOCK_METHOD2(UpdateLookupTable, void(const ibus::IBusLookupTable& table,
+  MOCK_METHOD2(UpdateLookupTable, void(const IBusLookupTable& table,
                                        bool visible));
   MOCK_METHOD0(HideLookupTable, void());
   MOCK_METHOD2(UpdateAuxiliaryText, void(const std::string& text,
@@ -44,6 +43,8 @@ class MockIBusPanelCandidateWindowHandler
                                        uint32 cursor_pos,
                                        bool visible) );
   MOCK_METHOD0(HidePreeditText, void());
+  MOCK_METHOD2(SetCursorLocation, void(const ibus::Rect& cursor_location,
+                                       const ibus::Rect& composition_head));
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockIBusPanelCandidateWindowHandler);
@@ -53,8 +54,8 @@ class MockIBusPanelPropertyHandler : public IBusPanelPropertyHandlerInterface {
  public:
   MockIBusPanelPropertyHandler() {}
   MOCK_METHOD1(RegisterProperties,
-               void(const ibus::IBusPropertyList& properties));
-  MOCK_METHOD1(UpdateProperty, void(const ibus::IBusProperty& property));
+               void(const IBusPropertyList& properties));
+  MOCK_METHOD1(UpdateProperty, void(const IBusProperty& property));
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockIBusPanelPropertyHandler);
@@ -62,7 +63,11 @@ class MockIBusPanelPropertyHandler : public IBusPanelPropertyHandlerInterface {
 
 class MockResponseSender {
  public:
-  MOCK_METHOD1(Run, void(dbus::Response* reponse));
+  // GMock doesn't support mocking methods which take scoped_ptr<>.
+  MOCK_METHOD1(MockRun, void(dbus::Response* reponse));
+  void Run(scoped_ptr<dbus::Response> response) {
+    MockRun(response.get());
+  }
 };
 
 // This class is used to verify that a method call response is empty. This class
@@ -75,7 +80,6 @@ class EmptyResponseVerifier {
 
   // Verifies the given |response| has no argument.
   void Verify(dbus::Response* response) {
-    scoped_ptr<dbus::Response> response_deleter(response);
     EXPECT_EQ(expected_serial_number_, response->GetReplySerial());
     dbus::MessageReader reader(response);
     EXPECT_FALSE(reader.HasMoreData());
@@ -144,18 +148,18 @@ class NullArgumentVerifier {
 
 class UpdateLookupTableVerifier {
  public:
-  UpdateLookupTableVerifier(const ibus::IBusLookupTable& table, bool visible)
+  UpdateLookupTableVerifier(const IBusLookupTable& table, bool visible)
       : table_(table),
         visible_(visible) {}
 
-  void Verify(const ibus::IBusLookupTable& table, bool visible) {
+  void Verify(const IBusLookupTable& table, bool visible) {
     EXPECT_EQ(table_.page_size(), table.page_size());
     EXPECT_EQ(table_.cursor_position(), table.cursor_position());
     EXPECT_EQ(visible_, visible);
   }
 
  private:
-  const ibus::IBusLookupTable& table_;
+  const IBusLookupTable& table_;
   const bool visible_;
 
   DISALLOW_COPY_AND_ASSIGN(UpdateLookupTableVerifier);
@@ -171,7 +175,7 @@ class PropertyListVerifier {
   }
 
   // Verifies the given |resposne| has IBusPropertyList.
-  void Verify(const ibus::IBusPropertyList& properties) {
+  void Verify(const IBusPropertyList& properties) {
     ASSERT_EQ(expected_keys_.size(), properties.size());
     for (size_t i = 0; i < properties.size(); ++i) {
       EXPECT_EQ(expected_keys_[i], properties[i]->key());
@@ -189,7 +193,7 @@ class PropertyVerifier {
   explicit PropertyVerifier(const std::string& key) : key_(key) {}
 
   // Verifies the given |resposne| has IBusPropertyList.
-  void Verify(const ibus::IBusProperty& property) {
+  void Verify(const IBusProperty& property) {
     EXPECT_EQ(key_, property.key());
   }
 
@@ -290,10 +294,14 @@ class IBusPanelServiceTest : public testing::Test {
                 AssertOnOriginThread())
         .WillRepeatedly(Return());
 
+    stub_input_context_client_.reset(IBusInputContextClient::Create(
+        STUB_DBUS_CLIENT_IMPLEMENTATION));
+
     // Create a service
     service_.reset(IBusPanelService::Create(
         REAL_DBUS_CLIENT_IMPLEMENTATION,
-        mock_bus_.get()));
+        mock_bus_.get(),
+        stub_input_context_client_.get()));
 
     // Set panel handler.
     candidate_window_handler_.reset(new MockIBusPanelCandidateWindowHandler());
@@ -310,6 +318,8 @@ class IBusPanelServiceTest : public testing::Test {
   scoped_ptr<MockIBusPanelCandidateWindowHandler> candidate_window_handler_;
   // The mock property handler. Do not free, this is owned by IBusPanelService.
   scoped_ptr<MockIBusPanelPropertyHandler> property_handler_;
+  // The stub input context client.
+  scoped_ptr<IBusInputContextClient> stub_input_context_client_;
   // The mock bus.
   scoped_refptr<dbus::MockBus> mock_bus_;
   // The mock exported object.
@@ -342,7 +352,7 @@ TEST_F(IBusPanelServiceTest, HideLookupTableTest) {
   EXPECT_CALL(*candidate_window_handler_, HideLookupTable());
   MockResponseSender response_sender;
   EmptyResponseVerifier response_expectation(kSerialNo);
-  EXPECT_CALL(response_sender, Run(_))
+  EXPECT_CALL(response_sender, MockRun(_))
       .WillOnce(Invoke(&response_expectation,
                        &EmptyResponseVerifier::Verify));
 
@@ -366,7 +376,7 @@ TEST_F(IBusPanelServiceTest, HideAuxiliaryTextTest) {
   EXPECT_CALL(*candidate_window_handler_, HideAuxiliaryText());
   MockResponseSender response_sender;
   EmptyResponseVerifier response_expectation(kSerialNo);
-  EXPECT_CALL(response_sender, Run(_))
+  EXPECT_CALL(response_sender, MockRun(_))
       .WillOnce(Invoke(&response_expectation,
                        &EmptyResponseVerifier::Verify));
 
@@ -390,7 +400,7 @@ TEST_F(IBusPanelServiceTest, HidePreeditTextTest) {
   EXPECT_CALL(*candidate_window_handler_, HidePreeditText());
   MockResponseSender response_sender;
   EmptyResponseVerifier response_expectation(kSerialNo);
-  EXPECT_CALL(response_sender, Run(_))
+  EXPECT_CALL(response_sender, MockRun(_))
       .WillOnce(Invoke(&response_expectation,
                        &EmptyResponseVerifier::Verify));
 
@@ -411,7 +421,7 @@ TEST_F(IBusPanelServiceTest, HidePreeditTextTest) {
 TEST_F(IBusPanelServiceTest, UpdateLookupTableTest) {
   // Set expectations.
   const uint32 kSerialNo = 1;
-  ibus::IBusLookupTable table;
+  IBusLookupTable table;
   table.set_page_size(3);
   table.set_cursor_position(4);
   const bool kVisible = false;
@@ -423,7 +433,7 @@ TEST_F(IBusPanelServiceTest, UpdateLookupTableTest) {
                        &UpdateLookupTableVerifier::Verify));
   MockResponseSender response_sender;
   EmptyResponseVerifier response_expectation(kSerialNo);
-  EXPECT_CALL(response_sender, Run(_))
+  EXPECT_CALL(response_sender, MockRun(_))
       .WillOnce(Invoke(&response_expectation,
                        &EmptyResponseVerifier::Verify));
 
@@ -453,7 +463,7 @@ TEST_F(IBusPanelServiceTest, UpdateAuxiliaryTextTest) {
   EXPECT_CALL(*candidate_window_handler_, UpdateAuxiliaryText(text, kVisible));
   MockResponseSender response_sender;
   EmptyResponseVerifier response_expectation(kSerialNo);
-  EXPECT_CALL(response_sender, Run(_))
+  EXPECT_CALL(response_sender, MockRun(_))
       .WillOnce(Invoke(&response_expectation,
                        &EmptyResponseVerifier::Verify));
 
@@ -462,7 +472,7 @@ TEST_F(IBusPanelServiceTest, UpdateAuxiliaryTextTest) {
                                ibus::panel::kUpdateAuxiliaryTextMethod);
   method_call.SetSerial(kSerialNo);
   dbus::MessageWriter writer(&method_call);
-  ibus::AppendStringAsIBusText(text, &writer);
+  AppendStringAsIBusText(text, &writer);
   writer.AppendBool(kVisible);
 
   // Call exported function.
@@ -485,7 +495,7 @@ TEST_F(IBusPanelServiceTest, UpdatePreeditTextTest) {
               UpdatePreeditText(text, kCursorPos, kVisible));
   MockResponseSender response_sender;
   EmptyResponseVerifier response_expectation(kSerialNo);
-  EXPECT_CALL(response_sender, Run(_))
+  EXPECT_CALL(response_sender, MockRun(_))
       .WillOnce(Invoke(&response_expectation,
                        &EmptyResponseVerifier::Verify));
 
@@ -494,7 +504,7 @@ TEST_F(IBusPanelServiceTest, UpdatePreeditTextTest) {
                                ibus::panel::kUpdatePreeditTextMethod);
   method_call.SetSerial(kSerialNo);
   dbus::MessageWriter writer(&method_call);
-  ibus::AppendStringAsIBusText(text, &writer);
+  AppendStringAsIBusText(text, &writer);
   writer.AppendUint32(kCursorPos);
   writer.AppendBool(kVisible);
 
@@ -553,9 +563,9 @@ TEST_F(IBusPanelServiceTest, RegisterPropertiesTest) {
   keys.push_back("key1");
   keys.push_back("key2");
   keys.push_back("key3");
-  ibus::IBusPropertyList properties;
+  IBusPropertyList properties;
   for (size_t i = 0; i < keys.size(); ++i) {
-    ibus::IBusProperty* property = new ibus::IBusProperty;
+    IBusProperty* property = new IBusProperty;
     property->set_key(keys[i]);
     properties.push_back(property);
   }
@@ -566,14 +576,14 @@ TEST_F(IBusPanelServiceTest, RegisterPropertiesTest) {
                         &PropertyListVerifier::Verify));
 
   MockResponseSender response_sender;
-  EXPECT_CALL(response_sender, Run(_));
+  EXPECT_CALL(response_sender, MockRun(_));
 
   // Create method call;
   dbus::MethodCall method_call(ibus::panel::kServiceInterface,
                                ibus::panel::kRegisterPropertiesMethod);
   method_call.SetSerial(1UL);
   dbus::MessageWriter writer(&method_call);
-  ibus::AppendIBusPropertyList(properties, &writer);
+  AppendIBusPropertyList(properties, &writer);
 
   // Call exported function.
   EXPECT_NE(method_callback_map_.find(ibus::panel::kRegisterPropertiesMethod),
@@ -586,7 +596,7 @@ TEST_F(IBusPanelServiceTest, RegisterPropertiesTest) {
 TEST_F(IBusPanelServiceTest, UpdatePropertyTest) {
   // Set expectations.
   const char kKey[] = "key";
-  ibus::IBusProperty property;
+  IBusProperty property;
   property.set_key(kKey);
 
   PropertyVerifier response_expectation(kKey);
@@ -594,14 +604,14 @@ TEST_F(IBusPanelServiceTest, UpdatePropertyTest) {
       .WillOnce(Invoke(&response_expectation, &PropertyVerifier::Verify));
 
   MockResponseSender response_sender;
-  EXPECT_CALL(response_sender, Run(_));
+  EXPECT_CALL(response_sender, MockRun(_));
 
   // Create method call;
   dbus::MethodCall method_call(ibus::panel::kServiceInterface,
                                ibus::panel::kUpdatePropertyMethod);
   method_call.SetSerial(1UL);
   dbus::MessageWriter writer(&method_call);
-  ibus::AppendIBusProperty(property, &writer);
+  AppendIBusProperty(property, &writer);
 
   // Call exported function.
   EXPECT_NE(method_callback_map_.find(ibus::panel::kUpdatePropertyMethod),
@@ -612,5 +622,4 @@ TEST_F(IBusPanelServiceTest, UpdatePropertyTest) {
                  base::Unretained(&response_sender)));
 }
 
-}  // namespace ibus
 }  // namespace chromeos

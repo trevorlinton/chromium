@@ -10,7 +10,6 @@
 #include "ui/aura/client/default_capture_client.h"
 #include "ui/aura/focus_manager.h"
 #include "ui/aura/root_window.h"
-#include "ui/aura/ui_controls_aura.h"
 #include "ui/aura/window_property.h"
 #include "ui/base/cursor/cursor_loader_win.h"
 #include "ui/base/ime/input_method_win.h"
@@ -19,14 +18,17 @@
 #include "ui/gfx/path_win.h"
 #include "ui/native_theme/native_theme_aura.h"
 #include "ui/native_theme/native_theme_win.h"
-#include "ui/ui_controls/ui_controls.h"
 #include "ui/views/corewm/compound_event_filter.h"
+#include "ui/views/corewm/corewm_switches.h"
+#include "ui/views/corewm/cursor_manager.h"
+#include "ui/views/corewm/focus_controller.h"
 #include "ui/views/corewm/input_method_event_filter.h"
 #include "ui/views/ime/input_method_bridge.h"
 #include "ui/views/widget/desktop_aura/desktop_activation_client.h"
-#include "ui/views/widget/desktop_aura/desktop_cursor_client.h"
 #include "ui/views/widget/desktop_aura/desktop_dispatcher_client.h"
 #include "ui/views/widget/desktop_aura/desktop_drag_drop_client_win.h"
+#include "ui/views/widget/desktop_aura/desktop_focus_rules.h"
+#include "ui/views/widget/desktop_aura/desktop_native_cursor_manager.h"
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
 #include "ui/views/widget/desktop_aura/desktop_screen_position_client.h"
 #include "ui/views/widget/root_view.h"
@@ -56,6 +58,10 @@ DesktopRootWindowHostWin::DesktopRootWindowHostWin(
 }
 
 DesktopRootWindowHostWin::~DesktopRootWindowHostWin() {
+  if (corewm::UseFocusControllerOnDesktop()) {
+    aura::client::SetFocusClient(root_window_, NULL);
+    aura::client::SetActivationClient(root_window_, NULL);
+  }
 }
 
 // static
@@ -97,9 +103,9 @@ aura::RootWindow* DesktopRootWindowHostWin::Init(
   if (parent_window)
     parent_hwnd = parent_window->GetRootWindow()->GetAcceleratedWidget();
 
-  message_handler_->Init(parent_hwnd, params.bounds);
-
   message_handler_->set_remove_standard_frame(params.remove_standard_frame);
+
+  message_handler_->Init(parent_hwnd, params.bounds);
 
   aura::RootWindow::CreateParams rw_params(params.bounds);
   rw_params.host = this;
@@ -120,17 +126,29 @@ aura::RootWindow* DesktopRootWindowHostWin::Init(
   capture_client_.reset(new aura::client::DefaultCaptureClient(root_window_));
   aura::client::SetCaptureClient(root_window_, capture_client_.get());
 
-  focus_client_.reset(new aura::FocusManager);
-  aura::client::SetFocusClient(root_window_, focus_client_.get());
-
-  activation_client_.reset(new DesktopActivationClient(root_window_));
+  if (corewm::UseFocusControllerOnDesktop()) {
+    corewm::FocusController* focus_controller =
+        new corewm::FocusController(new DesktopFocusRules);
+    focus_client_.reset(focus_controller);
+    aura::client::SetFocusClient(root_window_, focus_controller);
+    aura::client::SetActivationClient(root_window_, focus_controller);
+    root_window_->AddPreTargetHandler(focus_controller);
+  } else {
+    focus_client_.reset(new aura::FocusManager);
+    aura::client::SetFocusClient(root_window_, focus_client_.get());
+    activation_client_.reset(new DesktopActivationClient(root_window_));
+  }
 
   dispatcher_client_.reset(new DesktopDispatcherClient);
   aura::client::SetDispatcherClient(root_window_,
                                     dispatcher_client_.get());
 
-  cursor_client_.reset(new DesktopCursorClient(root_window_));
-  aura::client::SetCursorClient(root_window_, cursor_client_.get());
+  cursor_client_.reset(
+      new views::corewm::CursorManager(
+          scoped_ptr<corewm::NativeCursorManager>(
+              new views::DesktopNativeCursorManager(root_window_))));
+  aura::client::SetCursorClient(root_window_,
+                                cursor_client_.get());
 
   position_client_.reset(new DesktopScreenPositionClient());
   aura::client::SetScreenPositionClient(root_window_,
@@ -142,10 +160,9 @@ aura::RootWindow* DesktopRootWindowHostWin::Init(
                                                        GetHWND()));
   aura::client::SetDragDropClient(root_window_, drag_drop_client_.get());
 
-  focus_client_->FocusWindow(content_window_, NULL);
+  focus_client_->FocusWindow(content_window_);
   root_window_->SetProperty(kContentWindowForRootWindow, content_window_);
 
-  ui_controls::InstallUIControlsAura(CreateUIControlsAura(root_window_));
   return root_window_;
 }
 
@@ -265,7 +282,8 @@ void DesktopRootWindowHostWin::ClearNativeFocus() {
 }
 
 Widget::MoveLoopResult DesktopRootWindowHostWin::RunMoveLoop(
-    const gfx::Vector2d& drag_offset) {
+    const gfx::Vector2d& drag_offset,
+    Widget::MoveLoopSource source) {
   return message_handler_->RunMoveLoop(drag_offset) ?
       Widget::MOVE_LOOP_SUCCESSFUL : Widget::MOVE_LOOP_CANCELED;
 }
@@ -568,6 +586,10 @@ bool DesktopRootWindowHostWin::HandleAppCommand(short command) {
       GetWidget()->widget_delegate()->ExecuteWindowsCommand(command);
 }
 
+void DesktopRootWindowHostWin::HandleCancelMode() {
+  root_window_host_delegate_->OnHostCancelMode();
+}
+
 void DesktopRootWindowHostWin::HandleCaptureLost() {
   native_widget_delegate_->OnMouseCaptureLost();
 }
@@ -593,7 +615,6 @@ void DesktopRootWindowHostWin::HandleCreate() {
 
   // 1. Window property association
   // 2. MouseWheel.
-  // 3. Tooltip Manager.
 }
 
 void DesktopRootWindowHostWin::HandleDestroying() {
@@ -663,8 +684,6 @@ void DesktopRootWindowHostWin::HandleNativeBlur(HWND focused_window) {
 }
 
 bool DesktopRootWindowHostWin::HandleMouseEvent(const ui::MouseEvent& event) {
-  if (event.flags() & ui::EF_IS_NON_CLIENT)
-    return false;
   return root_window_host_delegate_->OnHostMouseEvent(
       const_cast<ui::MouseEvent*>(&event));
 }
@@ -678,6 +697,12 @@ bool DesktopRootWindowHostWin::HandleUntranslatedKeyEvent(
   scoped_ptr<ui::KeyEvent> duplicate_event(event.Copy());
   return static_cast<aura::RootWindowHostDelegate*>(root_window_)->
       OnHostKeyEvent(duplicate_event.get());
+}
+
+bool DesktopRootWindowHostWin::HandleTouchEvent(
+    const ui::TouchEvent& event) {
+  return root_window_host_delegate_->OnHostTouchEvent(
+      const_cast<ui::TouchEvent*>(&event));
 }
 
 bool DesktopRootWindowHostWin::HandleIMEMessage(UINT message,

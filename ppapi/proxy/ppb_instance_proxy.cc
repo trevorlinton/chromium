@@ -1140,13 +1140,12 @@ void PPB_Instance_Proxy::OnHostMsgDeliverSamples(
     enter.functions()->DeliverSamples(instance, audio_frames, &block_info);
 }
 
-void  PPB_Instance_Proxy::OnHostMsgSetCursor(
+void PPB_Instance_Proxy::OnHostMsgSetCursor(
     PP_Instance instance,
     int32_t type,
     const ppapi::HostResource& custom_image,
     const PP_Point& hot_spot) {
-  if (!dispatcher()->permissions().HasPermission(PERMISSION_DEV))
-    return;
+  // This API serves PPB_CursorControl_Dev and PPB_MouseCursor, so is public.
   EnterInstanceNoLock enter(instance);
   if (enter.succeeded()) {
     enter.functions()->SetCursor(
@@ -1200,6 +1199,9 @@ void PPB_Instance_Proxy::OnHostMsgUpdateSurroundingText(
 
 void PPB_Instance_Proxy::OnPluginMsgMouseLockComplete(PP_Instance instance,
                                                       int32_t result) {
+  if (!dispatcher()->IsPlugin())
+    return;
+
   // Save the mouse callback on the instance data.
   InstanceData* data = static_cast<PluginDispatcher*>(dispatcher())->
       GetInstanceData(instance);

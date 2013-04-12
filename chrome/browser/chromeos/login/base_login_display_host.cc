@@ -9,8 +9,10 @@
 #include "ash/shell_window_ids.h"
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/debug/trace_event.h"
 #include "base/file_util.h"
 #include "base/logging.h"
+#include "base/prefs/pref_service.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
@@ -32,9 +34,9 @@
 #include "chrome/browser/chromeos/mobile_config.h"
 #include "chrome/browser/chromeos/system/input_device_settings.h"
 #include "chrome/browser/chromeos/system/timezone_settings.h"
+#include "chrome/browser/managed_mode/managed_mode.h"
 #include "chrome/browser/policy/auto_enrollment_client.h"
 #include "chrome/browser/policy/browser_policy_connector.h"
-#include "chrome/browser/prefs/pref_service.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
@@ -44,6 +46,7 @@
 #include "content/public/browser/notification_types.h"
 #include "googleurl/src/gurl.h"
 #include "ui/aura/window.h"
+#include "ui/base/events/event_utils.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_animation_element.h"
@@ -374,6 +377,13 @@ void ShowLoginWizard(const std::string& first_screen_name,
   if (browser_shutdown::IsTryingToQuit())
     return;
 
+  // Managed mode is defined as a machine-level setting so we have to reset it
+  // each time login screen is shown. See also http://crbug.com/167642
+  // TODO(nkostylev): Remove this call when managed mode scope is
+  // limited to user session.
+  if (ManagedMode::IsInManagedMode())
+    ManagedMode::LeaveManagedMode();
+
   VLOG(1) << "Showing OOBE screen: " << first_screen_name;
 
   chromeos::input_method::InputMethodManager* manager =
@@ -401,6 +411,9 @@ void ShowLoginWizard(const std::string& first_screen_name,
     system::touchpad_settings::SetTapToClick(
         prefs->GetBoolean(prefs::kOwnerTapToClickEnabled));
   }
+
+  ui::SetNaturalScroll(CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kNaturalScrollDefault));
 
   gfx::Rect screen_bounds(chromeos::CalculateScreenBounds(size));
 
@@ -484,6 +497,7 @@ void ShowLoginWizard(const std::string& first_screen_name,
   chromeos::LoginUtils::Get()->PrewarmAuthentication();
   chromeos::DBusThreadManager::Get()->GetSessionManagerClient()
       ->EmitLoginPromptReady();
+  TRACE_EVENT0("chromeos", "ShowLoginWizard::EmitLoginPromptReady");
 
   // Set initial timezone if specified by customization.
   const std::string timezone_name = startup_manifest->initial_timezone();

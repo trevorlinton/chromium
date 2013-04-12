@@ -42,7 +42,7 @@ var testing = {};
    * mimic the gtest's class names.
    * @constructor
    */
-  function Test() {}
+  function Test() {};
 
   Test.prototype = {
     /**
@@ -122,6 +122,57 @@ var testing = {};
     extraLibraries: [],
 
     /**
+     * Whether to run the accessibility checks.
+     * @type {boolean}
+     */
+    runAccessibilityChecks: true,
+
+    /**
+     * Configuration for the accessibility audit.
+     * @type {axs.AuditConfiguration}
+     */
+    accessibilityAuditConfig: new axs.AuditConfiguration(),
+
+    /**
+     * Whether to treat accessibility issues (errors or warnings) as test
+     * failures. If true, any accessibility issues will cause the test to fail.
+     * If false, accessibility issues will cause a console.warn.
+     * Off by default to begin with; as we add the ability to suppress false
+     * positives, we will transition this to true.
+     * @type {boolean}
+     */
+    accessibilityIssuesAreErrors: false,
+
+    /**
+     * Holds any accessibility results found during the accessibility audit.
+     * @type {Array.<Object>}
+     */
+    a11yResults_: [],
+
+    /**
+     * Gets the list of accessibility errors found during the accessibility
+     * audit. Only for use in testing.
+     * @return {Array.<Object>}
+     */
+    getAccessibilityResults: function() {
+      return this.a11yResults_;
+    },
+
+    /**
+     * Run accessibility checks after this test completes.
+     */
+    enableAccessibilityChecks: function() {
+      this.runAccessibilityChecks = true;
+    },
+
+    /**
+     * Don't run accessibility checks after this test completes.
+     */
+    disableAccessibilityChecks: function() {
+      this.runAccessibilityChecks = false;
+    },
+
+    /**
      * Create a new class to handle |messageNames|, assign it to
      * |this.mockHandler|, register its messages and return it.
      * @return {Mock} Mock handler class assigned to |this.mockHandler|.
@@ -175,6 +226,24 @@ var testing = {};
      */
     runTest: function(testBody) {
       testBody.call(this);
+    },
+
+    /**
+     * Called to run the accessibility audit from the perspective of this
+     * fixture.
+     */
+    runAccessibilityAudit: function() {
+      if (!this.runAccessibilityChecks || typeof document === 'undefined')
+        return;
+
+      if (!runAccessibilityAudit(this.a11yResults_,
+                                 this.accessibilityAuditConfig)) {
+        var report = accessibilityAuditReport(this.a11yResults_);
+        if (this.accessibilityIssuesAreErrors)
+          throw new Error(report);
+        else
+          console.warn(report);
+      }
     },
 
     /**
@@ -294,6 +363,14 @@ var testing = {};
     runTest: function() {
       if (this.body && this.fixture)
         this.fixture.runTest(this.body);
+    },
+
+    /**
+     * Called after a test is run (in testDone) to test accessibility.
+     */
+    runAccessibilityAudit: function() {
+      if (this.fixture)
+        this.fixture.runAccessibilityAudit();
     },
 
     /**
@@ -607,18 +684,20 @@ var testing = {};
     if (!testIsDone) {
       testIsDone = true;
       if (currentTestCase) {
-        try {
-          currentTestCase.tearDown();
-        } catch (e) {
-          // Caught an exception in tearDown; Register the error and recreate
-          // the result if it is passed in.
-          errors.push(e);
-          if (result)
-            result = [false, errorsToMessage([e], result[1])];
-        }
+        var ok = true;
+        ok = createExpect(currentTestCase.runAccessibilityAudit.bind(
+            currentTestCase)).call(null) && ok;
+        ok = createExpect(currentTestCase.tearDown.bind(
+            currentTestCase)).call(null) && ok;
+
+        if (!ok && result)
+          result = [false, errorsToMessage(errors, result[1])];
+
         currentTestCase = null;
       }
-      chrome.send('testResult', result ? result : testResult());
+      if (!result)
+        result = testResult();
+      chrome.send('testResult', result);
       errors.splice(0, errors.length);
     } else {
       console.warn('testIsDone already');
@@ -652,9 +731,9 @@ var testing = {};
    */
   function testResult(errorsOk) {
     var result = [true, ''];
-    if (errors.length) {
+    if (errors.length)
       result = [!!errorsOk, errorsToMessage(errors)];
-    }
+
     return result;
   }
 
@@ -790,6 +869,57 @@ var testing = {};
   function assertNotReached(message) {
     helper.registerCall();
     throw new Error(helper.getCallMessage(message));
+  }
+
+  /**
+   * Run an accessibility audit on the current page state.
+   * @type {Function}
+   * @param {Array} a11yResults
+   * @param {axs.AuditConfigutarion=} opt_config
+   * @return {boolean} Whether there were any errors or warnings
+   * @private
+   */
+  function runAccessibilityAudit(a11yResults, opt_config) {
+    var auditResults = axs.Audit.run(opt_config);
+    for (var i = 0; i < auditResults.length; i++) {
+      var auditResult = auditResults[i];
+      if (auditResult.result == axs.constants.AuditResult.FAIL) {
+        var auditRule = auditResult.rule;
+        // TODO(aboxhall): more useful error messages (sadly non-trivial)
+        a11yResults.push(auditResult);
+      }
+    }
+
+    // TODO(aboxhall): have strict (no errors or warnings) vs non-strict
+    // (warnings ok)
+    // TODO(aboxhall): some kind of info logging for warnings only??
+    return (a11yResults.length == 0);
+  }
+
+  /**
+   * Concatenates the accessibility error messages for each result in
+   * |a11yResults| and
+   * |a11yWarnings| in to an accessibility report, appends it to the given
+   * |message| and returns the resulting message string.
+   * @param {Array.<string>} a11yResults The list of accessibility results
+   * @return {string} |message| + accessibility report.
+   */
+  function accessibilityAuditReport(a11yResults, message) {
+    message = message ? message + '\n\n' : '\n';
+    message += axs.Audit.createReport(a11yResults);
+    return message;
+  }
+
+  /**
+   * Asserts that the current page state passes the accessibility audit.
+   * @param {Array=} opt_results Array to fill with results, if desired.
+   */
+  function assertAccessibilityOk(opt_results) {
+    helper.registerCall();
+    var a11yResults = opt_results || [];
+    var auditConfig = currentTestCase.fixture.accessibilityAuditConfig;
+    if (!runAccessibilityAudit(a11yResults, auditConfig))
+      throw new Error(accessibilityAuditReport(a11yResults));
   }
 
   /**
@@ -1377,6 +1507,7 @@ var testing = {};
   exports.assertLT = assertLT;
   exports.assertNotEquals = assertNotEquals;
   exports.assertNotReached = assertNotReached;
+  exports.assertAccessibilityOk = assertAccessibilityOk;
   exports.callFunction = callFunction;
   exports.callFunctionWithSavedArgs = callFunctionWithSavedArgs;
   exports.callGlobalWithSavedArgs = callGlobalWithSavedArgs;
@@ -1389,11 +1520,13 @@ var testing = {};
   exports.expectLT = createExpect(assertLT);
   exports.expectNotEquals = createExpect(assertNotEquals);
   exports.expectNotReached = createExpect(assertNotReached);
+  exports.expectAccessibilityOk = createExpect(assertAccessibilityOk);
   exports.preloadJavascriptLibraries = preloadJavascriptLibraries;
   exports.registerMessageCallback = registerMessageCallback;
   exports.registerMockGlobals = registerMockGlobals;
   exports.registerMockMessageCallbacks = registerMockMessageCallbacks;
   exports.resetTestState = resetTestState;
+  exports.runAccessibilityAudit = runAccessibilityAudit;
   exports.runAllActions = runAllActions;
   exports.runAllActionsAsync = runAllActionsAsync;
   exports.runTest = runTest;
@@ -1402,6 +1535,7 @@ var testing = {};
   exports.DUMMY_URL = DUMMY_URL;
   exports.TEST = TEST;
   exports.TEST_F = TEST_F;
+  exports.RUNTIME_TEST_F = TEST_F;
   exports.GEN = GEN;
   exports.GEN_INCLUDE = GEN_INCLUDE;
   exports.WhenTestDone = WhenTestDone;

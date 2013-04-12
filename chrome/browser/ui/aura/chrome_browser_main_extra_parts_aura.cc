@@ -7,16 +7,14 @@
 #include "chrome/browser/chrome_browser_main.h"
 #include "chrome/browser/toolkit_extra_parts.h"
 #include "chrome/browser/ui/aura/active_desktop_monitor.h"
-#include "chrome/browser/ui/aura/stacking_client_aura.h"
 #include "ui/aura/env.h"
 #include "ui/gfx/screen.h"
 #include "ui/views/widget/desktop_aura/desktop_screen.h"
-#include "ui/views/widget/desktop_aura/desktop_stacking_client.h"
 #include "ui/views/widget/native_widget_aura.h"
 
 #if defined(OS_LINUX)
 #include "chrome/browser/ui/libgtk2ui/gtk2_ui.h"
-#include "ui/base/linux_ui.h"
+#include "ui/linux_ui/linux_ui.h"
 #else
 #endif
 
@@ -30,7 +28,7 @@ ChromeBrowserMainExtraPartsAura::ChromeBrowserMainExtraPartsAura() {
 ChromeBrowserMainExtraPartsAura::~ChromeBrowserMainExtraPartsAura() {
 }
 
-void ChromeBrowserMainExtraPartsAura::PreProfileInit() {
+void ChromeBrowserMainExtraPartsAura::ToolkitInitialized() {
 #if !defined(OS_CHROMEOS)
 #if defined(USE_ASH)
   active_desktop_monitor_.reset(new ActiveDesktopMonitor);
@@ -39,8 +37,6 @@ void ChromeBrowserMainExtraPartsAura::PreProfileInit() {
   {
     gfx::Screen::SetScreenInstance(gfx::SCREEN_TYPE_NATIVE,
                                    views::CreateDesktopScreen());
-    stacking_client_.reset(new views::DesktopStackingClient);
-    aura::client::SetStackingClient(stacking_client_.get());
   }
 #endif
 
@@ -51,7 +47,6 @@ void ChromeBrowserMainExtraPartsAura::PreProfileInit() {
 }
 
 void ChromeBrowserMainExtraPartsAura::PostMainMessageLoopRun() {
-  stacking_client_.reset();
   active_desktop_monitor_.reset();
 
   // aura::Env instance is deleted in BrowserProcessImpl::StartTearDown

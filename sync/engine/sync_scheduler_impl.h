@@ -33,7 +33,9 @@ namespace syncer {
 
 class BackoffDelayProvider;
 
-class SYNC_EXPORT_PRIVATE SyncSchedulerImpl : public SyncScheduler {
+class SYNC_EXPORT_PRIVATE SyncSchedulerImpl :
+    public SyncScheduler,
+    public SyncSessionJob::DestructionObserver {
  public:
   // |name| is a display string to identify the syncer thread.  Takes
   // |ownership of |syncer| and |delay_provider|.
@@ -78,6 +80,9 @@ class SYNC_EXPORT_PRIVATE SyncSchedulerImpl : public SyncScheduler {
   virtual void OnShouldStopSyncingPermanently() OVERRIDE;
   virtual void OnSyncProtocolError(
       const sessions::SyncSessionSnapshot& snapshot) OVERRIDE;
+
+  // SyncSessionJob::DestructionObserver implementation.
+  virtual void OnJobDestroyed(SyncSessionJob* job) OVERRIDE;
 
  private:
   enum JobProcessDecision {
@@ -163,7 +168,8 @@ class SYNC_EXPORT_PRIVATE SyncSchedulerImpl : public SyncScheduler {
                        base::TimeDelta delay);
 
   // Helper to assemble a job and post a delayed task to sync.
-  void ScheduleSyncSessionJob(scoped_ptr<SyncSessionJob> job);
+  void ScheduleSyncSessionJob(const tracked_objects::Location& loc,
+                              scoped_ptr<SyncSessionJob> job);
 
   // Invoke the Syncer to perform a sync.
   bool DoSyncSessionJob(scoped_ptr<SyncSessionJob> job);
@@ -215,6 +221,9 @@ class SYNC_EXPORT_PRIVATE SyncSchedulerImpl : public SyncScheduler {
   // Helper to signal all listeners registered with |session_context_|.
   void Notify(SyncEngineEvent::EventCause cause);
 
+  // Helper to signal listeners about changed retry time
+  void NotifyRetryTime(base::Time retry_time);
+
   // Callback to change backoff state. |to_be_canary| in both cases is the job
   // that should be granted canary privileges. Note: it is possible that the
   // job that gets scheduled when this callback is scheduled is different from
@@ -241,10 +250,6 @@ class SYNC_EXPORT_PRIVATE SyncSchedulerImpl : public SyncScheduler {
   // Creates a session for a poll and performs the sync.
   void PollTimerCallback();
 
-  // Used to update |connection_code_|, see below.
-  void UpdateServerConnectionManagerStatus(
-      HttpResponse::ServerConnectionCode code);
-
   // Called once the first time thread_ is started to broadcast an initial
   // session snapshot containing data like initial_sync_ended.  Important when
   // the client starts up and does not need to perform an initial sync.
@@ -257,6 +262,8 @@ class SYNC_EXPORT_PRIVATE SyncSchedulerImpl : public SyncScheduler {
   void UpdateNudgeTimeRecords(const sessions::SyncSourceInfo& info);
 
   virtual void OnActionableError(const sessions::SyncSessionSnapshot& snapshot);
+
+  void set_pending_nudge(SyncSessionJob* job);
 
   base::WeakPtrFactory<SyncSchedulerImpl> weak_ptr_factory_;
 
@@ -290,9 +297,6 @@ class SYNC_EXPORT_PRIVATE SyncSchedulerImpl : public SyncScheduler {
 
   // The mode of operation.
   Mode mode_;
-
-  // The latest connection code we got while trying to connect.
-  HttpResponse::ServerConnectionCode connection_code_;
 
   // Tracks (does not own) in-flight nudges (scheduled or unscheduled),
   // so we can coalesce. NULL if there is no pending nudge.

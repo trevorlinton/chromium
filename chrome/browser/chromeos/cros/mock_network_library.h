@@ -110,11 +110,11 @@ class MockNetworkLibrary : public NetworkLibrary {
   MOCK_METHOD1(SetCellularDataRoamingAllowed, void(bool));
   MOCK_METHOD2(SetCarrier, void(const std::string&,
                                 const NetworkOperationCallback&));
+  MOCK_METHOD0(ResetModem, void());
   MOCK_METHOD0(IsCellularAlwaysInRoaming, bool());
 
   MOCK_METHOD0(RequestNetworkScan, void(void));
   MOCK_CONST_METHOD1(HasProfileType, bool(NetworkProfileType));
-  MOCK_METHOD1(GetWifiAccessPoints, bool(WifiAccessPointVector*));
   MOCK_CONST_METHOD1(CanConnectToNetwork, bool(const Network*));
   MOCK_METHOD1(RefreshIPConfig, void(Network*));
   MOCK_METHOD1(ConnectToWifiNetwork, void(WifiNetwork*));
@@ -160,13 +160,13 @@ class MockNetworkLibrary : public NetworkLibrary {
   MOCK_CONST_METHOD0(wimax_busy, bool(void));
   MOCK_CONST_METHOD0(mobile_busy, bool(void));
 
-  MOCK_CONST_METHOD0(wifi_scanning, bool(void));
-
   MOCK_CONST_METHOD0(active_network, const Network*(void));
   MOCK_CONST_METHOD0(active_nonvirtual_network, const Network*(void));
   MOCK_CONST_METHOD0(connected_network, const Network*(void));
   MOCK_CONST_METHOD0(connecting_network, const Network*(void));
 
+  MOCK_CONST_METHOD0(wifi_scanning, bool(void));
+  MOCK_CONST_METHOD0(cellular_initializing, bool(void));
   MOCK_CONST_METHOD0(offline_mode, bool(void));
 
   MOCK_METHOD1(EnableEthernetNetworkDevice, void(bool));
@@ -198,6 +198,18 @@ class MockNetworkLibrary : public NetworkLibrary {
                                      bool));
   MOCK_METHOD2(SetActiveNetwork, bool(ConnectionType, const std::string&));
 };
+
+class MockCellularNetwork : public CellularNetwork {
+ public:
+  explicit MockCellularNetwork(const std::string& service_path);
+  virtual ~MockCellularNetwork();
+
+  MOCK_METHOD0(StartActivation, bool(void));
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(MockCellularNetwork);
+};
+
 
 }  // namespace chromeos
 

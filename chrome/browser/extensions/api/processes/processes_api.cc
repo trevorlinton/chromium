@@ -9,10 +9,9 @@
 #include "base/lazy_instance.h"
 #include "base/message_loop.h"
 #include "base/metrics/histogram.h"
-#include "base/string_number_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "base/values.h"
-
 #include "chrome/browser/extensions/api/processes/processes_api_constants.h"
 #include "chrome/browser/extensions/api/tabs/tabs_constants.h"
 #include "chrome/browser/extensions/event_router.h"
@@ -503,6 +502,14 @@ void ProcessesAPI::Shutdown() {
   ExtensionSystem::Get(profile_)->event_router()->UnregisterObserver(this);
 }
 
+static base::LazyInstance<ProfileKeyedAPIFactory<ProcessesAPI> >
+g_factory = LAZY_INSTANCE_INITIALIZER;
+
+// static
+ProfileKeyedAPIFactory<ProcessesAPI>* ProcessesAPI::GetFactoryInstance() {
+  return &g_factory.Get();
+}
+
 // static
 ProcessesAPI* ProcessesAPI::Get(Profile* profile) {
   return ProfileKeyedAPIFactory<ProcessesAPI>::GetForProfile(profile);
@@ -525,15 +532,6 @@ void ProcessesAPI::OnListenerRemoved(const EventListenerInfo& details) {
   // is removed (or a process with one exits), then we let the extension API
   // know that it has one fewer listener.
   processes_event_router()->ListenerRemoved();
-}
-
-static base::LazyInstance<ProfileKeyedAPIFactory<ProcessesAPI> >
-g_factory = LAZY_INSTANCE_INITIALIZER;
-
-template <>
-ProfileKeyedAPIFactory<ProcessesAPI>*
-ProfileKeyedAPIFactory<ProcessesAPI>::GetInstance() {
-  return &g_factory.Get();
 }
 
 GetProcessIdForTabFunction::GetProcessIdForTabFunction() : tab_id_(-1) {

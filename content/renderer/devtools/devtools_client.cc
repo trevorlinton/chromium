@@ -11,15 +11,21 @@
 #include "content/public/common/content_switches.h"
 #include "content/renderer/render_thread_impl.h"
 #include "content/renderer/render_view_impl.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebFloatPoint.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebDevToolsFrontend.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebFloatPoint.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebString.h"
 #include "ui/base/ui_base_switches.h"
 
 using WebKit::WebDevToolsFrontend;
 using WebKit::WebString;
 
 namespace content {
+
+namespace {
+
+bool g_devtools_frontend_testing_enabled = false;
+
+}  // namespace
 
 DevToolsClient::DevToolsClient(RenderViewImpl* render_view)
     : RenderViewObserver(render_view) {
@@ -56,6 +62,10 @@ void DevToolsClient::activateWindow() {
   Send(new DevToolsHostMsg_ActivateWindow(routing_id()));
 }
 
+void DevToolsClient::changeAttachedWindowHeight(unsigned height) {
+  Send(new DevToolsHostMsg_ChangeAttachedWindowHeight(routing_id(), height));
+}
+
 void DevToolsClient::closeWindow() {
   Send(new DevToolsHostMsg_CloseWindow(routing_id()));
 }
@@ -89,9 +99,31 @@ void DevToolsClient::append(const WebKit::WebString& url,
                                   content.utf8()));
 }
 
+void DevToolsClient::requestFileSystems() {
+  Send(new DevToolsHostMsg_RequestFileSystems(routing_id()));
+}
+
+void DevToolsClient::addFileSystem() {
+  Send(new DevToolsHostMsg_AddFileSystem(routing_id()));
+}
+
+void DevToolsClient::removeFileSystem(const WebString& fileSystemPath) {
+  Send(new DevToolsHostMsg_RemoveFileSystem(routing_id(),
+                                            fileSystemPath.utf8()));
+}
+
+bool DevToolsClient::isUnderTest() {
+  return g_devtools_frontend_testing_enabled;
+}
+
 void DevToolsClient::OnDispatchOnInspectorFrontend(const std::string& message) {
   web_tools_frontend_->dispatchOnInspectorFrontend(
       WebString::fromUTF8(message));
+}
+
+// static
+void DevToolsClient::EnableDevToolsFrontendTesting() {
+  g_devtools_frontend_testing_enabled = true;
 }
 
 }  // namespace content

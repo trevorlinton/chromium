@@ -6,6 +6,7 @@
 #define CC_LAYER_TREE_IMPL_H_
 
 #include "base/hash_tables.h"
+#include "base/values.h"
 #include "cc/layer_impl.h"
 
 #if defined(COMPILER_GCC)
@@ -28,10 +29,13 @@ class LayerTreeDebugState;
 class LayerTreeHostImpl;
 class LayerTreeImpl;
 class LayerTreeSettings;
+class MemoryHistory;
 class OutputSurface;
-class PinchZoomViewport;
+class PaintTimeCounter;
+class Proxy;
 class ResourceProvider;
 class TileManager;
+struct RendererCapabilities;
 
 class CC_EXPORT LayerTreeImpl {
  public:
@@ -46,20 +50,25 @@ class CC_EXPORT LayerTreeImpl {
   // Methods called by the layer tree that pass-through or access LTHI.
   // ---------------------------------------------------------------------------
   const LayerTreeSettings& settings() const;
+  const RendererCapabilities& rendererCapabilities() const;
   OutputSurface* output_surface() const;
   ResourceProvider* resource_provider() const;
   TileManager* tile_manager() const;
   FrameRateCounter* frame_rate_counter() const;
+  PaintTimeCounter* paint_time_counter() const;
+  MemoryHistory* memory_history() const;
   bool IsActiveTree() const;
   bool IsPendingTree() const;
+  bool IsRecycleTree() const;
   LayerImpl* FindActiveTreeLayerById(int id);
   LayerImpl* FindPendingTreeLayerById(int id);
   int MaxTextureSize() const;
+  bool PinchGestureActive() const;
+  base::TimeTicks CurrentFrameTime() const;
 
   // Tree specific methods exposed to layer-impl tree.
   // ---------------------------------------------------------------------------
   void SetNeedsRedraw();
-  void SetNeedsUpdateDrawProperties();
 
   // TODO(nduca): These are implemented in cc files temporarily, but will become
   // trivial accessors in a followup patch.
@@ -69,13 +78,15 @@ class CC_EXPORT LayerTreeImpl {
   const gfx::Size& layout_viewport_size() const;
   std::string layer_tree_as_text() const;
   DebugRectHistory* debug_rect_history() const;
-  const PinchZoomViewport& pinch_zoom_viewport() const;
+  scoped_ptr<base::Value> AsValue() const;
 
   // Other public methods
   // ---------------------------------------------------------------------------
   LayerImpl* RootLayer() const { return root_layer_.get(); }
   void SetRootLayer(scoped_ptr<LayerImpl>);
   scoped_ptr<LayerImpl> DetachLayerTree();
+
+  void pushPropertiesTo(LayerTreeImpl*);
 
   int source_frame_number() const { return source_frame_number_; }
   void set_source_frame_number(int frame_number) {
@@ -87,19 +98,15 @@ class CC_EXPORT LayerTreeImpl {
     hud_layer_ = layer_impl;
   }
 
-  LayerImpl* root_scroll_layer() { return root_scroll_layer_; }
-  const LayerImpl* root_scroll_layer() const { return root_scroll_layer_; }
-  void set_root_scroll_layer(LayerImpl* layer_impl) {
-    root_scroll_layer_ = layer_impl;
-  }
-
-  LayerImpl* currently_scrolling_layer() { return currently_scrolling_layer_; }
-  void set_currently_scrolling_layer(LayerImpl* layer_impl) {
-    currently_scrolling_layer_ = layer_impl;
+  LayerImpl* RootScrollLayer();
+  LayerImpl* CurrentlyScrollingLayer();
+  void set_currently_scrolling_layer(LayerImpl* layer) {
+    currently_scrolling_layer_ = layer;
   }
 
   void ClearCurrentlyScrollingLayer();
 
+  void FindRootScrollLayer();
   void UpdateMaxScrollOffset();
 
   SkColor background_color() const { return background_color_; }
@@ -112,14 +119,51 @@ class CC_EXPORT LayerTreeImpl {
     has_transparent_background_ = transparent;
   }
 
+  enum UpdateDrawPropertiesReason {
+    UPDATE_PENDING_TREE,
+    UPDATE_ACTIVE_TREE,
+    UPDATE_ACTIVE_TREE_FOR_DRAW
+  };
+
+  gfx::Transform ImplTransform() const;
+
+  void SetPageScaleFactorAndLimits(float page_scale_factor,
+      float min_page_scale_factor, float max_page_scale_factor);
+  void SetPageScaleDelta(float delta);
+  float total_page_scale_factor() const {
+    return page_scale_factor_ * page_scale_delta_;
+  }
+  float page_scale_factor() const { return page_scale_factor_; }
+  float min_page_scale_factor() const { return min_page_scale_factor_; }
+  float max_page_scale_factor() const { return max_page_scale_factor_; }
+  float page_scale_delta() const  { return page_scale_delta_; }
+  void set_sent_page_scale_delta(float delta) {
+    sent_page_scale_delta_ = delta;
+  }
+  float sent_page_scale_delta() const { return sent_page_scale_delta_; }
+
   // Updates draw properties and render surface layer list
-  void UpdateDrawProperties();
+  void UpdateDrawProperties(UpdateDrawPropertiesReason reason);
+  void set_needs_update_draw_properties() {
+    needs_update_draw_properties_ = true;
+  }
+  bool needs_update_draw_properties() const {
+    return needs_update_draw_properties_;
+  }
+
+  void set_needs_full_tree_sync(bool needs) { needs_full_tree_sync_ = needs; }
+  bool needs_full_tree_sync() const { return needs_full_tree_sync_; }
 
   void ClearRenderSurfaces();
 
+  bool AreVisibleResourcesReady() const;
+
   const LayerList& RenderSurfaceLayerList() const;
 
-  gfx::Size ContentSize() const;
+  // These return the size of the root scrollable area and the size of
+  // the user-visible scrolling viewport, in CSS layout coordinates.
+  gfx::Size ScrollableSize() const;
+  gfx::SizeF ScrollableViewportSize() const;
 
   LayerImpl* LayerById(int id);
 
@@ -128,6 +172,23 @@ class CC_EXPORT LayerTreeImpl {
   void UnregisterLayer(LayerImpl* layer);
 
   AnimationRegistrar* animationRegistrar() const;
+
+  void PushPersistedState(LayerTreeImpl* pendingTree);
+
+  void DidBecomeActive();
+
+  bool ContentsTexturesPurged() const;
+  void SetContentsTexturesPurged();
+  void ResetContentsTexturesPurged();
+
+  // Set on the active tree when the viewport size recently changed
+  // and the active tree's size is now out of date.
+  bool ViewportSizeInvalid() const;
+  void SetViewportSizeInvalid();
+  void ResetViewportSizeInvalid();
+
+  // Useful for debug assertions, probably shouldn't be used for anything else.
+  Proxy* proxy() const;
 
 protected:
   LayerTreeImpl(LayerTreeHostImpl* layer_tree_host_impl);
@@ -141,15 +202,29 @@ protected:
   SkColor background_color_;
   bool has_transparent_background_;
 
+  float page_scale_factor_;
+  float page_scale_delta_;
+  float sent_page_scale_delta_;
+  float min_page_scale_factor_;
+  float max_page_scale_factor_;
+
   typedef base::hash_map<int, LayerImpl*> LayerIdMap;
   LayerIdMap layer_id_map_;
 
-  // Persisted state
+  // Persisted state for non-impl-side-painting.
   int scrolling_layer_id_from_previous_tree_;
 
   // List of visible layers for the most recently prepared frame. Used for
   // rendering and input event hit testing.
   LayerList render_surface_layer_list_;
+
+  bool contents_textures_purged_;
+  bool viewport_size_invalid_;
+  bool needs_update_draw_properties_;
+
+  // In impl-side painting mode, this is true when the tree may contain
+  // structural differences relative to the active tree.
+  bool needs_full_tree_sync_;
 
   DISALLOW_COPY_AND_ASSIGN(LayerTreeImpl);
 };

@@ -15,6 +15,7 @@
 #include "build/build_config.h"
 #include "cc/compositor_frame.h"
 #include "cc/compositor_frame_metadata.h"
+#include "cc/context_provider.h"
 #include "cc/damage_tracker.h"
 #include "cc/geometry_binding.h"
 #include "cc/gl_frame_data.h"
@@ -29,8 +30,8 @@
 #include "cc/stream_video_draw_quad.h"
 #include "cc/texture_draw_quad.h"
 #include "cc/video_layer_impl.h"
+#include "gpu/GLES2/gl2extchromium.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebGraphicsContext3D.h"
-#include "third_party/WebKit/Source/Platform/chromium/public/WebSharedGraphicsContext3D.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "third_party/khronos/GLES2/gl2ext.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -44,11 +45,27 @@
 
 using WebKit::WebGraphicsContext3D;
 using WebKit::WebGraphicsMemoryAllocation;
-using WebKit::WebSharedGraphicsContext3D;
 
 namespace cc {
 
 namespace {
+
+// TODO(epenner): This should probably be moved to output surface.
+//
+// This implements a simple fence based on client side swaps.
+// This is to isolate the ResourceProvider from 'frames' which
+// it shouldn't need to care about, while still allowing us to
+// enforce good texture recycling behavior strictly throughout
+// the compositor (don't recycle a texture while it's in use).
+class SimpleSwapFence : public ResourceProvider::Fence {
+public:
+    SimpleSwapFence() : m_hasPassed(false) {}
+    virtual bool hasPassed() OVERRIDE { return m_hasPassed; }
+    void setHasPassed() { m_hasPassed = true; }
+private:
+    virtual ~SimpleSwapFence() {}
+    bool m_hasPassed;
+};
 
 bool needsIOSurfaceReadbackWorkaround()
 {
@@ -75,7 +92,7 @@ GLRenderer::GLRenderer(RendererClient* client, OutputSurface* outputSurface, Res
     , m_offscreenFramebufferId(0)
     , m_sharedGeometryQuad(gfx::RectF(-0.5f, -0.5f, 1.0f, 1.0f))
     , m_outputSurface(outputSurface)
-    , m_context(outputSurface->Context3D())
+    , m_context(outputSurface->context3d())
     , m_isViewportChanged(false)
     , m_isBackbufferDiscarded(false)
     , m_discardBackbufferWhenNotVisible(false)
@@ -118,11 +135,10 @@ bool GLRenderer::initialize()
     if (extensions.count("GL_CHROMIUM_iosurface"))
         DCHECK(extensions.count("GL_ARB_texture_rectangle"));
 
-    m_capabilities.usingGpuMemoryManager = extensions.count("GL_CHROMIUM_gpu_memory_manager");
+    m_capabilities.usingGpuMemoryManager = extensions.count("GL_CHROMIUM_gpu_memory_manager")
+                                           && settings().useMemoryManagement;
     if (m_capabilities.usingGpuMemoryManager)
         m_context->setMemoryAllocationChangedCallbackCHROMIUM(this);
-
-    m_capabilities.usingDiscardBackbuffer = extensions.count("GL_CHROMIUM_discard_backbuffer");
 
     m_capabilities.usingEglImage = extensions.count("GL_OES_EGL_image_external");
 
@@ -131,6 +147,12 @@ bool GLRenderer::initialize()
 
     // The updater can access textures while the GLRenderer is using them.
     m_capabilities.allowPartialTextureUpdates = true;
+
+    // Check for texture fast paths. Currently we always use MO8 textures,
+    // so we only need to avoid POT textures if we have an NPOT fast-path.
+    m_capabilities.avoidPow2Textures = extensions.count("GL_CHROMIUM_fast_NPOT_MO8_textures");
+
+    m_capabilities.usingOffscreenContext3d = true;
 
     m_isUsingBindUniform = extensions.count("GL_CHROMIUM_bind_uniform_location");
 
@@ -233,7 +255,7 @@ void GLRenderer::beginDrawingFrame(DrawingFrame& frame)
         // can leave the window at the wrong size if we never draw and the proper
         // viewport size is never set.
         m_isViewportChanged = false;
-        m_context->reshape(viewportWidth(), viewportHeight());
+        m_outputSurface->Reshape(gfx::Size(viewportWidth(), viewportHeight()));
     }
 
     makeContextCurrent();
@@ -260,8 +282,7 @@ void GLRenderer::drawQuad(DrawingFrame& frame, const DrawQuad* quad)
 {
     DCHECK(quad->rect.Contains(quad->visible_rect));
     if (quad->material != DrawQuad::TEXTURE_CONTENT) {
-        flushTextureQuadCache();
-        setBlendEnabled(quad->ShouldDrawWithBlending());
+      flushTextureQuadCache();
     }
 
     switch (quad->material) {
@@ -300,15 +321,17 @@ void GLRenderer::drawQuad(DrawingFrame& frame, const DrawQuad* quad)
 
 void GLRenderer::drawCheckerboardQuad(const DrawingFrame& frame, const CheckerboardDrawQuad* quad)
 {
+    setBlendEnabled(quad->ShouldDrawWithBlending());
+
     const TileCheckerboardProgram* program = tileCheckerboardProgram();
     DCHECK(program && (program->initialized() || isContextLost()));
     setUseProgram(program->program());
 
     SkColor color = quad->color;
-    GLC(context(), context()->uniform4f(program->fragmentShader().colorLocation(), SkColorGetR(color) / 255.0, SkColorGetG(color) / 255.0, SkColorGetB(color) / 255.0, 1));
+    GLC(context(), context()->uniform4f(program->fragmentShader().colorLocation(), SkColorGetR(color) * (1.0f / 255.0f), SkColorGetG(color) * (1.0f / 255.0f), SkColorGetB(color) * (1.0f / 255.0f), 1));
 
     const int checkerboardWidth = 16;
-    float frequency = 1.0 / checkerboardWidth;
+    float frequency = 1.0f / checkerboardWidth;
 
     gfx::Rect tileRect = quad->rect;
     float texOffsetX = tileRect.x() % checkerboardWidth;
@@ -325,6 +348,8 @@ void GLRenderer::drawCheckerboardQuad(const DrawingFrame& frame, const Checkerbo
 
 void GLRenderer::drawDebugBorderQuad(const DrawingFrame& frame, const DebugBorderDrawQuad* quad)
 {
+    setBlendEnabled(quad->ShouldDrawWithBlending());
+
     static float glMatrix[16];
     const SolidColorProgram* program = solidColorProgram();
     DCHECK(program && (program->initialized() || isContextLost()));
@@ -333,15 +358,15 @@ void GLRenderer::drawDebugBorderQuad(const DrawingFrame& frame, const DebugBorde
     // Use the full quadRect for debug quads to not move the edges based on partial swaps.
     const gfx::Rect& layerRect = quad->rect;
     gfx::Transform renderMatrix = quad->quadTransform();
-    renderMatrix.Translate(0.5 * layerRect.width() + layerRect.x(), 0.5 * layerRect.height() + layerRect.y());
+    renderMatrix.Translate(0.5f * layerRect.width() + layerRect.x(), 0.5f * layerRect.height() + layerRect.y());
     renderMatrix.Scale(layerRect.width(), layerRect.height());
     GLRenderer::toGLMatrix(&glMatrix[0], frame.projectionMatrix * renderMatrix);
     GLC(context(), context()->uniformMatrix4fv(program->vertexShader().matrixLocation(), 1, false, &glMatrix[0]));
 
     SkColor color = quad->color;
-    float alpha = SkColorGetA(color) / 255.0;
+    float alpha = SkColorGetA(color) * (1.0f / 255.0f);
 
-    GLC(context(), context()->uniform4f(program->fragmentShader().colorLocation(), (SkColorGetR(color) / 255.0) * alpha, (SkColorGetG(color) / 255.0) * alpha, (SkColorGetB(color) / 255.0) * alpha, alpha));
+    GLC(context(), context()->uniform4f(program->fragmentShader().colorLocation(), (SkColorGetR(color) * (1.0f / 255.0f)) * alpha, (SkColorGetG(color) * (1.0f / 255.0f)) * alpha, (SkColorGetB(color) * (1.0f / 255.0f)) * alpha, alpha));
 
     GLC(context(), context()->lineWidth(quad->width));
 
@@ -349,66 +374,71 @@ void GLRenderer::drawDebugBorderQuad(const DrawingFrame& frame, const DebugBorde
     GLC(context(), context()->drawElements(GL_LINE_LOOP, 4, GL_UNSIGNED_SHORT, 0));
 }
 
-static WebGraphicsContext3D* getFilterContext(bool hasImplThread)
-{
-    if (hasImplThread)
-        return WebSharedGraphicsContext3D::compositorThreadContext();
-    else
-        return WebSharedGraphicsContext3D::mainThreadContext();
-}
-
-static GrContext* getFilterGrContext(bool hasImplThread)
-{
-    if (hasImplThread)
-        return WebSharedGraphicsContext3D::compositorThreadGrContext();
-    else
-        return WebSharedGraphicsContext3D::mainThreadGrContext();
-}
-
-static inline SkBitmap applyFilters(GLRenderer* renderer, const WebKit::WebFilterOperations& filters, ScopedResource* sourceTexture, bool hasImplThread)
+static inline SkBitmap applyFilters(GLRenderer* renderer, const WebKit::WebFilterOperations& filters, ScopedResource* sourceTextureResource)
 {
     if (filters.isEmpty())
         return SkBitmap();
 
-    WebGraphicsContext3D* filterContext = getFilterContext(hasImplThread);
-    GrContext* filterGrContext = getFilterGrContext(hasImplThread);
-
-    if (!filterContext || !filterGrContext)
+    cc::ContextProvider* offscreenContexts = renderer->resourceProvider()->offscreenContextProvider();
+    if (!offscreenContexts || !offscreenContexts->Context3d() || !offscreenContexts->GrContext())
         return SkBitmap();
 
-    renderer->context()->flush();
+    ResourceProvider::ScopedWriteLockGL lock(renderer->resourceProvider(), sourceTextureResource->id());
 
-    ResourceProvider::ScopedWriteLockGL lock(renderer->resourceProvider(), sourceTexture->id());
-    SkBitmap source = RenderSurfaceFilters::apply(filters, lock.textureId(), sourceTexture->size(), filterContext, filterGrContext);
+    // Flush the compositor context to ensure that textures there are available
+    // in the shared context.  Do this after locking/creating the compositor
+    // texture.
+    renderer->resourceProvider()->flush();
+
+    // Make sure skia uses the correct GL context.
+    offscreenContexts->Context3d()->makeContextCurrent();
+
+    SkBitmap source = RenderSurfaceFilters::apply(filters, lock.textureId(), sourceTextureResource->size(), offscreenContexts->GrContext());
+
+    // Flush skia context so that all the rendered stuff appears on the
+    // texture.
+    offscreenContexts->GrContext()->flush();
+
+    // Flush the GL context so rendering results from this context are
+    // visible in the compositor's context.
+    offscreenContexts->Context3d()->flush();
+
+    // Use the compositor's GL context again.
+    renderer->resourceProvider()->graphicsContext3D()->makeContextCurrent();
     return source;
 }
 
-static SkBitmap applyImageFilter(GLRenderer* renderer, SkImageFilter* filter, ScopedResource* sourceTexture, bool hasImplThread)
+static SkBitmap applyImageFilter(GLRenderer* renderer, SkImageFilter* filter, ScopedResource* sourceTextureResource)
 {
     if (!filter)
         return SkBitmap();
 
-    WebGraphicsContext3D* context3d = getFilterContext(hasImplThread);
-    GrContext* grContext = getFilterGrContext(hasImplThread);
-
-    if (!context3d || !grContext)
+    cc::ContextProvider* offscreenContexts = renderer->resourceProvider()->offscreenContextProvider();
+    if (!offscreenContexts || !offscreenContexts->Context3d() || !offscreenContexts->GrContext())
         return SkBitmap();
 
-    renderer->context()->flush();
+    ResourceProvider::ScopedWriteLockGL lock(renderer->resourceProvider(), sourceTextureResource->id());
 
-    ResourceProvider::ScopedWriteLockGL lock(renderer->resourceProvider(), sourceTexture->id());
+    // Flush the compositor context to ensure that textures there are available
+    // in the shared context.  Do this after locking/creating the compositor
+    // texture.
+    renderer->resourceProvider()->flush();
+
+    // Make sure skia uses the correct GL context.
+    offscreenContexts->Context3d()->makeContextCurrent();
 
     // Wrap the source texture in a Ganesh platform texture.
-    GrPlatformTextureDesc platformTextureDescription;
-    platformTextureDescription.fWidth = sourceTexture->size().width();
-    platformTextureDescription.fHeight = sourceTexture->size().height();
-    platformTextureDescription.fConfig = kSkia8888_GrPixelConfig;
-    platformTextureDescription.fTextureHandle = lock.textureId();
-    skia::RefPtr<GrTexture> texture = skia::AdoptRef(grContext->createPlatformTexture(platformTextureDescription));
+    GrBackendTextureDesc backendTextureDescription;
+    backendTextureDescription.fWidth = sourceTextureResource->size().width();
+    backendTextureDescription.fHeight = sourceTextureResource->size().height();
+    backendTextureDescription.fConfig = kSkia8888_GrPixelConfig;
+    backendTextureDescription.fTextureHandle = lock.textureId();
+    backendTextureDescription.fOrigin = kTopLeft_GrSurfaceOrigin;
+    skia::RefPtr<GrTexture> texture = skia::AdoptRef(offscreenContexts->GrContext()->wrapBackendTexture(backendTextureDescription));
 
     // Place the platform texture inside an SkBitmap.
     SkBitmap source;
-    source.setConfig(SkBitmap::kARGB_8888_Config, sourceTexture->size().width(), sourceTexture->size().height());
+    source.setConfig(SkBitmap::kARGB_8888_Config, sourceTextureResource->size().width(), sourceTextureResource->size().height());
     skia::RefPtr<SkGrPixelRef> pixelRef = skia::AdoptRef(new SkGrPixelRef(texture.get()));
     source.setPixelRef(pixelRef.get());
 
@@ -419,11 +449,12 @@ static SkBitmap applyImageFilter(GLRenderer* renderer, SkImageFilter* filter, Sc
     desc.fWidth = source.width();
     desc.fHeight = source.height();
     desc.fConfig = kSkia8888_GrPixelConfig;
-    GrAutoScratchTexture scratchTexture(grContext, desc, GrContext::kExact_ScratchTexMatch);
+    desc.fOrigin = kTopLeft_GrSurfaceOrigin;
+    GrAutoScratchTexture scratchTexture(offscreenContexts->GrContext(), desc, GrContext::kExact_ScratchTexMatch);
     skia::RefPtr<GrTexture> backingStore = skia::AdoptRef(scratchTexture.detach());
 
     // Create a device and canvas using that backing store.
-    SkGpuDevice device(grContext, backingStore.get());
+    SkGpuDevice device(offscreenContexts->GrContext(), backingStore.get());
     SkCanvas canvas(&device);
 
     // Draw the source bitmap through the filter to the canvas.
@@ -431,8 +462,18 @@ static SkBitmap applyImageFilter(GLRenderer* renderer, SkImageFilter* filter, Sc
     paint.setImageFilter(filter);
     canvas.clear(0x0);
     canvas.drawSprite(source, 0, 0, &paint);
-    canvas.flush();
-    context3d->flush();
+
+    // Flush skia context so that all the rendered stuff appears on the
+    // texture.
+    offscreenContexts->GrContext()->flush();
+
+    // Flush the GL context so rendering results from this context are
+    // visible in the compositor's context.
+    offscreenContexts->Context3d()->flush();
+
+    // Use the compositor's GL context again.
+    renderer->resourceProvider()->graphicsContext3D()->makeContextCurrent();
+
     return device.accessBitmap(false);
 }
 
@@ -480,7 +521,7 @@ scoped_ptr<ScopedResource> GLRenderer::drawBackgroundFilters(
     if (!getFramebufferTexture(deviceBackgroundTexture.get(), deviceRect))
         return scoped_ptr<ScopedResource>();
 
-    SkBitmap filteredDeviceBackground = applyFilters(this, filters, deviceBackgroundTexture.get(), m_client->hasImplThread());
+    SkBitmap filteredDeviceBackground = applyFilters(this, filters, deviceBackgroundTexture.get());
     if (!filteredDeviceBackground.getTexture())
         return scoped_ptr<ScopedResource>();
 
@@ -497,7 +538,7 @@ scoped_ptr<ScopedResource> GLRenderer::drawBackgroundFilters(
     if (usingBackgroundTexture) {
         // Copy the readback pixels from device to the background texture for the surface.
         gfx::Transform deviceToFramebufferTransform;
-        deviceToFramebufferTransform.Translate(quad->rect.width() / 2.0, quad->rect.height() / 2.0);
+        deviceToFramebufferTransform.Translate(quad->rect.width() * 0.5f, quad->rect.height() * 0.5f);
         deviceToFramebufferTransform.Scale(quad->rect.width(), quad->rect.height());
         deviceToFramebufferTransform.PreconcatTransform(contentsDeviceTransformInverse);
         copyTextureToFramebuffer(frame, filteredDeviceBackgroundTextureId, deviceRect, deviceToFramebufferTransform);
@@ -512,13 +553,16 @@ scoped_ptr<ScopedResource> GLRenderer::drawBackgroundFilters(
 
 void GLRenderer::drawRenderPassQuad(DrawingFrame& frame, const RenderPassDrawQuad* quad)
 {
+    setBlendEnabled(quad->ShouldDrawWithBlending());
+
     CachedResource* contentsTexture = m_renderPassTextures.get(quad->render_pass_id);
     if (!contentsTexture || !contentsTexture->id())
         return;
 
     gfx::Transform quadRectMatrix;
     quadRectTransform(&quadRectMatrix, quad->quadTransform(), quad->rect);
-    gfx::Transform contentsDeviceTransform = MathUtil::to2dTransform(frame.windowMatrix * frame.projectionMatrix * quadRectMatrix);
+    gfx::Transform contentsDeviceTransform = frame.windowMatrix * frame.projectionMatrix * quadRectMatrix;
+    contentsDeviceTransform.FlattenTo2d();
 
     // Can only draw surface if device matrix is invertible.
     gfx::Transform contentsDeviceTransformInverse(gfx::Transform::kSkipInitialization);
@@ -532,9 +576,9 @@ void GLRenderer::drawRenderPassQuad(DrawingFrame& frame, const RenderPassDrawQua
     // Apply filters to the contents texture.
     SkBitmap filterBitmap;
     if (quad->filter) {
-        filterBitmap = applyImageFilter(this, quad->filter.get(), contentsTexture, m_client->hasImplThread());
+        filterBitmap = applyImageFilter(this, quad->filter.get(), contentsTexture);
     } else {
-        filterBitmap = applyFilters(this, quad->filters, contentsTexture, m_client->hasImplThread());
+        filterBitmap = applyFilters(this, quad->filters, contentsTexture);
     }
 
     // Draw the background texture if there is one.
@@ -641,7 +685,7 @@ void GLRenderer::drawRenderPassQuad(DrawingFrame& frame, const RenderPassDrawQua
         GLC(context(), context()->uniform2f(shaderTexScaleLocation,
                                             tex_scale_x, tex_scale_y));
     } else {
-      NOTREACHED();
+        DCHECK(isContextLost());
     }
 
     if (shaderMaskSamplerLocation != -1) {
@@ -664,7 +708,7 @@ void GLRenderer::drawRenderPassQuad(DrawingFrame& frame, const RenderPassDrawQua
         GLC(context(), context()->uniform3fv(shaderEdgeLocation, 8, edge));
     }
 
-    // Map device space quad to surface space. contentsDeviceTransform has no 3d component since it was generated with to2dTransform() so we don't need to project.
+    // Map device space quad to surface space. contentsDeviceTransform has no 3d component since it was flattened, so we don't need to project.
     gfx::QuadF surfaceQuad = MathUtil::mapQuad(contentsDeviceTransformInverse, deviceLayerEdges.ToQuadF(), clipped);
     DCHECK(!clipped);
 
@@ -680,14 +724,16 @@ void GLRenderer::drawRenderPassQuad(DrawingFrame& frame, const RenderPassDrawQua
 
 void GLRenderer::drawSolidColorQuad(const DrawingFrame& frame, const SolidColorDrawQuad* quad)
 {
+    setBlendEnabled(quad->ShouldDrawWithBlending());
+
     const SolidColorProgram* program = solidColorProgram();
     setUseProgram(program->program());
 
     SkColor color = quad->color;
     float opacity = quad->opacity();
-    float alpha = (SkColorGetA(color) / 255.0) * opacity;
+    float alpha = (SkColorGetA(color) * (1.0f / 255.0f)) * opacity;
 
-    GLC(context(), context()->uniform4f(program->fragmentShader().colorLocation(), (SkColorGetR(color) / 255.0) * alpha, (SkColorGetG(color) / 255.0) * alpha, (SkColorGetB(color) / 255.0) * alpha, alpha));
+    GLC(context(), context()->uniform4f(program->fragmentShader().colorLocation(), (SkColorGetR(color) * (1.0f / 255.0f)) * alpha, (SkColorGetG(color) * (1.0f / 255.0f)) * alpha, (SkColorGetB(color) * (1.0f / 255.0f)) * alpha, alpha));
 
     drawQuadGeometry(frame, quad->quadTransform(), quad->rect, program->vertexShader().matrixLocation());
 }
@@ -767,9 +813,9 @@ void GLRenderer::drawTileQuad(const DrawingFrame& frame, const TileDrawQuad* qua
     float fragmentTexScaleX = clampTexRect.width() / textureSize.width();
     float fragmentTexScaleY = clampTexRect.height() / textureSize.height();
 
-
     gfx::QuadF localQuad;
-    gfx::Transform deviceTransform = MathUtil::to2dTransform(frame.windowMatrix * frame.projectionMatrix * quad->quadTransform());
+    gfx::Transform deviceTransform = frame.windowMatrix * frame.projectionMatrix * quad->quadTransform();
+    deviceTransform.FlattenTo2d();
     if (!deviceTransform.IsInvertible())
         return;
 
@@ -777,10 +823,14 @@ void GLRenderer::drawTileQuad(const DrawingFrame& frame, const TileDrawQuad* qua
     gfx::QuadF deviceLayerQuad = MathUtil::mapQuad(deviceTransform, gfx::QuadF(quad->visibleContentRect()), clipped);
     DCHECK(!clipped);
 
+    // TODO(reveman): Axis-aligned is not enough to avoid anti-aliasing.
+    // Bounding rectangle for quad also needs to be expressible as
+    // an integer rectangle. crbug.com/169374
+    bool isAxisAlignedInTarget = deviceLayerQuad.IsRectilinear();
+    bool useAA = !clipped && !isAxisAlignedInTarget && quad->IsEdge();
+
     TileProgramUniforms uniforms;
-    // For now, we simply skip anti-aliasing with the quad is clipped. This only happens
-    // on perspective transformed layers that go partially behind the camera.
-    if (quad->IsAntialiased() && !clipped) {
+    if (useAA) {
         if (quad->swizzle_contents)
             tileUniformLocation(tileProgramSwizzleAA(), uniforms);
         else
@@ -802,10 +852,9 @@ void GLRenderer::drawTileQuad(const DrawingFrame& frame, const TileDrawQuad* qua
     setUseProgram(uniforms.program);
     GLC(context(), context()->uniform1i(uniforms.samplerLocation, 0));
     bool scaled = (texToGeomScaleX != 1 || texToGeomScaleY != 1);
-    GLenum filter = (quad->IsAntialiased() || scaled || !quad->quadTransform().IsIdentityOrIntegerTranslation()) ? GL_LINEAR : GL_NEAREST;
+    GLenum filter = (useAA || scaled || !quad->quadTransform().IsIdentityOrIntegerTranslation()) ? GL_LINEAR : GL_NEAREST;
     ResourceProvider::ScopedSamplerGL quadResourceLock(m_resourceProvider, quad->resource_id, GL_TEXTURE_2D, filter);
 
-    bool useAA = !clipped && quad->IsAntialiased();
     if (useAA) {
         LayerQuad deviceLayerBounds = LayerQuad(gfx::QuadF(deviceLayerQuad.BoundingBox()));
         deviceLayerBounds.inflateAntiAliasingDistance();
@@ -842,13 +891,13 @@ void GLRenderer::drawTileQuad(const DrawingFrame& frame, const TileDrawQuad* qua
         LayerQuad::Edge rightEdge(topRight, bottomRight);
 
         // Only apply anti-aliasing to edges not clipped by culling or scissoring.
-        if (quad->top_edge_aa && tileRect.y() == quad->rect.y())
+        if (quad->IsTopEdge() && tileRect.y() == quad->rect.y())
             topEdge = deviceLayerEdges.top();
-        if (quad->left_edge_aa && tileRect.x() == quad->rect.x())
+        if (quad->IsLeftEdge() && tileRect.x() == quad->rect.x())
             leftEdge = deviceLayerEdges.left();
-        if (quad->right_edge_aa && tileRect.right() == quad->rect.right())
+        if (quad->IsRightEdge() && tileRect.right() == quad->rect.right())
             rightEdge = deviceLayerEdges.right();
-        if (quad->bottom_edge_aa && tileRect.bottom() == quad->rect.bottom())
+        if (quad->IsBottomEdge() && tileRect.bottom() == quad->rect.bottom())
             bottomEdge = deviceLayerEdges.bottom();
 
         float sign = gfx::QuadF(tileRect).IsCounterClockwise() ? -1 : 1;
@@ -860,7 +909,7 @@ void GLRenderer::drawTileQuad(const DrawingFrame& frame, const TileDrawQuad* qua
         // Create device space quad.
         LayerQuad deviceQuad(leftEdge, topEdge, rightEdge, bottomEdge);
 
-        // Map device space quad to local space. deviceTransform has no 3d component since it was generated with to2dTransform() so we don't need to project.
+        // Map device space quad to local space. deviceTransform has no 3d component since it was flattened, so we don't need to project.
         // We should have already checked that the transform was uninvertible above.
         gfx::Transform inverseDeviceTransform(gfx::Transform::kSkipInitialization);
         bool didInvert = deviceTransform.GetInverse(&inverseDeviceTransform);
@@ -886,6 +935,10 @@ void GLRenderer::drawTileQuad(const DrawingFrame& frame, const TileDrawQuad* qua
         localQuad = gfx::RectF(tileRect);
     }
 
+    // Enable blending when the quad properties require it or if we decided
+    // to use antialiasing.
+    setBlendEnabled(quad->ShouldDrawWithBlending() || useAA);
+
     // Normalize to tileRect.
     localQuad.Scale(1.0f / tileRect.width(), 1.0f / tileRect.height());
 
@@ -897,12 +950,14 @@ void GLRenderer::drawTileQuad(const DrawingFrame& frame, const TileDrawQuad* qua
     // un-antialiased quad should have and which vertex this is and the float
     // quad passed in via uniform is the actual geometry that gets used to draw
     // it. This is why this centered rect is used and not the original quadRect.
-    gfx::RectF centeredRect(gfx::PointF(-0.5 * tileRect.width(), -0.5 * tileRect.height()), tileRect.size());
+    gfx::RectF centeredRect(gfx::PointF(-0.5f * tileRect.width(), -0.5f * tileRect.height()), tileRect.size());
     drawQuadGeometry(frame, quad->quadTransform(), centeredRect, uniforms.matrixLocation);
 }
 
 void GLRenderer::drawYUVVideoQuad(const DrawingFrame& frame, const YUVVideoDrawQuad* quad)
 {
+    setBlendEnabled(quad->ShouldDrawWithBlending());
+
     const VideoYUVProgram* program = videoYUVProgram();
     DCHECK(program && (program->initialized() || isContextLost()));
 
@@ -928,8 +983,8 @@ void GLRenderer::drawYUVVideoQuad(const DrawingFrame& frame, const YUVVideoDrawQ
     // They are taken from the following webpage: http://www.fourcc.org/fccyvrgb.php
     float yuv2RGB[9] = {
         1.164f, 1.164f, 1.164f,
-        0.f, -.391f, 2.018f,
-        1.596f, -.813f, 0.f,
+        0.0f, -.391f, 2.018f,
+        1.596f, -.813f, 0.0f,
     };
     GLC(context(), context()->uniformMatrix3fv(program->fragmentShader().yuvMatrixLocation(), 1, 0, yuv2RGB));
 
@@ -955,6 +1010,8 @@ void GLRenderer::drawYUVVideoQuad(const DrawingFrame& frame, const YUVVideoDrawQ
 
 void GLRenderer::drawStreamVideoQuad(const DrawingFrame& frame, const StreamVideoDrawQuad* quad)
 {
+    setBlendEnabled(quad->ShouldDrawWithBlending());
+
     static float glMatrix[16];
 
     DCHECK(m_capabilities.usingEglImage);
@@ -1023,9 +1080,9 @@ void GLRenderer::flushTextureQuadCache()
     // set up premultiplied alpha.
     if (!m_drawCache.use_premultiplied_alpha) {
       // As it turns out, the premultiplied alpha blending function (ONE, ONE_MINUS_SRC_ALPHA)
-        // will never cause the alpha channel to be set to anything less than 1.0 if it is
+        // will never cause the alpha channel to be set to anything less than 1.0f if it is
         // initialized to that value! Therefore, premultipliedAlpha being false is the first
-        // situation we can generally see an alpha channel less than 1.0 coming out of the
+        // situation we can generally see an alpha channel less than 1.0f coming out of the
         // compositor. This is causing platform differences in some layout tests (see
         // https://bugs.webkit.org/show_bug.cgi?id=82412), so in this situation, use a separate
         // blend function for the alpha channel to avoid modifying it. Don't use colorMask for this
@@ -1084,8 +1141,9 @@ void GLRenderer::enqueueTextureQuad(const DrawingFrame& frame, const TextureDraw
     }
 
     // Generate the uv-transform
-    const gfx::RectF& uvRect = quad->uv_rect;
-    Float4 uv = {uvRect.x(), uvRect.y(), uvRect.width(), uvRect.height()};
+    const gfx::PointF& uv0 = quad->uv_top_left;
+    const gfx::PointF& uv1 = quad->uv_bottom_right;
+    Float4 uv = {uv0.x(), uv0.y(), uv1.x() - uv0.x(), uv1.y() - uv0.y()};
     m_drawCache.uv_xform_data.push_back(uv);
 
     // Generate the vertex opacity
@@ -1114,8 +1172,9 @@ void GLRenderer::drawTextureQuad(const DrawingFrame& frame, const TextureDrawQua
         binding.set(textureProgram(), context());
     setUseProgram(binding.programId);
     GLC(context(), context()->uniform1i(binding.samplerLocation, 0));
-    const gfx::RectF& uvRect = quad->uv_rect;
-    GLC(context(), context()->uniform4f(binding.texTransformLocation, uvRect.x(), uvRect.y(), uvRect.width(), uvRect.height()));
+    const gfx::PointF& uv0 = quad->uv_top_left;
+    const gfx::PointF& uv1 = quad->uv_bottom_right;
+    GLC(context(), context()->uniform4f(binding.texTransformLocation, uv0.x(), uv0.y(), uv1.x() - uv0.x(), uv1.y() - uv0.y()));
 
     GLC(context(), context()->uniform1fv(binding.vertexOpacityLocation, 4, quad->vertex_opacity));
 
@@ -1123,9 +1182,9 @@ void GLRenderer::drawTextureQuad(const DrawingFrame& frame, const TextureDrawQua
 
     if (!quad->premultiplied_alpha) {
         // As it turns out, the premultiplied alpha blending function (ONE, ONE_MINUS_SRC_ALPHA)
-        // will never cause the alpha channel to be set to anything less than 1.0 if it is
+        // will never cause the alpha channel to be set to anything less than 1.0f if it is
         // initialized to that value! Therefore, premultipliedAlpha being false is the first
-        // situation we can generally see an alpha channel less than 1.0 coming out of the
+        // situation we can generally see an alpha channel less than 1.0f coming out of the
         // compositor. This is causing platform differences in some layout tests (see
         // https://bugs.webkit.org/show_bug.cgi?id=82412), so in this situation, use a separate
         // blend function for the alpha channel to avoid modifying it. Don't use colorMask for this
@@ -1141,13 +1200,15 @@ void GLRenderer::drawTextureQuad(const DrawingFrame& frame, const TextureDrawQua
 
 void GLRenderer::drawIOSurfaceQuad(const DrawingFrame& frame, const IOSurfaceDrawQuad* quad)
 {
+    setBlendEnabled(quad->ShouldDrawWithBlending());
+
     TexTransformTextureProgramBinding binding;
     binding.set(textureIOSurfaceProgram(), context());
 
     setUseProgram(binding.programId);
     GLC(context(), context()->uniform1i(binding.samplerLocation, 0));
     if (quad->orientation == IOSurfaceDrawQuad::FLIPPED)
-        GLC(context(), context()->uniform4f(binding.texTransformLocation, 0, quad->io_surface_size.height(), quad->io_surface_size.width(), quad->io_surface_size.height() * -1.0));
+        GLC(context(), context()->uniform4f(binding.texTransformLocation, 0, quad->io_surface_size.height(), quad->io_surface_size.width(), quad->io_surface_size.height() * -1.0f));
     else
         GLC(context(), context()->uniform4f(binding.texTransformLocation, 0, 0, quad->io_surface_size.width(), quad->io_surface_size.height()));
 
@@ -1172,9 +1233,7 @@ void GLRenderer::finishDrawingFrame(DrawingFrame& frame)
     if (settings().compositorFrameMessage) {
         CompositorFrame compositor_frame;
         compositor_frame.metadata = m_client->makeCompositorFrameMetadata();
-        compositor_frame.gl_frame_data.reset(new GLFrameData());
-        // FIXME: Fill in GLFrameData when we implement swapping with it.
-        m_outputSurface->SendFrameToParentCompositor(compositor_frame);
+        m_outputSurface->SendFrameToParentCompositor(&compositor_frame);
     }
 }
 
@@ -1299,16 +1358,26 @@ bool GLRenderer::swapBuffers()
         // If supported, we can save significant bandwidth by only swapping the damaged/scissored region (clamped to the viewport)
         m_swapBufferRect.Intersect(gfx::Rect(gfx::Point(), viewportSize()));
         int flippedYPosOfRectBottom = viewportHeight() - m_swapBufferRect.y() - m_swapBufferRect.height();
-        m_context->postSubBufferCHROMIUM(m_swapBufferRect.x(), flippedYPosOfRectBottom, m_swapBufferRect.width(), m_swapBufferRect.height());
+        m_outputSurface->PostSubBuffer(gfx::Rect(m_swapBufferRect.x(), flippedYPosOfRectBottom, m_swapBufferRect.width(), m_swapBufferRect.height()));
     } else {
-        // Note that currently this has the same effect as swapBuffers; we should
-        // consider exposing a different entry point on WebGraphicsContext3D.
-        m_context->prepareTexture();
+        m_outputSurface->SwapBuffers();
     }
 
     m_swapBufferRect = gfx::Rect();
 
+    // We don't have real fences, so we mark read fences as passed
+    // assuming a double-buffered GPU pipeline. A texture can be
+    // written to after one full frame has past since it was last read.
+    if (m_lastSwapFence)
+        static_cast<SimpleSwapFence*>(m_lastSwapFence.get())->setHasPassed();
+    m_lastSwapFence = m_resourceProvider->getReadLockFence();
+    m_resourceProvider->setReadLockFence(new SimpleSwapFence());
+
     return true;
+}
+
+void GLRenderer::receiveCompositorFrameAck(const CompositorFrameAck& ack) {
+    onSwapBuffersComplete();
 }
 
 void GLRenderer::onSwapBuffersComplete()
@@ -1365,6 +1434,7 @@ void GLRenderer::enforceMemoryPolicy()
         releaseRenderPassTextures();
         if (m_discardBackbufferWhenNotVisible)
             discardBackbuffer();
+        m_resourceProvider->releaseCachedData();
         GLC(m_context, m_context->flush());
     }
 }
@@ -1374,10 +1444,8 @@ void GLRenderer::discardBackbuffer()
     if (m_isBackbufferDiscarded)
         return;
 
-    if (!m_capabilities.usingDiscardBackbuffer)
-        return;
+    m_outputSurface->DiscardBackbuffer();
 
-    m_context->discardBackbufferCHROMIUM();
     m_isBackbufferDiscarded = true;
 
     // Damage tracker needs a full reset every time framebuffer is discarded.
@@ -1389,10 +1457,7 @@ void GLRenderer::ensureBackbuffer()
     if (!m_isBackbufferDiscarded)
         return;
 
-    if (!m_capabilities.usingDiscardBackbuffer)
-        return;
-
-    m_context->ensureBackbufferCHROMIUM();
+    m_outputSurface->EnsureBackbuffer();
     m_isBackbufferDiscarded = false;
 }
 
@@ -1496,7 +1561,7 @@ bool GLRenderer::useScopedTexture(DrawingFrame& frame, const ScopedResource* tex
 void GLRenderer::bindFramebufferToOutputSurface(DrawingFrame& frame)
 {
     m_currentFramebufferLock.reset();
-    GLC(m_context, m_context->bindFramebuffer(GL_FRAMEBUFFER, 0));
+    m_outputSurface->BindFramebuffer();
 }
 
 bool GLRenderer::bindFramebufferToTexture(DrawingFrame& frame, const ScopedResource* texture, const gfx::Rect& framebufferRect)
@@ -1508,7 +1573,7 @@ bool GLRenderer::bindFramebufferToTexture(DrawingFrame& frame, const ScopedResou
     unsigned textureId = m_currentFramebufferLock->textureId();
     GLC(m_context, m_context->framebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textureId, 0));
 
-    DCHECK(m_context->checkFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
+    DCHECK(m_context->checkFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE || isContextLost());
 
     initializeMatrices(frame, framebufferRect, false);
     setDrawViewportSize(framebufferRect.size());

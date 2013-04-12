@@ -38,6 +38,8 @@ class BluetoothOptionsHandler
   virtual void InitializeHandler() OVERRIDE;
   virtual void InitializePage() OVERRIDE;
 
+  void InitializeAdapter(scoped_refptr<device::BluetoothAdapter> adapter);
+
   // Sends a notification to the Web UI of the status of a Bluetooth device.
   // |device| is the Bluetooth device.
   // |params| is an optional set of parameters.
@@ -133,6 +135,9 @@ class BluetoothOptionsHandler
                              device::BluetoothDevice* device) OVERRIDE;
 
  private:
+  // Displays in the UI a connecting to the device |device| message.
+  void DeviceConnecting(device::BluetoothDevice* device);
+
   // Called by device::BluetoothAdapter in response to a failure to
   // change the power status of the adapter.
   void EnableChangeError();
@@ -188,6 +193,9 @@ class BluetoothOptionsHandler
 
   // Default bluetooth adapter, used for all operations.
   scoped_refptr<device::BluetoothAdapter> adapter_;
+
+  // True while performing device discovery.
+  bool discovering_;
 
   // Weak pointer factory for generating 'this' pointers that might live longer
   // than this object does.

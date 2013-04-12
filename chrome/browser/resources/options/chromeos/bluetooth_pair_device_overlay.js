@@ -18,6 +18,10 @@ cr.define('options', function() {
     REMOTE_PIN_CODE: 'bluetoothRemotePinCode',
     REMOTE_PASSKEY: 'bluetoothRemotePasskey',
     CONFIRM_PASSKEY: 'bluetoothConfirmPasskey',
+    CONNECT_FAILED: 'bluetoothConnectFailed',
+    CANCELED: 'bluetoothPairingCanceled',
+    DISMISSED: 'bluetoothPairingDismissed', // pairing dismissed(succeeded or
+                                            // canceled).
   };
 
   /**
@@ -77,8 +81,6 @@ cr.define('options', function() {
       OptionsPage.prototype.initializePage.call(this);
       var self = this;
       $('bluetooth-pair-device-cancel-button').onclick = function() {
-        chrome.send('updateBluetoothDevice',
-                    [self.device_.address, 'cancel']);
         OptionsPage.closeOverlay();
       };
       $('bluetooth-pair-device-reject-button').onclick = function() {
@@ -127,6 +129,16 @@ cr.define('options', function() {
           this.keyDownEventHandler_.bind(this));
       $('bluetooth-pincode').addEventListener('keydown',
           this.keyDownEventHandler_.bind(this));
+    },
+
+    /** @override */
+    didClosePage: function() {
+      if (this.device_.pairing != PAIRING.DISMISSED &&
+          this.device_.pairing != PAIRING.CONNECT_FAILED) {
+        this.device_.pairing = PAIRING.CANCELED;
+        chrome.send('updateBluetoothDevice',
+                    [this.device_.address, 'cancel']);
+      }
     },
 
     /**
@@ -329,10 +341,18 @@ cr.define('options', function() {
    *          string: address} data  Data for constructing the message.
    */
   BluetoothPairing.showMessage = function(data) {
-    var name = '';
-    if (data.address.length > 0) {
-      name = data.address;
-      var list = $('bluetooth-paired-devices-list');
+    var name = data.address;
+    if (name.length == 0)
+      return;
+    var dialog = BluetoothPairing.getInstance();
+    if (dialog.device_ && name == dialog.device_.address &&
+        dialog.device_.pairing == PAIRING.CANCELED) {
+      // Do not show any error message after cancelation of the pairing.
+      return;
+    }
+
+    var list = $('bluetooth-paired-devices-list');
+    if (list) {
       var index = list.find(name);
       if (index == undefined) {
         list = $('bluetooth-unpaired-devices-list');
@@ -356,8 +376,10 @@ cr.define('options', function() {
   BluetoothPairing.dismissDialog = function() {
     var overlay = OptionsPage.getTopmostVisiblePage();
     var dialog = BluetoothPairing.getInstance();
-    if (overlay == dialog && dialog.dismissible_)
+    if (overlay == dialog && dialog.dismissible_) {
+      dialog.device_.pairing = PAIRING.DISMISSED;
       OptionsPage.closeOverlay();
+    }
   };
 
   // Export

@@ -106,10 +106,10 @@ int WaitpidWithTimeout(ProcessHandle handle, int64 wait_milliseconds,
   int64 double_sleep_time = 0;
 
   // If the process hasn't exited yet, then sleep and try again.
-  Time wakeup_time = Time::Now() +
+  TimeTicks wakeup_time = TimeTicks::Now() +
       TimeDelta::FromMilliseconds(wait_milliseconds);
   while (ret_pid == 0) {
-    Time now = Time::Now();
+    TimeTicks now = TimeTicks::Now();
     if (now > wakeup_time)
       break;
     // Guaranteed to be non-negative!
@@ -549,8 +549,8 @@ bool LaunchProcess(const std::vector<std::string>& argv,
   fd_shuffle1.reserve(fd_shuffle_size);
   fd_shuffle2.reserve(fd_shuffle_size);
 
-  scoped_array<char*> argv_cstr(new char*[argv.size() + 1]);
-  scoped_array<char*> new_environ;
+  scoped_ptr<char*[]> argv_cstr(new char*[argv.size() + 1]);
+  scoped_ptr<char*[]> new_environ;
   if (options.environ)
     new_environ.reset(AlterEnvironment(*options.environ, GetEnvironment()));
 
@@ -876,10 +876,10 @@ static bool WaitForSingleNonChildProcess(ProcessHandle handle,
   // interrupted.
   bool wait_forever = wait.InMilliseconds() == base::kNoTimeout;
   base::TimeDelta remaining_delta;
-  base::Time deadline;
+  base::TimeTicks deadline;
   if (!wait_forever) {
     remaining_delta = wait;
-    deadline = base::Time::Now() + remaining_delta;
+    deadline = base::TimeTicks::Now() + remaining_delta;
   }
 
   result = -1;
@@ -899,7 +899,7 @@ static bool WaitForSingleNonChildProcess(ProcessHandle handle,
 
     if (result == -1 && errno == EINTR) {
       if (!wait_forever) {
-        remaining_delta = deadline - base::Time::Now();
+        remaining_delta = deadline - base::TimeTicks::Now();
       }
       result = 0;
     } else {
@@ -1012,7 +1012,7 @@ static GetAppOutputInternalResult GetAppOutputInternal(
   int pipe_fd[2];
   pid_t pid;
   InjectiveMultimap fd_shuffle1, fd_shuffle2;
-  scoped_array<char*> argv_cstr(new char*[argv.size() + 1]);
+  scoped_ptr<char*[]> argv_cstr(new char*[argv.size() + 1]);
 
   fd_shuffle1.reserve(3);
   fd_shuffle2.reserve(3);
@@ -1156,7 +1156,7 @@ bool WaitForProcessesToExit(const FilePath::StringType& executable_name,
   // TODO(port): This is inefficient, but works if there are multiple procs.
   // TODO(port): use waitpid to avoid leaving zombies around
 
-  base::Time end_time = base::Time::Now() + wait;
+  base::TimeTicks end_time = base::TimeTicks::Now() + wait;
   do {
     NamedProcessIterator iter(executable_name, filter);
     if (!iter.NextProcessEntry()) {
@@ -1164,7 +1164,7 @@ bool WaitForProcessesToExit(const FilePath::StringType& executable_name,
       break;
     }
     base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(100));
-  } while ((end_time - base::Time::Now()) > base::TimeDelta());
+  } while ((end_time - base::TimeTicks::Now()) > base::TimeDelta());
 
   return result;
 }

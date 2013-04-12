@@ -178,6 +178,11 @@ gpu::CommandBuffer::State CommandBufferProxyImpl::GetLastState() {
   return last_state_;
 }
 
+int32 CommandBufferProxyImpl::GetLastToken() {
+  TryUpdateState();
+  return last_state_.token;
+}
+
 void CommandBufferProxyImpl::Flush(int32 put_offset) {
   if (last_state_.error != gpu::error::kNoError)
     return;
@@ -391,10 +396,6 @@ uint32 CommandBufferProxyImpl::InsertSyncPoint() {
   uint32 sync_point = 0;
   Send(new GpuCommandBufferMsg_InsertSyncPoint(route_id_, &sync_point));
   return sync_point;
-}
-
-void CommandBufferProxyImpl::WaitSyncPoint(uint32 sync_point) {
-  Send(new GpuCommandBufferMsg_WaitSyncPoint(route_id_, sync_point));
 }
 
 bool CommandBufferProxyImpl::SignalSyncPoint(uint32 sync_point,

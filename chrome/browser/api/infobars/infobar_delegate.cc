@@ -47,10 +47,6 @@ InfoBarDelegate::Type InfoBarDelegate::GetInfoBarType() const {
   return WARNING_TYPE;
 }
 
-AlternateNavInfoBarDelegate* InfoBarDelegate::AsAlternateNavInfoBarDelegate() {
-  return NULL;
-}
-
 AutoLoginInfoBarDelegate* InfoBarDelegate::AsAutoLoginInfoBarDelegate() {
   return NULL;
 }
@@ -74,6 +70,11 @@ MediaStreamInfoBarDelegate* InfoBarDelegate::AsMediaStreamInfoBarDelegate() {
 
 RegisterProtocolHandlerInfoBarDelegate*
     InfoBarDelegate::AsRegisterProtocolHandlerInfoBarDelegate() {
+  return NULL;
+}
+
+ScreenCaptureInfoBarDelegate*
+    InfoBarDelegate::AsScreenCaptureInfoBarDelegate() {
   return NULL;
 }
 

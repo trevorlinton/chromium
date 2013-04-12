@@ -14,6 +14,7 @@
 
 namespace cc {
 
+class ContextProvider;
 class LayerTreeHost;
 
 class SingleThreadProxy : public Proxy, LayerTreeHostImplClient {
@@ -44,20 +45,26 @@ public:
     virtual size_t maxPartialTextureUpdates() const OVERRIDE;
     virtual void acquireLayerTextures() OVERRIDE { }
     virtual void forceSerializeOnSwapBuffers() OVERRIDE;
+    virtual skia::RefPtr<SkPicture> capturePicture() OVERRIDE;
+    virtual scoped_ptr<base::Value> asValue() const OVERRIDE;
     virtual bool commitPendingForTesting() OVERRIDE;
 
     // LayerTreeHostImplClient implementation
-    virtual void didLoseOutputSurfaceOnImplThread() OVERRIDE { }
+    virtual void didLoseOutputSurfaceOnImplThread() OVERRIDE;
     virtual void onSwapBuffersCompleteOnImplThread() OVERRIDE;
     virtual void onVSyncParametersChanged(base::TimeTicks timebase, base::TimeDelta interval) OVERRIDE { }
     virtual void onCanDrawStateChanged(bool canDraw) OVERRIDE { }
     virtual void onHasPendingTreeStateChanged(bool havePendingTree) OVERRIDE;
     virtual void setNeedsRedrawOnImplThread() OVERRIDE;
+    virtual void didUploadVisibleHighResolutionTileOnImplThread() OVERRIDE;
     virtual void setNeedsCommitOnImplThread() OVERRIDE;
     virtual void setNeedsManageTilesOnImplThread() OVERRIDE;
     virtual void postAnimationEventsToMainThreadOnImplThread(scoped_ptr<AnimationEventsVector>, base::Time wallClockTime) OVERRIDE;
     virtual bool reduceContentsTextureMemoryOnImplThread(size_t limitBytes, int priorityCutoff) OVERRIDE;
+    virtual void reduceWastedContentsTextureMemoryOnImplThread() OVERRIDE;
     virtual void sendManagedMemoryStats() OVERRIDE;
+    virtual bool isInsideDraw() OVERRIDE;
+    virtual void renewTreePriority() OVERRIDE { }
 
     // Called by the legacy path where RenderWidget does the scheduling.
     void compositeImmediately();
@@ -67,12 +74,13 @@ private:
 
     bool commitAndComposite();
     void doCommit(scoped_ptr<ResourceUpdateQueue>);
-    bool doComposite();
+    bool doComposite(scoped_refptr<cc::ContextProvider> offscreenContextProvider);
     void didSwapFrame();
 
     // Accessed on main thread only.
     LayerTreeHost* m_layerTreeHost;
     bool m_outputSurfaceLost;
+    bool m_createdOffscreenContextProvider;
 
     // Holds on to the context between initializeContext() and initializeRenderer() calls. Shouldn't
     // be used for anything else.
@@ -84,6 +92,8 @@ private:
     RendererCapabilities m_RendererCapabilitiesForMainThread;
 
     bool m_nextFrameIsNewlyCommittedFrame;
+
+    bool m_insideDraw;
 
     base::TimeDelta m_totalCommitTime;
     size_t m_totalCommitCount;

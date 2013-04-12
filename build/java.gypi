@@ -10,17 +10,12 @@
 #   'target_name': 'my-package_java',
 #   'type': 'none',
 #   'variables': {
-#     'package_name': 'my-package',
 #     'java_in_dir': 'path/to/package/root',
 #   },
 #   'includes': ['path/to/this/gypi/file'],
 # }
 #
-# The generated jar-file will be:
-#   <(PRODUCT_DIR)/lib.java/chromium_<(package_name).jar
 # Required variables:
-#  package_name - Used to name the intermediate output directory and in the
-#    names of some output files.
 #  java_in_dir - The top-level java directory. The src should be in
 #    <java_in_dir>/src.
 # Optional/automatic variables:
@@ -44,37 +39,45 @@
 #  R_package - The java package in which the R class (which maps resources to
 #    integer IDs) should be generated, e.g. org.chromium.content.
 #  R_package_relpath - Same as R_package, but replace each '.' with '/'.
+#  java_strings_grd - The name of the grd file from which to generate localized
+#    strings.xml files, if any.
 
 {
   'dependencies': [
     '<(DEPTH)/build/build_output_dirs_android.gyp:build_output_dirs'
   ],
-  # This all_dependent_settings is used for java targets only. This will add the
-  # chromium_<(package_name) jar to the classpath of dependent java targets.
-  'all_dependent_settings': {
-    'variables': {
-      'input_jars_paths': ['<(PRODUCT_DIR)/lib.java/chromium_<(package_name).jar'],
-    },
-  },
   'variables': {
     'input_jars_paths': [],
     'additional_src_dirs': [],
     'javac_includes': [],
+    'jar_name': '<(_target_name).jar',
+    'jar_path': '<(PRODUCT_DIR)/lib.java/<(jar_name)',
     'additional_input_paths': ['>@(additional_R_files)'],
     'generated_src_dirs': ['>@(generated_R_dirs)'],
     'generated_R_dirs': [],
     'additional_R_files': [],
     'has_java_resources%': 0,
+    'java_strings_grd%': '',
+  },
+  # This all_dependent_settings is used for java targets only. This will add the
+  # jar path to the classpath of dependent java targets.
+  'all_dependent_settings': {
+    'variables': {
+      'input_jars_paths': ['<(jar_path)'],
+    },
   },
   'conditions': [
     ['has_java_resources == 1', {
       'variables': {
         'res_dir': '<(java_in_dir)/res',
-        'crunched_res_dir': '<(SHARED_INTERMEDIATE_DIR)/<(package_name)/res',
-        'R_dir': '<(SHARED_INTERMEDIATE_DIR)/<(package_name)/java_R',
+        'out_res_dir': '<(SHARED_INTERMEDIATE_DIR)/<(_target_name)/res',
+        'R_dir': '<(SHARED_INTERMEDIATE_DIR)/<(_target_name)/java_R',
         'R_file': '<(R_dir)/<(R_package_relpath)/R.java',
+        'R_text_file': '<(R_dir)/R.txt',
         'generated_src_dirs': ['<(R_dir)'],
         'additional_input_paths': ['<(R_file)'],
+        # grit_grd_file is used by grit_action.gypi, included below.
+        'grit_grd_file': '<(java_in_dir)/strings/<(java_strings_grd)',
       },
       'all_dependent_settings': {
         'variables': {
@@ -82,18 +85,44 @@
           # generated_R_dirs and additional_R_files.
           'generated_R_dirs': ['<(R_dir)'],
           'additional_R_files': ['<(R_file)'],
+          'additional_R_text_files': ['<(R_text_file)'],
 
           # Dependent APKs include this target's resources via
           # additional_res_dirs and additional_res_packages.
-          'additional_res_dirs': ['<(crunched_res_dir)', '<(res_dir)'],
+          'additional_res_dirs': ['<(out_res_dir)', '<(res_dir)'],
           'additional_res_packages': ['<(R_package)'],
         },
       },
+      'conditions': [
+        ['java_strings_grd != ""', {
+          'actions': [
+            {
+              'action_name': 'generate_localized_strings_xml',
+              'variables': {
+                'grit_out_dir': '<(out_res_dir)',
+                # resource_ids is unneeded since we don't generate .h headers.
+                'grit_resource_ids': '',
+              },
+              'includes': ['../build/grit_action.gypi'],
+            },
+          ],
+        }],
+      ],
       'actions': [
         # Generate R.java and crunch image resources.
         {
           'action_name': 'process_resources',
-          'message': 'processing resources for <(package_name)',
+          'message': 'processing resources for <(_target_name)',
+          'conditions': [
+            ['java_strings_grd != ""', {
+              'inputs': [
+                # TODO(newt): replace this with .../values/strings.xml once
+                # the English strings.xml is generated as well? That would be
+                # simpler and faster and should be equivalent.
+                '<!@pymod_do_main(grit_info <@(grit_defines) --outputs "<(out_res_dir)" <(grit_grd_file))',
+              ],
+            }],
+          ],
           'inputs': [
             '<(DEPTH)/build/android/process_resources.py',
             '<!@(find <(res_dir) -type f)',
@@ -108,7 +137,7 @@
             '--R-package', '<(R_package)',
             '--R-dir', '<(R_dir)',
             '--res-dir', '<(res_dir)',
-            '--crunched-res-dir', '<(crunched_res_dir)',
+            '--out-res-dir', '<(out_res_dir)',
           ],
         },
       ],
@@ -116,8 +145,8 @@
   ],
   'actions': [
     {
-      'action_name': 'ant_<(package_name)',
-      'message': 'Building <(package_name) java sources.',
+      'action_name': 'ant_<(_target_name)',
+      'message': 'Building <(_target_name) java sources.',
       'inputs': [
         'android/ant/common.xml',
         'android/ant/chromium-jars.xml',
@@ -126,7 +155,7 @@
         '>@(additional_input_paths)',
       ],
       'outputs': [
-        '<(PRODUCT_DIR)/lib.java/chromium_<(package_name).jar',
+        '<(jar_path)',
       ],
       'action': [
         'ant', '-quiet',
@@ -141,7 +170,8 @@
         '-DADDITIONAL_SRC_DIRS=>(additional_src_dirs)',
         '-DGENERATED_SRC_DIRS=>(generated_src_dirs)',
         '-DINPUT_JARS_PATHS=>(input_jars_paths)',
-        '-DPACKAGE_NAME=<(package_name)',
+        '-DJAR_NAME=<(jar_name)',
+        '-DOUT_DIR=<(ant_build_out)/<(_target_name)',
         '-DJAVAC_INCLUDES=>(javac_includes)',
 
         '-Dbasedir=<(java_in_dir)',

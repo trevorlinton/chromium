@@ -5,9 +5,10 @@
 #include "content/browser/renderer_host/pepper/browser_ppapi_host_impl.h"
 
 #include "content/browser/renderer_host/pepper/pepper_message_filter.h"
-#include "content/browser/trace_message_filter.h"
+#include "content/browser/tracing/trace_message_filter.h"
 #include "content/common/pepper_renderer_instance_data.h"
 #include "content/public/browser/render_view_host.h"
+#include "content/public/common/process_type.h"
 #include "ipc/ipc_message_macros.h"
 
 namespace content {
@@ -25,14 +26,15 @@ BrowserPpapiHost* BrowserPpapiHost::CreateExternalPluginProcess(
   // profile_data_directory through for NaCl. They are currently only needed for
   // PPB_Flash_File interfaces so it doesn't matter.
   std::string plugin_name;
-  FilePath profile_data_directory;
+  base::FilePath profile_data_directory;
   BrowserPpapiHostImpl* browser_ppapi_host =
       new BrowserPpapiHostImpl(sender, permissions, plugin_name,
-                               profile_data_directory);
+                               profile_data_directory,
+                               PROCESS_TYPE_NACL_LOADER);
   browser_ppapi_host->set_plugin_process_handle(plugin_child_process);
 
   channel->AddFilter(
-      new PepperMessageFilter(PepperMessageFilter::NACL,
+      new PepperMessageFilter(PROCESS_TYPE_NACL_LOADER,
                               permissions,
                               host_resolver,
                               render_process_id,
@@ -47,11 +49,13 @@ BrowserPpapiHostImpl::BrowserPpapiHostImpl(
     IPC::Sender* sender,
     const ppapi::PpapiPermissions& permissions,
     const std::string& plugin_name,
-    const FilePath& profile_data_directory)
+    const base::FilePath& profile_data_directory,
+    ProcessType plugin_process_type)
     : ppapi_host_(new ppapi::host::PpapiHost(sender, permissions)),
       plugin_process_handle_(base::kNullProcessHandle),
       plugin_name_(plugin_name),
-      profile_data_directory_(profile_data_directory) {
+      profile_data_directory_(profile_data_directory),
+      plugin_process_type_(plugin_process_type) {
   message_filter_ = new HostMessageFilter(ppapi_host_.get());
   ppapi_host_->AddHostFactoryFilter(scoped_ptr<ppapi::host::HostFactory>(
       new ContentBrowserPepperHostFactory(this)));
@@ -101,7 +105,7 @@ const std::string& BrowserPpapiHostImpl::GetPluginName() {
   return plugin_name_;
 }
 
-const FilePath& BrowserPpapiHostImpl::GetProfileDataDirectory() {
+const base::FilePath& BrowserPpapiHostImpl::GetProfileDataDirectory() {
   return profile_data_directory_;
 }
 

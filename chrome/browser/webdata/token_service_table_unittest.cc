@@ -5,7 +5,7 @@
 #include "base/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/path_service.h"
-#include "base/string_number_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/time.h"
 #include "chrome/browser/webdata/token_service_table.h"
 #include "chrome/browser/webdata/web_database.h"
@@ -25,7 +25,7 @@ class TokenServiceTableTest : public testing::Test {
     file_ = temp_dir_.path().AppendASCII("TestWebDatabase");
   }
 
-  FilePath file_;
+  base::FilePath file_;
   base::ScopedTempDir temp_dir_;
 
  private:
@@ -34,7 +34,7 @@ class TokenServiceTableTest : public testing::Test {
 
 TEST_F(TokenServiceTableTest, TokenServiceGetAllRemoveAll) {
   WebDatabase db;
-  ASSERT_EQ(sql::INIT_OK, db.Init(file_));
+  ASSERT_EQ(sql::INIT_OK, db.Init(file_, std::string()));
 
   std::map<std::string, std::string> out_map;
   std::string service;
@@ -67,7 +67,7 @@ TEST_F(TokenServiceTableTest, TokenServiceGetAllRemoveAll) {
 
 TEST_F(TokenServiceTableTest, TokenServiceGetSet) {
   WebDatabase db;
-  ASSERT_EQ(sql::INIT_OK, db.Init(file_));
+  ASSERT_EQ(sql::INIT_OK, db.Init(file_, std::string()));
 
   std::map<std::string, std::string> out_map;
   std::string service;

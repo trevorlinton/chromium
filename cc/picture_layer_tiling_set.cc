@@ -6,6 +6,18 @@
 
 namespace cc {
 
+namespace {
+
+class LargestToSmallestScaleFunctor {
+ public:
+  bool operator() (PictureLayerTiling* left, PictureLayerTiling* right) {
+    return left->contents_scale() > right->contents_scale();
+  }
+};
+
+}  // namespace
+
+
 PictureLayerTilingSet::PictureLayerTilingSet(
     PictureLayerTilingClient * client)
     : client_(client) {
@@ -14,16 +26,22 @@ PictureLayerTilingSet::PictureLayerTilingSet(
 PictureLayerTilingSet::~PictureLayerTilingSet() {
 }
 
+void PictureLayerTilingSet::SetClient(PictureLayerTilingClient* client) {
+  client_ = client;
+  for (size_t i = 0; i < tilings_.size(); ++i)
+    tilings_[i]->SetClient(client_);
+}
+
 void PictureLayerTilingSet::CloneAll(
     const PictureLayerTilingSet& other,
-    const Region& invalidation) {
+    const Region& invalidation,
+    float minimum_contents_scale) {
   tilings_.clear();
   tilings_.reserve(other.tilings_.size());
   for (size_t i = 0; i < other.tilings_.size(); ++i) {
-    tilings_.append(other.tilings_[i]->Clone());
-    tilings_.last()->SetLayerBounds(LayerBounds());
-    tilings_.last()->SetClient(client_);
-    tilings_.last()->Invalidate(invalidation);
+    if (other.tilings_[i]->contents_scale() < minimum_contents_scale)
+      continue;
+    Clone(other.tilings_[i], invalidation);
   }
 }
 
@@ -34,9 +52,14 @@ void PictureLayerTilingSet::Clone(
   for (size_t i = 0; i < tilings_.size(); ++i)
     DCHECK_NE(tilings_[i]->contents_scale(), tiling->contents_scale());
 
-  tilings_.append(tiling->Clone());
-  tilings_.last()->SetClient(client_);
-  tilings_.last()->Invalidate(invalidation);
+  tilings_.push_back(tiling->Clone());
+  gfx::Size size = tilings_.back()->layer_bounds();
+  tilings_.back()->SetClient(client_);
+  tilings_.back()->Invalidate(invalidation);
+  // Intentionally use this set's layer bounds, as it may have changed.
+  tilings_.back()->SetLayerBounds(layer_bounds_);
+
+  tilings_.sort(LargestToSmallestScaleFunctor());
 }
 
 void PictureLayerTilingSet::SetLayerBounds(gfx::Size layer_bounds) {
@@ -51,27 +74,65 @@ gfx::Size PictureLayerTilingSet::LayerBounds() const {
   return layer_bounds_;
 }
 
-const PictureLayerTiling* PictureLayerTilingSet::AddTiling(
-    float contents_scale,
-    gfx::Size tile_size) {
-  tilings_.append(PictureLayerTiling::Create(contents_scale, tile_size));
-  tilings_.last()->SetClient(client_);
-  tilings_.last()->SetLayerBounds(layer_bounds_);
-  return tilings_.last();
+PictureLayerTiling* PictureLayerTilingSet::AddTiling(float contents_scale) {
+  tilings_.push_back(PictureLayerTiling::Create(contents_scale));
+  PictureLayerTiling* appended = tilings_.back();
+  appended->SetClient(client_);
+  appended->SetLayerBounds(layer_bounds_);
+
+  tilings_.sort(LargestToSmallestScaleFunctor());
+  return appended;
 }
 
-void PictureLayerTilingSet::Reset() {
+void PictureLayerTilingSet::RemoveAllTilings() {
+  tilings_.clear();
+}
+
+void PictureLayerTilingSet::Remove(PictureLayerTiling* tiling) {
+  ScopedPtrVector<PictureLayerTiling>::iterator iter =
+    std::find(tilings_.begin(), tilings_.end(), tiling);
+  if (iter == tilings_.end())
+    return;
+  tilings_.erase(iter);
+}
+
+void PictureLayerTilingSet::RemoveAllTiles() {
   for (size_t i = 0; i < tilings_.size(); ++i)
     tilings_[i]->Reset();
 }
 
-PictureLayerTilingSet::Iterator::Iterator(const PictureLayerTilingSet* set,
-                                          float contents_scale,
-                                          gfx::Rect content_rect)
+void PictureLayerTilingSet::CreateTilesFromLayerRect(gfx::Rect layer_rect) {
+  for (size_t i = 0; i < tilings_.size(); ++i)
+    tilings_[i]->CreateTilesFromLayerRect(layer_rect);
+}
+
+PictureLayerTilingSet::Iterator::Iterator(
+    const PictureLayerTilingSet* set,
+    float contents_scale,
+    gfx::Rect content_rect,
+    float ideal_contents_scale,
+    PictureLayerTiling::LayerDeviceAlignment layerDeviceAlignment)
     : set_(set),
       contents_scale_(contents_scale),
+      ideal_contents_scale_(ideal_contents_scale),
+      layer_device_alignment_(layerDeviceAlignment),
       current_tiling_(-1) {
   missing_region_.Union(content_rect);
+
+  for (ideal_tiling_ = 0;
+       static_cast<size_t>(ideal_tiling_) < set_->tilings_.size();
+       ++ideal_tiling_) {
+    PictureLayerTiling* tiling = set_->tilings_[ideal_tiling_];
+    if (tiling->contents_scale() < ideal_contents_scale_) {
+      if (ideal_tiling_ > 0)
+        ideal_tiling_--;
+      break;
+    }
+  }
+
+  if (ideal_tiling_ == set_->tilings_.size() && ideal_tiling_ > 0)
+    ideal_tiling_--;
+
   ++(*this);
 }
 
@@ -111,6 +172,30 @@ Tile* PictureLayerTilingSet::Iterator::operator*() const {
   return *tiling_iter_;
 }
 
+PictureLayerTiling* PictureLayerTilingSet::Iterator::CurrentTiling() {
+  if (current_tiling_ < 0)
+    return NULL;
+  if (static_cast<size_t>(current_tiling_) >= set_->tilings_.size())
+    return NULL;
+  return set_->tilings_[current_tiling_];
+}
+
+int PictureLayerTilingSet::Iterator::NextTiling() const {
+  // Order returned by this method is:
+  // 1. Ideal tiling index
+  // 2. Tiling index < Ideal in decreasing order (higher res than ideal)
+  // 3. Tiling index > Ideal in increasing order (lower res than ideal)
+  // 4. Tiling index > tilings.size() (invalid index)
+  if (current_tiling_ < 0)
+    return ideal_tiling_;
+  else if (current_tiling_ > ideal_tiling_)
+    return current_tiling_ + 1;
+  else if (current_tiling_)
+    return current_tiling_ - 1;
+  else
+    return ideal_tiling_ + 1;
+}
+
 PictureLayerTilingSet::Iterator& PictureLayerTilingSet::Iterator::operator++() {
   bool first_time = current_tiling_ < 0;
 
@@ -133,7 +218,7 @@ PictureLayerTilingSet::Iterator& PictureLayerTilingSet::Iterator::operator++() {
     // tiling and set up to iterate through all of the remaining holes.
     // This will also happen the first time through the loop.
     if (!region_iter_.has_rect()) {
-      current_tiling_++;
+      current_tiling_ = NextTiling();
       current_region_.Swap(missing_region_);
       missing_region_.Clear();
       region_iter_ = Region::Iterator(current_region_);
@@ -163,7 +248,8 @@ PictureLayerTilingSet::Iterator& PictureLayerTilingSet::Iterator::operator++() {
     tiling_iter_ = PictureLayerTiling::Iterator(
         set_->tilings_[current_tiling_],
         contents_scale_,
-        last_rect);
+        last_rect,
+        layer_device_alignment_);
   }
 
   return *this;
@@ -176,22 +262,53 @@ PictureLayerTilingSet::Iterator::operator bool() const {
 
 void PictureLayerTilingSet::UpdateTilePriorities(
     WhichTree tree,
-    const gfx::Size& device_viewport,
-    float layer_content_scale_x,
-    float layer_content_scale_y,
+    gfx::Size device_viewport,
+    gfx::Rect viewport_in_content_space,
+    gfx::Size last_layer_bounds,
+    gfx::Size current_layer_bounds,
+    gfx::Size last_layer_content_bounds,
+    gfx::Size current_layer_content_bounds,
+    float last_layer_contents_scale,
+    float current_layer_contents_scale,
     const gfx::Transform& last_screen_transform,
     const gfx::Transform& current_screen_transform,
-    double time_delta) {
+    int current_source_frame_number,
+    double current_frame_time,
+    bool store_screen_space_quads_on_tiles) {
+  gfx::RectF viewport_in_layer_space = gfx::ScaleRect(
+    viewport_in_content_space,
+    1.f / current_layer_contents_scale,
+    1.f / current_layer_contents_scale);
+
   for (size_t i = 0; i < tilings_.size(); ++i) {
     tilings_[i]->UpdateTilePriorities(
         tree,
         device_viewport,
-        layer_content_scale_x,
-        layer_content_scale_y,
+        viewport_in_layer_space,
+        last_layer_bounds,
+        current_layer_bounds,
+        last_layer_content_bounds,
+        current_layer_content_bounds,
+        last_layer_contents_scale,
+        current_layer_contents_scale,
         last_screen_transform,
         current_screen_transform,
-        time_delta);
+        current_source_frame_number,
+        current_frame_time,
+        store_screen_space_quads_on_tiles);
   }
+}
+
+void PictureLayerTilingSet::DidBecomeActive() {
+  for (size_t i = 0; i < tilings_.size(); ++i)
+    tilings_[i]->DidBecomeActive();
+}
+
+scoped_ptr<base::Value> PictureLayerTilingSet::AsValue() const {
+  scoped_ptr<base::ListValue> state(new base::ListValue());
+  for (size_t i = 0; i < tilings_.size(); ++i)
+    state->Append(tilings_[i]->AsValue().release());
+  return state.PassAs<base::Value>();
 }
 
 }  // namespace cc

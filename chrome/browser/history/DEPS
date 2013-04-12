@@ -26,8 +26,7 @@ include_rules = [
   "!chrome/browser/content_settings/cookie_settings.h",
   "!chrome/browser/diagnostics/sqlite_diagnostics.h",
   "!chrome/browser/favicon/favicon_service.h",
-  "!chrome/browser/instant/instant_loader.h",
-  "!chrome/browser/prefs/pref_service.h",
+  "!chrome/browser/instant/instant_overlay.h",
   "!chrome/browser/prefs/scoped_user_pref_update.h",
   "!chrome/browser/prerender/prerender_contents.h",
   "!chrome/browser/prerender/prerender_manager.h",
@@ -51,7 +50,6 @@ include_rules = [
   "!chrome/browser/ui/profile_error_dialog.h",
   "!chrome/browser/ui/webui/ntp/most_visited_handler.h",
   "!chrome/browser/ui/webui/ntp/new_tab_ui.h",
-  "!chrome/browser/visitedlink/visitedlink_master.h",
 ]
 
 specific_include_rules = {

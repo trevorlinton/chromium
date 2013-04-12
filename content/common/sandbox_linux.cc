@@ -8,6 +8,8 @@
 #include <sys/time.h>
 #include <sys/types.h>
 
+#include <limits>
+
 #include "base/command_line.h"
 #include "base/file_util.h"
 #include "base/logging.h"
@@ -64,6 +66,19 @@ bool ShouldEnableSeccompLegacy(const std::string& process_type) {
   } else {
     return false;
   }
+}
+
+bool AddResourceLimit(int resource, rlim_t limit) {
+  struct rlimit old_rlimit;
+  if (getrlimit(resource, &old_rlimit))
+    return false;
+  // Make sure we don't raise the existing limit.
+  const struct rlimit new_rlimit = {
+      std::min(old_rlimit.rlim_cur, limit),
+      std::min(old_rlimit.rlim_max, limit)
+      };
+  int rc = setrlimit(resource, &new_rlimit);
+  return rc == 0;
 }
 
 }  // namespace
@@ -195,7 +210,7 @@ bool LinuxSandbox::IsSingleThreaded() const {
   // Possibly racy, but it's ok because this is more of a debug check to catch
   // new threaded situations arising during development.
   int num_threads = file_util::CountFilesCreatedAfter(
-      FilePath("/proc/self/task"),
+      base::FilePath("/proc/self/task"),
       base::Time::UnixEpoch());
 
   // We pass the test if we don't know ( == 0), because the setuid sandbox
@@ -257,26 +272,39 @@ bool LinuxSandbox::seccomp_bpf_supported() const {
 
 bool LinuxSandbox::LimitAddressSpace(const std::string& process_type) {
   (void) process_type;
-#if defined(__x86_64__) && !defined(ADDRESS_SANITIZER)
+#if !defined(ADDRESS_SANITIZER)
   CommandLine* command_line = CommandLine::ForCurrentProcess();
   if (command_line->HasSwitch(switches::kNoSandbox)) {
     return false;
   }
+
   // Limit the address space to 4GB.
-  const rlim_t kNewAddressSpaceMaxSize = 0x100000000L;
-  struct rlimit old_address_space_limit;
-  if (getrlimit(RLIMIT_AS, &old_address_space_limit))
-    return false;
-  // Make sure we don't raise the existing limit.
-  const struct rlimit new_address_space_limit = {
-      std::min(old_address_space_limit.rlim_cur, kNewAddressSpaceMaxSize),
-      std::min(old_address_space_limit.rlim_max, kNewAddressSpaceMaxSize)
-      };
-  int rc = setrlimit(RLIMIT_AS, &new_address_space_limit);
-  return (rc == 0);
+  // This is in the hope of making some kernel exploits more complex and less
+  // reliable. It also limits sprays a little on 64-bit.
+  rlim_t address_space_limit = std::numeric_limits<uint32_t>::max();
+#if defined(__LP64__)
+  // On 64 bits, V8 and possibly others will reserve massive memory ranges and
+  // rely on on-demand paging for allocation.  Unfortunately, even
+  // MADV_DONTNEED ranges  count towards RLIMIT_AS so this is not an option.
+  // See crbug.com/169327 for a discussion.
+  // For now, increase limit to 16GB for renderer and worker processes to
+  // accomodate.
+  if (process_type == switches::kRendererProcess ||
+      process_type == switches::kWorkerProcess) {
+    address_space_limit = 1L << 34;
+  }
+#endif  // defined(__LP64__)
+
+  // On all platforms, add a limit to the brk() heap that would prevent
+  // allocations that can't be index by an int.
+  const rlim_t kNewDataSegmentMaxSize = std::numeric_limits<int>::max();
+
+  bool limited_as = AddResourceLimit(RLIMIT_AS, address_space_limit);
+  bool limited_data = AddResourceLimit(RLIMIT_DATA, kNewDataSegmentMaxSize);
+  return limited_as && limited_data;
 #else
   return false;
-#endif  // __x86_64__ && !defined(ADDRESS_SANITIZER)
+#endif  // !defined(ADDRESS_SANITIZER)
 }
 
 }  // namespace content

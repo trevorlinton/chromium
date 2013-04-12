@@ -9,18 +9,29 @@ namespace chromeos {
 // Constants for ONC properties.
 namespace onc {
 
-// Top Level ONC
-const char kCertificates[] = "Certificates";
-const char kEncryptedConfiguration[] = "EncryptedConfiguration";
-const char kNetworkConfigurations[] = "NetworkConfigurations";
-const char kUnencryptedConfiguration[] = "UnencryptedConfiguration";
-const char kNetworkConfiguration[] = "NetworkConfiguration";
+const char kAugmentationEffectiveSetting[] = "Effective";
+const char kAugmentationUserPolicy[] = "UserPolicy";
+const char kAugmentationDevicePolicy[] = "DevicePolicy";
+const char kAugmentationUserSetting[] = "UserSetting";
+const char kAugmentationSharedSetting[] = "SharedSetting";
+const char kAugmentationUserEditable[] = "UserEditable";
+const char kAugmentationDeviceEditable[] = "DeviceEditable";
 
 // Common keys/values.
 const char kRecommended[] = "Recommended";
 const char kRemove[] = "Remove";
 
+// Top Level Configuration
+namespace toplevel_config {
+const char kCertificates[] = "Certificates";
+const char kEncryptedConfiguration[] = "EncryptedConfiguration";
+const char kNetworkConfigurations[] = "NetworkConfigurations";
+const char kType[] = "Type";
+const char kUnencryptedConfiguration[] = "UnencryptedConfiguration";
+}  // namespace toplevel_config
+
 // Network Configuration
+namespace network_config {
 const char kCellular[] = "Cellular";
 const char kEthernet[] = "Ethernet";
 const char kGUID[] = "GUID";
@@ -29,9 +40,60 @@ const char kName[] = "Name";
 const char kNameServers[] = "NameServers";
 const char kProxySettings[] = "ProxySettings";
 const char kSearchDomains[] = "SearchDomains";
+const char kServicePath[] = "ServicePath";
+const char kConnectionState[] = "ConnectionState";
 const char kType[] = "Type";
 const char kVPN[] = "VPN";
 const char kWiFi[] = "WiFi";
+}  // namespace network_config
+
+namespace network_type {
+const char kAllTypes[] = "All";
+const char kCellular[] = "Cellular";
+const char kEthernet[] = "Ethernet";
+const char kVPN[] = "VPN";
+const char kWiFi[] = "WiFi";
+}  // namespace network_type
+
+namespace cellular {
+const char kActivateOverNonCellularNetwork[] = "ActivateOverNonCellularNetwork";
+const char kActivationState[] = "ActivationState";
+const char kAllowRoaming[] = "AllowRoaming";
+const char kAPN[] = "APN";
+const char kCarrier[] = "Carrier";
+const char kESN[] = "ESN";
+const char kFamily[] = "Family";
+const char kFirmwareRevision[] = "FirmwareRevision";
+const char kFoundNetworks[] = "FoundNetworks";
+const char kHardwareRevision[] = "HardwareRevision";
+const char kHomeProvider[] = "HomeProvider";
+const char kICCID[] = "ICCID";
+const char kIMEI[] = "IMEI";
+const char kIMSI[] = "IMSI";
+const char kManufacturer[] = "Manufacturer";
+const char kMDN[] = "MDN";
+const char kMEID[] = "MEID";
+const char kMIN[] = "MIN";
+const char kModelID[] = "ModelID";
+const char kNetworkTechnology[] = "NetworkTechnology";
+const char kOperatorCode[] = "OperatorCode";
+const char kOperatorName[] = "OperatorName";
+const char kPRLVersion[] = "PRLVersion";
+const char kProviderRequiresRoaming[] = "ProviderRequiresRoaming";
+const char kRoamingState[] = "RoamingState";
+const char kSelectedNetwork[] = "SelectedNetwork";
+const char kServingOperator[] = "ServingOperator";
+const char kSIMLockStatus[] = "SIMLockStatus";
+const char kSIMPresent[] = "SIMPresent";
+const char kSupportedCarriers[] = "SupportedCarriers";
+const char kSupportNetworkScan[] = "SupportNetworkScan";
+}  // namespace cellular
+
+namespace connection_state {
+const char kConnected[] = "Connected";
+const char kConnecting[] = "Connecting";
+const char kNotConnected[] = "NotConnected";
+}  // namespace status
 
 namespace ethernet {
 const char kAuthentication[] = "Authentication";
@@ -51,6 +113,7 @@ const char kType[] = "Type";
 
 namespace wifi {
 const char kAutoConnect[] = "AutoConnect";
+const char kBSSID[] = "BSSID";
 const char kEAP[] = "EAP";
 const char kHiddenSSID[] = "HiddenSSID";
 const char kNone[] = "None";
@@ -70,6 +133,7 @@ const char kClient[] = "Client";
 const char kCommonName[] = "CommonName";
 const char kEmailAddress[] = "EmailAddress";
 const char kEnrollmentURI[] = "EnrollmentURI";
+const char kGUID[] = "GUID";
 const char kIssuerCARef[] = "IssuerCARef";
 const char kIssuer[] = "Issuer";
 const char kLocality[] = "Locality";
@@ -99,6 +163,7 @@ const char kPBKDF2[] = "PBKDF2";
 const char kSHA1[] = "SHA1";
 const char kSalt[] = "Salt";
 const char kStretch[] = "Stretch";
+const char kType[] = "Type";
 }  // namespace encrypted
 
 namespace eap {
@@ -131,6 +196,7 @@ const char kAuthNoCache[] = "AuthNoCache";
 const char kAuthRetry[] = "AuthRetry";
 const char kAuth[] = "Auth";
 const char kAuthenticationType[] = "AuthenticationType";
+const char kAutoConnect[] = "AutoConnect";
 const char kCert[] = "Cert";
 const char kCipher[] = "Cipher";
 const char kClientCertPattern[] = "ClientCertPattern";

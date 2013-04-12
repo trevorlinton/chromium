@@ -9,7 +9,8 @@ namespace content {
 class IndexedDBLayoutTest : public InProcessBrowserLayoutTest {
  public:
   IndexedDBLayoutTest() : InProcessBrowserLayoutTest(
-      FilePath(), FilePath().AppendASCII("storage").AppendASCII("indexeddb")) {
+      base::FilePath(),
+      base::FilePath().AppendASCII("storage").AppendASCII("indexeddb")) {
   }
 
   void RunLayoutTests(const char* file_names[]) {
@@ -62,7 +63,8 @@ static const char* kKeyTests[] = {
   "keyrange-required-arguments.html",
   "key-sort-order-across-types.html",
   "key-sort-order-date.html",
-  "key-type-array.html",
+  // Flaky: http://crbug.com/165671
+  //"key-type-array.html",
   "key-type-infinity.html",
   "invalid-keys.html",
   NULL
@@ -89,13 +91,17 @@ static const char* kRegressionTests[] = {
   NULL
 };
 
-const char* kIntVersionTests[] = {
+const char* kIntVersionTests1[] = {
   "intversion-abort-in-initial-upgradeneeded.html",
   "intversion-blocked.html",
   "intversion-close-between-events.html",
   "intversion-close-in-oncomplete.html",
   "intversion-close-in-upgradeneeded.html",
   "delete-in-upgradeneeded-close-in-open-success.html",
+  NULL
+};
+
+const char* kIntVersionTests2[] = {
   "delete-in-upgradeneeded-close-in-versionchange.html",
   "intversion-gated-on-delete.html",
   "intversion-long-queue.html",
@@ -117,17 +123,13 @@ IN_PROC_BROWSER_TEST_F(IndexedDBLayoutTest, ComplexTests) {
 }
 
 // TODO(dgrogan): times out flakily. http://crbug.com/153064
-IN_PROC_BROWSER_TEST_F(IndexedDBLayoutTest, DISABLED_IndexTests) {
+// Marking FLAKY to diagnose if this is just a test duration
+// issue (and we need to split it up) or something else.
+IN_PROC_BROWSER_TEST_F(IndexedDBLayoutTest, FLAKY_IndexTests) {
   RunLayoutTests(kIndexTests);
 }
 
-#if defined(OS_LINUX)
-#define MAYBE_KeyTests DISABLED_KeyTests
-#else
-#define MAYBE_KeyTests KeyTests
-#endif
-
-IN_PROC_BROWSER_TEST_F(IndexedDBLayoutTest, MAYBE_KeyTests) {
+IN_PROC_BROWSER_TEST_F(IndexedDBLayoutTest, KeyTests) {
   RunLayoutTests(kKeyTests);
 }
 
@@ -135,12 +137,21 @@ IN_PROC_BROWSER_TEST_F(IndexedDBLayoutTest, TransactionTests) {
   RunLayoutTests(kTransactionTests);
 }
 
-IN_PROC_BROWSER_TEST_F(IndexedDBLayoutTest, IntVersionTests) {
-  RunLayoutTests(kIntVersionTests);
+IN_PROC_BROWSER_TEST_F(IndexedDBLayoutTest, IntVersionTests1) {
+  RunLayoutTests(kIntVersionTests1);
+}
+
+IN_PROC_BROWSER_TEST_F(IndexedDBLayoutTest, IntVersionTests2) {
+  RunLayoutTests(kIntVersionTests2);
 }
 
 IN_PROC_BROWSER_TEST_F(IndexedDBLayoutTest, RegressionTests) {
   RunLayoutTests(kRegressionTests);
+}
+
+// TODO(jsbell): Remove this when data has been gathered.
+IN_PROC_BROWSER_TEST_F(IndexedDBLayoutTest, FLAKY_FlakyTests) {
+  RunLayoutTest("key-type-array.html");
 }
 
 }  // namespace content

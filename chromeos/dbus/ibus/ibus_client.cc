@@ -53,7 +53,7 @@ class IBusClientImpl : public IBusClient {
 
   // IBusClient override.
   virtual void RegisterComponent(
-      const ibus::IBusComponent& ibus_component,
+      const IBusComponent& ibus_component,
       const RegisterComponentCallback& callback,
       const ErrorCallback& error_callback) OVERRIDE {
     DCHECK(!callback.is_null());
@@ -61,7 +61,7 @@ class IBusClientImpl : public IBusClient {
     dbus::MethodCall method_call(ibus::bus::kServiceInterface,
                                  ibus::bus::kRegisterComponentMethod);
     dbus::MessageWriter writer(&method_call);
-    ibus::AppendIBusComponent(ibus_component, &writer);
+    AppendIBusComponent(ibus_component, &writer);
     proxy_->CallMethodWithErrorCallback(
         &method_call,
         dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
@@ -177,30 +177,40 @@ class IBusClientImpl : public IBusClient {
   DISALLOW_COPY_AND_ASSIGN(IBusClientImpl);
 };
 
-// A stub implementation of IBusClient.
-class IBusClientStubImpl : public IBusClient {
+// An implementation of IBusClient without ibus-daemon interaction.
+// Currently this class is used only on linux desktop.
+// TODO(nona): Use this on ChromeOS device once crbug.com/171351 is fixed.
+class IBusClientDaemonlessImpl : public IBusClient {
  public:
-  IBusClientStubImpl() {}
-  virtual ~IBusClientStubImpl() {}
+  IBusClientDaemonlessImpl() {}
+  virtual ~IBusClientDaemonlessImpl() {}
 
   virtual void CreateInputContext(
       const std::string& client_name,
       const CreateInputContextCallback & callback,
-      const ErrorCallback& error_callback) OVERRIDE {}
+      const ErrorCallback& error_callback) OVERRIDE {
+    // TODO(nona): Implement this.
+  }
 
   virtual void RegisterComponent(
-      const ibus::IBusComponent& ibus_component,
+      const IBusComponent& ibus_component,
       const RegisterComponentCallback& callback,
-      const ErrorCallback& error_callback) OVERRIDE {}
+      const ErrorCallback& error_callback) OVERRIDE {
+    // TODO(nona): Implement this.
+  }
 
   virtual void SetGlobalEngine(const std::string& engine_name,
-                               const ErrorCallback& error_callback) OVERRIDE {}
+                               const ErrorCallback& error_callback) OVERRIDE {
+    // TODO(nona): Implement his.
+  }
 
   virtual void Exit(ExitOption option,
-                    const ErrorCallback& error_callback) OVERRIDE {}
+                    const ErrorCallback& error_callback) OVERRIDE {
+    // Exit is not supported on daemon-less implementation.
+  }
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(IBusClientStubImpl);
+  DISALLOW_COPY_AND_ASSIGN(IBusClientDaemonlessImpl);
 };
 
 }  // namespace
@@ -219,7 +229,7 @@ IBusClient* IBusClient::Create(DBusClientImplementationType type,
     return new IBusClientImpl(bus);
   }
   DCHECK_EQ(STUB_DBUS_CLIENT_IMPLEMENTATION, type);
-  return new IBusClientStubImpl();
+  return new IBusClientDaemonlessImpl();
 }
 
 }  // namespace chromeos

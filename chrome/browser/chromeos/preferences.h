@@ -11,8 +11,10 @@
 #include "base/compiler_specific.h"
 #include "base/prefs/public/pref_member.h"
 #include "chrome/browser/chromeos/language_preferences.h"
-#include "chrome/browser/prefs/pref_service_observer.h"
+#include "chrome/browser/prefs/pref_service_syncable_observer.h"
 
+class PrefRegistrySimple;
+class PrefRegistrySyncable;
 class PrefService;
 class PrefServiceSyncable;
 
@@ -25,15 +27,16 @@ class InputMethodManager;
 // is first initialized, it will initialize the OS settings to what's stored in
 // the preferences. These include touchpad settings, etc.
 // When the preferences change, we change the settings to reflect the new value.
-class Preferences : public PrefServiceObserver {
+class Preferences : public PrefServiceSyncableObserver {
  public:
   Preferences();
   explicit Preferences(
       input_method::InputMethodManager* input_method_manager);  // for testing
   virtual ~Preferences();
 
-  // This method will register the prefs associated with Chrome OS settings.
-  static void RegisterUserPrefs(PrefServiceSyncable* prefs);
+  // These method will register the prefs associated with Chrome OS settings.
+  static void RegisterPrefs(PrefRegistrySimple* registry);
+  static void RegisterUserPrefs(PrefRegistrySyncable* registry);
 
   // This method will initialize Chrome OS settings to values in user prefs.
   void Init(PrefServiceSyncable* prefs);
@@ -96,7 +99,7 @@ class Preferences : public PrefServiceObserver {
   // on the cmd line.
   void ForceNaturalScrollDefault();
 
-  // PrefServiceObserver implementation.
+  // PrefServiceSyncableObserver implementation.
   virtual void OnIsSyncingChanged() OVERRIDE;
 
   PrefServiceSyncable* prefs_;
@@ -109,8 +112,8 @@ class Preferences : public PrefServiceObserver {
   BooleanPrefMember three_finger_swipe_enabled_;
   BooleanPrefMember natural_scroll_;
   BooleanPrefMember vert_edge_scroll_enabled_;
-  BooleanPrefMember accessibility_enabled_;
   BooleanPrefMember screen_magnifier_enabled_;
+  IntegerPrefMember screen_magnifier_type_;
   DoublePrefMember screen_magnifier_scale_;
   IntegerPrefMember speed_factor_;
   IntegerPrefMember mouse_sensitivity_;
@@ -157,6 +160,21 @@ class Preferences : public PrefServiceObserver {
   BooleanPrefMember enable_screen_lock_;
 
   BooleanPrefMember enable_drm_;
+
+  // Power-management-related preferences.
+  IntegerPrefMember power_ac_screen_dim_delay_ms_;
+  IntegerPrefMember power_ac_screen_off_delay_ms_;
+  IntegerPrefMember power_ac_screen_lock_delay_ms_;
+  IntegerPrefMember power_ac_idle_delay_ms_;
+  IntegerPrefMember power_battery_screen_dim_delay_ms_;
+  IntegerPrefMember power_battery_screen_off_delay_ms_;
+  IntegerPrefMember power_battery_screen_lock_delay_ms_;
+  IntegerPrefMember power_battery_idle_delay_ms_;
+  IntegerPrefMember power_idle_action_;
+  IntegerPrefMember power_lid_closed_action_;
+  BooleanPrefMember power_use_audio_activity_;
+  BooleanPrefMember power_use_video_activity_;
+  DoublePrefMember power_presentation_idle_delay_factor_;
 
   DISALLOW_COPY_AND_ASSIGN(Preferences);
 };

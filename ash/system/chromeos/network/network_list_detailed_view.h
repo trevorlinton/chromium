@@ -38,13 +38,14 @@ class NetworkListDetailedView : public NetworkListDetailedViewBase {
   virtual void AppendNetworkEntries() OVERRIDE;
   virtual void GetAvailableNetworkList(
       std::vector<NetworkIconInfo>* list) OVERRIDE;
-  virtual void RefreshNetworkScrollWithEmptyNetworkList() OVERRIDE;
   virtual void UpdateNetworkEntries() OVERRIDE;
   virtual void AppendCustomButtonsToBottomRow(views::View* bottom_row) OVERRIDE;
   virtual void UpdateNetworkExtra() OVERRIDE;
   virtual void CustomButtonPressed(views::Button* sender,
                                    const ui::Event& event) OVERRIDE;
   virtual bool CustomLinkClickedOn(views::View* sender) OVERRIDE;
+  virtual bool UpdateNetworkListEntries(
+      std::set<std::string>* new_service_paths) OVERRIDE;
 
  private:
   std::string carrier_id_;
@@ -59,6 +60,9 @@ class NetworkListDetailedView : public NetworkListDetailedViewBase {
   TrayPopupLabelButton* other_wifi_;
   TrayPopupLabelButton* turn_on_wifi_;
   TrayPopupLabelButton* other_mobile_;
+  views::Label* scanning_view_;
+  views::Label* no_wifi_networks_view_;
+  views::Label* no_cellular_networks_view_;
 
   DISALLOW_COPY_AND_ASSIGN(NetworkListDetailedView);
 };

@@ -6,10 +6,13 @@
 
 #include "ash/shell.h"
 #include "ash/system/web_notification/web_notification_tray.h"
+#include "base/utf_string_conversions.h"
+#include "base/values.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/notifications/balloon.h"
 #include "chrome/browser/notifications/desktop_notification_service.h"
 #include "chrome/browser/notifications/desktop_notification_service_factory.h"
+#include "chrome/browser/notifications/message_center_settings_controller.h"
 #include "chrome/browser/notifications/notification.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -17,8 +20,15 @@
 #include "chrome/browser/ui/views/ash/balloon_view_ash.h"
 #include "chrome/browser/ui/views/notifications/balloon_view_host.h"
 #include "chrome/browser/ui/views/notifications/balloon_view_views.h"
+#include "chrome/common/extensions/extension.h"
+#include "chrome/common/extensions/extension_constants.h"
+#include "chrome/common/extensions/extension_set.h"
+#include "chrome/common/extensions/permissions/api_permission.h"
+#include "ui/message_center/views/notifier_settings_view.h"
+#include "ui/views/widget/widget.h"
 
-BalloonCollectionImplAsh::BalloonCollectionImplAsh() {
+BalloonCollectionImplAsh::BalloonCollectionImplAsh()
+    : settings_controller_(new MessageCenterSettingsController) {
   ash::Shell::GetInstance()->GetWebNotificationTray()->message_center()->
       SetDelegate(this);
 }
@@ -36,6 +46,8 @@ void BalloonCollectionImplAsh::Add(const Notification& notification,
     return;  // HTML notifications are not supported in Ash.
   if (notification.title().empty() && notification.body().empty())
     return;  // Empty notification, don't show.
+  // TODO(mukai): add a filter if the source extension is disabled or not.
+  // The availability can be checked from DesktopNotificationService.
   return BalloonCollectionImpl::Add(notification, profile);
 }
 
@@ -60,7 +72,8 @@ void BalloonCollectionImplAsh::DisableNotificationsFromSource(
 }
 
 void BalloonCollectionImplAsh::NotificationRemoved(
-    const std::string& notification_id) {
+    const std::string& notification_id,
+    bool by_user) {
   RemoveById(notification_id);
 }
 
@@ -73,9 +86,13 @@ void BalloonCollectionImplAsh::ShowSettings(
       chrome::FindOrCreateTabbedBrowser(profile,
                                         chrome::HOST_DESKTOP_TYPE_ASH);
   if (GetBalloonExtension(balloon))
-    chrome::ShowExtensions(browser);
+    chrome::ShowExtensions(browser, std::string());
   else
     chrome::ShowContentSettings(browser, CONTENT_SETTINGS_TYPE_NOTIFICATIONS);
+}
+
+void BalloonCollectionImplAsh::ShowSettingsDialog(gfx::NativeView context) {
+  settings_controller_->ShowSettingsDialog(context);
 }
 
 void BalloonCollectionImplAsh::OnClicked(const std::string& notification_id) {
@@ -83,7 +100,6 @@ void BalloonCollectionImplAsh::OnClicked(const std::string& notification_id) {
   if (!balloon)
     return;
   balloon->OnClick();
-  RemoveById(notification_id);
 }
 
 void BalloonCollectionImplAsh::OnButtonClicked(

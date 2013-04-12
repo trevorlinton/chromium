@@ -165,6 +165,7 @@ cr.define('bmm', function() {
       }
 
       if (el && el.parentNode == this &&
+          !el.editing &&
           !(el.lastChild instanceof ContextMenuButton)) {
         el.appendChild(new ContextMenuButton);
       }
@@ -389,7 +390,7 @@ cr.define('bmm', function() {
       if (bmm.isFolder(bookmarkNode)) {
         this.className = 'folder';
       } else {
-        labelEl.style.backgroundImage = url(getFaviconUrl(bookmarkNode.url));
+        labelEl.style.backgroundImage = getFaviconImageSet(bookmarkNode.url);
         labelEl.style.backgroundSize = '16px';
         urlEl.textContent = bookmarkNode.url;
       }

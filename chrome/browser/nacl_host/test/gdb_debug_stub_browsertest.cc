@@ -3,9 +3,10 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
+#include "base/environment.h"
 #include "base/path_service.h"
 #include "base/process_util.h"
-#include "base/string_number_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "chrome/browser/nacl_host/nacl_browser.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/ppapi/ppapi_test.h"
@@ -16,7 +17,7 @@ class NaClGdbDebugStubTest : public PPAPINaClNewlibTest {
   NaClGdbDebugStubTest() {
   }
 
-  void SetUpCommandLine(CommandLine* command_line) OVERRIDE;
+  virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE;
 
   void StartTestScript(base::ProcessHandle* test_process,
                        std::string test_name, int debug_stub_port);
@@ -33,8 +34,8 @@ void NaClGdbDebugStubTest::StartTestScript(base::ProcessHandle* test_process,
                                            std::string test_name,
                                            int debug_stub_port) {
   // We call python script to reuse GDB RSP protocol implementation.
-  CommandLine cmd(FilePath(FILE_PATH_LITERAL("python")));
-  FilePath script;
+  CommandLine cmd(base::FilePath(FILE_PATH_LITERAL("python")));
+  base::FilePath script;
   PathService::Get(base::DIR_SOURCE_ROOT, &script);
   script = script.AppendASCII(
       "chrome/browser/nacl_host/test/debug_stub_browser_tests.py");
@@ -48,10 +49,14 @@ void NaClGdbDebugStubTest::StartTestScript(base::ProcessHandle* test_process,
 void NaClGdbDebugStubTest::RunDebugStubTest(const std::string& nacl_module,
                                             const std::string& test_name) {
   base::ProcessHandle test_script;
+  scoped_ptr<base::Environment> env(base::Environment::Create());
   NaClBrowser::GetInstance()->SetGdbDebugStubPortListener(
       base::Bind(&NaClGdbDebugStubTest::StartTestScript,
                  base::Unretained(this), &test_script, test_name));
+  // Turn on debug stub logging.
+  env->SetVar("NACLVERBOSITY", "1");
   RunTestViaHTTP(nacl_module);
+  env->UnSetVar("NACLVERBOSITY");
   NaClBrowser::GetInstance()->ClearGdbDebugStubPortListener();
   int exit_code;
   base::WaitForExitCode(test_script, &exit_code);

@@ -7,21 +7,19 @@
 #include <windows.h>
 #include <shobjidl.h>
 #include <propkey.h>
-#include <propvarutil.h>
-#include <tchar.h>
-#include <strsafe.h>
 
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/file_util.h"
 #include "base/message_loop.h"
 #include "base/path_service.h"
-#include "base/string_number_conversions.h"
 #include "base/string_util.h"
 #include "base/stringprintf.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "base/win/registry.h"
 #include "base/win/scoped_comptr.h"
+#include "base/win/scoped_propvariant.h"
 #include "base/win/shortcut.h"
 #include "base/win/windows_version.h"
 #include "chrome/browser/web_applications/web_app.h"
@@ -39,28 +37,21 @@
 #include "chrome/installer/util/work_item_list.h"
 #include "content/public/browser/browser_thread.h"
 
-// propsys.lib is required for PropvariantTo*().
-#pragma comment(lib, "propsys.lib")
-
 using content::BrowserThread;
 
 namespace {
 
-#if defined(GOOGLE_CHROME_BUILD)
-const wchar_t kAppListAppName[] = L"ChromeAppList";
-#else
-const wchar_t kAppListAppName[] = L"ChromiumAppList";
-#endif
+const wchar_t kAppListAppNameSuffix[] = L"AppList";
 
 // Helper function for ShellIntegration::GetAppId to generates profile id
 // from profile path. "profile_id" is composed of sanitized basenames of
 // user data dir and profile dir joined by a ".".
-string16 GetProfileIdFromPath(const FilePath& profile_path) {
+string16 GetProfileIdFromPath(const base::FilePath& profile_path) {
   // Return empty string if profile_path is empty
   if (profile_path.empty())
     return string16();
 
-  FilePath default_user_data_dir;
+  base::FilePath default_user_data_dir;
   // Return empty string if profile_path is in default user data
   // dir and is the default profile.
   if (chrome::GetDefaultUserDataDirectory(&default_user_data_dir) &&
@@ -88,11 +79,18 @@ string16 GetProfileIdFromPath(const FilePath& profile_path) {
   return profile_id;
 }
 
+string16 GetAppListAppName() {
+  BrowserDistribution* dist = BrowserDistribution::GetDistribution();
+  string16 app_name(dist->GetBaseAppId());
+  app_name.append(kAppListAppNameSuffix);
+  return app_name;
+}
+
 // Gets expected app id for given Chrome (based on |command_line| and
 // |is_per_user_install|).
 string16 GetExpectedAppId(const CommandLine& command_line,
                           bool is_per_user_install) {
-  FilePath profile_path;
+  base::FilePath profile_path;
   if (command_line.HasSwitch(switches::kUserDataDir)) {
     profile_path =
         command_line.GetSwitchValuePath(switches::kUserDataDir).AppendASCII(
@@ -107,7 +105,7 @@ string16 GetExpectedAppId(const CommandLine& command_line,
     app_name = UTF8ToUTF16(web_app::GenerateApplicationNameFromExtensionId(
         command_line.GetSwitchValueASCII(switches::kAppId)));
   } else if (command_line.HasSwitch(switches::kShowAppList)) {
-    app_name = kAppListAppName;
+    app_name = GetAppListAppName();
   } else {
     BrowserDistribution* dist = BrowserDistribution::GetDistribution();
     app_name = ShellUtil::GetBrowserModelId(dist, is_per_user_install);
@@ -121,7 +119,7 @@ void MigrateChromiumShortcutsCallback() {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::FILE));
 
   // Get full path of chrome.
-  FilePath chrome_exe;
+  base::FilePath chrome_exe;
   if (!PathService::Get(base::FILE_EXE, &chrome_exe))
     return;
 
@@ -146,7 +144,7 @@ void MigrateChromiumShortcutsCallback() {
   };
 
   for (int i = 0; i < arraysize(kLocations); ++i) {
-    FilePath path;
+    base::FilePath path;
     if (!PathService::Get(kLocations[i].location_id, &path)) {
       NOTREACHED();
       continue;
@@ -189,7 +187,7 @@ ShellIntegration::DefaultWebClientSetPermission
 }
 
 bool ShellIntegration::SetAsDefaultBrowser() {
-  FilePath chrome_exe;
+  base::FilePath chrome_exe;
   if (!PathService::Get(base::FILE_EXE, &chrome_exe)) {
     LOG(ERROR) << "Error getting app exe path";
     return false;
@@ -211,7 +209,7 @@ bool ShellIntegration::SetAsDefaultProtocolClient(const std::string& protocol) {
   if (protocol.empty())
     return false;
 
-  FilePath chrome_exe;
+  base::FilePath chrome_exe;
   if (!PathService::Get(base::FILE_EXE, &chrome_exe)) {
     LOG(ERROR) << "Error getting app exe path";
     return false;
@@ -231,7 +229,7 @@ bool ShellIntegration::SetAsDefaultProtocolClient(const std::string& protocol) {
 }
 
 bool ShellIntegration::SetAsDefaultBrowserInteractive() {
-  FilePath chrome_exe;
+  base::FilePath chrome_exe;
   if (!PathService::Get(base::FILE_EXE, &chrome_exe)) {
     NOTREACHED() << "Error getting app exe path";
     return false;
@@ -249,7 +247,7 @@ bool ShellIntegration::SetAsDefaultBrowserInteractive() {
 
 bool ShellIntegration::SetAsDefaultProtocolClientInteractive(
     const std::string& protocol) {
-  FilePath chrome_exe;
+  base::FilePath chrome_exe;
   if (!PathService::Get(base::FILE_EXE, &chrome_exe)) {
     NOTREACHED() << "Error getting app exe path";
     return false;
@@ -276,6 +274,13 @@ ShellIntegration::DefaultWebClientState
     ShellIntegration::IsDefaultProtocolClient(const std::string& protocol) {
   return GetDefaultWebClientStateFromShellUtilDefaultState(
       ShellUtil::GetChromeDefaultProtocolClientState(UTF8ToUTF16(protocol)));
+}
+
+std::string ShellIntegration::GetApplicationForProtocol(const GURL& url) {
+  // TODO(calamity): this will be implemented when external_protocol_dialog is
+  // refactored on windows.
+  NOTREACHED();
+  return std::string();
 }
 
 // There is no reliable way to say which browser is default on a machine (each
@@ -312,7 +317,7 @@ bool ShellIntegration::IsFirefoxDefaultBrowser() {
 
 string16 ShellIntegration::GetAppModelIdForProfile(
     const string16& app_name,
-    const FilePath& profile_path) {
+    const base::FilePath& profile_path) {
   std::vector<string16> components;
   components.push_back(app_name);
   const string16 profile_id(GetProfileIdFromPath(profile_path));
@@ -322,9 +327,9 @@ string16 ShellIntegration::GetAppModelIdForProfile(
 }
 
 string16 ShellIntegration::GetChromiumModelIdForProfile(
-    const FilePath& profile_path) {
+    const base::FilePath& profile_path) {
   BrowserDistribution* dist = BrowserDistribution::GetDistribution();
-  FilePath chrome_exe;
+  base::FilePath chrome_exe;
   if (!PathService::Get(base::FILE_EXE, &chrome_exe)) {
     NOTREACHED();
     return dist->GetBaseAppId();
@@ -336,15 +341,15 @@ string16 ShellIntegration::GetChromiumModelIdForProfile(
 }
 
 string16 ShellIntegration::GetAppListAppModelIdForProfile(
-    const FilePath& profile_path) {
-  return ShellIntegration::GetAppModelIdForProfile(kAppListAppName,
-                                                   profile_path);
+    const base::FilePath& profile_path) {
+  return ShellIntegration::GetAppModelIdForProfile(
+      GetAppListAppName(), profile_path);
 }
 
 string16 ShellIntegration::GetChromiumIconLocation() {
   // Determine the path to chrome.exe. If we can't determine what that is,
   // we have bigger fish to fry...
-  FilePath chrome_exe;
+  base::FilePath chrome_exe;
   if (!PathService::Get(base::FILE_EXE, &chrome_exe)) {
     NOTREACHED();
     return string16();
@@ -369,9 +374,10 @@ void ShellIntegration::MigrateChromiumShortcuts() {
       base::TimeDelta::FromSeconds(kMigrateChromiumShortcutsDelaySeconds));
 }
 
-int ShellIntegration::MigrateShortcutsInPathInternal(const FilePath& chrome_exe,
-                                                     const FilePath& path,
-                                                     bool check_dual_mode) {
+int ShellIntegration::MigrateShortcutsInPathInternal(
+    const base::FilePath& chrome_exe,
+    const base::FilePath& path,
+    bool check_dual_mode) {
   DCHECK(base::win::GetVersion() >= base::win::VERSION_WIN7);
 
   // Enumerate all pinned shortcuts in the given path directly.
@@ -383,10 +389,10 @@ int ShellIntegration::MigrateShortcutsInPathInternal(const FilePath& chrome_exe,
       InstallUtil::IsPerUserInstall(chrome_exe.value().c_str());
 
   int shortcuts_migrated = 0;
-  FilePath target_path;
+  base::FilePath target_path;
   string16 arguments;
-  string16 existing_app_id;
-  for (FilePath shortcut = shortcuts_enum.Next(); !shortcut.empty();
+  base::win::ScopedPropVariant propvariant;
+  for (base::FilePath shortcut = shortcuts_enum.Next(); !shortcut.empty();
        shortcut = shortcuts_enum.Next()) {
     // TODO(gab): Use ProgramCompare instead of comparing FilePaths below once
     // it is fixed to work with FilePaths with spaces.
@@ -420,57 +426,52 @@ int ShellIntegration::MigrateShortcutsInPathInternal(const FilePath& chrome_exe,
 
     // Validate the existing app id for the shortcut.
     base::win::ScopedComPtr<IPropertyStore> property_store;
-    PROPVARIANT pv_app_id;
-    PropVariantInit(&pv_app_id);
+    propvariant.Reset();
     if (FAILED(property_store.QueryFrom(shell_link)) ||
-        property_store->GetValue(PKEY_AppUserModel_ID, &pv_app_id) != S_OK) {
+        property_store->GetValue(PKEY_AppUserModel_ID,
+                                 propvariant.Receive()) != S_OK) {
       // When in doubt, prefer not updating the shortcut.
       NOTREACHED();
       continue;
-    } else if (pv_app_id.vt == VT_EMPTY) {
-      // If there is no app_id set, set our app_id if one is expected.
-      if (!expected_app_id.empty())
-        updated_properties.set_app_id(expected_app_id);
     } else {
-      // Validate that the existing app_id is the expected app_id; if not, set
-      // the expected app_id on the shortcut.
-      size_t expected_size = expected_app_id.size() + 1;
-      HRESULT result = PropVariantToString(
-          pv_app_id, WriteInto(&existing_app_id, expected_size), expected_size);
-      PropVariantClear(&pv_app_id);
-      if (result != S_OK && result != STRSAFE_E_INSUFFICIENT_BUFFER) {
-        // Accept the STRSAFE_E_INSUFFICIENT_BUFFER error state as it means the
-        // existing appid is longer than |expected_app_id| and thus we will
-        // simply assume inequality.
-        NOTREACHED();
-        continue;
-      } else if (result == STRSAFE_E_INSUFFICIENT_BUFFER ||
-                 expected_app_id != existing_app_id) {
-        updated_properties.set_app_id(expected_app_id);
+      switch (propvariant.get().vt) {
+        case VT_EMPTY:
+          // If there is no app_id set, set our app_id if one is expected.
+          if (!expected_app_id.empty())
+            updated_properties.set_app_id(expected_app_id);
+          break;
+        case VT_LPWSTR:
+          if (expected_app_id != string16(propvariant.get().pwszVal))
+            updated_properties.set_app_id(expected_app_id);
+          break;
+        default:
+          NOTREACHED();
+          continue;
       }
     }
 
     if (check_dual_mode) {
-      BOOL existing_dual_mode;
-      PROPVARIANT pv_dual_mode;
-      PropVariantInit(&pv_dual_mode);
+      propvariant.Reset();
       if (property_store->GetValue(PKEY_AppUserModel_IsDualMode,
-                                   &pv_dual_mode) != S_OK) {
+                                   propvariant.Receive()) != S_OK) {
         // When in doubt, prefer to not update the shortcut.
         NOTREACHED();
         continue;
-      } else if (pv_dual_mode.vt == VT_EMPTY) {
-        // If dual_mode is not set at all, make sure it gets set to true.
-        updated_properties.set_dual_mode(true);
       } else {
-        // If it is set to false, make sure it gets set to true as well.
-        if (PropVariantToBoolean(pv_dual_mode, &existing_dual_mode) != S_OK) {
-          NOTREACHED();
-          continue;
+        switch (propvariant.get().vt) {
+          case VT_EMPTY:
+            // If dual_mode is not set at all, make sure it gets set to true.
+            updated_properties.set_dual_mode(true);
+            break;
+          case VT_BOOL:
+            // If it is set to false, make sure it gets set to true as well.
+            if (!propvariant.get().boolVal)
+              updated_properties.set_dual_mode(true);
+            break;
+          default:
+            NOTREACHED();
+            continue;
         }
-        PropVariantClear(&pv_dual_mode);
-        if (!existing_dual_mode)
-          updated_properties.set_dual_mode(true);
       }
     }
 
@@ -488,14 +489,15 @@ int ShellIntegration::MigrateShortcutsInPathInternal(const FilePath& chrome_exe,
   return shortcuts_migrated;
 }
 
-FilePath ShellIntegration::GetStartMenuShortcut(const FilePath& chrome_exe) {
+base::FilePath ShellIntegration::GetStartMenuShortcut(
+    const base::FilePath& chrome_exe) {
   static const int kFolderIds[] = {
     base::DIR_COMMON_START_MENU,
     base::DIR_START_MENU,
   };
   BrowserDistribution* dist = BrowserDistribution::GetDistribution();
   string16 shortcut_name(dist->GetAppShortCutName());
-  FilePath shortcut;
+  base::FilePath shortcut;
 
   // Check both the common and the per-user Start Menu folders for system-level
   // installs.
@@ -513,5 +515,5 @@ FilePath ShellIntegration::GetStartMenuShortcut(const FilePath& chrome_exe) {
       return shortcut;
   }
 
-  return FilePath();
+  return base::FilePath();
 }

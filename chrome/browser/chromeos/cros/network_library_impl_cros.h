@@ -61,9 +61,9 @@ class NetworkLibraryImplCros : public NetworkLibraryImplBase  {
   virtual void SetCellularDataRoamingAllowed(bool new_value) OVERRIDE;
   virtual void SetCarrier(const std::string& carrier,
                           const NetworkOperationCallback& completed) OVERRIDE;
+  virtual void ResetModem() OVERRIDE;
   virtual bool IsCellularAlwaysInRoaming() OVERRIDE;
   virtual void RequestNetworkScan() OVERRIDE;
-  virtual bool GetWifiAccessPoints(WifiAccessPointVector* result) OVERRIDE;
 
   virtual void RefreshIPConfig(Network* network) OVERRIDE;
 
@@ -162,7 +162,6 @@ class NetworkLibraryImplCros : public NetworkLibraryImplBase  {
   void UpdateTechnologies(const base::ListValue* technologies, int* bitfieldp);
   void UpdateAvailableTechnologies(const base::ListValue* technologies);
   void UpdateEnabledTechnologies(const base::ListValue* technologies);
-  void UpdateConnectedTechnologies(const base::ListValue* technologies);
 
   // Update network lists.
   void UpdateNetworkServiceList(const base::ListValue* services);
@@ -210,8 +209,6 @@ class NetworkLibraryImplCros : public NetworkLibraryImplBase  {
 
   // Map of monitored devices.
   NetworkWatcherMap monitored_devices_;
-
-  base::Time wifi_scan_request_time_;
 
   DISALLOW_COPY_AND_ASSIGN(NetworkLibraryImplCros);
 };

@@ -9,6 +9,7 @@
 #include "net/base/upload_data_stream.h"
 #include "net/base/upload_file_element_reader.h"
 #include "webkit/blob/blob_storage_controller.h"
+#include "webkit/fileapi/upload_file_system_file_element_reader.h"
 
 using webkit_blob::BlobData;
 using webkit_blob::BlobStorageController;
@@ -41,8 +42,10 @@ class BytesElementReader : public net::UploadBytesElementReader {
 class FileElementReader : public net::UploadFileElementReader {
  public:
   FileElementReader(ResourceRequestBody* resource_request_body,
+                    base::TaskRunner* task_runner,
                     const ResourceRequestBody::Element& element)
-      : net::UploadFileElementReader(element.path(),
+      : net::UploadFileElementReader(task_runner,
+                                     element.path(),
                                      element.offset(),
                                      element.length(),
                                      element.expected_modification_time()),
@@ -70,7 +73,7 @@ void ResourceRequestBody::AppendBytes(const char* bytes, int bytes_len) {
 }
 
 void ResourceRequestBody::AppendFileRange(
-    const FilePath& file_path,
+    const base::FilePath& file_path,
     uint64 offset, uint64 length,
     const base::Time& expected_modification_time) {
   elements_.push_back(Element());
@@ -93,7 +96,9 @@ void ResourceRequestBody::AppendFileSystemFileRange(
 
 net::UploadDataStream*
 ResourceRequestBody::ResolveElementsAndCreateUploadDataStream(
-    BlobStorageController* blob_controller) {
+    BlobStorageController* blob_controller,
+    fileapi::FileSystemContext* file_system_context,
+    base::TaskRunner* file_task_runner) {
   // Resolve all blob elements.
   std::vector<const Element*> resolved_elements;
   for (size_t i = 0; i < elements_.size(); ++i) {
@@ -114,11 +119,17 @@ ResourceRequestBody::ResolveElementsAndCreateUploadDataStream(
         element_readers.push_back(new BytesElementReader(this, element));
         break;
       case Element::TYPE_FILE:
-        element_readers.push_back(new FileElementReader(this, element));
+        element_readers.push_back(
+            new FileElementReader(this, file_task_runner, element));
         break;
       case Element::TYPE_FILE_FILESYSTEM:
-        // TODO(kinuko): Resolve FileSystemURL before creating UploadData.
-        NOTREACHED();
+        element_readers.push_back(
+            new fileapi::UploadFileSystemFileElementReader(
+                file_system_context,
+                element.url(),
+                element.offset(),
+                element.length(),
+                element.expected_modification_time()));
         break;
       case Element::TYPE_BLOB:
         // Blob elements should be resolved beforehand.

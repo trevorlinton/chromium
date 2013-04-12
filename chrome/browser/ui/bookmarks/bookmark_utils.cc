@@ -4,22 +4,24 @@
 
 #include "chrome/browser/ui/bookmarks/bookmark_utils.h"
 
+#include "base/basictypes.h"
 #include "base/logging.h"
-#include "base/prefs/public/pref_service_base.h"
-#include "base/string_number_conversions.h"
+#include "base/prefs/pref_service.h"
+#include "base/strings/string_number_conversions.h"
 #include "chrome/browser/bookmarks/bookmark_model.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/bookmarks/bookmark_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_navigator.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/simple_message_box.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/web_contents.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
+#include "net/base/net_util.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace chrome {
@@ -28,22 +30,78 @@ int num_bookmark_urls_before_prompting = 15;
 
 namespace {
 
-// Returns the number of children of |node| that are of type url.
-int ChildURLCount(const BookmarkNode* node) {
-  int result = 0;
-  for (int i = 0; i < node->child_count(); ++i) {
-    const BookmarkNode* child = node->GetChild(i);
-    if (child->is_url())
-      result++;
+// Iterator that iterates through a set of BookmarkNodes returning the URLs
+// for nodes that are urls, or the URLs for the children of non-url urls.
+// This does not recurse through all descendants, only immediate children.
+// The following illustrates
+// typical usage:
+// OpenURLIterator iterator(nodes);
+// while (iterator.has_next()) {
+//   const GURL* url = iterator.NextURL();
+//   // do something with |urll|.
+// }
+class OpenURLIterator {
+ public:
+  explicit OpenURLIterator(const std::vector<const BookmarkNode*>& nodes)
+      : child_index_(0),
+        next_(NULL),
+        parent_(nodes.begin()),
+        end_(nodes.end()) {
+    FindNext();
   }
-  return result;
-}
+
+  bool has_next() { return next_ != NULL;}
+
+  const GURL* NextURL() {
+    if (!has_next()) {
+      NOTREACHED();
+      return NULL;
+    }
+
+    const GURL* next = next_;
+    FindNext();
+    return next;
+  }
+
+ private:
+  // Seach next node which has URL.
+  void FindNext() {
+    for (; parent_ < end_; ++parent_, child_index_ = 0) {
+      if ((*parent_)->is_url()) {
+        next_ = &(*parent_)->url();
+        ++parent_;
+        child_index_ = 0;
+        return;
+      } else {
+        for (; child_index_ < (*parent_)->child_count(); ++child_index_) {
+          const BookmarkNode* child = (*parent_)->GetChild(child_index_);
+          if (child->is_url()) {
+            next_ = &child->url();
+            ++child_index_;
+            return;
+          }
+        }
+      }
+    }
+    next_ = NULL;
+  }
+
+  int child_index_;
+  const GURL* next_;
+  std::vector<const BookmarkNode*>::const_iterator parent_;
+  const std::vector<const BookmarkNode*>::const_iterator end_;
+
+  DISALLOW_COPY_AND_ASSIGN(OpenURLIterator);
+};
 
 bool ShouldOpenAll(gfx::NativeWindow parent,
                    const std::vector<const BookmarkNode*>& nodes) {
   int child_count = 0;
-  for (size_t i = 0; i < nodes.size(); ++i)
-    child_count += ChildURLCount(nodes[i]);
+  OpenURLIterator iterator(nodes);
+  while (iterator.has_next()) {
+    iterator.NextURL();
+    child_count++;
+  }
 
   if (child_count < num_bookmark_urls_before_prompting)
     return true;
@@ -53,52 +111,6 @@ bool ShouldOpenAll(gfx::NativeWindow parent,
       l10n_util::GetStringFUTF16(IDS_BOOKMARK_BAR_SHOULD_OPEN_ALL,
                                  base::IntToString16(child_count)),
       MESSAGE_BOX_TYPE_QUESTION) == MESSAGE_BOX_RESULT_YES;
-}
-
-// Implementation of OpenAll. Opens all nodes of type URL and any children of
-// |node| that are of type URL. |navigator| is the PageNavigator used to open
-// URLs. After the first url is opened |opened_url| is set to true and
-// |navigator| is set to the PageNavigator of the last active tab. This is done
-// to handle a window disposition of new window, in which case we want
-// subsequent tabs to open in that window.
-void OpenAllImpl(const BookmarkNode* node,
-                 WindowOpenDisposition initial_disposition,
-                 content::PageNavigator** navigator,
-                 bool* opened_url,
-                 content::BrowserContext* browser_context) {
-  if (node->is_url()) {
-    // When |initial_disposition| is OFF_THE_RECORD, a node which can't be
-    // opened in incognito window, it is detected using |browser_context|, is
-    // not opened.
-    if (initial_disposition == OFF_THE_RECORD &&
-        !IsURLAllowedInIncognito(node->url(), browser_context))
-        return;
-
-    WindowOpenDisposition disposition;
-    if (*opened_url)
-      disposition = NEW_BACKGROUND_TAB;
-    else
-      disposition = initial_disposition;
-    content::WebContents* opened_tab = (*navigator)->OpenURL(
-        content::OpenURLParams(node->url(), content::Referrer(), disposition,
-                               content::PAGE_TRANSITION_AUTO_BOOKMARK, false));
-    if (!*opened_url) {
-      *opened_url = true;
-      // We opened the first URL which may have opened a new window or clobbered
-      // the current page, reset the navigator just to be sure. |opened_tab| may
-      // be NULL in tests.
-      if (opened_tab)
-        *navigator = opened_tab;
-    }
-  } else {
-    // For folders only open direct children.
-    for (int i = 0; i < node->child_count(); ++i) {
-      const BookmarkNode* child_node = node->GetChild(i);
-      if (child_node->is_url())
-        OpenAllImpl(child_node, initial_disposition, navigator, opened_url,
-                    browser_context);
-    }
-  }
 }
 
 // Returns the total number of descendants nodes.
@@ -113,25 +125,12 @@ int ChildURLCountTotal(const BookmarkNode* node) {
   return result;
 }
 
-bool NodeHasURLs(const BookmarkNode* node) {
-  DCHECK(node);
-
-  if (node->is_url())
-    return true;
-
-  for (int i = 0; i < node->child_count(); ++i) {
-    if (NodeHasURLs(node->GetChild(i)))
-      return true;
-  }
-  return false;
-}
-
 // Returns in |urls|, the url and title pairs for each open tab in browser.
 void GetURLsForOpenTabs(Browser* browser,
                         std::vector<std::pair<GURL, string16> >* urls) {
-  for (int i = 0; i < browser->tab_count(); ++i) {
+  for (int i = 0; i < browser->tab_strip_model()->count(); ++i) {
     std::pair<GURL, string16> entry;
-    GetURLAndTitleToBookmark(GetWebContentsAt(browser, i),
+    GetURLAndTitleToBookmark(browser->tab_strip_model()->GetWebContentsAt(i),
                              &(entry.first), &(entry.second));
     urls->push_back(entry);
   }
@@ -147,10 +146,38 @@ void OpenAll(gfx::NativeWindow parent,
   if (!ShouldOpenAll(parent, nodes))
     return;
 
-  bool opened_url = false;
-  for (size_t i = 0; i < nodes.size(); ++i)
-    OpenAllImpl(nodes[i], initial_disposition, &navigator, &opened_url,
-                browser_context);
+  // Opens all |nodes| of type URL and any children of |nodes| that are of type
+  // URL. |navigator| is the PageNavigator used to open URLs. After the first
+  // url is opened |opened_first_url| is set to true and |navigator| is set to
+  // the PageNavigator of the last active tab. This is done to handle a window
+  // disposition of new window, in which case we want subsequent tabs to open in
+  // that window.
+  bool opened_first_url = false;
+  WindowOpenDisposition disposition = initial_disposition;
+  OpenURLIterator iterator(nodes);
+  while (iterator.has_next()) {
+    const GURL* url = iterator.NextURL();
+    // When |initial_disposition| is OFF_THE_RECORD, a node which can't be
+    // opened in incognito window, it is detected using |browser_context|, is
+    // not opened.
+    if (initial_disposition == OFF_THE_RECORD &&
+        !IsURLAllowedInIncognito(*url, browser_context))
+      continue;
+
+    content::WebContents* opened_tab = navigator->OpenURL(
+        content::OpenURLParams(*url, content::Referrer(), disposition,
+                               content::PAGE_TRANSITION_AUTO_BOOKMARK, false));
+
+    if (!opened_first_url) {
+      opened_first_url = true;
+      disposition = NEW_BACKGROUND_TAB;
+      // We opened the first URL which may have opened a new window or clobbered
+      // the current page, reset the navigator just to be sure. |opened_tab| may
+      // be NULL in tests.
+      if (opened_tab)
+        navigator = opened_tab;
+    }
+  }
 }
 
 void OpenAll(gfx::NativeWindow parent,
@@ -189,8 +216,17 @@ void ShowBookmarkAllTabsDialog(Browser* browser) {
 }
 
 bool HasBookmarkURLs(const std::vector<const BookmarkNode*>& selection) {
-  for (size_t i = 0; i < selection.size(); ++i) {
-    if (NodeHasURLs(selection[i]))
+  OpenURLIterator iterator(selection);
+  return iterator.has_next();
+}
+
+bool HasBookmarkURLsAllowedInIncognitoMode(
+    const std::vector<const BookmarkNode*>& selection,
+    content::BrowserContext* browser_context) {
+  OpenURLIterator iterator(selection);
+  while (iterator.has_next()) {
+    const GURL* url = iterator.NextURL();
+    if (IsURLAllowedInIncognito(*url, browser_context))
       return true;
   }
   return false;
@@ -204,11 +240,27 @@ void GetURLAndTitleToBookmark(content::WebContents* web_contents,
 }
 
 void ToggleBookmarkBarWhenVisible(content::BrowserContext* browser_context) {
-  PrefServiceBase* prefs = PrefServiceBase::FromBrowserContext(browser_context);
+  PrefService* prefs = PrefServiceFromBrowserContext(browser_context);
   const bool always_show = !prefs->GetBoolean(prefs::kShowBookmarkBar);
 
   // The user changed when the bookmark bar is shown, update the preferences.
   prefs->SetBoolean(prefs::kShowBookmarkBar, always_show);
+}
+
+string16 FormatBookmarkURLForDisplay(const GURL& url,
+                                     const PrefService* prefs) {
+  std::string languages;
+  if (prefs)
+    languages = prefs->GetString(prefs::kAcceptLanguages);
+
+  // Because this gets re-parsed by FixupURL(), it's safe to omit the scheme
+  // and trailing slash, and unescape most characters.  However, it's
+  // important not to drop any username/password, or unescape anything that
+  // changes the URL's meaning.
+  return net::FormatUrl(
+      url, languages,
+      net::kFormatUrlOmitAll & ~net::kFormatUrlOmitUsernamePassword,
+      net::UnescapeRule::SPACES, NULL, NULL, NULL);
 }
 
 }  // namespace chrome

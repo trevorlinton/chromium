@@ -31,8 +31,7 @@ class PushMessagingInvalidationHandler : public PushMessagingInvalidationMapper,
   // enabled.
   PushMessagingInvalidationHandler(
       InvalidationFrontend* service,
-      PushMessagingInvalidationHandlerDelegate* delegate,
-      const std::set<std::string>& extension_ids);
+      PushMessagingInvalidationHandlerDelegate* delegate);
   virtual ~PushMessagingInvalidationHandler();
 
   // PushMessagingInvalidationMapper implementation.
@@ -43,8 +42,7 @@ class PushMessagingInvalidationHandler : public PushMessagingInvalidationMapper,
   virtual void OnInvalidatorStateChange(
       syncer::InvalidatorState state) OVERRIDE;
   virtual void OnIncomingInvalidation(
-      const syncer::ObjectIdInvalidationMap& invalidation_map,
-      syncer::IncomingInvalidationSource source) OVERRIDE;
+      const syncer::ObjectIdInvalidationMap& invalidation_map) OVERRIDE;
 
   const std::set<std::string>& GetRegisteredExtensionsForTest() const {
     return registered_extensions_;

@@ -18,7 +18,6 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/chrome_paths.h"
@@ -61,7 +60,7 @@ class BrowserClosedObserver : public content::NotificationObserver {
 
   virtual void Observe(int type,
                        const content::NotificationSource& source,
-                       const content::NotificationDetails& details) {
+                       const content::NotificationDetails& details) OVERRIDE {
     MessageLoopForUI::current()->Quit();
   }
 
@@ -143,7 +142,7 @@ class DevToolsSanityTest : public InProcessBrowserTest {
   }
 
   WebContents* GetInspectedTab() {
-    return chrome::GetWebContentsAt(browser(), 0);
+    return browser()->tab_strip_model()->GetWebContentsAt(0);
   }
 
   void CloseDevToolsWindow() {
@@ -184,12 +183,12 @@ class DevToolsExtensionTest : public DevToolsSanityTest,
  protected:
   // Load an extension from test\data\devtools\extensions\<extension_name>
   void LoadExtension(const char* extension_name) {
-    FilePath path = test_extensions_dir_.AppendASCII(extension_name);
+    base::FilePath path = test_extensions_dir_.AppendASCII(extension_name);
     ASSERT_TRUE(LoadExtensionFromPath(path)) << "Failed to load extension.";
   }
 
  private:
-  bool LoadExtensionFromPath(const FilePath& path) {
+  bool LoadExtensionFromPath(const base::FilePath& path) {
     ExtensionService* service = extensions::ExtensionSystem::Get(
         browser()->profile())->extension_service();
     size_t num_before = service->extensions()->size();
@@ -242,9 +241,9 @@ class DevToolsExtensionTest : public DevToolsSanityTest,
     return true;
   }
 
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) {
+  virtual void Observe(int type,
+                       const content::NotificationSource& source,
+                       const content::NotificationDetails& details) OVERRIDE {
     switch (type) {
       case chrome::NOTIFICATION_EXTENSION_LOADED:
       case chrome::NOTIFICATION_EXTENSION_HOST_DID_STOP_LOADING:
@@ -256,12 +255,12 @@ class DevToolsExtensionTest : public DevToolsSanityTest,
     }
   }
 
-  FilePath test_extensions_dir_;
+  base::FilePath test_extensions_dir_;
 };
 
 class DevToolsExperimentalExtensionTest : public DevToolsExtensionTest {
  public:
-  void SetUpCommandLine(CommandLine* command_line) OVERRIDE {
+  virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE {
     command_line->AppendSwitch(switches::kEnableExperimentalExtensionApis);
   }
 };
@@ -389,7 +388,7 @@ class WorkerDevToolsSanityTest : public InProcessBrowserTest {
             worker_data->worker_route_id));
     DevToolsManager::GetInstance()->RegisterDevToolsClientHostFor(
         agent_host,
-        window_->devtools_client_host());
+        window_->GetDevToolsClientHostForTest());
     RenderViewHost* client_rvh = window_->GetRenderViewHost();
     WebContents* client_contents = WebContents::FromRenderViewHost(client_rvh);
     if (client_contents->IsLoading()) {
@@ -462,7 +461,6 @@ IN_PROC_BROWSER_TEST_F(DevToolsExtensionTest,
 }
 
 // Tests that scripts are not duplicated after Scripts Panel switch.
-// Disabled - see http://crbug.com/124300
 IN_PROC_BROWSER_TEST_F(DevToolsSanityTest,
                        TestNoScriptDuplicatesOnPanelSwitch) {
   RunTest("testNoScriptDuplicatesOnPanelSwitch", kDebuggerTestPage);
@@ -470,7 +468,6 @@ IN_PROC_BROWSER_TEST_F(DevToolsSanityTest,
 
 // Tests that debugger works correctly if pause event occurs when DevTools
 // frontend is being loaded.
-// http://crbug.com/106114
 IN_PROC_BROWSER_TEST_F(DevToolsSanityTest,
                        TestPauseWhenLoadingDevTools) {
   RunTest("testPauseWhenLoadingDevTools", kPauseWhenLoadingDevTools);
@@ -516,7 +513,8 @@ IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, TestReattachAfterCrash) {
   content::WindowedNotificationObserver observer(
       content::NOTIFICATION_LOAD_STOP,
       content::Source<NavigationController>(
-          &chrome::GetActiveWebContents(browser())->GetController()));
+          &browser()->tab_strip_model()->GetActiveWebContents()->
+              GetController()));
   chrome::Reload(browser(), CURRENT_TAB);
   observer.Wait();
 

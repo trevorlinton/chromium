@@ -4,6 +4,7 @@
 
 #include "content/shell/webkit_test_helpers.h"
 
+#include "base/utf_string_conversions.h"
 #include "third_party/WebKit/Tools/DumpRenderTree/chromium/TestRunner/public/WebPreferences.h"
 #include "webkit/glue/webpreferences.h"
 
@@ -42,8 +43,19 @@ void ExportLayoutTestSpecificPreferences(const WebPreferences& from,
   to->allow_running_insecure_content = from.allowRunningOfInsecureContent;
   to->css_shaders_enabled = from.cssCustomFilterEnabled;
   to->should_respect_image_orientation = from.shouldRespectImageOrientation;
+  to->asynchronous_spell_checking_enabled =
+      from.asynchronousSpellCheckingEnabled;
+  to->allow_file_access_from_file_urls = from.allowFileAccessFromFileURLs;
+  to->author_and_user_styles_enabled = from.authorAndUserStylesEnabled;
+  to->javascript_can_open_windows_automatically =
+      from.javaScriptCanOpenWindowsAutomatically;
+  to->user_style_sheet_location = from.userStyleSheetLocation;
+  to->touch_drag_drop_enabled = from.touchDragDropEnabled;
 }
 
+// Applies settings that differ between layout tests and regular mode. Some
+// of the defaults are controlled via command line flags which are
+// automatically set for layout tests.
 void ApplyLayoutTestDefaultPreferences(webkit_glue::WebPreferences* prefs) {
   prefs->allow_universal_access_from_file_urls = true;
   prefs->dom_paste_enabled = true;
@@ -61,6 +73,36 @@ void ApplyLayoutTestDefaultPreferences(webkit_glue::WebPreferences* prefs) {
   prefs->allow_displaying_insecure_content = true;
   prefs->allow_running_insecure_content = true;
   prefs->webgl_errors_to_console_enabled = false;
+  string16 serif;
+#if defined(OS_MACOSX)
+  prefs->cursive_font_family_map[webkit_glue::WebPreferences::kCommonScript] =
+      ASCIIToUTF16("Apple Chancery");
+  prefs->fantasy_font_family_map[webkit_glue::WebPreferences::kCommonScript] =
+      ASCIIToUTF16("Papyrus");
+  serif = ASCIIToUTF16("Times");
+#else
+  prefs->cursive_font_family_map[webkit_glue::WebPreferences::kCommonScript] =
+      ASCIIToUTF16("Comic Sans MS");
+  prefs->fantasy_font_family_map[webkit_glue::WebPreferences::kCommonScript] =
+      ASCIIToUTF16("Impact");
+  serif = ASCIIToUTF16("times new roman");
+#endif
+  prefs->serif_font_family_map[webkit_glue::WebPreferences::kCommonScript] =
+      serif;
+  prefs->standard_font_family_map[webkit_glue::WebPreferences::kCommonScript] =
+      serif;
+  prefs->fixed_font_family_map[webkit_glue::WebPreferences::kCommonScript] =
+      ASCIIToUTF16("Courier");
+  prefs->sans_serif_font_family_map[
+      webkit_glue::WebPreferences::kCommonScript] = ASCIIToUTF16("Helvetica");
+  prefs->minimum_logical_font_size = 9;
+  prefs->asynchronous_spell_checking_enabled = false;
+  prefs->user_style_sheet_enabled = true;
+  prefs->threaded_html_parser = true;
+  prefs->accelerated_2d_canvas_enabled = false;
+  prefs->accelerated_compositing_for_video_enabled = false;
+  prefs->deferred_2d_canvas_enabled = false;
+  prefs->mock_scrollbars_enabled = false;
 }
 
 }  // namespace content

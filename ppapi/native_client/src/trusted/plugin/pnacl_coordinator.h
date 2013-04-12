@@ -116,18 +116,30 @@ class PnaclCoordinator: public CallbackSource<FileStreamData> {
                             const nacl::string& component);
 
   // Run |translate_notify_callback_| with an error condition that is not
-  // PPAPI specific.
-  void ReportNonPpapiError(const nacl::string& message);
+  // PPAPI specific.  Also set ErrorInfo report.
+  void ReportNonPpapiError(PluginErrorCode err, const nacl::string& message);
   // Run when faced with a PPAPI error condition. Bring control back to the
   // plugin by invoking the |translate_notify_callback_|.
-  void ReportPpapiError(int32_t pp_error, const nacl::string& message);
-  void ReportPpapiError(int32_t pp_error);
+  // Also set ErrorInfo report.
+  void ReportPpapiError(PluginErrorCode err,
+                        int32_t pp_error, const nacl::string& message);
+  // Bring control back to the plugin by invoking the
+  // |translate_notify_callback_|.  This does not set the ErrorInfo report,
+  // it is assumed that it was already set.
+  void ExitWithError();
 
   // Implement FileDownloader's template of the CallbackSource interface.
   // This method returns a callback which will be called by the FileDownloader
   // to stream the bitcode data as it arrives. The callback
   // (BitcodeStreamGotData) passes it to llc over SRPC.
   StreamCallback GetCallback();
+
+  // Return a callback that should be notified when |bytes_compiled| bytes
+  // have been compiled.
+  pp::CompletionCallback GetCompileProgressCallback(int64_t bytes_compiled);
+
+  // Get the last known load progress.
+  void GetCurrentProgress(int64_t* bytes_loaded, int64_t* bytes_total);
 
  private:
   NACL_DISALLOW_COPY_AND_ASSIGN(PnaclCoordinator);
@@ -153,6 +165,8 @@ class PnaclCoordinator: public CallbackSource<FileStreamData> {
   void CachedFileDidOpen(int32_t pp_error);
   // Invoked when a pexe data chunk arrives (when using streaming translation)
   void BitcodeStreamGotData(int32_t pp_error, FileStreamData data);
+  // Invoked when a pexe data chunk is compiled.
+  void BitcodeGotCompiled(int32_t pp_error, int64_t bytes_compiled);
   // Invoked when the pexe download finishes (using streaming translation)
   void BitcodeStreamDidFinish(int32_t pp_error);
   // Invoked when the write descriptor for obj_file_ is created.
@@ -173,6 +187,11 @@ class PnaclCoordinator: public CallbackSource<FileStreamData> {
   void DidCopyNexeToCachePartial(int32_t pp_error, int32_t num_read_prev,
                                  int64_t cur_offset);
   void NexeWasCopiedToCache(int32_t pp_error);
+  // If the copy of the nexe to the not-yet-committed-to-cache file
+  // failed after partial writes, we attempt to delete the partially written
+  // file. This callback is invoked when the delete is completed.
+  void CorruptCacheFileWasDeleted(int32_t delete_pp_error,
+                                  int32_t orig_pp_error);
   // Invoked when the nexe_file_ temporary has been renamed to the nexe name.
   void NexeFileWasRenamed(int32_t pp_error);
   // Invoked when the read descriptor for nexe_file_ is created.
@@ -235,6 +254,12 @@ class PnaclCoordinator: public CallbackSource<FileStreamData> {
 
   // True if compilation is off_the_record.
   bool off_the_record_;
+
+  // State for timing and size information for UMA stats.
+  int64_t pnacl_init_time_;
+  int64_t pexe_size_;  // Count as we stream -- will converge to pexe size.
+  int64_t pexe_bytes_compiled_;  // Count as we compile.
+  int64_t expected_pexe_size_;   // Expected download total (-1 if unknown).
 
   // The helper thread used to do translations via SRPC.
   // Keep this last in declaration order to ensure the other variables

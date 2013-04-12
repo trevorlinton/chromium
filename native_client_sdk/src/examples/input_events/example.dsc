@@ -1,5 +1,5 @@
 {
-  'TOOLS': ['newlib', 'glibc', 'pnacl'],
+  'TOOLS': ['newlib', 'glibc', 'pnacl', 'linux', 'win'],
   'TARGETS': [
     {
       'NAME' : 'input_events',
@@ -13,7 +13,9 @@
       'LIBS': ['ppapi_cpp', 'ppapi', 'pthread']
     }
   ],
-  'DATA': ['example.js'],
+  'DATA': [
+    'example.js',
+  ],
   'DEST': 'examples',
   'NAME': 'input_events',
   'TITLE': 'Input Events',

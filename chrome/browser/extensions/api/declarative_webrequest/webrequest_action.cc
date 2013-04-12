@@ -12,6 +12,7 @@
 #include "base/string_util.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/api/declarative_webrequest/request_stage.h"
+#include "chrome/browser/extensions/api/declarative_webrequest/webrequest_condition.h"
 #include "chrome/browser/extensions/api/declarative_webrequest/webrequest_constants.h"
 #include "chrome/browser/extensions/api/web_request/web_request_api_helpers.h"
 #include "chrome/browser/extensions/api/web_request/web_request_permissions.h"
@@ -313,6 +314,8 @@ struct WebRequestActionFactory {
       (* FactoryMethod)(const base::DictionaryValue* /* dict */ ,
                         std::string* /* error */,
                         bool* /* bad_message */);
+  // Maps the name of a declarativeWebRequest action type to the factory
+  // function creating it.
   std::map<std::string, FactoryMethod> factory_methods;
 
   WebRequestActionFactory() {
@@ -440,70 +443,26 @@ scoped_ptr<WebRequestAction> WebRequestAction::Create(
   return scoped_ptr<WebRequestAction>();
 }
 
-
-//
-// WebRequestActionSet
-//
-
-WebRequestActionSet::WebRequestActionSet(const Actions& actions)
-    : actions_(actions) {}
-
-WebRequestActionSet::~WebRequestActionSet() {}
-
-// static
-scoped_ptr<WebRequestActionSet> WebRequestActionSet::Create(
-    const AnyVector& actions,
-    std::string* error,
-    bool* bad_message) {
-  *error = "";
-  *bad_message = false;
-  Actions result;
-
-  for (AnyVector::const_iterator i = actions.begin();
-       i != actions.end(); ++i) {
-    CHECK(i->get());
-    scoped_ptr<WebRequestAction> action =
-        WebRequestAction::Create((*i)->value(), error, bad_message);
-    if (!error->empty() || *bad_message)
-      return scoped_ptr<WebRequestActionSet>(NULL);
-    result.push_back(make_linked_ptr(action.release()));
-  }
-
-  return scoped_ptr<WebRequestActionSet>(new WebRequestActionSet(result));
-}
-
-std::list<LinkedPtrEventResponseDelta> WebRequestActionSet::CreateDeltas(
-    const ExtensionInfoMap* extension_info_map,
-    const std::string& extension_id,
-    const WebRequestRule::RequestData& request_data,
-    bool crosses_incognito,
-    const base::Time& extension_install_time) const {
-  std::list<LinkedPtrEventResponseDelta> result;
-  for (Actions::const_iterator i = actions_.begin(); i != actions_.end(); ++i) {
-    if (!(*i)->HasPermission(extension_info_map, extension_id,
-                             request_data.request, crosses_incognito))
-      continue;
-    if ((*i)->GetStages() & request_data.stage) {
-      LinkedPtrEventResponseDelta delta = (*i)->CreateDelta(
-          request_data, extension_id, extension_install_time);
-      if (delta.get()) {
-        if ((*i)->DeltaHasPermission(extension_info_map, extension_id,
-                                     request_data.request, crosses_incognito,
-                                     delta))
-          result.push_back(delta);
-      }
+void WebRequestAction::Apply(const std::string& extension_id,
+                             base::Time extension_install_time,
+                             ApplyInfo* apply_info) const {
+  if (!HasPermission(apply_info->extension_info_map, extension_id,
+                     apply_info->request_data.request,
+                     apply_info->crosses_incognito))
+    return;
+  if (GetStages() & apply_info->request_data.stage) {
+    LinkedPtrEventResponseDelta delta = CreateDelta(
+        apply_info->request_data, extension_id, extension_install_time);
+    if (delta.get()) {
+      if (DeltaHasPermission(apply_info->extension_info_map, extension_id,
+                             apply_info->request_data.request,
+                             apply_info->crosses_incognito,
+                             delta))
+        apply_info->deltas->push_back(delta);
     }
   }
-  return result;
 }
 
-int WebRequestActionSet::GetMinimumPriority() const {
-  int minimum_priority = std::numeric_limits<int>::min();
-  for (Actions::const_iterator i = actions_.begin(); i != actions_.end(); ++i) {
-    minimum_priority = std::max(minimum_priority, (*i)->GetMinimumPriority());
-  }
-  return minimum_priority;
-}
 
 //
 // WebRequestCancelAction
@@ -528,7 +487,7 @@ WebRequestCancelAction::GetHostPermissionsStrategy() const {
 }
 
 LinkedPtrEventResponseDelta WebRequestCancelAction::CreateDelta(
-    const WebRequestRule::RequestData& request_data,
+    const WebRequestData& request_data,
     const std::string& extension_id,
     const base::Time& extension_install_time) const {
   CHECK(request_data.stage & GetStages());
@@ -561,7 +520,7 @@ WebRequestRedirectAction::GetHostPermissionsStrategy() const {
 }
 
 LinkedPtrEventResponseDelta WebRequestRedirectAction::CreateDelta(
-    const WebRequestRule::RequestData& request_data,
+    const WebRequestData& request_data,
     const std::string& extension_id,
     const base::Time& extension_install_time) const {
   CHECK(request_data.stage & GetStages());
@@ -599,7 +558,7 @@ WebRequestRedirectToTransparentImageAction::GetHostPermissionsStrategy() const {
 
 LinkedPtrEventResponseDelta
 WebRequestRedirectToTransparentImageAction::CreateDelta(
-    const WebRequestRule::RequestData& request_data,
+    const WebRequestData& request_data,
     const std::string& extension_id,
     const base::Time& extension_install_time) const {
   CHECK(request_data.stage & GetStages());
@@ -635,7 +594,7 @@ WebRequestRedirectToEmptyDocumentAction::GetHostPermissionsStrategy() const {
 
 LinkedPtrEventResponseDelta
 WebRequestRedirectToEmptyDocumentAction::CreateDelta(
-    const WebRequestRule::RequestData& request_data,
+    const WebRequestData& request_data,
     const std::string& extension_id,
     const base::Time& extension_install_time) const {
   CHECK(request_data.stage & GetStages());
@@ -724,7 +683,7 @@ WebRequestRedirectByRegExAction::GetHostPermissionsStrategy() const {
 }
 
 LinkedPtrEventResponseDelta WebRequestRedirectByRegExAction::CreateDelta(
-    const WebRequestRule::RequestData& request_data,
+    const WebRequestData& request_data,
     const std::string& extension_id,
     const base::Time& extension_install_time) const {
   CHECK(request_data.stage & GetStages());
@@ -768,7 +727,7 @@ WebRequestSetRequestHeaderAction::GetType() const {
 
 LinkedPtrEventResponseDelta
 WebRequestSetRequestHeaderAction::CreateDelta(
-    const WebRequestRule::RequestData& request_data,
+    const WebRequestData& request_data,
     const std::string& extension_id,
     const base::Time& extension_install_time) const {
   CHECK(request_data.stage & GetStages());
@@ -800,7 +759,7 @@ WebRequestRemoveRequestHeaderAction::GetType() const {
 
 LinkedPtrEventResponseDelta
 WebRequestRemoveRequestHeaderAction::CreateDelta(
-    const WebRequestRule::RequestData& request_data,
+    const WebRequestData& request_data,
     const std::string& extension_id,
     const base::Time& extension_install_time) const {
   CHECK(request_data.stage & GetStages());
@@ -834,7 +793,7 @@ WebRequestAddResponseHeaderAction::GetType() const {
 
 LinkedPtrEventResponseDelta
 WebRequestAddResponseHeaderAction::CreateDelta(
-    const WebRequestRule::RequestData& request_data,
+    const WebRequestData& request_data,
     const std::string& extension_id,
     const base::Time& extension_install_time) const {
   CHECK(request_data.stage & GetStages());
@@ -879,7 +838,7 @@ WebRequestRemoveResponseHeaderAction::GetType() const {
 
 LinkedPtrEventResponseDelta
 WebRequestRemoveResponseHeaderAction::CreateDelta(
-    const WebRequestRule::RequestData& request_data,
+    const WebRequestData& request_data,
     const std::string& extension_id,
     const base::Time& extension_install_time) const {
   CHECK(request_data.stage & GetStages());
@@ -935,7 +894,7 @@ WebRequestIgnoreRulesAction::GetHostPermissionsStrategy() const {
 }
 
 LinkedPtrEventResponseDelta WebRequestIgnoreRulesAction::CreateDelta(
-    const WebRequestRule::RequestData& request_data,
+    const WebRequestData& request_data,
     const std::string& extension_id,
     const base::Time& extension_install_time) const {
   CHECK(request_data.stage & GetStages());
@@ -963,7 +922,7 @@ WebRequestAction::Type WebRequestRequestCookieAction::GetType() const {
 }
 
 LinkedPtrEventResponseDelta WebRequestRequestCookieAction::CreateDelta(
-    const WebRequestRule::RequestData& request_data,
+    const WebRequestData& request_data,
     const std::string& extension_id,
     const base::Time& extension_install_time) const {
   CHECK(request_data.stage & GetStages());
@@ -996,7 +955,7 @@ WebRequestAction::Type WebRequestResponseCookieAction::GetType() const {
 }
 
 LinkedPtrEventResponseDelta WebRequestResponseCookieAction::CreateDelta(
-    const WebRequestRule::RequestData& request_data,
+    const WebRequestData& request_data,
     const std::string& extension_id,
     const base::Time& extension_install_time) const {
   CHECK(request_data.stage & GetStages());
@@ -1030,7 +989,7 @@ WebRequestAction::Type WebRequestSendMessageToExtensionAction::GetType() const {
 }
 
 LinkedPtrEventResponseDelta WebRequestSendMessageToExtensionAction::CreateDelta(
-    const WebRequestRule::RequestData& request_data,
+    const WebRequestData& request_data,
     const std::string& extension_id,
     const base::Time& extension_install_time) const {
   CHECK(request_data.stage & GetStages());

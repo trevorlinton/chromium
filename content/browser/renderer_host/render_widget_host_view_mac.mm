@@ -38,6 +38,7 @@
 #include "content/common/gpu/gpu_messages.h"
 #include "content/common/plugin_messages.h"
 #include "content/common/view_messages.h"
+#include "content/port/browser/render_widget_host_view_frame_subscriber.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #import "content/public/browser/render_widget_host_view_mac_delegate.h"
@@ -73,7 +74,6 @@ using WebKit::WebInputEvent;
 using WebKit::WebInputEventFactory;
 using WebKit::WebMouseEvent;
 using WebKit::WebMouseWheelEvent;
-using WebKit::WebGestureEvent;
 
 // These are not documented, so use only after checking -respondsToSelector:.
 @interface NSApplication (UndocumentedSpeechMethods)
@@ -146,7 +146,6 @@ static float ScaleFactor(NSView* view) {
 - (void)scrollOffsetPinnedToLeft:(BOOL)left toRight:(BOOL)right;
 - (void)setHasHorizontalScrollbar:(BOOL)has_horizontal_scrollbar;
 - (void)keyEvent:(NSEvent*)theEvent wasKeyEquivalent:(BOOL)equiv;
-- (void)cancelChildPopups;
 - (void)windowDidChangeBackingProperties:(NSNotification*)notification;
 - (void)windowChangedGlobalFrame:(NSNotification*)notification;
 - (void)checkForPluginImeCancellation;
@@ -172,6 +171,78 @@ static const short kIOHIDEventTypeScroll = 6;
 
 - (BOOL)canBecomeMainWindow {
   return YES;
+}
+
+@end
+
+@interface RenderWidgetPopupWindow : NSWindow {
+   // The event tap that allows monitoring of all events, to properly close with
+   // a click outside the bounds of the window.
+  id clickEventTap_;
+}
+@end
+
+@implementation RenderWidgetPopupWindow
+
+- (id)initWithContentRect:(NSRect)contentRect
+                styleMask:(NSUInteger)windowStyle
+                  backing:(NSBackingStoreType)bufferingType
+                    defer:(BOOL)deferCreation {
+  if (self = [super initWithContentRect:contentRect
+                              styleMask:windowStyle
+                                backing:bufferingType
+                                  defer:deferCreation]) {
+    [self setOpaque:NO];
+    [self setBackgroundColor:[NSColor clearColor]];
+    [self startObservingClicks];
+  }
+  return self;
+}
+
+- (void)close {
+  [self stopObservingClicks];
+  [super close];
+}
+
+// Gets called when the menubar is clicked.
+// Needed because the local event monitor doesn't see the click on the menubar.
+- (void)beganTracking:(NSNotification*)notification {
+  [self close];
+}
+
+// Install the callback.
+- (void)startObservingClicks {
+  clickEventTap_ = [NSEvent addLocalMonitorForEventsMatchingMask:NSAnyEventMask
+      handler:^NSEvent* (NSEvent* event) {
+          if ([event window] == self)
+            return event;
+          NSEventType eventType = [event type];
+          if (eventType == NSLeftMouseDown || eventType == NSRightMouseDown)
+            [self close];
+          return event;
+  }];
+
+  NSNotificationCenter* notificationCenter =
+      [NSNotificationCenter defaultCenter];
+  [notificationCenter addObserver:self
+         selector:@selector(beganTracking:)
+             name:NSMenuDidBeginTrackingNotification
+           object:[NSApp mainMenu]];
+}
+
+// Remove the callback.
+- (void)stopObservingClicks {
+  if (!clickEventTap_)
+    return;
+
+  [NSEvent removeMonitor:clickEventTap_];
+   clickEventTap_ = nil;
+
+  NSNotificationCenter* notificationCenter =
+      [NSNotificationCenter defaultCenter];
+  [notificationCenter removeObserver:self
+                name:NSMenuDidBeginTrackingNotification
+              object:[NSApp mainMenu]];
 }
 
 @end
@@ -333,6 +404,26 @@ void RenderWidgetHostViewMac::SetAllowOverlappingViews(bool overlapping) {
 ///////////////////////////////////////////////////////////////////////////////
 // RenderWidgetHostViewMac, RenderWidgetHostView implementation:
 
+bool RenderWidgetHostViewMac::OnMessageReceived(const IPC::Message& message) {
+  bool handled = true;
+  IPC_BEGIN_MESSAGE_MAP(RenderWidgetHostViewMac, message)
+    IPC_MESSAGE_HANDLER(ViewHostMsg_PluginFocusChanged, OnPluginFocusChanged)
+    IPC_MESSAGE_HANDLER(ViewHostMsg_StartPluginIme, OnStartPluginIme)
+    IPC_MESSAGE_HANDLER(ViewHostMsg_AllocateFakePluginWindowHandle,
+                        OnAllocateFakePluginWindowHandle)
+    IPC_MESSAGE_HANDLER(ViewHostMsg_DestroyFakePluginWindowHandle,
+                        OnDestroyFakePluginWindowHandle)
+    IPC_MESSAGE_HANDLER(ViewHostMsg_AcceleratedSurfaceSetIOSurface,
+                        OnAcceleratedSurfaceSetIOSurface)
+    IPC_MESSAGE_HANDLER(ViewHostMsg_AcceleratedSurfaceSetTransportDIB,
+                        OnAcceleratedSurfaceSetTransportDIB)
+    IPC_MESSAGE_HANDLER(ViewHostMsg_AcceleratedSurfaceBuffersSwapped,
+                        OnAcceleratedSurfaceBuffersSwapped)
+    IPC_MESSAGE_UNHANDLED(handled = false)
+  IPC_END_MESSAGE_MAP()
+  return handled;
+}
+
 void RenderWidgetHostViewMac::InitAsChild(
     gfx::NativeView parent_view) {
 }
@@ -343,22 +434,30 @@ void RenderWidgetHostViewMac::InitAsPopup(
   bool activatable = popup_type_ == WebKit::WebPopupTypeNone;
   [cocoa_view_ setCloseOnDeactivate:YES];
   [cocoa_view_ setCanBeKeyView:activatable ? YES : NO];
-  [parent_host_view->GetNativeView() addSubview:cocoa_view_];
 
   NSPoint origin_global = NSPointFromCGPoint(pos.origin().ToCGPoint());
   if ([[NSScreen screens] count] > 0) {
     origin_global.y = [[[NSScreen screens] objectAtIndex:0] frame].size.height -
         pos.height() - origin_global.y;
   }
-  NSPoint origin_window =
-      [[cocoa_view_ window] convertScreenToBase:origin_global];
-  NSPoint origin_view =
-      [cocoa_view_ convertPoint:origin_window fromView:nil];
-  NSRect initial_frame = NSMakeRect(origin_view.x,
-                                    origin_view.y,
-                                    pos.width(),
-                                    pos.height());
-  [cocoa_view_ setFrame:initial_frame];
+
+  popup_window_.reset([[RenderWidgetPopupWindow alloc]
+      initWithContentRect:NSMakeRect(origin_global.x, origin_global.y,
+                                     pos.width(), pos.height())
+                styleMask:NSBorderlessWindowMask
+                  backing:NSBackingStoreBuffered
+                    defer:NO]);
+  [popup_window_ setLevel:NSPopUpMenuWindowLevel];
+  [popup_window_ setReleasedWhenClosed:NO];
+  [popup_window_ makeKeyAndOrderFront:nil];
+  [[popup_window_ contentView] addSubview:cocoa_view_];
+  [cocoa_view_ setFrame:[[popup_window_ contentView] bounds]];
+  [cocoa_view_ setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+  [[NSNotificationCenter defaultCenter]
+      addObserver:cocoa_view_
+         selector:@selector(popupWindowWillClose:)
+             name:NSWindowWillCloseNotification
+           object:popup_window_];
 }
 
 // This function creates the fullscreen window and hides the dock and menubar if
@@ -467,24 +566,17 @@ void RenderWidgetHostViewMac::SetBounds(const gfx::Rect& rect) {
     // The position of |rect| is screen coordinate system and we have to
     // consider Cocoa coordinate system is upside-down and also multi-screen.
     NSPoint origin_global = NSPointFromCGPoint(rect.origin().ToCGPoint());
+    NSSize size = NSMakeSize(rect.width(), rect.height());
+    size = [cocoa_view_ convertSize:size toView:nil];
     if ([[NSScreen screens] count] > 0) {
-      NSSize size = NSMakeSize(rect.width(), rect.height());
-      size = [cocoa_view_ convertSize:size toView:nil];
       NSScreen* screen =
           static_cast<NSScreen*>([[NSScreen screens] objectAtIndex:0]);
       origin_global.y =
           NSHeight([screen frame]) - size.height - origin_global.y;
     }
-
-    // Then |origin_global| is converted to client coordinate system.
-    DCHECK([cocoa_view_ window]);
-    NSPoint origin_window =
-        [[cocoa_view_ window] convertScreenToBase:origin_global];
-    NSPoint origin_view =
-        [[cocoa_view_ superview] convertPoint:origin_window fromView:nil];
-    NSRect frame = NSMakeRect(origin_view.x, origin_view.y,
-                              rect.width(), rect.height());
-    [cocoa_view_ setFrame:frame];
+    [popup_window_ setFrame:NSMakeRect(origin_global.x, origin_global.y,
+                                       size.width, size.height)
+                    display:YES];
   } else {
     DCHECK([[cocoa_view_ superview] isKindOfClass:[BaseView class]]);
     BaseView* superview = static_cast<BaseView*>([cocoa_view_ superview]);
@@ -635,15 +727,6 @@ void RenderWidgetHostViewMac::TextInputStateChanged(
   }
 }
 
-void RenderWidgetHostViewMac::SelectionBoundsChanged(
-    const gfx::Rect& start_rect,
-    WebKit::WebTextDirection start_direction,
-    const gfx::Rect& end_rect,
-    WebKit::WebTextDirection end_direction) {
-  if (start_rect == end_rect)
-    caret_rect_ = start_rect;
-}
-
 void RenderWidgetHostViewMac::ImeCancelComposition() {
   [cocoa_view_ cancelComposition];
 }
@@ -714,30 +797,25 @@ void RenderWidgetHostViewMac::RenderViewGone(base::TerminationStatus status,
 void RenderWidgetHostViewMac::Destroy() {
   AckPendingSwapBuffers();
 
-  // On Windows, popups are implemented with a popup window style, so that when
-  // an event comes in that would "cancel" it, it receives the OnCancelMode
-  // message and can kill itself. Alas, on the Mac, views cannot capture events
-  // outside of themselves. On Windows, if Destroy is being called on a view,
-  // then the event causing the destroy had also cancelled any popups by the
-  // time Destroy() was called. On the Mac we have to destroy all the popups
-  // ourselves.
-
-  // Depth-first destroy all popups. Use ShutdownHost() to enforce
-  // deepest-first ordering.
   for (NSView* subview in [cocoa_view_ subviews]) {
-    if ([subview isKindOfClass:[RenderWidgetHostViewCocoa class]]) {
-      [static_cast<RenderWidgetHostViewCocoa*>(subview)
-          renderWidgetHostViewMac]->ShutdownHost();
-    } else if ([subview isKindOfClass:[AcceleratedPluginView class]]) {
+    if ([subview isKindOfClass:[AcceleratedPluginView class]]) {
       [static_cast<AcceleratedPluginView*>(subview)
           onRenderWidgetHostViewGone];
     }
   }
 
+  [[NSNotificationCenter defaultCenter]
+      removeObserver:cocoa_view_
+                name:NSWindowWillCloseNotification
+              object:popup_window_];
+
   // We've been told to destroy.
   [cocoa_view_ retain];
   [cocoa_view_ removeFromSuperview];
   [cocoa_view_ autorelease];
+
+  [popup_window_ close];
+  popup_window_.autorelease();
 
   [fullscreen_window_manager_ exitFullscreenMode];
   fullscreen_window_manager_.reset();
@@ -828,6 +906,15 @@ void RenderWidgetHostViewMac::SelectionChanged(const string16& text,
   RenderWidgetHostViewBase::SelectionChanged(text, offset, range);
 }
 
+void RenderWidgetHostViewMac::SelectionBoundsChanged(
+    const ViewHostMsg_SelectionBounds_Params& params) {
+  if (params.anchor_rect == params.focus_rect)
+    caret_rect_ = params.anchor_rect;
+}
+
+void RenderWidgetHostViewMac::ScrollOffsetChanged() {
+}
+
 void RenderWidgetHostViewMac::SetShowingContextMenu(bool showing) {
   RenderWidgetHostViewBase::SetShowingContextMenu(showing);
 
@@ -869,9 +956,9 @@ BackingStore* RenderWidgetHostViewMac::AllocBackingStore(
 void RenderWidgetHostViewMac::CopyFromCompositingSurface(
     const gfx::Rect& src_subrect,
     const gfx::Size& dst_size,
-    const base::Callback<void(bool)>& callback,
-    skia::PlatformBitmap* output) {
-  base::ScopedClosureRunner scoped_callback_runner(base::Bind(callback, false));
+    const base::Callback<void(bool, const SkBitmap&)>& callback) {
+  base::ScopedClosureRunner scoped_callback_runner(
+      base::Bind(callback, false, SkBitmap()));
   if (!compositing_iosurface_.get() ||
       !compositing_iosurface_->HasIOSurface())
     return;
@@ -879,23 +966,73 @@ void RenderWidgetHostViewMac::CopyFromCompositingSurface(
   float scale = ScaleFactor(cocoa_view_);
   gfx::Size dst_pixel_size = gfx::ToFlooredSize(
       gfx::ScaleSize(dst_size, scale));
-  if (!output->Allocate(
-      dst_pixel_size.width(), dst_pixel_size.height(), true))
+
+  SkBitmap output;
+  output.setConfig(SkBitmap::kARGB_8888_Config,
+                   dst_pixel_size.width(), dst_pixel_size.height());
+  if (!output.allocPixels())
     return;
+  output.setIsOpaque(true);
+
   scoped_callback_runner.Release();
 
-  // Convert |src_subrect| from the views coordinate (upper-left origin) into
-  // the OpenGL coordinate (lower-left origin).
-  gfx::Rect src_gl_subrect = src_subrect;
-  src_gl_subrect.set_y(GetViewBounds().height() - src_subrect.bottom());
+  compositing_iosurface_->CopyTo(GetScaledOpenGLPixelRect(src_subrect),
+                                 ScaleFactor(cocoa_view_),
+                                 dst_pixel_size,
+                                 output,
+                                 callback);
+}
 
-  gfx::Rect src_pixel_gl_subrect = gfx::ToEnclosingRect(
-      gfx::ScaleRect(src_gl_subrect, scale));
-  compositing_iosurface_->CopyTo(
-      src_pixel_gl_subrect,
-      dst_pixel_size,
-      output->GetBitmap().getPixels(),
+void RenderWidgetHostViewMac::CopyFromCompositingSurfaceToVideoFrame(
+      const gfx::Rect& src_subrect,
+      const scoped_refptr<media::VideoFrame>& target,
+      const base::Callback<void(bool)>& callback) {
+  base::ScopedClosureRunner scoped_callback_runner(base::Bind(callback, false));
+  if (!render_widget_host_->is_accelerated_compositing_active() ||
+      !compositing_iosurface_.get() ||
+      !compositing_iosurface_->HasIOSurface())
+    return;
+
+  if (!target) {
+    NOTREACHED();
+    return;
+  }
+
+  if (target->format() != media::VideoFrame::YV12 &&
+      target->format() != media::VideoFrame::I420) {
+    NOTREACHED();
+    return;
+  }
+
+  if (src_subrect.IsEmpty())
+    return;
+
+  scoped_callback_runner.Release();
+  compositing_iosurface_->CopyToVideoFrame(
+      GetScaledOpenGLPixelRect(src_subrect),
+      ScaleFactor(cocoa_view_),
+      target,
       callback);
+}
+
+bool RenderWidgetHostViewMac::CanCopyToVideoFrame() const {
+  return (!render_widget_host_->GetBackingStore(false) &&
+          render_widget_host_->is_accelerated_compositing_active() &&
+          compositing_iosurface_.get() &&
+          compositing_iosurface_->HasIOSurface());
+}
+
+bool RenderWidgetHostViewMac::CanSubscribeFrame() const {
+  return true;
+}
+
+void RenderWidgetHostViewMac::BeginFrameSubscription(
+    RenderWidgetHostViewFrameSubscriber* subscriber) {
+  frame_subscriber_.reset(subscriber);
+}
+
+void RenderWidgetHostViewMac::EndFrameSubscription() {
+  frame_subscriber_.reset();
 }
 
 // Sets whether or not to accept first responder status.
@@ -922,14 +1059,6 @@ void RenderWidgetHostViewMac::KillSelf() {
   }
 }
 
-void RenderWidgetHostViewMac::PluginFocusChanged(bool focused, int plugin_id) {
-  [cocoa_view_ pluginFocusChanged:(focused ? YES : NO) forPlugin:plugin_id];
-}
-
-void RenderWidgetHostViewMac::StartPluginIme() {
-  [cocoa_view_ setPluginImeActive:YES];
-}
-
 bool RenderWidgetHostViewMac::PostProcessEventForPluginIme(
     const NativeWebKeyboardEvent& event) {
   // Check WebInputEvent type since multiple types of events can be sent into
@@ -951,48 +1080,6 @@ void RenderWidgetHostViewMac::PluginImeCompositionCompleted(
   }
 }
 
-gfx::PluginWindowHandle
-RenderWidgetHostViewMac::AllocateFakePluginWindowHandle(bool opaque,
-                                                        bool root) {
-  CHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-
-  // |render_widget_host_| is set to NULL when |RWHVMac::Destroy()| has
-  // completed. If |AllocateFakePluginWindowHandle()| is called after that,
-  // we will crash when the AcceleratedPluginView we allocate below is
-  // destroyed.
-  DCHECK(render_widget_host_);
-
-  // Create an NSView to host the plugin's/compositor's pixels.
-  gfx::PluginWindowHandle handle =
-      plugin_container_manager_.AllocateFakePluginWindowHandle(opaque, root);
-
-  scoped_nsobject<AcceleratedPluginView> plugin_view(
-      [[AcceleratedPluginView alloc] initWithRenderWidgetHostViewMac:this
-                                                        pluginHandle:handle]);
-  [plugin_view setHidden:YES];
-
-  [cocoa_view_ addSubview:plugin_view];
-  plugin_views_[handle] = plugin_view;
-
-  return handle;
-}
-
-void RenderWidgetHostViewMac::DestroyFakePluginWindowHandle(
-    gfx::PluginWindowHandle window) {
-  CHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  PluginViewMap::iterator it = plugin_views_.find(window);
-  DCHECK(plugin_views_.end() != it);
-  if (plugin_views_.end() == it) {
-    return;
-  }
-  [it->second removeFromSuperview];
-  plugin_views_.erase(it);
-
-  // The view's dealloc will call DeallocFakePluginWindowHandle(), which will
-  // remove the handle from |plugin_container_manager_|. This code path is
-  // taken if a plugin is removed, but the RWHVMac itself stays alive.
-}
-
 // This is called by AcceleratedPluginView's -dealloc.
 void RenderWidgetHostViewMac::DeallocFakePluginWindowHandle(
     gfx::PluginWindowHandle window) {
@@ -1006,30 +1093,6 @@ AcceleratedPluginView* RenderWidgetHostViewMac::ViewForPluginWindowHandle(
   if (plugin_views_.end() == it)
     return nil;
   return it->second;
-}
-
-void RenderWidgetHostViewMac::AcceleratedSurfaceSetIOSurface(
-    gfx::PluginWindowHandle window,
-    int32 width,
-    int32 height,
-    uint64 io_surface_identifier) {
-  CHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  plugin_container_manager_.SetSizeAndIOSurface(window,
-                                                width,
-                                                height,
-                                                io_surface_identifier);
-}
-
-void RenderWidgetHostViewMac::AcceleratedSurfaceSetTransportDIB(
-    gfx::PluginWindowHandle window,
-    int32 width,
-    int32 height,
-    TransportDIB::Handle transport_dib) {
-  CHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-  plugin_container_manager_.SetSizeAndTransportDIB(window,
-                                                   width,
-                                                   height,
-                                                   transport_dib);
 }
 
 bool RenderWidgetHostViewMac::CompositorSwapBuffers(uint64 surface_handle,
@@ -1085,7 +1148,8 @@ bool RenderWidgetHostViewMac::CompositorSwapBuffers(uint64 surface_handle,
   // later.
   if (!about_to_validate_and_paint_) {
     compositing_iosurface_->DrawIOSurface(cocoa_view_,
-                                          ScaleFactor(cocoa_view_));
+                                          ScaleFactor(cocoa_view_),
+                                          frame_subscriber_.get());
   }
   return true;
 }
@@ -1321,6 +1385,10 @@ void RenderWidgetHostViewMac::AcceleratedSurfaceSuspend() {
     compositing_iosurface_->UnrefIOSurface();
 }
 
+void RenderWidgetHostViewMac::AcceleratedSurfaceRelease() {
+  compositing_iosurface_.reset();
+}
+
 bool RenderWidgetHostViewMac::HasAcceleratedSurface(
       const gfx::Size& desired_size) {
   return last_frame_was_accelerated_ &&
@@ -1357,7 +1425,7 @@ gfx::GLSurfaceHandle RenderWidgetHostViewMac::GetCompositingSurface() {
   // Compositor window is always gfx::kNullPluginWindow.
   // TODO(jbates) http://crbug.com/105344 This will be removed when there are no
   // plugin windows.
-  return gfx::GLSurfaceHandle(gfx::kNullPluginWindow, true);
+  return gfx::GLSurfaceHandle(gfx::kNullPluginWindow, gfx::NATIVE_TRANSPORT);
 }
 
 void RenderWidgetHostViewMac::DrawAcceleratedSurfaceInstance(
@@ -1428,6 +1496,14 @@ void RenderWidgetHostViewMac::UnhandledWheelEvent(
     const WebKit::WebMouseWheelEvent& event) {
   [cocoa_view_ gotUnhandledWheelEvent];
 }
+
+bool RenderWidgetHostViewMac::Send(IPC::Message* message) {
+  if (render_widget_host_)
+    return render_widget_host_->Send(message);
+  delete message;
+  return false;
+}
+
 
 void RenderWidgetHostViewMac::ShutdownHost() {
   weak_factory_.InvalidateWeakPtrs();
@@ -1560,6 +1636,102 @@ void RenderWidgetHostViewMac::SetTextInputActive(bool active) {
     if (text_input_type_ == ui::TEXT_INPUT_TYPE_PASSWORD)
       DisablePasswordInput();
   }
+}
+
+void RenderWidgetHostViewMac::OnPluginFocusChanged(bool focused,
+                                                   int plugin_id) {
+  [cocoa_view_ pluginFocusChanged:(focused ? YES : NO) forPlugin:plugin_id];
+}
+
+void RenderWidgetHostViewMac::OnStartPluginIme() {
+  [cocoa_view_ setPluginImeActive:YES];
+}
+
+void RenderWidgetHostViewMac::OnAllocateFakePluginWindowHandle(
+    bool opaque,
+    bool root,
+    gfx::PluginWindowHandle* id) {
+  CHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+
+  // |render_widget_host_| is set to NULL when |RWHVMac::Destroy()| has
+  // completed. If |AllocateFakePluginWindowHandle()| is called after that,
+  // we will crash when the AcceleratedPluginView we allocate below is
+  // destroyed.
+  DCHECK(render_widget_host_);
+
+  // Create an NSView to host the plugin's/compositor's pixels.
+  gfx::PluginWindowHandle handle =
+      plugin_container_manager_.AllocateFakePluginWindowHandle(opaque, root);
+
+  scoped_nsobject<AcceleratedPluginView> plugin_view(
+      [[AcceleratedPluginView alloc] initWithRenderWidgetHostViewMac:this
+                                                        pluginHandle:handle]);
+  [plugin_view setHidden:YES];
+
+  [cocoa_view_ addSubview:plugin_view];
+  plugin_views_[handle] = plugin_view;
+
+  *id = handle;
+}
+
+void RenderWidgetHostViewMac::OnDestroyFakePluginWindowHandle(
+    gfx::PluginWindowHandle id) {
+  CHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  PluginViewMap::iterator it = plugin_views_.find(id);
+  DCHECK(plugin_views_.end() != it);
+  if (plugin_views_.end() == it) {
+    return;
+  }
+  [it->second removeFromSuperview];
+  plugin_views_.erase(it);
+
+  // The view's dealloc will call DeallocFakePluginWindowHandle(), which will
+  // remove the handle from |plugin_container_manager_|. This code path is
+  // taken if a plugin is removed, but the RWHVMac itself stays alive.
+}
+
+void RenderWidgetHostViewMac::OnAcceleratedSurfaceSetIOSurface(
+    gfx::PluginWindowHandle window,
+    int32 width,
+    int32 height,
+    uint64 mach_port) {
+  CHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  plugin_container_manager_.SetSizeAndIOSurface(window,
+                                                width,
+                                                height,
+                                                mach_port);
+}
+
+void RenderWidgetHostViewMac::OnAcceleratedSurfaceSetTransportDIB(
+    gfx::PluginWindowHandle window,
+    int32 width,
+    int32 height,
+    TransportDIB::Handle transport_dib) {
+  CHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  plugin_container_manager_.SetSizeAndTransportDIB(window,
+                                                   width,
+                                                   height,
+                                                   transport_dib);
+}
+
+void RenderWidgetHostViewMac::OnAcceleratedSurfaceBuffersSwapped(
+    gfx::PluginWindowHandle window, uint64 surface_handle) {
+  // This code path could be updated to implement flow control for
+  // updating of accelerated plugins as well. However, if we add support
+  // for composited plugins then this is not necessary.
+  GpuHostMsg_AcceleratedSurfaceBuffersSwapped_Params params;
+  params.window = window;
+  params.surface_handle = surface_handle;
+  AcceleratedSurfaceBuffersSwapped(params, 0);
+}
+
+gfx::Rect RenderWidgetHostViewMac::GetScaledOpenGLPixelRect(
+    const gfx::Rect& rect) {
+  gfx::Rect src_gl_subrect = rect;
+  src_gl_subrect.set_y(GetViewBounds().height() - rect.bottom());
+
+  return gfx::ToEnclosingRect(gfx::ScaleRect(src_gl_subrect,
+                                             ScaleFactor(cocoa_view_)));
 }
 
 }  // namespace content
@@ -1780,45 +1952,6 @@ void RenderWidgetHostViewMac::SetTextInputActive(bool active) {
   const WebMouseEvent event =
       WebInputEventFactory::mouseEvent(theEvent, self);
   renderWidgetHostView_->ForwardMouseEvent(event);
-}
-
-- (void)shortCircuitEndGestureWithEvent:(NSEvent*)event {
-  DCHECK(base::mac::IsOSLionOrLater());
-
-  if ([event subtype] != kIOHIDEventTypeScroll)
-    return;
-
-  if (renderWidgetHostView_->render_widget_host_) {
-    WebGestureEvent webEvent = WebInputEventFactory::gestureEvent(event, self);
-    renderWidgetHostView_->render_widget_host_->ForwardGestureEvent(webEvent);
-  }
-
-  if (endGestureMonitor_) {
-    [NSEvent removeMonitor:endGestureMonitor_];
-    endGestureMonitor_ = nil;
-  }
-}
-
-- (void)beginGestureWithEvent:(NSEvent*)event {
-  if (base::mac::IsOSLionOrLater() &&
-      [event subtype] == kIOHIDEventTypeScroll &&
-      renderWidgetHostView_->render_widget_host_) {
-    WebGestureEvent webEvent = WebInputEventFactory::gestureEvent(event, self);
-    renderWidgetHostView_->render_widget_host_->ForwardGestureEvent(webEvent);
-
-    // Use an NSEvent monitor to get the gesture-end event. This is done in
-    // order to get the gesture-end, even if the view is not visible, which is
-    // not the case with -endGestureWithEvent:. An example scenario where this
-    // may happen is switching tabs while a gesture is in progress.
-    if (!endGestureMonitor_) {
-      endGestureMonitor_ =
-          [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskEndGesture
-              handler:^(NSEvent* blockEvent) {
-                        [self shortCircuitEndGestureWithEvent:blockEvent];
-                        return blockEvent;
-                      }];
-    }
-  }
 }
 
 - (BOOL)performKeyEquivalent:(NSEvent*)theEvent {
@@ -2116,10 +2249,6 @@ void RenderWidgetHostViewMac::SetTextInputActive(bool active) {
 }
 
 - (void)scrollWheel:(NSEvent*)event {
-  // Cancel popups before calling the delegate because even if the delegate eats
-  // the event, it's still an explicit user action outside the popup.
-  [self cancelChildPopups];
-
   if (delegate_ && [delegate_ respondsToSelector:@selector(handleEvent:)]) {
     BOOL handled = [delegate_ handleEvent:event];
     if (handled)
@@ -2144,23 +2273,6 @@ void RenderWidgetHostViewMac::SetTextInputActive(bool active) {
     const WebMouseWheelEvent& webEvent =
         WebInputEventFactory::mouseWheelEvent(event, self);
     renderWidgetHostView_->render_widget_host_->ForwardWheelEvent(webEvent);
-  }
-}
-
-// See the comment in RenderWidgetHostViewMac::Destroy() about cancellation
-// events. On the Mac we must kill popups on outside events, thus this lovely
-// case of filicide caused by events on parent views.
-- (void)cancelChildPopups {
-  // If this view can be the key view, it is not a popup. Therefore, if it has
-  // any children, they are popups that need to be canceled.
-  if (canBeKeyView_) {
-    for (NSView* subview in [self subviews]) {
-      if (![subview isKindOfClass:[RenderWidgetHostViewCocoa class]])
-        continue;  // Skip plugin views.
-
-      [static_cast<RenderWidgetHostViewCocoa*>(subview)
-          renderWidgetHostViewMac]->KillSelf();
-    }
   }
 }
 
@@ -2363,7 +2475,7 @@ void RenderWidgetHostViewMac::SetTextInputActive(bool active) {
     }
 
     renderWidgetHostView_->compositing_iosurface_->DrawIOSurface(
-        self, ScaleFactor(self));
+        self, ScaleFactor(self), renderWidgetHostView_->frame_subscriber());
     return;
   }
 
@@ -3254,6 +3366,20 @@ extern NSString *NSTextInputReplacementRangeAttributeName;
   }
 }
 
+- (void)selectAll:(id)sender {
+  // editCommand_helper_ adds implementations for most NSResponder methods
+  // dynamically. But the renderer side only sends selection results back to
+  // the browser if they were triggered by a keyboard event or went through
+  // one of the Select methods on RWH. Since selectAll: is called from the
+  // menu handler, neither is true.
+  // Explicitly call SelectAll() here to make sure the renderer returns
+  // selection results.
+  if (renderWidgetHostView_->render_widget_host_->IsRenderView()) {
+    static_cast<RenderViewHostImpl*>(
+        renderWidgetHostView_->render_widget_host_)->SelectAll();
+  }
+}
+
 - (void)startSpeaking:(id)sender {
   renderWidgetHostView_->SpeakSelection();
 }
@@ -3378,8 +3504,12 @@ extern NSString *NSTextInputReplacementRangeAttributeName;
   if (currentCursor_ == cursor)
     return;
 
-  currentCursor_.reset(cursor, base::scoped_policy::RETAIN);
+  currentCursor_.reset([cursor retain]);
   [[self window] invalidateCursorRectsForView:self];
+}
+
+- (void)popupWindowWillClose:(NSNotification *)notification {
+  renderWidgetHostView_->KillSelf();
 }
 
 @end

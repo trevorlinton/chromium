@@ -16,8 +16,8 @@
 #include "base/process.h"
 #include "base/process_util.h"
 #include "base/string16.h"
-#include "base/string_number_conversions.h"
 #include "base/string_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread.h"
 #include "base/time.h"
@@ -27,10 +27,15 @@
 #include "chrome/browser/chromeos/memory/low_memory_observer.h"
 #include "chrome/browser/memory_details.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_iterator.h"
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/host_desktop.h"
+#include "chrome/browser/ui/tab_contents/tab_contents_iterator.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/tabs/tab_utils.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/url_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
@@ -69,12 +74,19 @@ const char kExperiment[] = "LowMemoryMargin";
 // value.
 const int kAdjustmentIntervalSeconds = 10;
 
+// For each period of this length we record a statistic to indicate whether
+// or not the user experienced a low memory event. If you change this interval
+// you must replace Tabs.Discard.DiscardInLastMinute with a new statistic.
+const int kRecentTabDiscardIntervalSeconds = 60;
+
 // If there has been no priority adjustment in this interval, we assume the
 // machine was suspended and correct our timing statistics.
 const int kSuspendThresholdSeconds = kAdjustmentIntervalSeconds * 4;
 
-// The default interval in milliseconds to wait before setting the score of
-// currently focused tab.
+// When switching to a new tab the tab's renderer's OOM score needs to be
+// updated to reflect its front-most status and protect it from discard.
+// However, doing this immediately might slow down tab switch time, so wait
+// a little while before doing the adjustment.
 const int kFocusedTabScoreAdjustIntervalMs = 500;
 
 // Returns a unique ID for a WebContents.  Do not cast back to a pointer, as
@@ -82,6 +94,25 @@ const int kFocusedTabScoreAdjustIntervalMs = 500;
 int64 IdFromWebContents(WebContents* web_contents) {
   return reinterpret_cast<int64>(web_contents);
 }
+
+// Records a statistics |sample| for UMA histogram |name| using a linear
+// distribution of buckets.
+void RecordLinearHistogram(const std::string& name,
+                           int sample,
+                           int maximum,
+                           size_t bucket_count) {
+  // Do not use the UMA_HISTOGRAM_... macros here.  They cache the Histogram
+  // instance and thus only work if |name| is constant.
+  base::HistogramBase* counter = base::LinearHistogram::FactoryGet(
+      name,
+      1,  // Minimum. The 0 bin for underflow is automatically added.
+      maximum + 1,  // Ensure bucket size of |maximum| / |bucket_count|.
+      bucket_count + 2,  // Account for the underflow and overflow bins.
+      base::Histogram::kUmaTargetedHistogramFlag);
+  counter->Add(sample);
+}
+
+}  // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
 // OomMemoryDetails logs details about all Chrome processes during an out-of-
@@ -119,20 +150,23 @@ void OomMemoryDetails::OnDetailsAvailable() {
   }
   LOG(WARNING) << "OOM details (" << delta.InMilliseconds() << " ms):\n"
       << log_string;
-  if (g_browser_process && g_browser_process->oom_priority_manager())
-    g_browser_process->oom_priority_manager()->DiscardTab();
+  if (g_browser_process && g_browser_process->oom_priority_manager()) {
+    OomPriorityManager* manager = g_browser_process->oom_priority_manager();
+    manager->PurgeBrowserMemory();
+    manager->DiscardTab();
+  }
   // Delete ourselves so we don't have to worry about OomPriorityManager
   // deleting us when we're still working.
   Release();
 }
-
-}  // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
 // OomPriorityManager
 
 OomPriorityManager::TabStats::TabStats()
   : is_app(false),
+    is_reloadable_ui(false),
+    is_playing_audio(false),
     is_pinned(false),
     is_selected(false),
     is_discarded(false),
@@ -145,7 +179,8 @@ OomPriorityManager::TabStats::~TabStats() {
 
 OomPriorityManager::OomPriorityManager()
     : focused_tab_pid_(0),
-      discard_count_(0) {
+      discard_count_(0),
+      recent_tab_discard_(false) {
   // We only need the low memory observer if we want to discard tabs.
   if (!CommandLine::ForCurrentProcess()->HasSwitch(switches::kNoDiscardTabs))
     low_memory_observer_.reset(new LowMemoryObserver);
@@ -172,6 +207,13 @@ void OomPriorityManager::Start() {
                  this,
                  &OomPriorityManager::AdjustOomPriorities);
   }
+  if (!recent_tab_discard_timer_.IsRunning()) {
+    recent_tab_discard_timer_.Start(
+        FROM_HERE,
+        TimeDelta::FromSeconds(kRecentTabDiscardIntervalSeconds),
+        this,
+        &OomPriorityManager::RecordRecentTabDiscard);
+  }
   if (low_memory_observer_.get())
     low_memory_observer_->Start();
   start_time_ = TimeTicks::Now();
@@ -179,6 +221,7 @@ void OomPriorityManager::Start() {
 
 void OomPriorityManager::Stop() {
   timer_.Stop();
+  recent_tab_discard_timer_.Stop();
   if (low_memory_observer_.get())
     low_memory_observer_->Stop();
 }
@@ -192,12 +235,13 @@ std::vector<string16> OomPriorityManager::GetTabTitles() {
   for ( ; it != stats.end(); ++it) {
     string16 str;
     str.reserve(4096);
-    str += it->title;
-    str += ASCIIToUTF16(" (");
     int score = pid_to_oom_score_[it->renderer_handle];
     str += base::IntToString16(score);
-    str += ASCIIToUTF16(")");
+    str += ASCIIToUTF16(" - ");
+    str += it->title;
     str += ASCIIToUTF16(it->is_app ? " app" : "");
+    str += ASCIIToUTF16(it->is_reloadable_ui ? " reloadable_ui" : "");
+    str += ASCIIToUTF16(it->is_playing_audio ? " playing_audio" : "");
     str += ASCIIToUTF16(it->is_pinned ? " pinned" : "");
     str += ASCIIToUTF16(it->is_discarded ? " discarded" : "");
     titles.push_back(str);
@@ -231,10 +275,33 @@ void OomPriorityManager::LogMemoryAndDiscardTab() {
   details->StartFetch(MemoryDetails::SKIP_USER_METRICS);
 }
 
+///////////////////////////////////////////////////////////////////////////////
+// OomPriorityManager, private:
+
+// static
+bool OomPriorityManager::IsReloadableUI(const GURL& url) {
+  // There are many chrome:// UI URLs, but only look for the ones that users
+  // are likely to have open. Most of the benefit is the from NTP URL.
+  const char* kReloadableUrlPrefixes[] = {
+      chrome::kChromeUIDownloadsURL,
+      chrome::kChromeUIHistoryURL,
+      chrome::kChromeUINewTabURL,
+      chrome::kChromeUISettingsURL,
+  };
+  // Prefix-match against the table above. Use strncmp to avoid allocating
+  // memory to convert the URL prefix constants into std::strings.
+  for (size_t i = 0; i < arraysize(kReloadableUrlPrefixes); ++i) {
+    if (!strncmp(url.spec().c_str(),
+                 kReloadableUrlPrefixes[i],
+                 strlen(kReloadableUrlPrefixes[i])))
+      return true;
+  }
+  return false;
+}
+
 bool OomPriorityManager::DiscardTabById(int64 target_web_contents_id) {
-  for (BrowserList::const_iterator browser_iterator = BrowserList::begin();
-       browser_iterator != BrowserList::end(); ++browser_iterator) {
-    Browser* browser = *browser_iterator;
+  for (chrome::BrowserIterator it; !it.done(); it.Next()) {
+    Browser* browser = *it;
     TabStripModel* model = browser->tab_strip_model();
     for (int idx = 0; idx < model->count(); idx++) {
       // Can't discard tabs that are already discarded or active.
@@ -249,6 +316,7 @@ bool OomPriorityManager::DiscardTabById(int64 target_web_contents_id) {
         // memory state that lead to the discard.
         RecordDiscardStatistics();
         model->DiscardWebContentsAt(idx);
+        recent_tab_discard_ = true;
         return true;
       }
     }
@@ -294,12 +362,22 @@ void OomPriorityManager::RecordDiscardStatistics() {
     EXPERIMENT_HISTOGRAM_MEGABYTES("Tabs.Discard.MemAnonymousMB",
                                    mem_anonymous_mb);
 
+    // Record graphics GEM object size in a histogram with 50 MB buckets.
+    int mem_graphics_gem_mb = 0;
+    if (memory.gem_size != -1)
+      mem_graphics_gem_mb = memory.gem_size / 1024 / 1024;
+    RecordLinearHistogram(
+        "Tabs.Discard.MemGraphicsMB", mem_graphics_gem_mb, 2500, 50);
+
+    // Record shared memory (used by renderer/GPU buffers).
+    int mem_shmem_mb = memory.shmem / 1024;
+    RecordLinearHistogram("Tabs.Discard.MemShmemMB", mem_shmem_mb, 2500, 50);
+
     // On Intel, graphics objects are in anonymous pages, but on ARM they are
     // not. For a total "allocated count" add in graphics pages on ARM.
     int mem_allocated_mb = mem_anonymous_mb;
 #if defined(ARCH_CPU_ARM_FAMILY)
-    if (memory.gem_size != -1)
-      mem_allocated_mb += memory.gem_size / 1024 / 1024;
+    mem_allocated_mb += mem_graphics_gem_mb;
 #endif
     EXPERIMENT_CUSTOM_COUNTS("Tabs.Discard.MemAllocatedMB", mem_allocated_mb,
                              256, 32768, 50)
@@ -313,13 +391,33 @@ void OomPriorityManager::RecordDiscardStatistics() {
   last_discard_time_ = TimeTicks::Now();
 }
 
+void OomPriorityManager::RecordRecentTabDiscard() {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
+  // If we change the interval we need to change the histogram name.
+  UMA_HISTOGRAM_BOOLEAN("Tabs.Discard.DiscardInLastMinute",
+                        recent_tab_discard_);
+  // Reset for the next interval.
+  recent_tab_discard_ = false;
+}
+
+void OomPriorityManager::PurgeBrowserMemory() {
+  // Based on experimental evidence, attempts to free memory from renderers
+  // have been too slow to use in OOM situations (V8 garbage collection) or
+  // do not lead to persistent decreased usage (image/bitmap caches). This
+  // function therefore only targets large blocks of memory in the browser.
+  for (TabContentsIterator it; !it.done(); it.Next()) {
+    WebContents* web_contents = *it;
+    // Screenshots can consume ~5 MB per web contents for platforms that do
+    // touch back/forward.
+    web_contents->GetController().ClearAllScreenshots();
+  }
+  // TODO(jamescook): Are there other things we could flush? Drive metadata?
+}
+
 int OomPriorityManager::GetTabCount() const {
   int tab_count = 0;
-  for (BrowserList::const_iterator browser_it = BrowserList::begin();
-      browser_it != BrowserList::end(); ++browser_it) {
-    Browser* browser = *browser_it;
-    tab_count += browser->tab_strip_model()->count();
-  }
+  for (chrome::BrowserIterator it; !it.done(); it.Next())
+    tab_count += it->tab_strip_model()->count();
   return tab_count;
 }
 
@@ -327,18 +425,27 @@ int OomPriorityManager::GetTabCount() const {
 // than |second|.
 bool OomPriorityManager::CompareTabStats(TabStats first,
                                          TabStats second) {
-  // Being currently selected is most important.
+  // Being currently selected is most important to protect.
   if (first.is_selected != second.is_selected)
-    return first.is_selected == true;
+    return first.is_selected;
 
-  // Being pinned is second most important.
+  // Tab with internal web UI like NTP or Settings are good choices to discard,
+  // so protect non-Web UI and let the other conditionals finish the sort.
+  if (first.is_reloadable_ui != second.is_reloadable_ui)
+    return !first.is_reloadable_ui;
+
+  // Being pinned is important to protect.
   if (first.is_pinned != second.is_pinned)
-    return first.is_pinned == true;
+    return first.is_pinned;
 
   // Being an app is important too, as you're the only visible surface in the
   // window and we don't want to discard that.
   if (first.is_app != second.is_app)
-    return first.is_app == true;
+    return first.is_app;
+
+  // Protect streaming audio and video conferencing tabs.
+  if (first.is_playing_audio != second.is_playing_audio)
+    return first.is_playing_audio;
 
   // TODO(jamescook): Incorporate sudden_termination_allowed into the sort
   // order.  We don't do this now because pages with unload handlers set
@@ -428,7 +535,7 @@ void OomPriorityManager::Observe(int type,
 // 2) last time a tab was selected
 // 3) is the tab currently selected
 void OomPriorityManager::AdjustOomPriorities() {
-  if (BrowserList::size() == 0)
+  if (BrowserList::GetInstance(chrome::HOST_DESKTOP_TYPE_ASH)->empty())
     return;
 
   // Check for a discontinuity in time caused by the machine being suspended.
@@ -456,9 +563,11 @@ OomPriorityManager::TabStatsList OomPriorityManager::GetTabStatsOnUIThread() {
   TabStatsList stats_list;
   stats_list.reserve(32);  // 99% of users have < 30 tabs open
   bool browser_active = true;
+  const BrowserList* ash_browser_list =
+      BrowserList::GetInstance(chrome::HOST_DESKTOP_TYPE_ASH);
   for (BrowserList::const_reverse_iterator browser_iterator =
-           BrowserList::begin_last_active();
-       browser_iterator != BrowserList::end_last_active();
+           ash_browser_list->begin_last_active();
+       browser_iterator != ash_browser_list->end_last_active();
        ++browser_iterator) {
     Browser* browser = *browser_iterator;
     bool is_browser_for_app = browser->is_app();
@@ -468,6 +577,8 @@ OomPriorityManager::TabStatsList OomPriorityManager::GetTabStatsOnUIThread() {
       if (!contents->IsCrashed()) {
         TabStats stats;
         stats.is_app = is_browser_for_app;
+        stats.is_reloadable_ui = IsReloadableUI(contents->GetURL());
+        stats.is_playing_audio = chrome::IsPlayingAudio(contents);
         stats.is_pinned = model->IsTabPinned(i);
         stats.is_selected = browser_active && model->IsTabSelected(i);
         stats.is_discarded = model->IsTabDiscarded(i);

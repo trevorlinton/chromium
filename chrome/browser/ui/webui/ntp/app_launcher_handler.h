@@ -10,7 +10,6 @@
 
 #include "base/memory/scoped_ptr.h"
 #include "base/prefs/public/pref_change_registrar.h"
-#include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/extension_uninstall_dialog.h"
 #include "chrome/browser/favicon/favicon_service.h"
 #include "chrome/browser/ui/extensions/extension_enable_flow_delegate.h"
@@ -25,7 +24,7 @@
 class ExtensionEnableFlow;
 class ExtensionService;
 class PrefChangeRegistrar;
-class PrefServiceSyncable;
+class PrefRegistrySyncable;
 class Profile;
 
 namespace extensions {
@@ -106,7 +105,7 @@ class AppLauncherHandler : public content::WebUIMessageHandler,
   void HandleSetNotificationsDisabled(const base::ListValue* args);
 
   // Register app launcher preferences.
-  static void RegisterUserPrefs(PrefServiceSyncable* pref_service);
+  static void RegisterUserPrefs(PrefRegistrySyncable* registry);
 
   // Records the given type of app launch for UMA.
   static void RecordAppLaunchType(extension_misc::AppLaunchBucket bucket);
@@ -146,7 +145,6 @@ class AppLauncherHandler : public content::WebUIMessageHandler,
   virtual void ExtensionUninstallCanceled() OVERRIDE;
 
   // ExtensionEnableFlowDelegate:
-  virtual ExtensionInstallPrompt* CreateExtensionInstallPrompt() OVERRIDE;
   virtual void ExtensionEnableFlowFinished() OVERRIDE;
   virtual void ExtensionEnableFlowAborted(bool user_initiated) OVERRIDE;
 

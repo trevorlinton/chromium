@@ -1,4 +1,4 @@
-# Copyright (c) 2012 The Chromium Authors. All rights reserved.
+# Copyright 2013 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -7,6 +7,7 @@
     'chromium_code': 1,
 
     'linux_link_kerberos%': 0,
+    'use_simple_cache_backend%': 0,
     'conditions': [
       ['chromeos==1 or OS=="android" or OS=="ios"', {
         # Disable Kerberos on ChromeOS, Android and iOS, at least for now.
@@ -15,9 +16,12 @@
       }, {  # chromeos == 0
         'use_kerberos%': 1,
       }],
-      ['OS=="android"', {
+      ['OS=="android" and target_arch != "ia32"', {
         # The way the cache uses mmap() is inefficient on some Android devices.
         # If this flag is set, we hackily avoid using mmap() in the disk cache.
+        # We are pretty confident that mmap-ing the index would not hurt any
+        # existing x86 android devices, but we cannot be so sure about the
+        # variety of ARM devices. So enable it for x86 only for now.
         'posix_avoid_mmap%': 1,
       }, {
         'posix_avoid_mmap%': 0,
@@ -56,8 +60,14 @@
         'net_resources',
       ],
       'sources': [
+        'android/cert_verify_result_android.h',
+        'android/cert_verify_result_android_list.h',
         'android/gurl_utils.cc',
         'android/gurl_utils.h',
+        'android/keystore.cc',
+        'android/keystore.h',
+        'android/keystore_openssl.cc',
+        'android/keystore_openssl.h',
         'android/net_jni_registrar.cc',
         'android/net_jni_registrar.h',
         'android/network_change_notifier_android.cc',
@@ -110,6 +120,11 @@
         'base/cert_verify_proc_win.h',
         'base/cert_verify_result.cc',
         'base/cert_verify_result.h',
+        'base/client_cert_store.h',
+        'base/client_cert_store_impl.h',
+        'base/client_cert_store_impl_mac.cc',
+        'base/client_cert_store_impl_nss.cc',
+        'base/client_cert_store_impl_win.cc',
         'base/completion_callback.h',
         'base/connection_type_histograms.cc',
         'base/connection_type_histograms.h',
@@ -154,6 +169,8 @@
         'base/gzip_filter.h',
         'base/gzip_header.cc',
         'base/gzip_header.h',
+        'base/hash_value.cc',
+        'base/hash_value.h',
         'base/host_cache.cc',
         'base/host_cache.h',
         'base/host_mapping_rules.cc',
@@ -176,6 +193,7 @@
         'base/keygen_handler_nss.cc',
         'base/keygen_handler_openssl.cc',
         'base/keygen_handler_win.cc',
+        'base/linked_hash_map.h',
         'base/load_flags.h',
         'base/load_flags_list.h',
         'base/load_states.h',
@@ -223,9 +241,11 @@
         'base/nss_cert_database.h',
         'base/nss_memio.c',
         'base/nss_memio.h',
-        'base/openssl_memory_private_key_store.cc',
+        'base/openssl_client_key_store.cc',
+        'base/openssl_client_key_store.h',
         'base/openssl_private_key_store.h',
         'base/openssl_private_key_store_android.cc',
+        'base/openssl_private_key_store_memory.cc',
         'base/pem_tokenizer.cc',
         'base/pem_tokenizer.h',
         'base/platform_mime_util.h',
@@ -299,6 +319,8 @@
         'base/upload_file_element_reader.cc',
         'base/upload_file_element_reader.h',
         'base/upload_progress.h',
+        'base/url_util.cc',
+        'base/url_util.h',
         'base/winsock_init.cc',
         'base/winsock_init.h',
         'base/winsock_util.cc',
@@ -396,6 +418,13 @@
         'disk_cache/stress_support.h',
         'disk_cache/trace.cc',
         'disk_cache/trace.h',
+        'disk_cache/simple/simple_backend_impl.cc',
+        'disk_cache/simple/simple_backend_impl.h',
+        'disk_cache/simple/simple_disk_format.h',
+        'disk_cache/simple/simple_entry_impl.cc',
+        'disk_cache/simple/simple_entry_impl.h',
+        'disk_cache/simple/simple_synchronous_entry.cc',
+        'disk_cache/simple/simple_synchronous_entry.h',
         'disk_cache/flash/format.h',
         'disk_cache/flash/log_store.cc',
         'disk_cache/flash/log_store.h',
@@ -543,6 +572,8 @@
         'http/http_response_headers.h',
         'http/http_response_info.cc',
         'http/http_response_info.h',
+        'http/http_security_headers.cc',
+        'http/http_security_headers.h',
         'http/http_server_properties.cc',
         'http/http_server_properties.h',
         'http/http_server_properties_impl.cc',
@@ -624,11 +655,8 @@
         'proxy/proxy_list.h',
         'proxy/proxy_resolver.h',
         'proxy/proxy_resolver_error_observer.h',
-        'proxy/proxy_resolver_js_bindings.cc',
-        'proxy/proxy_resolver_js_bindings.h',
         'proxy/proxy_resolver_mac.cc',
         'proxy/proxy_resolver_mac.h',
-        'proxy/proxy_resolver_request_context.h',
         'proxy/proxy_resolver_script.h',
         'proxy/proxy_resolver_script_data.cc',
         'proxy/proxy_resolver_script_data.h',
@@ -645,9 +673,7 @@
         'proxy/proxy_server_mac.cc',
         'proxy/proxy_service.cc',
         'proxy/proxy_service.h',
-        'proxy/sync_host_resolver.h',
-        'proxy/sync_host_resolver_bridge.cc',
-        'proxy/sync_host_resolver_bridge.h',
+        'quic/blocked_list.h',
         'quic/congestion_control/cubic.cc',
         'quic/congestion_control/cubic.h',
         'quic/congestion_control/fix_rate_receiver.cc',
@@ -660,10 +686,8 @@
         'quic/congestion_control/leaky_bucket.h',
         'quic/congestion_control/paced_sender.cc',
         'quic/congestion_control/paced_sender.h',
-        'quic/congestion_control/quic_receipt_metrics_collector.cc',
-        'quic/congestion_control/quic_receipt_metrics_collector.h',
-        'quic/congestion_control/quic_send_scheduler.cc',
-        'quic/congestion_control/quic_send_scheduler.h',
+        'quic/congestion_control/quic_congestion_manager.cc',
+        'quic/congestion_control/quic_congestion_manager.h',
         'quic/congestion_control/receive_algorithm_interface.cc',
         'quic/congestion_control/receive_algorithm_interface.h',
         'quic/congestion_control/send_algorithm_interface.cc',
@@ -674,8 +698,15 @@
         'quic/congestion_control/tcp_receiver.h',
         'quic/crypto/crypto_framer.cc',
         'quic/crypto/crypto_framer.h',
+        'quic/crypto/crypto_handshake.cc',
+        'quic/crypto/crypto_handshake.h',
         'quic/crypto/crypto_protocol.cc',
         'quic/crypto/crypto_protocol.h',
+        'quic/crypto/crypto_utils.cc',
+        'quic/crypto/crypto_utils.h',
+        'quic/crypto/curve25519_key_exchange.cc',
+        'quic/crypto/curve25519_key_exchange.h',
+        'quic/crypto/key_exchange.h',
         'quic/crypto/null_decrypter.cc',
         'quic/crypto/null_decrypter.h',
         'quic/crypto/null_encrypter.cc',
@@ -686,6 +717,9 @@
         'quic/crypto/quic_encrypter.h',
         'quic/crypto/quic_random.cc',
         'quic/crypto/quic_random.h',
+        'quic/quic_bandwidth.cc',
+        'quic/quic_bandwidth.h',
+        'quic/quic_blocked_writer_interface.h',
         'quic/quic_client_session.cc',
         'quic/quic_client_session.h',
         'quic/quic_crypto_client_stream.cc',
@@ -698,6 +732,8 @@
         'quic/quic_connection.h',
         'quic/quic_connection_helper.cc',
         'quic/quic_connection_helper.h',
+        'quic/quic_connection_logger.cc',
+        'quic/quic_connection_logger.h',
         'quic/quic_data_reader.cc',
         'quic/quic_data_reader.h',
         'quic/quic_data_writer.cc',
@@ -710,6 +746,10 @@
         'quic/quic_http_stream.h',
         'quic/quic_packet_creator.cc',
         'quic/quic_packet_creator.h',
+        'quic/quic_packet_entropy_manager.cc',
+        'quic/quic_packet_entropy_manager.h',
+        'quic/quic_packet_generator.cc',
+        'quic/quic_packet_generator.h',
         'quic/quic_protocol.cc',
         'quic/quic_protocol.h',
         'quic/quic_reliable_client_stream.cc',
@@ -757,16 +797,12 @@
         'socket/socks_client_socket_pool.h',
         'socket/ssl_client_socket.cc',
         'socket/ssl_client_socket.h',
-        'socket/ssl_client_socket_mac.cc',
-        'socket/ssl_client_socket_mac.h',
         'socket/ssl_client_socket_nss.cc',
         'socket/ssl_client_socket_nss.h',
         'socket/ssl_client_socket_openssl.cc',
         'socket/ssl_client_socket_openssl.h',
         'socket/ssl_client_socket_pool.cc',
         'socket/ssl_client_socket_pool.h',
-        'socket/ssl_client_socket_win.cc',
-        'socket/ssl_client_socket_win.h',
         'socket/ssl_error_params.cc',
         'socket/ssl_error_params.h',
         'socket/ssl_server_socket.h',
@@ -818,6 +854,7 @@
         'spdy/spdy_http_utils.h',
         'spdy/spdy_io_buffer.cc',
         'spdy/spdy_io_buffer.h',
+        'spdy/spdy_protocol.cc',
         'spdy/spdy_protocol.h',
         'spdy/spdy_proxy_client_socket.cc',
         'spdy/spdy_proxy_client_socket.h',
@@ -868,6 +905,8 @@
         'url_request/url_fetcher_delegate.cc',
         'url_request/url_fetcher_delegate.h',
         'url_request/url_fetcher_factory.h',
+        'url_request/url_fetcher_file_writer.cc',
+        'url_request/url_fetcher_file_writer.h',
         'url_request/url_fetcher_impl.cc',
         'url_request/url_fetcher_impl.h',
         'url_request/url_request.cc',
@@ -923,6 +962,8 @@
         'url_request/url_request_throttler_manager.h',
         'url_request/view_cache_helper.cc',
         'url_request/view_cache_helper.h',
+        'websockets/websocket_errors.cc',
+        'websockets/websocket_errors.h',
         'websockets/websocket_frame.cc',
         'websockets/websocket_frame.h',
         'websockets/websocket_frame_parser.cc',
@@ -1023,11 +1064,17 @@
             'dns/dns_client.cc',
           ],
         }],
+	['use_simple_cache_backend==1', {
+          'defines': [
+            'USE_SIMPLE_CACHE_BACKEND',
+          ]
+        }],
         ['use_openssl==1', {
             'sources!': [
               'base/cert_database_nss.cc',
               'base/cert_verify_proc_nss.cc',
               'base/cert_verify_proc_nss.h',
+              'base/client_cert_store_impl_nss.cc',
               'base/crypto_module_nss.cc',
               'base/keygen_handler_nss.cc',
               'base/nss_cert_database.cc',
@@ -1061,9 +1108,11 @@
               'base/cert_verify_proc_openssl.h',
               'base/crypto_module_openssl.cc',
               'base/keygen_handler_openssl.cc',
-              'base/openssl_memory_private_key_store.cc',
+              'base/openssl_client_key_store.cc',
+              'base/openssl_client_key_store.h',
               'base/openssl_private_key_store.h',
               'base/openssl_private_key_store_android.cc',
+              'base/openssl_private_key_store_memory.cc',
               'base/test_root_certs_openssl.cc',
               'base/x509_certificate_openssl.cc',
               'base/x509_util_openssl.cc',
@@ -1139,6 +1188,7 @@
             'sources!': [
               'base/cert_verify_proc_nss.cc',
               'base/cert_verify_proc_nss.h',
+              'base/client_cert_store_impl_nss.cc',
             ],
         }],
         [ 'enable_websockets != 1', {
@@ -1153,6 +1203,7 @@
         }],
         [ 'OS == "win"', {
             'sources!': [
+              'base/client_cert_store_impl_nss.cc',
               'http/http_auth_handler_ntlm_portable.cc',
               'socket/tcp_client_socket_libevent.cc',
               'socket/tcp_client_socket_libevent.h',
@@ -1167,6 +1218,8 @@
               'third_party/nss/ssl.gyp:libssl',
               'tld_cleanup',
             ],
+            # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+            'msvs_disabled_warnings': [4267, ],
           }, { # else: OS != "win"
             'sources!': [
               'base/winsock_init.cc',
@@ -1179,6 +1232,9 @@
           },
         ],
         [ 'OS == "mac"', {
+            'sources!': [
+              'base/client_cert_store_impl_nss.cc',
+            ],
             'dependencies': [
               '../third_party/nss/nss.gyp:nspr',
               '../third_party/nss/nss.gyp:nss',
@@ -1223,8 +1279,13 @@
             'sources!': [
               'base/cert_database_openssl.cc',
               'base/cert_verify_proc_openssl.cc',
-              'base/openssl_memory_private_key_store.cc',
+              'base/openssl_private_key_store_memory.cc',
               'base/test_root_certs_openssl.cc',
+            ],
+            # The net/android/keystore_openssl.cc source file needs to
+            # access an OpenSSL-internal header.
+            'include_dirs': [
+              '../third_party/openssl',
             ],
           }, {  # else OS != "android"
             'defines': [
@@ -1289,12 +1350,14 @@
         'net_test_support',
       ],
       'sources': [
+        'android/keystore_unittest.cc',
         'android/network_change_notifier_android_unittest.cc',
         'base/address_list_unittest.cc',
         'base/address_tracker_linux_unittest.cc',
         'base/backoff_entry_unittest.cc',
         'base/big_endian_unittest.cc',
         'base/cert_verify_proc_unittest.cc',
+        'base/client_cert_store_impl_unittest.cc',
         'base/crl_set_unittest.cc',
         'base/data_url_unittest.cc',
         'base/default_server_bound_cert_store_unittest.cc',
@@ -1323,6 +1386,7 @@
         'base/net_util_unittest.cc',
         'base/network_change_notifier_win_unittest.cc',
         'base/nss_cert_database_unittest.cc',
+        'base/openssl_client_key_store_unittest.cc',
         'base/pem_tokenizer_unittest.cc',
         'base/prioritized_dispatcher_unittest.cc',
         'base/priority_queue_unittest.cc',
@@ -1344,6 +1408,7 @@
         'base/upload_bytes_element_reader_unittest.cc',
         'base/upload_data_stream_unittest.cc',
         'base/upload_file_element_reader_unittest.cc',
+        'base/url_util_unittest.cc',
         'base/x509_certificate_unittest.cc',
         'base/x509_cert_types_unittest.cc',
         'base/x509_util_unittest.cc',
@@ -1421,6 +1486,7 @@
         'http/http_request_headers_unittest.cc',
         'http/http_response_body_drainer_unittest.cc',
         'http/http_response_headers_unittest.cc',
+        'http/http_security_headers_unittest.cc',
         'http/http_server_properties_impl_unittest.cc',
         'http/http_stream_factory_impl_unittest.cc',
         'http/http_stream_parser_unittest.cc',
@@ -1450,23 +1516,22 @@
         'proxy/proxy_config_unittest.cc',
         'proxy/proxy_info_unittest.cc',
         'proxy/proxy_list_unittest.cc',
-        'proxy/proxy_resolver_js_bindings_unittest.cc',
+        'proxy/proxy_resolver_v8_tracing_unittest.cc',
         'proxy/proxy_resolver_v8_unittest.cc',
         'proxy/proxy_script_decider_unittest.cc',
         'proxy/proxy_script_fetcher_impl_unittest.cc',
         'proxy/proxy_server_unittest.cc',
         'proxy/proxy_service_unittest.cc',
-        'proxy/sync_host_resolver_bridge_unittest.cc',
+        'quic/blocked_list_test.cc',
         'quic/congestion_control/cubic_test.cc',
         'quic/congestion_control/fix_rate_test.cc',
         'quic/congestion_control/hybrid_slow_start_test.cc',
         'quic/congestion_control/leaky_bucket_test.cc',
         'quic/congestion_control/paced_sender_test.cc',
-        'quic/congestion_control/quic_receipt_metrics_collector_test.cc',
-        'quic/congestion_control/quic_send_scheduler_test.cc',
         'quic/congestion_control/tcp_cubic_sender_test.cc',
         'quic/congestion_control/tcp_receiver_test.cc',
         'quic/crypto/crypto_framer_test.cc',
+        'quic/crypto/crypto_handshake_test.cc',
         'quic/crypto/null_decrypter_test.cc',
         'quic/crypto/null_encrypter_test.cc',
         'quic/crypto/quic_random_test.cc',
@@ -1482,8 +1547,11 @@
         'quic/test_tools/quic_test_utils.h',
         'quic/test_tools/reliable_quic_stream_peer.cc',
         'quic/test_tools/reliable_quic_stream_peer.h',
+        'quic/test_tools/simple_quic_framer.cc',
+        'quic/test_tools/simple_quic_framer.h',
         'quic/test_tools/test_task_runner.cc',
         'quic/test_tools/test_task_runner.h',
+        'quic/quic_bandwidth_test.cc',
         'quic/quic_client_session_test.cc',
         'quic/quic_clock_test.cc',
         'quic/quic_connection_helper_test.cc',
@@ -1494,12 +1562,17 @@
         'quic/quic_fec_group_test.cc',
         'quic/quic_framer_test.cc',
         'quic/quic_http_stream_test.cc',
+        'quic/quic_network_transaction_unittest.cc',
         'quic/quic_packet_creator_test.cc',
+        'quic/quic_packet_entropy_manager_test.cc',
+        'quic/quic_packet_generator_test.cc',
+        'quic/quic_protocol_test.cc',
         'quic/quic_reliable_client_stream_test.cc',
         'quic/quic_session_test.cc',
         'quic/quic_stream_factory_test.cc',
         'quic/quic_stream_sequencer_test.cc',
         'quic/quic_time_test.cc',
+        'quic/reliable_quic_stream_test.cc',
         'socket/buffered_write_stream_socket_unittest.cc',
         'socket/client_socket_pool_base_unittest.cc',
         'socket/deterministic_socket_data_unittest.cc',
@@ -1508,6 +1581,7 @@
         'socket/socks5_client_socket_unittest.cc',
         'socket/socks_client_socket_pool_unittest.cc',
         'socket/socks_client_socket_unittest.cc',
+        'socket/ssl_client_socket_openssl_unittest.cc',
         'socket/ssl_client_socket_pool_unittest.cc',
         'socket/ssl_client_socket_unittest.cc',
         'socket/ssl_server_socket_unittest.cc',
@@ -1521,6 +1595,7 @@
         'spdy/buffered_spdy_framer_spdy2_unittest.cc',
         'spdy/spdy_credential_builder_unittest.cc',
         'spdy/spdy_credential_state_unittest.cc',
+        'spdy/spdy_frame_builder_test.cc',
         'spdy/spdy_frame_reader_test.cc',
         'spdy/spdy_framer_test.cc',
         'spdy/spdy_header_block_unittest.cc',
@@ -1534,14 +1609,20 @@
         'spdy/spdy_proxy_client_socket_spdy2_unittest.cc',
         'spdy/spdy_session_spdy3_unittest.cc',
         'spdy/spdy_session_spdy2_unittest.cc',
+        'spdy/spdy_session_test_util.cc',
+        'spdy/spdy_session_test_util.h',
         'spdy/spdy_stream_spdy3_unittest.cc',
         'spdy/spdy_stream_spdy2_unittest.cc',
         'spdy/spdy_stream_test_util.cc',
         'spdy/spdy_stream_test_util.h',
+        'spdy/spdy_test_util_common.cc',
+        'spdy/spdy_test_util_common.h',
         'spdy/spdy_test_util_spdy3.cc',
         'spdy/spdy_test_util_spdy3.h',
         'spdy/spdy_test_util_spdy2.cc',
         'spdy/spdy_test_util_spdy2.h',
+        'spdy/spdy_test_utils.cc',
+        'spdy/spdy_test_utils.h',
         'spdy/spdy_websocket_stream_spdy2_unittest.cc',
         'spdy/spdy_websocket_stream_spdy3_unittest.cc',
         'spdy/spdy_websocket_test_util_spdy2.cc',
@@ -1568,6 +1649,7 @@
         'url_request/url_request_throttler_unittest.cc',
         'url_request/url_request_unittest.cc',
         'url_request/view_cache_helper_unittest.cc',
+        'websockets/websocket_errors_unittest.cc',
         'websockets/websocket_frame_parser_unittest.cc',
         'websockets/websocket_frame_unittest.cc',
         'websockets/websocket_handshake_handler_unittest.cc',
@@ -1590,6 +1672,11 @@
             # No res_ninit() et al on Android, so this doesn't make a lot of
             # sense.
             'dns/dns_config_service_posix_unittest.cc',
+            'base/client_cert_store_impl_unittest.cc',
+          ],
+          'dependencies': [
+            'net_javatests',
+            'net_test_jni_headers',
           ],
         }],
         [ 'use_glib == 1', {
@@ -1634,12 +1721,15 @@
             # TODO(bulach): Add equivalent tests when the underlying
             #               functionality is ported to OpenSSL.
             'sources!': [
-              'base/x509_util_nss_unittest.cc',
+              'base/client_cert_store_impl_unittest.cc',
               'base/nss_cert_database_unittest.cc',
+              'base/x509_util_nss_unittest.cc',
             ],
           }, {  # else !use_openssl: remove the unneeded files
             'sources!': [
+              'base/openssl_client_key_store_unittest.cc',
               'base/x509_util_openssl_unittest.cc',
+              'socket/ssl_client_socket_openssl_unittest.cc',
             ],
           },
         ],
@@ -1673,6 +1763,7 @@
           }, {  # else: !use_v8_in_net
             'sources!': [
               'proxy/proxy_resolver_v8_unittest.cc',
+              'proxy/proxy_resolver_v8_tracing_unittest.cc',
             ],
           },
         ],
@@ -1689,6 +1780,8 @@
               '../third_party/nss/nss.gyp:nss',
               'third_party/nss/ssl.gyp:libssl',
             ],
+            # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+            'msvs_disabled_warnings': [4267, ],
           },
         ],
         [ 'OS == "mac"', {
@@ -1719,6 +1812,7 @@
             'sources!': [
               # TODO(droger): The following tests are disabled because the
               # implementation is missing or incomplete.
+              'base/client_cert_store_impl_unittest.cc',
               # KeygenHandler::GenKeyAndSignChallenge() is not ported to iOS.
               'base/keygen_handler_unittest.cc',
               # Need to read input data files.
@@ -1755,6 +1849,10 @@
                   'http/http_network_layer_unittest.cc',
                   'http/http_network_transaction_spdy2_unittest.cc',
                   'http/http_network_transaction_spdy3_unittest.cc',
+
+                  # These tests crash when run with coverage turned on:
+                  # http://crbug.com/177203
+                  'proxy/proxy_service_unittest.cc',
                 ],
               }],
             ],
@@ -1821,6 +1919,8 @@
             'dependencies': [
               '../third_party/icu/icu.gyp:icudata',
             ],
+            # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+            'msvs_disabled_warnings': [4267, ],
           },
         ],
       ],
@@ -1831,6 +1931,7 @@
       'dependencies': [
         '../base/base.gyp:base',
         '../base/base.gyp:test_support_base',
+        '../build/temp_gyp/googleurl.gyp:googleurl',
         '../testing/gtest.gyp:gtest',
         'net',
       ],
@@ -1844,6 +1945,8 @@
         'base/capturing_net_log.h',
         'base/cert_test_util.cc',
         'base/cert_test_util.h',
+        'base/load_timing_info_test_util.cc',
+        'base/load_timing_info_test_util.h',
         'base/mock_cert_verifier.cc',
         'base/mock_cert_verifier.h',
         'base/mock_file_stream.cc',
@@ -1880,8 +1983,6 @@
         'socket/socket_test_util.h',
         'test/base_test_server.cc',
         'test/base_test_server.h',
-        'test/local_sync_test_server.cc',
-        'test/local_sync_test_server.h',
         'test/local_test_server_posix.cc',
         'test/local_test_server_win.cc',
         'test/local_test_server.cc',
@@ -1902,11 +2003,8 @@
         ['inside_chromium_build==1 and OS != "ios"', {
           'dependencies': [
             # The test server uses Python modules generated by cloud print.
-            # TODO(sync): Remove this hack (http://crbug.com/119403).
+            # TODO(cloud_policy): Remove this hack (http://crbug.com/119403).
             '../chrome/app/policy/cloud_policy_codegen.gyp:cloud_policy_proto_compile',
-            # The test server uses Python modules generated by the sync protos.
-            # TODO(sync): Remove this hack (http://crbug.com/117559).
-            '../sync/protocol/sync_proto.gyp:sync_proto',
             '../third_party/protobuf/protobuf.gyp:py_proto',
           ],
         }],
@@ -1952,6 +2050,8 @@
           },
         ],
       ],
+      # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+      'msvs_disabled_warnings': [4267, ],
     },
     {
       'target_name': 'net_resources',
@@ -1988,6 +2088,8 @@
         'server/web_socket.cc',
         'server/web_socket.h',
       ],
+      # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+      'msvs_disabled_warnings': [4267, ],
     },
     {
       'target_name': 'dump_cache',
@@ -2012,6 +2114,8 @@
         'tools/dump_cache/url_utilities.h',
         'tools/dump_cache/url_utilities.cc',
       ],
+      # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+      'msvs_disabled_warnings': [4267, ],
     },
   ],
   'conditions': [
@@ -2033,9 +2137,13 @@
           'sources': [
             'proxy/proxy_resolver_v8.cc',
             'proxy/proxy_resolver_v8.h',
+            'proxy/proxy_resolver_v8_tracing.cc',
+            'proxy/proxy_resolver_v8_tracing.h',
             'proxy/proxy_service_v8.cc',
             'proxy/proxy_service_v8.h',
           ],
+          # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+          'msvs_disabled_warnings': [4267, ],
         },
       ],
     }],
@@ -2054,6 +2162,8 @@
           'sources': [
             'tools/crash_cache/crash_cache.cc',
           ],
+          # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+          'msvs_disabled_warnings': [4267, ],
         },
         {
           'target_name': 'crl_set_dump',
@@ -2065,6 +2175,8 @@
           'sources': [
             'tools/crl_set_dump/crl_set_dump.cc',
           ],
+          # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+          'msvs_disabled_warnings': [4267, ],
         },
         {
           'target_name': 'dns_fuzz_stub',
@@ -2076,6 +2188,8 @@
           'sources': [
             'tools/dns_fuzz_stub/dns_fuzz_stub.cc',
           ],
+          # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+          'msvs_disabled_warnings': [4267, ],
         },
         {
           'target_name': 'fetch_client',
@@ -2092,6 +2206,8 @@
           'sources': [
             'tools/fetch/fetch_client.cc',
           ],
+          # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+          'msvs_disabled_warnings': [4267, ],
         },
         {
           'target_name': 'fetch_server',
@@ -2115,6 +2231,8 @@
             'tools/fetch/http_session.cc',
             'tools/fetch/http_session.h',
           ],
+          # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+          'msvs_disabled_warnings': [4267, ],
         },
         {
           'target_name': 'gdig',
@@ -2140,6 +2258,8 @@
           'sources': [
             'tools/get_server_time/get_server_time.cc',
           ],
+          # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+          'msvs_disabled_warnings': [4267, ],
         },
         {
           'target_name': 'net_watcher',
@@ -2167,9 +2287,8 @@
           'type': 'executable',
           'dependencies': [
             '../base/base.gyp:base',
-            '../build/temp_gyp/googleurl.gyp:googleurl',
+            '../base/base.gyp:test_support_base',
             '../testing/gtest.gyp:gtest',
-            'net',
             'net_test_support',
           ],
           'sources': [
@@ -2187,6 +2306,8 @@
           'sources': [
             'disk_cache/stress_cache.cc',
           ],
+          # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+          'msvs_disabled_warnings': [4267, ],
         },
         {
           'target_name': 'tld_cleanup',
@@ -2199,6 +2320,8 @@
           'sources': [
             'tools/tld_cleanup/tld_cleanup.cc',
           ],
+          # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+          'msvs_disabled_warnings': [4267, ],
         },
       ],
     }],
@@ -2276,6 +2399,7 @@
           'target_name': 'net_jni_headers',
           'type': 'none',
           'sources': [
+            'android/java/src/org/chromium/net/AndroidKeyStore.java',
             'android/java/src/org/chromium/net/AndroidNetworkLibrary.java',
             'android/java/src/org/chromium/net/GURLUtils.java',
             'android/java/src/org/chromium/net/NetworkChangeNotifier.java',
@@ -2284,19 +2408,41 @@
           'variables': {
             'jni_gen_dir': 'net',
           },
+          'direct_dependent_settings': {
+            'include_dirs': [
+              '<(SHARED_INTERMEDIATE_DIR)/net',
+            ],
+          },
+          'includes': [ '../build/jni_generator.gypi' ],
+        },
+        {
+          'target_name': 'net_test_jni_headers',
+          'type': 'none',
+          'sources': [
+            'android/javatests/src/org/chromium/net/AndroidKeyStoreTestUtil.java',
+          ],
+          'variables': {
+            'jni_gen_dir': 'net',
+          },
+          'direct_dependent_settings': {
+            'include_dirs': [
+              '<(SHARED_INTERMEDIATE_DIR)/net',
+            ],
+          },
           'includes': [ '../build/jni_generator.gypi' ],
         },
         {
           'target_name': 'net_java',
           'type': 'none',
           'variables': {
-            'package_name': 'net',
             'java_in_dir': '../net/android/java',
           },
           'dependencies': [
             '../base/base.gyp:base',
-            'net_errors_java',
+            'cert_verify_result_android_java',
             'certificate_mime_types_java',
+            'net_errors_java',
+            'private_key_types_java',
           ],
           'includes': [ '../build/java.gypi' ],
         },
@@ -2304,7 +2450,6 @@
           'target_name': 'net_java_test_support',
           'type': 'none',
           'variables': {
-            'package_name': 'net_java_test_support',
             'java_in_dir': '../net/test/android/javatests',
           },
           'includes': [ '../build/java.gypi' ],
@@ -2313,7 +2458,6 @@
           'target_name': 'net_javatests',
           'type': 'none',
           'variables': {
-            'package_name': 'net_javatests',
             'java_in_dir': '../net/android/javatests',
           },
           'dependencies': [
@@ -2327,11 +2471,11 @@
           'target_name': 'net_errors_java',
           'type': 'none',
           'sources': [
-            'base/net_error_list.h',
             'android/java/NetError.template',
           ],
           'variables': {
-            'package_name': 'org.chromium.net',
+            'package_name': 'org/chromium/net',
+            'template_deps': ['base/net_error_list.h'],
           },
           'includes': [ '../build/android/java_cpp_template.gypi' ],
         },
@@ -2339,11 +2483,35 @@
           'target_name': 'certificate_mime_types_java',
           'type': 'none',
           'sources': [
-            'base/mime_util_certificate_type_list.h',
             'android/java/CertificateMimeType.template',
           ],
           'variables': {
-            'package_name': 'org.chromium.net',
+            'package_name': 'org/chromium/net',
+            'template_deps': ['base/mime_util_certificate_type_list.h'],
+          },
+          'includes': [ '../build/android/java_cpp_template.gypi' ],
+        },
+        {
+          'target_name': 'cert_verify_result_android_java',
+          'type': 'none',
+          'sources': [
+            'android/java/CertVerifyResultAndroid.template',
+          ],
+          'variables': {
+            'package_name': 'org/chromium/net',
+            'template_deps': ['android/cert_verify_result_android_list.h'],
+          },
+          'includes': [ '../build/android/java_cpp_template.gypi' ],
+        },
+        {
+          'target_name': 'private_key_types_java',
+          'type': 'none',
+          'sources': [
+            'android/java/PrivateKeyType.template',
+          ],
+          'variables': {
+            'package_name': 'org/chromium/net',
+            'template_deps': ['android/private_key_type_list.h'],
           },
           'includes': [ '../build/android/java_cpp_template.gypi' ],
         },
@@ -2359,6 +2527,7 @@
           'type': 'none',
           'dependencies': [
             'net_java',
+            'net_javatests',
             'net_unittests',
           ],
           'variables': {

@@ -8,7 +8,7 @@
 #include "cc/layer.h"
 #include "cc/layer_animation_controller.h"
 #include "cc/layer_impl.h"
-#include "third_party/WebKit/Source/Platform/chromium/public/WebTransformOperations.h"
+#include "cc/transform_operations.h"
 
 using cc::Animation;
 using cc::AnimationCurve;
@@ -50,13 +50,13 @@ int addAnimatedTransform(Target& target, double duration, int deltaX, int deltaY
     scoped_ptr<KeyframedTransformAnimationCurve> curve(KeyframedTransformAnimationCurve::create());
 
     if (duration > 0) {
-        WebKit::WebTransformOperations startOperations;
-        startOperations.appendTranslate(deltaX, deltaY, 0);
+        TransformOperations startOperations;
+        startOperations.AppendTranslate(deltaX, deltaY, 0);
         curve->addKeyframe(TransformKeyframe::create(0, startOperations, scoped_ptr<cc::TimingFunction>()));
     }
 
-    WebKit::WebTransformOperations operations;
-    operations.appendTranslate(deltaX, deltaY, 0);
+    TransformOperations operations;
+    operations.AppendTranslate(deltaX, deltaY, 0);
     curve->addKeyframe(TransformKeyframe::create(duration, operations, scoped_ptr<cc::TimingFunction>()));
 
     int id = nextAnimationId++;
@@ -111,9 +111,9 @@ double FakeTransformTransition::duration() const
     return m_duration;
 }
 
-WebKit::WebTransformationMatrix FakeTransformTransition::getValue(double time) const
+gfx::Transform FakeTransformTransition::getValue(double time) const
 {
-    return WebKit::WebTransformationMatrix();
+    return gfx::Transform();
 }
 
 scoped_ptr<cc::AnimationCurve> FakeTransformTransition::clone() const

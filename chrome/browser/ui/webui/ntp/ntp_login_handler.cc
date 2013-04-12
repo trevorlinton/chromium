@@ -10,16 +10,18 @@
 #include "base/bind_helpers.h"
 #include "base/metrics/histogram.h"
 #include "base/prefs/pref_notifier.h"
+#include "base/prefs/pref_service.h"
 #include "base/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/managed_mode/managed_mode.h"
-#include "chrome/browser/prefs/pref_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_metrics.h"
+#include "chrome/browser/signin/signin_manager.h"
+#include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/sync/profile_sync_service.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/ui/browser.h"
@@ -29,7 +31,6 @@
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/webui/ntp/new_tab_ui.h"
 #include "chrome/browser/ui/webui/sync_promo/sync_promo_ui.h"
-#include "chrome/browser/ui/webui/web_ui_util.h"
 #include "chrome/browser/web_resource/promo_resource_service.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/pref_names.h"
@@ -46,6 +47,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/image/image.h"
+#include "ui/webui/web_ui_util.h"
 
 using content::OpenURLParams;
 using content::Referrer;
@@ -61,7 +63,7 @@ SkBitmap GetGAIAPictureForNTP(const gfx::Image& image) {
 
   gfx::Canvas canvas(gfx::Size(kLength, kLength), ui::SCALE_FACTOR_100P,
       false);
-  canvas.DrawImageInt(gfx::ImageSkia(bmp), 0, 0);
+  canvas.DrawImageInt(gfx::ImageSkia::CreateFrom1xBitmap(bmp), 0, 0);
 
   // Draw a gray border on the inside of the icon.
   SkColor color = SkColorSetARGB(83, 0, 0, 0);
@@ -91,6 +93,10 @@ void NTPLoginHandler::RegisterMessages() {
                       pref_service,
                       base::Bind(&NTPLoginHandler::UpdateLogin,
                                  base::Unretained(this)));
+  signin_allowed_pref_.Init(prefs::kSigninAllowed,
+                            pref_service,
+                            base::Bind(&NTPLoginHandler::UpdateLogin,
+                                       base::Unretained(this)));
 
   registrar_.Add(this, chrome::NOTIFICATION_PROFILE_CACHED_INFO_CHANGED,
                  content::NotificationService::AllSources());
@@ -136,7 +142,7 @@ void NTPLoginHandler::HandleShowSyncLoginUI(const ListValue* args) {
 #if !defined(OS_ANDROID)
     // The user isn't signed in, show the sync promo.
     if (SyncPromoUI::ShouldShowSyncPromo(profile)) {
-      chrome::ShowSyncSetup(browser, SyncPromoUI::SOURCE_NTP_LINK);
+      chrome::ShowBrowserSignin(browser, SyncPromoUI::SOURCE_NTP_LINK);
       RecordInHistogram(NTP_SIGN_IN_PROMO_CLICKED);
     }
 #endif
@@ -180,14 +186,16 @@ void NTPLoginHandler::HandleLoginMessageSeen(const ListValue* args) {
   Profile::FromWebUI(web_ui())->GetPrefs()->SetBoolean(
       prefs::kSyncPromoShowNTPBubble, false);
   NewTabUI* ntp_ui = NewTabUI::FromWebUIController(web_ui()->GetController());
-  ntp_ui->set_showing_sync_bubble(true);
+  // When instant extended is enabled, there may not be a NewTabUI object.
+  if (ntp_ui)
+    ntp_ui->set_showing_sync_bubble(true);
 }
 
 void NTPLoginHandler::HandleShowAdvancedLoginUI(const ListValue* args) {
   Browser* browser =
       chrome::FindBrowserWithWebContents(web_ui()->GetWebContents());
   if (browser)
-    chrome::ShowSyncSetup(browser, SyncPromoUI::SOURCE_NTP_LINK);
+    chrome::ShowBrowserSignin(browser, SyncPromoUI::SOURCE_NTP_LINK);
 }
 
 void NTPLoginHandler::UpdateLogin() {
@@ -212,8 +220,7 @@ void NTPLoginHandler::UpdateLogin() {
         const gfx::Image* image =
             cache.GetGAIAPictureOfProfileAtIndex(profile_index);
         if (image)
-          icon_url = web_ui_util::GetBitmapDataUrl(
-              GetGAIAPictureForNTP(*image));
+          icon_url = webui::GetBitmapDataUrl(GetGAIAPictureForNTP(*image));
       }
       if (header.empty())
         header = CreateSpanWithClass(UTF8ToUTF16(username), "profile-name");
@@ -251,10 +258,8 @@ bool NTPLoginHandler::ShouldShow(Profile* profile) {
   // UI and the avatar menu don't exist on that platform.
   return false;
 #else
-  if (profile->IsOffTheRecord())
-    return false;
-
-  return profile->GetOriginalProfile()->IsSyncAccessible();
+  SigninManager* signin = SigninManagerFactory::GetForProfile(profile);
+  return !profile->IsOffTheRecord() && signin && signin->IsSigninAllowed();
 #endif
 }
 

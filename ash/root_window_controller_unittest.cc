@@ -11,6 +11,7 @@
 #include "ash/system/tray/system_tray_delegate.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/system_modal_container_layout_manager.h"
+#include "ash/wm/window_properties.h"
 #include "ash/wm/window_util.h"
 #include "ui/aura/client/focus_change_observer.h"
 #include "ui/aura/client/focus_client.h"
@@ -24,6 +25,9 @@
 #include "ui/views/controls/menu/menu_controller.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
+
+using aura::Window;
+using views::Widget;
 
 namespace ash {
 namespace {
@@ -113,7 +117,14 @@ class RootWindowControllerTest : public test::AshTestBase {
   }
 };
 
-TEST_F(RootWindowControllerTest, MoveWindows_Basic) {
+#if defined(OS_WIN)
+// Multiple displays are not supported on Windows Ash. http://crbug.com/165962
+#define MAYBE_MoveWindows_Basic DISABLED_MoveWindows_Basic
+#else
+#define MAYBE_MoveWindows_Basic MoveWindows_Basic
+#endif
+
+TEST_F(RootWindowControllerTest, MAYBE_MoveWindows_Basic) {
   UpdateDisplay("600x600,500x500");
   Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
   internal::RootWindowController* controller =
@@ -129,10 +140,15 @@ TEST_F(RootWindowControllerTest, MoveWindows_Basic) {
   views::Widget* maximized = CreateTestWidget(gfx::Rect(700, 10, 100, 100));
   maximized->Maximize();
   EXPECT_EQ(root_windows[1], maximized->GetNativeView()->GetRootWindow());
-
-  EXPECT_EQ("600,0 500x500", maximized->GetWindowBoundsInScreen().ToString());
-  EXPECT_EQ("0,0 500x500",
-            maximized->GetNativeView()->GetBoundsInRootWindow().ToString());
+  if (Shell::IsLauncherPerDisplayEnabled()) {
+    EXPECT_EQ("600,0 500x452", maximized->GetWindowBoundsInScreen().ToString());
+    EXPECT_EQ("0,0 500x452",
+              maximized->GetNativeView()->GetBoundsInRootWindow().ToString());
+  } else {
+    EXPECT_EQ("600,0 500x500", maximized->GetWindowBoundsInScreen().ToString());
+    EXPECT_EQ("0,0 500x500",
+              maximized->GetNativeView()->GetBoundsInRootWindow().ToString());
+  }
 
   views::Widget* minimized = CreateTestWidget(gfx::Rect(800, 10, 100, 100));
   minimized->Minimize();
@@ -149,6 +165,22 @@ TEST_F(RootWindowControllerTest, MoveWindows_Basic) {
   EXPECT_EQ("0,0 500x500",
             fullscreen->GetNativeView()->GetBoundsInRootWindow().ToString());
 
+  views::Widget* unparented_control = new Widget;
+  Widget::InitParams params;
+  params.bounds = gfx::Rect(650, 10, 100, 100);
+  params.context = CurrentContext();
+  params.type = Widget::InitParams::TYPE_CONTROL;
+  unparented_control->Init(params);
+  EXPECT_EQ(root_windows[1],
+            unparented_control->GetNativeView()->GetRootWindow());
+  EXPECT_EQ(internal::kShellWindowId_UnparentedControlContainer,
+            unparented_control->GetNativeView()->parent()->id());
+
+  aura::Window* panel = CreateTestWindowInShellWithDelegateAndType(
+      NULL, aura::client::WINDOW_TYPE_PANEL, 0, gfx::Rect(700, 100, 100, 100));
+  EXPECT_EQ(root_windows[1], panel->GetRootWindow());
+  EXPECT_EQ(internal::kShellWindowId_PanelContainer, panel->parent()->id());
+
   // Make sure a window that will delete itself when losing focus
   // will not crash.
   aura::WindowTracker tracker;
@@ -156,7 +188,7 @@ TEST_F(RootWindowControllerTest, MoveWindows_Basic) {
   aura::Window* d2 = CreateTestWindowInShellWithDelegate(
       &delete_on_blur_delegate, 0, gfx::Rect(50, 50, 100, 100));
   delete_on_blur_delegate.SetWindow(d2);
-  aura::client::GetFocusClient(root_windows[0])->FocusWindow(d2, NULL);
+  aura::client::GetFocusClient(root_windows[0])->FocusWindow(d2);
   tracker.Add(d2);
 
   UpdateDisplay("600x600");
@@ -199,9 +231,26 @@ TEST_F(RootWindowControllerTest, MoveWindows_Basic) {
             fullscreen->GetWindowBoundsInScreen().ToString());
   EXPECT_EQ("300,10 100x100",
             fullscreen->GetNativeView()->GetBoundsInRootWindow().ToString());
+
+  // Test if the unparented widget has moved.
+  EXPECT_EQ(root_windows[0],
+            unparented_control->GetNativeView()->GetRootWindow());
+  EXPECT_EQ(internal::kShellWindowId_UnparentedControlContainer,
+            unparented_control->GetNativeView()->parent()->id());
+
+  // Test if the panel has moved.
+  EXPECT_EQ(root_windows[0], panel->GetRootWindow());
+  EXPECT_EQ(internal::kShellWindowId_PanelContainer, panel->parent()->id());
 }
 
-TEST_F(RootWindowControllerTest, MoveWindows_Modal) {
+#if defined(OS_WIN)
+// Multiple displays are not supported on Windows Ash. http://crbug.com/165962
+#define MAYBE_MoveWindows_Modal DISABLED_MoveWindows_Modal
+#else
+#define MAYBE_MoveWindows_Modal MoveWindows_Modal
+#endif
+
+TEST_F(RootWindowControllerTest, MAYBE_MoveWindows_Modal) {
   UpdateDisplay("500x500,500x500");
 
   Shell::RootWindowList root_windows = Shell::GetAllRootWindows();
@@ -317,6 +366,33 @@ TEST_F(RootWindowControllerTest, ModalContainerNotLoggedInLoggedIn) {
       internal::kShellWindowId_SystemModalContainer)->layout_manager(),
           controller->GetSystemModalLayoutManager(
               session_modal_widget->GetNativeView()));
+}
+
+// Ensure a workspace with two windows reports immersive mode even if only
+// one has the property set.
+TEST_F(RootWindowControllerTest, ImmersiveMode) {
+  UpdateDisplay("600x600");
+  internal::RootWindowController* controller =
+      Shell::GetInstance()->GetPrimaryRootWindowController();
+
+  // Open a maximized window.
+  Widget* w1 = CreateTestWidget(gfx::Rect(0, 1, 250, 251));
+  w1->Maximize();
+
+  // Immersive mode off by default.
+  EXPECT_FALSE(controller->IsImmersiveMode());
+
+  // Enter immersive mode.
+  w1->GetNativeWindow()->SetProperty(ash::internal::kImmersiveModeKey, true);
+  EXPECT_TRUE(controller->IsImmersiveMode());
+
+  // Add a child, like a print window.  Still in immersive mode.
+  Widget* w2 =
+      Widget::CreateWindowWithParentAndBounds(NULL,
+                                              w1->GetNativeWindow(),
+                                              gfx::Rect(0, 1, 150, 151));
+  w2->Show();
+  EXPECT_TRUE(controller->IsImmersiveMode());
 }
 
 }  // namespace test

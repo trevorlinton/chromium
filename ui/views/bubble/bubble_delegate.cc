@@ -35,7 +35,6 @@ Widget* CreateBubbleWidget(BubbleDelegateView* bubble) {
     bubble_params.parent = bubble->anchor_widget()->GetNativeView();
   bubble_params.can_activate = bubble->CanActivate();
 #if defined(OS_WIN) && !defined(USE_AURA)
-  bubble_params.type = Widget::InitParams::TYPE_WINDOW_FRAMELESS;
   bubble_params.transparent = false;
 #endif
   bubble_widget->Init(bubble_params);
@@ -67,11 +66,11 @@ class BubbleBorderDelegate : public WidgetDelegate,
   virtual const Widget* GetWidget() const OVERRIDE { return widget_; }
   virtual NonClientFrameView* CreateNonClientFrameView(
       Widget* widget) OVERRIDE {
-    return bubble_->CreateNonClientFrameView(widget);
+    return bubble_->CreateBubbleFrameView();
   }
 
   // WidgetObserver overrides:
-  virtual void OnWidgetClosing(Widget* widget) OVERRIDE {
+  virtual void OnWidgetDestroying(Widget* widget) OVERRIDE {
     bubble_ = NULL;
     widget_->Close();
   }
@@ -91,6 +90,7 @@ Widget* CreateBorderWidget(BubbleDelegateView* bubble) {
   border_params.transparent = true;
   border_params.parent = bubble->GetWidget()->GetNativeView();
   border_params.can_activate = false;
+  border_params.accept_events = bubble->border_accepts_events();
   border_widget->Init(border_params);
   border_widget->set_focus_on_creation(false);
   return border_widget;
@@ -113,6 +113,7 @@ BubbleDelegateView::BubbleDelegateView()
       border_widget_(NULL),
       use_focusless_(false),
       accept_events_(true),
+      border_accepts_events_(true),
       adjust_if_offscreen_(true),
       parent_window_(NULL) {
   AddAccelerator(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
@@ -135,6 +136,7 @@ BubbleDelegateView::BubbleDelegateView(
       border_widget_(NULL),
       use_focusless_(false),
       accept_events_(true),
+      border_accepts_events_(true),
       adjust_if_offscreen_(true),
       parent_window_(NULL) {
   AddAccelerator(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
@@ -184,17 +186,16 @@ View* BubbleDelegateView::GetContentsView() {
 
 NonClientFrameView* BubbleDelegateView::CreateNonClientFrameView(
     Widget* widget) {
-  BubbleBorder::ArrowLocation arrow_loc = arrow_location();
-  if (base::i18n::IsRTL())
-    arrow_loc = BubbleBorder::horizontal_mirror(arrow_loc);
-  BubbleBorder* border = new BubbleBorder(arrow_loc, shadow_);
-  border->set_background_color(color());
-  BubbleFrameView* frame_view = new BubbleFrameView(margins(), border);
-  frame_view->set_background(new BubbleBackground(border));
-  return frame_view;
+#if defined(OS_WIN) && !defined(USE_AURA)
+  // On non-aura windows the bubble frame is owned by the border widget. The
+  // main widget uses the default non client view, so return NULL here.
+  return NULL;
+#else
+  return CreateBubbleFrameView();
+#endif
 }
 
-void BubbleDelegateView::OnWidgetClosing(Widget* widget) {
+void BubbleDelegateView::OnWidgetDestroying(Widget* widget) {
   if (anchor_widget() == widget) {
     anchor_widget_->RemoveObserver(this);
     anchor_view_ = NULL;
@@ -269,6 +270,14 @@ void BubbleDelegateView::ResetFade() {
 void BubbleDelegateView::SetAlignment(BubbleBorder::BubbleAlignment alignment) {
   GetBubbleFrameView()->bubble_border()->set_alignment(alignment);
   SizeToContents();
+}
+
+BubbleFrameView* BubbleDelegateView::CreateBubbleFrameView() {
+  BubbleFrameView* frame = new BubbleFrameView(margins());
+  BubbleBorder::ArrowLocation arrow = base::i18n::IsRTL() ?
+      BubbleBorder::horizontal_mirror(arrow_location()) : arrow_location();
+  frame->SetBubbleBorder(new BubbleBorder(arrow, shadow(), color()));
+  return frame;
 }
 
 bool BubbleDelegateView::AcceleratorPressed(

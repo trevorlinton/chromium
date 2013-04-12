@@ -14,7 +14,6 @@
 
 #include "base/memory/scoped_nsobject.h"
 #include "base/memory/scoped_ptr.h"
-#include "chrome/browser/sync/sync_ui_util.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_bar_controller.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_bubble_controller.h"
 #import "chrome/browser/ui/cocoa/browser_command_executor.h"
@@ -38,8 +37,8 @@ class ExtensionKeybindingRegistryCocoa;
 @class FullscreenWindow;
 @class InfoBarContainerController;
 class LocationBarViewMac;
+@class OverlayableContentsController;
 @class PresentationModeController;
-@class PreviewableContentsController;
 class StatusBubbleMac;
 @class TabStripController;
 @class TabStripView;
@@ -70,7 +69,7 @@ class WebContents;
   scoped_nsobject<DownloadShelfController> downloadShelfController_;
   scoped_nsobject<BookmarkBarController> bookmarkBarController_;
   scoped_nsobject<DevToolsController> devToolsController_;
-  scoped_nsobject<PreviewableContentsController> previewableContentsController_;
+  scoped_nsobject<OverlayableContentsController> overlayableContentsController_;
   scoped_nsobject<PresentationModeController> presentationModeController_;
   scoped_nsobject<FullscreenExitBubbleController>
       fullscreenExitBubbleController_;
@@ -113,10 +112,6 @@ class WebContents;
   // in presentation mode (for window types having a floating bar; it remains
   // nil for those which don't).
   scoped_nsobject<NSView> floatingBarBackingView_;
-
-  // Tracks whether the floating bar is above or below the bookmark bar, in
-  // terms of z-order.
-  BOOL floatingBarAboveBookmarkBar_;
 
   // The borderless window used in fullscreen mode.  Lion reuses the original
   // window in fullscreen mode, so this is always nil on Lion.
@@ -163,6 +158,10 @@ class WebContents;
   // The Extension Command Registry used to determine which keyboard events to
   // handle.
   scoped_ptr<ExtensionKeybindingRegistryCocoa> extension_keybinding_registry_;
+
+  // The offset between the bottom of the toolbar and web contents. This is used
+  // to push the web contents below the bookmark bar.
+  CGFloat toolbarToWebContentsOffset_;
 }
 
 // A convenience class method which gets the |BrowserWindowController| for a
@@ -174,6 +173,13 @@ class WebContents;
 // is a BWC, or the first controller in the parent-window chain that is a
 // BWC. This method returns nil if no window in the chain has a BWC.
 + (BrowserWindowController*)browserWindowControllerForView:(NSView*)view;
+
+// Helper method used to update the "Signin" menu item to reflect the current
+// signed in state. Class-level function as it's still required even when there
+// are no open browser windows.
++ (void)updateSigninItem:(id)signinItem
+              shouldShow:(BOOL)showSigninMenuItem
+          currentProfile:(Profile*)profile;
 
 // Load the browser window nib and do any Cocoa-specific initialization.
 // Takes ownership of |browser|.
@@ -195,6 +201,9 @@ class WebContents;
 // Return a weak pointer to the tab strip controller.
 - (TabStripController*)tabStripController;
 
+// Return a weak pointer to the find bar controller.
+- (FindBarCocoaController*)findBarCocoaController;
+
 // Access the ObjC controller that contains the infobars.
 - (InfoBarContainerController*)infoBarContainerController;
 
@@ -203,6 +212,12 @@ class WebContents;
 
 // Access the C++ bridge object representing the location bar.
 - (LocationBarViewMac*)locationBarBridge;
+
+// Returns a weak pointer to the floating bar backing view;
+- (NSView*)floatingBarBackingView;
+
+// Returns a weak pointer to the overlayable contents controller.
+- (OverlayableContentsController*)overlayableContentsController;
 
 // Access the Profile object that backs this Browser.
 - (Profile*)profile;
@@ -259,6 +274,8 @@ class WebContents;
 
 - (BookmarkBarController*)bookmarkBarController;
 
+- (DevToolsController*)devToolsController;
+
 - (BOOL)isDownloadShelfVisible;
 
 // Lazily creates the download shelf in visible state if it doesn't exist yet.
@@ -311,9 +328,8 @@ class WebContents;
 // coordinates.
 - (NSPoint)bookmarkBubblePoint;
 
-// Shows or hides the Instant preview contents.
+// Shows or hides the Instant overlay contents.
 - (void)commitInstant;
-- (BOOL)isInstantTabShowing;
 
 // Returns the frame, in Cocoa (unflipped) screen coordinates, of the area where
 // Instant results are.  If Instant is not showing, returns the frame of where
@@ -324,6 +340,8 @@ class WebContents;
 - (void)sheetDidEnd:(NSWindow*)sheet
          returnCode:(NSInteger)code
             context:(void*)context;
+
+- (void)updateBookmarkBarStateForInstantOverlay;
 
 @end  // @interface BrowserWindowController
 
@@ -374,8 +392,7 @@ class WebContents;
 
 // Enters (or exits) fullscreen mode.  This method is safe to call on all OS
 // versions.
-- (void)enterFullscreenForURL:(const GURL&)url
-                   bubbleType:(FullscreenExitBubbleType)bubbleType;
+- (void)enterFullscreen;
 - (void)exitFullscreen;
 
 // Updates the contents of the fullscreen exit bubble with |url| and

@@ -18,6 +18,7 @@ namespace content {
 CONTENT_EXPORT extern const char kMediaStreamSource[];
 CONTENT_EXPORT extern const char kMediaStreamSourceId[];
 CONTENT_EXPORT extern const char kMediaStreamSourceTab[];
+CONTENT_EXPORT extern const char kMediaStreamSourceScreen[];
 
 // Callback to deliver the result of a media request. |label| is the string
 // to identify the request,
@@ -48,6 +49,12 @@ struct CONTENT_EXPORT StreamDeviceInfo {
   StreamDeviceInfo(MediaStreamType service_param,
                    const std::string& name_param,
                    const std::string& device_param,
+                   bool opened);
+  StreamDeviceInfo(MediaStreamType service_param,
+                   const std::string& name_param,
+                   const std::string& device_param,
+                   int sample_rate,
+                   int channel_layout,
                    bool opened);
   static bool IsEqual(const StreamDeviceInfo& first,
                       const StreamDeviceInfo& second);

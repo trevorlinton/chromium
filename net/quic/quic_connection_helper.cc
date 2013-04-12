@@ -9,8 +9,6 @@
 #include "base/task_runner.h"
 #include "base/time.h"
 #include "net/base/io_buffer.h"
-#include "net/quic/congestion_control/quic_receipt_metrics_collector.h"
-#include "net/quic/congestion_control/quic_send_scheduler.h"
 #include "net/quic/quic_utils.h"
 
 namespace net {
@@ -25,7 +23,11 @@ QuicConnectionHelper::QuicConnectionHelper(base::TaskRunner* task_runner,
       clock_(clock),
       random_generator_(random_generator),
       send_alarm_registered_(false),
-      timeout_alarm_registered_(false) {
+      timeout_alarm_registered_(false),
+      retransmission_alarm_registered_(false),
+      retransmission_alarm_running_(false),
+      ack_alarm_registered_(false),
+      ack_alarm_time_(QuicTime::Zero()) {
 }
 
 QuicConnectionHelper::~QuicConnectionHelper() {
@@ -67,15 +69,30 @@ int QuicConnectionHelper::WritePacketToWire(
   return rv;
 }
 
-void QuicConnectionHelper::SetResendAlarm(
-    QuicPacketSequenceNumber sequence_number,
-    QuicTime::Delta delay) {
-  // TODO(rch): Coalesce these alarms.
-  task_runner_->PostDelayedTask(
-      FROM_HERE,
-      base::Bind(&QuicConnectionHelper::OnResendAlarm,
-                 weak_factory_.GetWeakPtr(), sequence_number),
-      base::TimeDelta::FromMicroseconds(delay.ToMicroseconds()));
+void QuicConnectionHelper::SetRetransmissionAlarm(QuicTime::Delta delay) {
+  if (!retransmission_alarm_registered_) {
+    task_runner_->PostDelayedTask(
+        FROM_HERE,
+        base::Bind(&QuicConnectionHelper::OnRetransmissionAlarm,
+                   weak_factory_.GetWeakPtr()),
+        base::TimeDelta::FromMicroseconds(delay.ToMicroseconds()));
+  }
+}
+
+void QuicConnectionHelper::SetAckAlarm(QuicTime::Delta delay) {
+  if (!ack_alarm_registered_) {
+    task_runner_->PostDelayedTask(
+        FROM_HERE,
+        base::Bind(&QuicConnectionHelper::OnAckAlarm,
+                   weak_factory_.GetWeakPtr()),
+        base::TimeDelta::FromMicroseconds(delay.ToMicroseconds()));
+  }
+  ack_alarm_registered_ = true;
+  ack_alarm_time_ = clock_->Now().Add(delay);
+}
+
+void QuicConnectionHelper::ClearAckAlarm() {
+  ack_alarm_time_ = QuicTime::Zero();
 }
 
 void QuicConnectionHelper::SetSendAlarm(QuicTime::Delta delay) {
@@ -118,10 +135,11 @@ void QuicConnectionHelper::GetPeerAddress(IPEndPoint* peer_address) {
   socket_->GetPeerAddress(peer_address);
 }
 
-
-void QuicConnectionHelper::OnResendAlarm(
-    QuicPacketSequenceNumber sequence_number) {
-  connection_->MaybeResendPacket(sequence_number);
+void QuicConnectionHelper::OnRetransmissionAlarm() {
+  QuicTime when = connection_->OnRetransmissionTimeout();
+  if (!when.IsInitialized()) {
+    SetRetransmissionAlarm(clock_->Now().Subtract(when));
+  }
 }
 
 void QuicConnectionHelper::OnSendAlarm() {
@@ -134,6 +152,23 @@ void QuicConnectionHelper::OnSendAlarm() {
 void QuicConnectionHelper::OnTimeoutAlarm() {
   timeout_alarm_registered_ = false;
   connection_->CheckForTimeout();
+}
+
+void QuicConnectionHelper::OnAckAlarm() {
+  ack_alarm_registered_ = false;
+  // Alarm may have been cleared.
+  if (!ack_alarm_time_.IsInitialized()) {
+    return;
+  }
+
+  // Alarm may have been reset to a later time.
+  if (clock_->Now() < ack_alarm_time_) {
+    SetAckAlarm(ack_alarm_time_.Subtract(clock_->Now()));
+    return;
+  }
+
+  ack_alarm_time_ = QuicTime::Zero();
+  connection_->SendAck();
 }
 
 void QuicConnectionHelper::OnWriteComplete(int result) {

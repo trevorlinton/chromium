@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
@@ -61,6 +61,10 @@ class ManagedModeSiteList {
   ManagedModeSiteList(const std::string& extension_id,
                       const ExtensionResource& path);
   ~ManagedModeSiteList();
+
+  // Creates a copy of the site list.
+  // Caller takes ownership of the returned value.
+  ManagedModeSiteList* Clone();
 
   // Returns a list of all categories.
   // TODO(bauerb): The list is hardcoded for now, but if we allow custom

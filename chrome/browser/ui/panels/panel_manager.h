@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_PANELS_PANEL_MANAGER_H_
 #define CHROME_BROWSER_UI_PANELS_PANEL_MANAGER_H_
 
+#include <list>
 #include <vector>
 #include "base/basictypes.h"
 #include "base/lazy_instance.h"
@@ -21,11 +22,14 @@ class GURL;
 class PanelDragController;
 class PanelResizeController;
 class PanelMouseWatcher;
+class StackedPanelCollection;
 
 // This class manages a set of panels.
-class PanelManager : public DisplaySettingsProvider::DisplayAreaObserver,
+class PanelManager : public DisplaySettingsProvider::DisplayObserver,
                      public DisplaySettingsProvider::FullScreenObserver {
  public:
+  typedef std::list<StackedPanelCollection*> Stacks;
+
   enum CreateMode {
     CREATE_AS_DOCKED,  // Creates a docked panel. The default.
     CREATE_AS_DETACHED  // Creates a detached panel.
@@ -33,6 +37,11 @@ class PanelManager : public DisplaySettingsProvider::DisplayAreaObserver,
 
   // Returns a single instance.
   static PanelManager* GetInstance();
+
+  // Tells PanelManager to use |provider| for testing purpose. This has to be
+  // called before GetInstance.
+  static void SetDisplaySettingsProviderForTesting(
+      DisplaySettingsProvider* provider);
 
   // Returns true if panels should be used for the extension.
   static bool ShouldUsePanels(const std::string& extension_id);
@@ -63,10 +72,16 @@ class PanelManager : public DisplaySettingsProvider::DisplayAreaObserver,
   // Asynchronous confirmation of panel having been closed.
   void OnPanelClosed(Panel* panel);
 
+  // Creates a StackedPanelCollection and returns it.
+  StackedPanelCollection* CreateStack();
+
+  // Deletes |stack|. The stack must be empty at the time of deletion.
+  void RemoveStack(StackedPanelCollection* stack);
+
   // Returns the maximum size that panel can be auto-resized or resized by the
   // API.
-  int GetMaxPanelWidth() const;
-  int GetMaxPanelHeight() const;
+  int GetMaxPanelWidth(const gfx::Rect& work_area) const;
+  int GetMaxPanelHeight(const gfx::Rect& work_area) const;
 
   // Drags the given panel.
   // |mouse_location| is in screen coordinate system.
@@ -96,8 +111,13 @@ class PanelManager : public DisplaySettingsProvider::DisplayAreaObserver,
   // Brings up or down the titlebars for all minimized panels.
   void BringUpOrDownTitlebars(bool bring_up);
 
+  std::vector<Panel*> GetDetachedAndStackedPanels() const;
+
   int num_panels() const;
   std::vector<Panel*> panels() const;
+
+  const Stacks& stacks() const { return stacks_; }
+  int num_stacks() const { return stacks_.size(); }
 
   PanelDragController* drag_controller() const {
     return drag_controller_.get();
@@ -112,8 +132,6 @@ class PanelManager : public DisplaySettingsProvider::DisplayAreaObserver,
   DisplaySettingsProvider* display_settings_provider() const {
     return display_settings_provider_.get();
   }
-
-  gfx::Rect display_area() const { return display_area_; }
 
   PanelMouseWatcher* mouse_watcher() const {
     return panel_mouse_watcher_.get();
@@ -169,11 +187,24 @@ class PanelManager : public DisplaySettingsProvider::DisplayAreaObserver,
   PanelManager();
   virtual ~PanelManager();
 
-  // Overridden from DisplaySettingsProvider::DisplayAreaObserver:
-  virtual void OnDisplayAreaChanged(const gfx::Rect& display_area) OVERRIDE;
+  void Initialize(DisplaySettingsProvider* provider);
+
+  // Overridden from DisplaySettingsProvider::DisplayObserver:
+  virtual void OnDisplayChanged() OVERRIDE;
 
   // Overridden from DisplaySettingsProvider::FullScreenObserver:
   virtual void OnFullScreenModeChanged(bool is_full_screen) OVERRIDE;
+
+  // Returns the collection to which a new panel should add. The new panel
+  // is expected to be created with |bounds| and |mode|. The size of |bounds|
+  // could be used to determine which collection is more appropriate to have
+  // the new panel. Upon return, |positioning_mask| contains the required mask
+  // to be applied when the new panel is being added to the collection.
+  PanelCollection* GetCollectionForNewPanel(
+      Panel* new_panel,
+      const gfx::Rect& bounds,
+      CreateMode mode,
+      PanelCollection::PositioningMask* positioning_mask);
 
   // Tests may want to use a mock panel mouse watcher.
   void SetMouseWatcher(PanelMouseWatcher* watcher);
@@ -183,6 +214,7 @@ class PanelManager : public DisplaySettingsProvider::DisplayAreaObserver,
 
   scoped_ptr<DetachedPanelCollection> detached_collection_;
   scoped_ptr<DockedPanelCollection> docked_collection_;
+  Stacks stacks_;
 
   scoped_ptr<PanelDragController> drag_controller_;
   scoped_ptr<PanelResizeController> resize_controller_;
@@ -193,8 +225,6 @@ class PanelManager : public DisplaySettingsProvider::DisplayAreaObserver,
   scoped_ptr<PanelMouseWatcher> panel_mouse_watcher_;
 
   scoped_ptr<DisplaySettingsProvider> display_settings_provider_;
-
-  gfx::Rect display_area_;
 
   // Whether or not bounds will be updated when the preferred content size is
   // changed. The testing code could set this flag to false so that other tests

@@ -10,18 +10,19 @@ import android.test.ActivityInstrumentationTestCase2;
 
 import junit.framework.Assert;
 
+import org.chromium.android_webview.AwBrowserProcess;
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwContentsClient;
 import org.chromium.android_webview.AwSettings;
 import org.chromium.android_webview.test.util.JSUtils;
 import org.chromium.content.browser.ContentSettings;
-import org.chromium.content.browser.ContentView;
 import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content.browser.LoadUrlParams;
 import org.chromium.content.browser.test.util.CallbackHelper;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer;
+import org.chromium.content.common.ProcessInitException;
 import org.chromium.ui.gfx.ActivityNativeWindow;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -38,8 +39,6 @@ public class AndroidWebViewTestBase
         extends ActivityInstrumentationTestCase2<AndroidWebViewTestRunnerActivity> {
     protected static int WAIT_TIMEOUT_SECONDS = 15;
     private static final int CHECK_INTERVAL = 100;
-    protected static final boolean NORMAL_VIEW = false;
-    protected static final boolean INCOGNITO_VIEW = true;
 
     public AndroidWebViewTestBase() {
         super(AndroidWebViewTestRunnerActivity.class);
@@ -47,14 +46,14 @@ public class AndroidWebViewTestBase
 
     @Override
     protected void setUp() throws Exception {
+        super.setUp();
         final Context context = getActivity();
         getInstrumentation().runOnMainSync(new Runnable() {
             @Override
             public void run() {
                 AwTestResourceProvider.registerResources(context);
-                ContentViewCore.initChromiumBrowserProcess(
-                        context, ContentView.MAX_RENDERERS_SINGLE_PROCESS);
-            }
+                AwBrowserProcess.start(context);
+             }
         });
     }
 
@@ -67,16 +66,11 @@ public class AndroidWebViewTestBase
      * @param <R> Type of result to return
      */
     public <R> R runTestOnUiThreadAndGetResult(Callable<R> callable)
-            throws Throwable {
+            throws Exception {
         FutureTask<R> task = new FutureTask<R>(callable);
         getInstrumentation().waitForIdleSync();
         getInstrumentation().runOnMainSync(task);
-        try {
-            return task.get();
-        } catch (ExecutionException e) {
-            // Unwrap the cause of the exception and re-throw it.
-            throw e.getCause();
-        }
+        return task.get();
     }
 
     protected void enableJavaScriptOnUiThread(final AwContents awContents) {
@@ -93,7 +87,7 @@ public class AndroidWebViewTestBase
      */
     protected void loadUrlSync(final AwContents awContents,
                                CallbackHelper onPageFinishedHelper,
-                               final String url) throws Throwable {
+                               final String url) throws Exception {
         int currentCallCount = onPageFinishedHelper.getCallCount();
         loadUrlAsync(awContents, url);
         onPageFinishedHelper.waitForCallback(currentCallCount, 1, WAIT_TIMEOUT_SECONDS,
@@ -103,7 +97,7 @@ public class AndroidWebViewTestBase
     protected void loadUrlSyncAndExpectError(final AwContents awContents,
             CallbackHelper onPageFinishedHelper,
             CallbackHelper onReceivedErrorHelper,
-            final String url) throws Throwable {
+            final String url) throws Exception {
         int onErrorCallCount = onReceivedErrorHelper.getCallCount();
         int onFinishedCallCount = onPageFinishedHelper.getCallCount();
         loadUrlAsync(awContents, url);
@@ -117,8 +111,8 @@ public class AndroidWebViewTestBase
      * Loads url on the UI thread but does not block.
      */
     protected void loadUrlAsync(final AwContents awContents,
-                                final String url) throws Throwable {
-        runTestOnUiThread(new Runnable() {
+                                final String url) throws Exception {
+        getInstrumentation().runOnMainSync(new Runnable() {
             @Override
             public void run() {
                 awContents.loadUrl(new LoadUrlParams(url));
@@ -131,7 +125,7 @@ public class AndroidWebViewTestBase
      */
     protected void postUrlSync(final AwContents awContents,
             CallbackHelper onPageFinishedHelper, final String url,
-            byte[] postData) throws Throwable {
+            byte[] postData) throws Exception {
         int currentCallCount = onPageFinishedHelper.getCallCount();
         postUrlAsync(awContents, url, postData);
         onPageFinishedHelper.waitForCallback(currentCallCount, 1, WAIT_TIMEOUT_SECONDS,
@@ -142,7 +136,7 @@ public class AndroidWebViewTestBase
      * Loads url on the UI thread but does not block.
      */
     protected void postUrlAsync(final AwContents awContents,
-            final String url, byte[] postData) throws Throwable {
+            final String url, byte[] postData) throws Exception {
         class PostUrl implements Runnable {
             byte[] mPostData;
             public PostUrl(byte[] postData) {
@@ -154,7 +148,7 @@ public class AndroidWebViewTestBase
                         mPostData));
             }
         }
-        runTestOnUiThread(new PostUrl(postData));
+        getInstrumentation().runOnMainSync(new PostUrl(postData));
     }
 
     /**
@@ -163,7 +157,7 @@ public class AndroidWebViewTestBase
     protected void loadDataSync(final AwContents awContents,
                                 CallbackHelper onPageFinishedHelper,
                                 final String data, final String mimeType,
-                                final boolean isBase64Encoded) throws Throwable {
+                                final boolean isBase64Encoded) throws Exception {
         int currentCallCount = onPageFinishedHelper.getCallCount();
         loadDataAsync(awContents, data, mimeType, isBase64Encoded);
         onPageFinishedHelper.waitForCallback(currentCallCount, 1, WAIT_TIMEOUT_SECONDS,
@@ -174,9 +168,9 @@ public class AndroidWebViewTestBase
                                            CallbackHelper onPageFinishedHelper,
                                            final String data, final String mimeType,
                                            final boolean isBase64Encoded, final String charset)
-            throws Throwable {
+            throws Exception {
         int currentCallCount = onPageFinishedHelper.getCallCount();
-        runTestOnUiThread(new Runnable() {
+        getInstrumentation().runOnMainSync(new Runnable() {
             @Override
             public void run() {
                 awContents.loadUrl(LoadUrlParams.createLoadDataParams(
@@ -192,8 +186,8 @@ public class AndroidWebViewTestBase
      */
     protected void loadDataAsync(final AwContents awContents, final String data,
                                  final String mimeType, final boolean isBase64Encoded)
-            throws Throwable {
-        runTestOnUiThread(new Runnable() {
+            throws Exception {
+        getInstrumentation().runOnMainSync(new Runnable() {
             @Override
             public void run() {
                 awContents.loadUrl(LoadUrlParams.createLoadDataParams(
@@ -202,19 +196,18 @@ public class AndroidWebViewTestBase
         });
     }
 
-    protected AwTestContainerView createAwTestContainerView(final boolean incognito,
+    protected AwTestContainerView createAwTestContainerView(
             final AwContentsClient awContentsClient) {
-        return createAwTestContainerView(incognito, new AwTestContainerView(getActivity()),
+        return createAwTestContainerView(new AwTestContainerView(getActivity()),
                 awContentsClient);
     }
 
-    protected AwTestContainerView createAwTestContainerView(final boolean incognito,
+    protected AwTestContainerView createAwTestContainerView(
             final AwTestContainerView testContainerView,
             final AwContentsClient awContentsClient) {
         testContainerView.initialize(new AwContents(testContainerView,
                 testContainerView.getInternalAccessDelegate(),
-                awContentsClient, new ActivityNativeWindow(getActivity()),
-                incognito, false));
+                awContentsClient, false));
         getActivity().addView(testContainerView);
         testContainerView.requestFocus();
         return testContainerView;
@@ -222,19 +215,12 @@ public class AndroidWebViewTestBase
 
     protected AwTestContainerView createAwTestContainerViewOnMainSync(
             final AwContentsClient client) throws Exception {
-        return createAwTestContainerViewOnMainSync(NORMAL_VIEW, client);
-    }
-
-    protected AwTestContainerView createAwTestContainerViewOnMainSync(
-            final boolean incognito,
-            final AwContentsClient client) throws Exception {
         final AtomicReference<AwTestContainerView> testContainerView =
                 new AtomicReference<AwTestContainerView>();
-        final Context context = getActivity();
         getInstrumentation().runOnMainSync(new Runnable() {
             @Override
             public void run() {
-                testContainerView.set(createAwTestContainerView(incognito, client));
+                testContainerView.set(createAwTestContainerView(client));
             }
         });
         return testContainerView.get();
@@ -250,7 +236,7 @@ public class AndroidWebViewTestBase
         });
     }
 
-    protected String getTitleOnUiThread(final AwContents awContents) throws Throwable {
+    protected String getTitleOnUiThread(final AwContents awContents) throws Exception {
         return runTestOnUiThreadAndGetResult(new Callable<String>() {
             @Override
             public String call() throws Exception {
@@ -260,7 +246,7 @@ public class AndroidWebViewTestBase
     }
 
     protected ContentSettings getContentSettingsOnUiThread(
-            final AwContents awContents) throws Throwable {
+            final AwContents awContents) throws Exception {
         return runTestOnUiThreadAndGetResult(new Callable<ContentSettings>() {
             @Override
             public ContentSettings call() throws Exception {
@@ -270,7 +256,7 @@ public class AndroidWebViewTestBase
     }
 
     protected AwSettings getAwSettingsOnUiThread(
-            final AwContents awContents) throws Throwable {
+            final AwContents awContents) throws Exception {
         return runTestOnUiThreadAndGetResult(new Callable<AwSettings>() {
             @Override
             public AwSettings call() throws Exception {
@@ -284,7 +270,7 @@ public class AndroidWebViewTestBase
      * result of its execution in JSON format.
      */
     protected String executeJavaScriptAndWaitForResult(final AwContents awContents,
-            TestAwContentsClient viewClient, final String code) throws Throwable {
+            TestAwContentsClient viewClient, final String code) throws Exception {
         return JSUtils.executeJavaScriptAndWaitForResult(this, awContents,
                 viewClient.getOnEvaluateJavaScriptResultHelper(),
                 code);
@@ -294,7 +280,7 @@ public class AndroidWebViewTestBase
      * Similar to CriteriaHelper.pollForCriteria but runs the callable on the UI thread.
      * Note that exceptions are treated as failure.
      */
-    protected boolean pollOnUiThread(final Callable<Boolean> callable) throws Throwable {
+    protected boolean pollOnUiThread(final Callable<Boolean> callable) throws Exception {
         return CriteriaHelper.pollForCriteria(new Criteria() {
             @Override
             public boolean isSatisfied() {
@@ -313,8 +299,8 @@ public class AndroidWebViewTestBase
      */
     protected void clearCacheOnUiThread(
             final AwContents awContents,
-            final boolean includeDiskFiles) throws Throwable {
-        runTestOnUiThread(new Runnable() {
+            final boolean includeDiskFiles) throws Exception {
+        getInstrumentation().runOnMainSync(new Runnable() {
             @Override
             public void run() {
               awContents.clearCache(includeDiskFiles);

@@ -70,6 +70,7 @@ class CommandBufferProxyImpl
   virtual bool Initialize() OVERRIDE;
   virtual State GetState() OVERRIDE;
   virtual State GetLastState() OVERRIDE;
+  virtual int32 GetLastToken() OVERRIDE;
   virtual void Flush(int32 put_offset) OVERRIDE;
   virtual State FlushSync(int32 put_offset, int32 last_known_get) OVERRIDE;
   virtual void SetGetBuffer(int32 shm_id) OVERRIDE;
@@ -95,11 +96,6 @@ class CommandBufferProxyImpl
   // ordered wrt other messages (in particular, Flush). Sync point IDs are
   // global and can be used for cross-channel synchronization.
   uint32 InsertSyncPoint();
-
-  // Makes this command buffer wait on a sync point. This command buffer will be
-  // unscheduled until the command buffer that inserted that sync point reaches
-  // it, or gets destroyed.
-  void WaitSyncPoint(uint32);
 
   // Makes this command buffer invoke a task when a sync point is reached, or
   // the command buffer that inserted that sync point is destroyed.

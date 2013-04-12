@@ -24,6 +24,8 @@ namespace extension_manifest_keys {
   extern const char kBrowseURLs[];
   extern const char kChromeURLOverrides[];
   extern const char kCommands[];
+  extern const char kContentPack[];
+  extern const char kContentPackSites[];
   extern const char kContentScripts[];
   extern const char kContentSecurityPolicy[];
   extern const char kConvertedFromUserScript[];
@@ -97,6 +99,7 @@ namespace extension_manifest_keys {
   extern const char kPageActionPopup[];
   extern const char kPageActionPopupPath[];
   extern const char kPageActions[];
+  extern const char kPageLauncher[];
   extern const char kPermissions[];
   extern const char kPlatformAppBackground[];
   extern const char kPlatformAppBackgroundPage[];
@@ -197,6 +200,8 @@ namespace extension_manifest_errors {
   extern const char kInvalidBrowseURLs[];
   extern const char kInvalidChromeURLOverrides[];
   extern const char kInvalidCommandsKey[];
+  extern const char kInvalidContentPack[];
+  extern const char kInvalidContentPackSites[];
   extern const char kInvalidContentScript[];
   extern const char kInvalidContentScriptsList[];
   extern const char kInvalidContentSecurityPolicy[];
@@ -290,6 +295,7 @@ namespace extension_manifest_errors {
   extern const char kInvalidPageActionsList[];
   extern const char kInvalidPageActionsListSize[];
   extern const char kInvalidPageActionTypeValue[];
+  extern const char kInvalidPageLauncher[];
   extern const char kInvalidPermission[];
   extern const char kInvalidPermissions[];
   extern const char kInvalidPermissionScheme[];

@@ -135,6 +135,10 @@ class NATIVE_THEME_EXPORT NativeTheme {
     bool has_gutter;
   };
 
+  struct MenuBackgroundExtraParams {
+    int corner_radius;
+  };
+
   struct ProgressBarExtraParams {
     double animated_seconds;
     bool determinate;
@@ -190,6 +194,7 @@ class NATIVE_THEME_EXPORT NativeTheme {
     MenuItemExtraParams menu_item;
     MenuListExtraParams menu_list;
     MenuSeparatorExtraParams menu_separator;
+    MenuBackgroundExtraParams menu_background;
     ProgressBarExtraParams progress_bar;
     ScrollbarArrowExtraParams scrollbar_arrow;
     ScrollbarTrackExtraParams scrollbar_track;
@@ -250,6 +255,22 @@ class NATIVE_THEME_EXPORT NativeTheme {
     kColorId_TextfieldSelectionColor,
     kColorId_TextfieldSelectionBackgroundFocused,
     kColorId_TextfieldSelectionBackgroundUnfocused,
+    // Tree
+    kColorId_TreeBackground,
+    kColorId_TreeText,
+    kColorId_TreeSelectedText,
+    kColorId_TreeSelectedTextUnfocused,
+    kColorId_TreeSelectionBackgroundFocused,
+    kColorId_TreeSelectionBackgroundUnfocused,
+    kColorId_TreeArrow,
+    // Table
+    kColorId_TableBackground,
+    kColorId_TableText,
+    kColorId_TableSelectedText,
+    kColorId_TableSelectedTextUnfocused,
+    kColorId_TableSelectionBackgroundFocused,
+    kColorId_TableSelectionBackgroundUnfocused,
+    kColorId_TableGroupingIndicatorColor,
     // TODO(benrg): move other hardcoded colors here.
   };
 

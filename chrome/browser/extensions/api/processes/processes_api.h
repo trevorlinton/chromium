@@ -101,6 +101,9 @@ class ProcessesAPI : public ProfileKeyedAPI,
   // ProfileKeyedService implementation.
   virtual void Shutdown() OVERRIDE;
 
+  // ProfileKeyedAPI implementation.
+  static ProfileKeyedAPIFactory<ProcessesAPI>* GetFactoryInstance();
+
   // Convenience method to get the ProcessesAPI for a profile.
   static ProcessesAPI* Get(Profile* profile);
 
@@ -126,10 +129,6 @@ class ProcessesAPI : public ProfileKeyedAPI,
   scoped_ptr<ProcessesEventRouter> processes_event_router_;
 };
 
-template <>
-ProfileKeyedAPIFactory<ProcessesAPI>*
-ProfileKeyedAPIFactory<ProcessesAPI>::GetInstance();
-
 // This extension function returns the Process object for the renderer process
 // currently in use by the specified Tab.
 class GetProcessIdForTabFunction : public AsyncExtensionFunction,
@@ -153,7 +152,8 @@ class GetProcessIdForTabFunction : public AsyncExtensionFunction,
   // Storage for the tab ID parameter.
   int tab_id_;
 
-  DECLARE_EXTENSION_FUNCTION_NAME("experimental.processes.getProcessIdForTab")
+  DECLARE_EXTENSION_FUNCTION("experimental.processes.getProcessIdForTab",
+                             EXPERIMENTAL_PROCESSES_GETPROCESSIDFORTAB)
 };
 
 // Extension function that allows terminating Chrome subprocesses, by supplying
@@ -182,7 +182,8 @@ class TerminateFunction : public AsyncExtensionFunction,
   // Storage for the process ID parameter.
   int process_id_;
 
-  DECLARE_EXTENSION_FUNCTION_NAME("experimental.processes.terminate")
+  DECLARE_EXTENSION_FUNCTION("experimental.processes.terminate",
+                             EXPERIMENTAL_PROCESSES_TERMINATE)
 };
 
 // Extension function which returns a set of Process objects, containing the
@@ -211,7 +212,8 @@ class GetProcessInfoFunction : public AsyncExtensionFunction,
   bool memory_;
 #endif
 
-  DECLARE_EXTENSION_FUNCTION_NAME("experimental.processes.getProcessInfo")
+  DECLARE_EXTENSION_FUNCTION("experimental.processes.getProcessInfo",
+                             EXPERIMENTAL_PROCESSES_GETPROCESSINFO)
 };
 
 }  // namespace extensions

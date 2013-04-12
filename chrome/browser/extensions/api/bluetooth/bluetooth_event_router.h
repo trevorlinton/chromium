@@ -9,8 +9,10 @@
 
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_vector.h"
+#include "base/memory/weak_ptr.h"
 #include "chrome/common/extensions/api/bluetooth.h"
 #include "device/bluetooth/bluetooth_adapter.h"
+#include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "device/bluetooth/bluetooth_socket.h"
 
 class Profile;
@@ -23,13 +25,12 @@ class ExtensionBluetoothEventRouter
   explicit ExtensionBluetoothEventRouter(Profile* profile);
   virtual ~ExtensionBluetoothEventRouter();
 
-  // adapter() will return NULL if the bluetooth adapter is not supported in the
-  // current platform.
-  scoped_refptr<const device::BluetoothAdapter> adapter();
+  // Returns true if adapter_ has been initialized for testing or bluetooth
+  // adapter is available for the current platform.
+  bool IsBluetoothSupported() const;
 
-  // GetMutableAdapter will return NULL if the bluetooth adapter is not
-  // supported in the current platform.
-  scoped_refptr<device::BluetoothAdapter> GetMutableAdapter();
+  void GetAdapter(
+      const device::BluetoothAdapterFactory::AdapterCallback& callback);
 
   // Called when a bluetooth event listener is added.
   void OnListenerAdded();
@@ -78,6 +79,7 @@ class ExtensionBluetoothEventRouter
   }
  private:
   void InitializeAdapterIfNeeded();
+  void InitializeAdapter(scoped_refptr<device::BluetoothAdapter> adapter);
   void MaybeReleaseAdapter();
   void DispatchAdapterStateEvent();
 
@@ -100,6 +102,8 @@ class ExtensionBluetoothEventRouter
   typedef ScopedVector<extensions::api::bluetooth::Device>
       DeviceList;
   DeviceList discovered_devices_;
+
+  base::WeakPtrFactory<ExtensionBluetoothEventRouter> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionBluetoothEventRouter);
 };

@@ -4,11 +4,11 @@
 
 #include "chrome/browser/geolocation/geolocation_infobar_queue_controller.h"
 
+#include "base/prefs/pref_service.h"
 #include "chrome/browser/api/infobars/infobar_service.h"
 #include "chrome/browser/content_settings/host_content_settings_map.h"
 #include "chrome/browser/geolocation/geolocation_confirm_infobar_delegate.h"
 #include "chrome/browser/infobars/infobar.h"
-#include "chrome/browser/prefs/pref_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/tab_contents/tab_util.h"
 #include "chrome/common/chrome_notification_types.h"
@@ -156,16 +156,8 @@ void GeolocationInfoBarQueueController::OnPermissionSet(
     bool allowed) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
 
-  if (update_content_setting) {
-    ContentSetting content_setting =
-        allowed ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_BLOCK;
-    profile_->GetHostContentSettingsMap()->SetContentSetting(
-        ContentSettingsPattern::FromURLNoWildcard(requesting_frame.GetOrigin()),
-        ContentSettingsPattern::FromURLNoWildcard(embedder.GetOrigin()),
-        CONTENT_SETTINGS_TYPE_GEOLOCATION,
-        std::string(),
-        content_setting);
-  }
+  if (update_content_setting)
+    UpdateContentSetting(requesting_frame, embedder, allowed);
 
   // Cancel this request first, then notify listeners.  TODO(pkasting): Why
   // is this order important?
@@ -305,4 +297,25 @@ void GeolocationInfoBarQueueController::UnregisterForInfoBarNotifications(
                       chrome::NOTIFICATION_TAB_CONTENTS_INFOBAR_REMOVED,
                       content::Source<InfoBarService>(infobar_service));
   }
+}
+
+void GeolocationInfoBarQueueController::UpdateContentSetting(
+    const GURL& requesting_frame,
+    const GURL& embedder,
+    bool allowed) {
+  if (requesting_frame.GetOrigin().SchemeIsFile()) {
+    // Chrome can be launched with --disable-web-security which allows
+    // geolocation requests from file:// URLs. We don't want to store these
+    // in the host content settings map.
+    return;
+  }
+
+  ContentSetting content_setting =
+      allowed ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_BLOCK;
+  profile_->GetHostContentSettingsMap()->SetContentSetting(
+      ContentSettingsPattern::FromURLNoWildcard(requesting_frame.GetOrigin()),
+      ContentSettingsPattern::FromURLNoWildcard(embedder.GetOrigin()),
+      CONTENT_SETTINGS_TYPE_GEOLOCATION,
+      std::string(),
+      content_setting);
 }

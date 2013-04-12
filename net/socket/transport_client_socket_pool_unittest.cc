@@ -14,6 +14,7 @@
 #include "net/base/capturing_net_log.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/load_timing_info.h"
+#include "net/base/load_timing_info_test_util.h"
 #include "net/base/mock_host_resolver.h"
 #include "net/base/net_errors.h"
 #include "net/base/net_util.h"
@@ -46,17 +47,8 @@ void TestLoadTimingInfoConnectedReused(const ClientSocketHandle& handle) {
   EXPECT_TRUE(load_timing_info.socket_reused);
   EXPECT_NE(NetLog::Source::kInvalidId, load_timing_info.socket_log_id);
 
-  EXPECT_TRUE(load_timing_info.connect_timing.connect_start.is_null());
-  EXPECT_TRUE(load_timing_info.connect_timing.connect_end.is_null());
-  EXPECT_TRUE(load_timing_info.connect_timing.dns_start.is_null());
-  EXPECT_TRUE(load_timing_info.connect_timing.dns_end.is_null());
-  EXPECT_TRUE(load_timing_info.connect_timing.ssl_start.is_null());
-  EXPECT_TRUE(load_timing_info.connect_timing.ssl_end.is_null());
-  EXPECT_TRUE(load_timing_info.proxy_resolve_start.is_null());
-  EXPECT_TRUE(load_timing_info.proxy_resolve_end.is_null());
-  EXPECT_TRUE(load_timing_info.send_start.is_null());
-  EXPECT_TRUE(load_timing_info.send_end.is_null());
-  EXPECT_TRUE(load_timing_info.receive_headers_end.is_null());
+  ExpectConnectTimingHasNoTimes(load_timing_info.connect_timing);
+  ExpectLoadTimingHasOnlyConnectionTimes(load_timing_info);
 }
 
 // Make sure |handle| sets load times correctly when it has been assigned a
@@ -72,21 +64,9 @@ void TestLoadTimingInfoConnectedNotReused(const ClientSocketHandle& handle) {
   EXPECT_FALSE(load_timing_info.socket_reused);
   EXPECT_NE(NetLog::Source::kInvalidId, load_timing_info.socket_log_id);
 
-  EXPECT_FALSE(load_timing_info.connect_timing.dns_start.is_null());
-  EXPECT_LE(load_timing_info.connect_timing.dns_start,
-            load_timing_info.connect_timing.dns_end);
-  EXPECT_LE(load_timing_info.connect_timing.dns_end,
-            load_timing_info.connect_timing.connect_start);
-  EXPECT_LE(load_timing_info.connect_timing.connect_start,
-            load_timing_info.connect_timing.connect_end);
-
-  EXPECT_TRUE(load_timing_info.connect_timing.ssl_start.is_null());
-  EXPECT_TRUE(load_timing_info.connect_timing.ssl_end.is_null());
-  EXPECT_TRUE(load_timing_info.proxy_resolve_start.is_null());
-  EXPECT_TRUE(load_timing_info.proxy_resolve_end.is_null());
-  EXPECT_TRUE(load_timing_info.send_start.is_null());
-  EXPECT_TRUE(load_timing_info.send_end.is_null());
-  EXPECT_TRUE(load_timing_info.receive_headers_end.is_null());
+  ExpectConnectTimingHasTimes(load_timing_info.connect_timing,
+                              CONNECT_TIMING_HAS_DNS_TIMES);
+  ExpectLoadTimingHasOnlyConnectionTimes(load_timing_info);
 
   TestLoadTimingInfoConnectedReused(handle);
 }
@@ -112,23 +92,23 @@ class MockClientSocket : public StreamSocket {
   }
 
   // StreamSocket implementation.
-  virtual int Connect(const CompletionCallback& callback) {
+  virtual int Connect(const CompletionCallback& callback) OVERRIDE {
     connected_ = true;
     return OK;
   }
-  virtual void Disconnect() {
+  virtual void Disconnect() OVERRIDE {
     connected_ = false;
   }
-  virtual bool IsConnected() const {
+  virtual bool IsConnected() const OVERRIDE {
     return connected_;
   }
-  virtual bool IsConnectedAndIdle() const {
+  virtual bool IsConnectedAndIdle() const OVERRIDE {
     return connected_;
   }
-  virtual int GetPeerAddress(IPEndPoint* address) const {
+  virtual int GetPeerAddress(IPEndPoint* address) const OVERRIDE {
     return ERR_UNEXPECTED;
   }
-  virtual int GetLocalAddress(IPEndPoint* address) const {
+  virtual int GetLocalAddress(IPEndPoint* address) const OVERRIDE {
     if (!connected_)
       return ERR_SOCKET_NOT_CONNECTED;
     if (addrlist_.front().GetFamily() == ADDRESS_FAMILY_IPV4)
@@ -137,39 +117,39 @@ class MockClientSocket : public StreamSocket {
       SetIPv6Address(address);
     return OK;
   }
-  virtual const BoundNetLog& NetLog() const {
+  virtual const BoundNetLog& NetLog() const OVERRIDE {
     return net_log_;
   }
 
-  virtual void SetSubresourceSpeculation() {}
-  virtual void SetOmniboxSpeculation() {}
-  virtual bool WasEverUsed() const { return false; }
-  virtual bool UsingTCPFastOpen() const { return false; }
-  virtual int64 NumBytesRead() const { return -1; }
-  virtual base::TimeDelta GetConnectTimeMicros() const {
+  virtual void SetSubresourceSpeculation() OVERRIDE {}
+  virtual void SetOmniboxSpeculation() OVERRIDE {}
+  virtual bool WasEverUsed() const OVERRIDE { return false; }
+  virtual bool UsingTCPFastOpen() const OVERRIDE { return false; }
+  virtual int64 NumBytesRead() const OVERRIDE { return -1; }
+  virtual base::TimeDelta GetConnectTimeMicros() const OVERRIDE {
     return base::TimeDelta::FromMicroseconds(-1);
   }
-  virtual bool WasNpnNegotiated() const {
+  virtual bool WasNpnNegotiated() const OVERRIDE {
     return false;
   }
-  virtual NextProto GetNegotiatedProtocol() const {
+  virtual NextProto GetNegotiatedProtocol() const OVERRIDE {
     return kProtoUnknown;
   }
-  virtual bool GetSSLInfo(SSLInfo* ssl_info) {
+  virtual bool GetSSLInfo(SSLInfo* ssl_info) OVERRIDE {
     return false;
   }
 
   // Socket implementation.
   virtual int Read(IOBuffer* buf, int buf_len,
-                   const CompletionCallback& callback) {
+                   const CompletionCallback& callback) OVERRIDE {
     return ERR_FAILED;
   }
   virtual int Write(IOBuffer* buf, int buf_len,
-                    const CompletionCallback& callback) {
+                    const CompletionCallback& callback) OVERRIDE {
     return ERR_FAILED;
   }
-  virtual bool SetReceiveBufferSize(int32 size) { return true; }
-  virtual bool SetSendBufferSize(int32 size) { return true; }
+  virtual bool SetReceiveBufferSize(int32 size) OVERRIDE { return true; }
+  virtual bool SetSendBufferSize(int32 size) OVERRIDE { return true; }
 
  private:
   bool connected_;
@@ -185,58 +165,58 @@ class MockFailingClientSocket : public StreamSocket {
   }
 
   // StreamSocket implementation.
-  virtual int Connect(const CompletionCallback& callback) {
+  virtual int Connect(const CompletionCallback& callback) OVERRIDE {
     return ERR_CONNECTION_FAILED;
   }
 
-  virtual void Disconnect() {}
+  virtual void Disconnect() OVERRIDE {}
 
-  virtual bool IsConnected() const {
+  virtual bool IsConnected() const OVERRIDE {
     return false;
   }
-  virtual bool IsConnectedAndIdle() const {
+  virtual bool IsConnectedAndIdle() const OVERRIDE {
     return false;
   }
-  virtual int GetPeerAddress(IPEndPoint* address) const {
+  virtual int GetPeerAddress(IPEndPoint* address) const OVERRIDE {
     return ERR_UNEXPECTED;
   }
-  virtual int GetLocalAddress(IPEndPoint* address) const {
+  virtual int GetLocalAddress(IPEndPoint* address) const OVERRIDE {
     return ERR_UNEXPECTED;
   }
-  virtual const BoundNetLog& NetLog() const {
+  virtual const BoundNetLog& NetLog() const OVERRIDE {
     return net_log_;
   }
 
-  virtual void SetSubresourceSpeculation() {}
-  virtual void SetOmniboxSpeculation() {}
-  virtual bool WasEverUsed() const { return false; }
-  virtual bool UsingTCPFastOpen() const { return false; }
-  virtual int64 NumBytesRead() const { return -1; }
-  virtual base::TimeDelta GetConnectTimeMicros() const {
+  virtual void SetSubresourceSpeculation() OVERRIDE {}
+  virtual void SetOmniboxSpeculation() OVERRIDE {}
+  virtual bool WasEverUsed() const OVERRIDE { return false; }
+  virtual bool UsingTCPFastOpen() const OVERRIDE { return false; }
+  virtual int64 NumBytesRead() const OVERRIDE { return -1; }
+  virtual base::TimeDelta GetConnectTimeMicros() const OVERRIDE {
     return base::TimeDelta::FromMicroseconds(-1);
   }
-  virtual bool WasNpnNegotiated() const {
+  virtual bool WasNpnNegotiated() const OVERRIDE {
     return false;
   }
-  virtual NextProto GetNegotiatedProtocol() const {
+  virtual NextProto GetNegotiatedProtocol() const OVERRIDE {
     return kProtoUnknown;
   }
-  virtual bool GetSSLInfo(SSLInfo* ssl_info) {
+  virtual bool GetSSLInfo(SSLInfo* ssl_info) OVERRIDE {
     return false;
   }
 
   // Socket implementation.
   virtual int Read(IOBuffer* buf, int buf_len,
-                   const CompletionCallback& callback) {
+                   const CompletionCallback& callback) OVERRIDE {
     return ERR_FAILED;
   }
 
   virtual int Write(IOBuffer* buf, int buf_len,
-                    const CompletionCallback& callback) {
+                    const CompletionCallback& callback) OVERRIDE {
     return ERR_FAILED;
   }
-  virtual bool SetReceiveBufferSize(int32 size) { return true; }
-  virtual bool SetSendBufferSize(int32 size) { return true; }
+  virtual bool SetReceiveBufferSize(int32 size) OVERRIDE { return true; }
+  virtual bool SetSendBufferSize(int32 size) OVERRIDE { return true; }
 
  private:
   const AddressList addrlist_;
@@ -265,7 +245,7 @@ class MockPendingClientSocket : public StreamSocket {
   }
 
   // StreamSocket implementation.
-  virtual int Connect(const CompletionCallback& callback) {
+  virtual int Connect(const CompletionCallback& callback) OVERRIDE {
     MessageLoop::current()->PostDelayedTask(
         FROM_HERE,
         base::Bind(&MockPendingClientSocket::DoCallback,
@@ -274,18 +254,18 @@ class MockPendingClientSocket : public StreamSocket {
     return ERR_IO_PENDING;
   }
 
-  virtual void Disconnect() {}
+  virtual void Disconnect() OVERRIDE {}
 
-  virtual bool IsConnected() const {
+  virtual bool IsConnected() const OVERRIDE {
     return is_connected_;
   }
-  virtual bool IsConnectedAndIdle() const {
+  virtual bool IsConnectedAndIdle() const OVERRIDE {
     return is_connected_;
   }
-  virtual int GetPeerAddress(IPEndPoint* address) const {
+  virtual int GetPeerAddress(IPEndPoint* address) const OVERRIDE {
     return ERR_UNEXPECTED;
   }
-  virtual int GetLocalAddress(IPEndPoint* address) const {
+  virtual int GetLocalAddress(IPEndPoint* address) const OVERRIDE {
     if (!is_connected_)
       return ERR_SOCKET_NOT_CONNECTED;
     if (addrlist_.front().GetFamily() == ADDRESS_FAMILY_IPV4)
@@ -294,40 +274,40 @@ class MockPendingClientSocket : public StreamSocket {
       SetIPv6Address(address);
     return OK;
   }
-  virtual const BoundNetLog& NetLog() const {
+  virtual const BoundNetLog& NetLog() const OVERRIDE {
     return net_log_;
   }
 
-  virtual void SetSubresourceSpeculation() {}
-  virtual void SetOmniboxSpeculation() {}
-  virtual bool WasEverUsed() const { return false; }
-  virtual bool UsingTCPFastOpen() const { return false; }
-  virtual int64 NumBytesRead() const { return -1; }
-  virtual base::TimeDelta GetConnectTimeMicros() const {
+  virtual void SetSubresourceSpeculation() OVERRIDE {}
+  virtual void SetOmniboxSpeculation() OVERRIDE {}
+  virtual bool WasEverUsed() const OVERRIDE { return false; }
+  virtual bool UsingTCPFastOpen() const OVERRIDE { return false; }
+  virtual int64 NumBytesRead() const OVERRIDE { return -1; }
+  virtual base::TimeDelta GetConnectTimeMicros() const OVERRIDE {
     return base::TimeDelta::FromMicroseconds(-1);
   }
-  virtual bool WasNpnNegotiated() const {
+  virtual bool WasNpnNegotiated() const OVERRIDE {
     return false;
   }
-  virtual NextProto GetNegotiatedProtocol() const {
+  virtual NextProto GetNegotiatedProtocol() const OVERRIDE {
     return kProtoUnknown;
   }
-  virtual bool GetSSLInfo(SSLInfo* ssl_info) {
+  virtual bool GetSSLInfo(SSLInfo* ssl_info) OVERRIDE {
     return false;
   }
 
   // Socket implementation.
   virtual int Read(IOBuffer* buf, int buf_len,
-                   const CompletionCallback& callback) {
+                   const CompletionCallback& callback) OVERRIDE {
     return ERR_FAILED;
   }
 
   virtual int Write(IOBuffer* buf, int buf_len,
-                    const CompletionCallback& callback) {
+                    const CompletionCallback& callback) OVERRIDE {
     return ERR_FAILED;
   }
-  virtual bool SetReceiveBufferSize(int32 size) { return true; }
-  virtual bool SetSendBufferSize(int32 size) { return true; }
+  virtual bool SetReceiveBufferSize(int32 size) OVERRIDE { return true; }
+  virtual bool SetSendBufferSize(int32 size) OVERRIDE { return true; }
 
  private:
   void DoCallback(const CompletionCallback& callback) {
@@ -376,7 +356,7 @@ class MockClientSocketFactory : public ClientSocketFactory {
       DatagramSocket::BindType bind_type,
       const RandIntCallback& rand_int_cb,
       NetLog* net_log,
-      const NetLog::Source& source) {
+      const NetLog::Source& source) OVERRIDE {
     NOTREACHED();
     return NULL;
   }
@@ -384,7 +364,7 @@ class MockClientSocketFactory : public ClientSocketFactory {
   virtual StreamSocket* CreateTransportClientSocket(
       const AddressList& addresses,
       NetLog* /* net_log */,
-      const NetLog::Source& /* source */) {
+      const NetLog::Source& /* source */) OVERRIDE {
     allocation_count_++;
 
     ClientSocketType type = client_socket_type_;
@@ -420,12 +400,12 @@ class MockClientSocketFactory : public ClientSocketFactory {
       ClientSocketHandle* transport_socket,
       const HostPortPair& host_and_port,
       const SSLConfig& ssl_config,
-      const SSLClientSocketContext& context) {
+      const SSLClientSocketContext& context) OVERRIDE {
     NOTIMPLEMENTED();
     return NULL;
   }
 
-  virtual void ClearSSLSessionCache() {
+  virtual void ClearSSLSessionCache() OVERRIDE {
     NOTIMPLEMENTED();
   }
 
@@ -480,7 +460,7 @@ class TransportClientSocketPoolTest : public testing::Test {
               NULL) {
   }
 
-  ~TransportClientSocketPoolTest() {
+  virtual ~TransportClientSocketPoolTest() {
     internal::ClientSocketPoolBaseHelper::set_connect_backup_jobs_enabled(
         connect_backup_jobs_enabled_);
   }

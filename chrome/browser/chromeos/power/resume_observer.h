@@ -7,20 +7,20 @@
 
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "chromeos/dbus/root_power_manager_observer.h"
+#include "chromeos/dbus/power_manager_client.h"
 
 namespace chromeos {
 
 // A class to observe system resume events and dispatch onWokeUp extension API
 // events.
-class ResumeObserver : public RootPowerManagerObserver {
+class ResumeObserver : public PowerManagerClient::Observer {
  public:
   // This class registers/unregisters itself as an observer in ctor/dtor.
   ResumeObserver();
   virtual ~ResumeObserver();
 
-  // RootPowerManagerObserver overrides:
-  virtual void OnResume(const base::TimeDelta& sleep_duration) OVERRIDE;
+  // PowerManagerClient::Observer overrides:
+  virtual void SystemResumed(const base::TimeDelta& sleep_duration) OVERRIDE;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ResumeObserver);

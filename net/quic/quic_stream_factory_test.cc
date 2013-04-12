@@ -10,6 +10,8 @@
 #include "net/http/http_response_headers.h"
 #include "net/http/http_response_info.h"
 #include "net/http/http_util.h"
+#include "net/quic/crypto/quic_decrypter.h"
+#include "net/quic/crypto/quic_encrypter.h"
 #include "net/quic/quic_http_stream.h"
 #include "net/quic/test_tools/mock_clock.h"
 #include "net/quic/test_tools/mock_random.h"
@@ -23,37 +25,47 @@ namespace test {
 class QuicStreamFactoryTest : public ::testing::Test {
  protected:
   QuicStreamFactoryTest()
-      : factory_(&host_resolver_, &socket_factory_,
-                 &random_generator_,
-                 new MockClock()),
+      : clock_(new MockClock()),
+        factory_(&host_resolver_, &socket_factory_,
+                 &random_generator_, clock_),
         host_port_proxy_pair_(HostPortPair("www.google.com", 443),
                               ProxyServer::Direct()) {
   }
 
   scoped_ptr<QuicEncryptedPacket> ConstructChlo() {
-    scoped_ptr<QuicPacket> chlo(ConstructHandshakePacket(0xDEADBEEF, kCHLO));
-    QuicFramer framer(QuicDecrypter::Create(kNULL),
+    const std::string& host = host_port_proxy_pair_.first.host();
+    scoped_ptr<QuicPacket> chlo(ConstructClientHelloPacket(0xDEADBEEF,
+                                                           clock_,
+                                                           &random_generator_,
+                                                           host));
+    QuicFramer framer(kQuicVersion1,
+                      QuicDecrypter::Create(kNULL),
                       QuicEncrypter::Create(kNULL));
-    return scoped_ptr<QuicEncryptedPacket>(framer.EncryptPacket(*chlo));
+    return scoped_ptr<QuicEncryptedPacket>(framer.EncryptPacket(1, *chlo));
   }
 
   scoped_ptr<QuicEncryptedPacket> ConstructShlo() {
     scoped_ptr<QuicPacket> shlo(ConstructHandshakePacket(0xDEADBEEF, kSHLO));
-    QuicFramer framer(QuicDecrypter::Create(kNULL),
+    QuicFramer framer(kQuicVersion1,
+                      QuicDecrypter::Create(kNULL),
                       QuicEncrypter::Create(kNULL));
-    return scoped_ptr<QuicEncryptedPacket>(framer.EncryptPacket(*shlo));
+    return scoped_ptr<QuicEncryptedPacket>(framer.EncryptPacket(1, *shlo));
   }
 
   scoped_ptr<QuicEncryptedPacket> ConstructRstPacket(
       QuicPacketSequenceNumber num,
       QuicStreamId stream_id) {
     QuicPacketHeader header;
-    header.guid = 0xDEADBEEF;
+    header.public_header.guid = 0xDEADBEEF;
+    header.public_header.reset_flag = false;
+    header.public_header.version_flag = false;
     header.packet_sequence_number = num;
-    header.flags = PACKET_FLAGS_NONE;
+    header.entropy_flag = false;
+    header.fec_entropy_flag = false;
+    header.fec_flag = false;
     header.fec_group = 0;
 
-    QuicRstStreamFrame rst(stream_id, 0, QUIC_NO_ERROR);
+    QuicRstStreamFrame rst(stream_id, QUIC_NO_ERROR);
     return scoped_ptr<QuicEncryptedPacket>(
         ConstructPacket(header, QuicFrame(&rst)));
   }
@@ -62,35 +74,44 @@ class QuicStreamFactoryTest : public ::testing::Test {
       QuicPacketSequenceNumber largest_received,
       QuicPacketSequenceNumber least_unacked) {
     QuicPacketHeader header;
-    header.guid = 0xDEADBEEF;
+    header.public_header.guid = 0xDEADBEEF;
+    header.public_header.reset_flag = false;
+    header.public_header.version_flag = false;
     header.packet_sequence_number = 2;
-    header.flags = PACKET_FLAGS_NONE;
+    header.entropy_flag = false;
+    header.fec_entropy_flag = false;
+    header.fec_flag = false;
     header.fec_group = 0;
 
     QuicAckFrame ack(largest_received, least_unacked);
-
     QuicCongestionFeedbackFrame feedback;
     feedback.type = kTCP;
     feedback.tcp.accumulated_number_of_lost_packets = 0;
     feedback.tcp.receive_window = 16000;
 
-    QuicFramer framer(QuicDecrypter::Create(kNULL),
+    QuicFramer framer(kQuicVersion1,
+                      QuicDecrypter::Create(kNULL),
                       QuicEncrypter::Create(kNULL));
     QuicFrames frames;
     frames.push_back(QuicFrame(&ack));
     frames.push_back(QuicFrame(&feedback));
     scoped_ptr<QuicPacket> packet(
-        framer.ConstructFrameDataPacket(header, frames));
-    return scoped_ptr<QuicEncryptedPacket>(framer.EncryptPacket(*packet));
+        framer.ConstructFrameDataPacket(header, frames).packet);
+    return scoped_ptr<QuicEncryptedPacket>(
+        framer.EncryptPacket(header.packet_sequence_number, *packet));
   }
 
   // Returns a newly created packet to send congestion feedback data.
   scoped_ptr<QuicEncryptedPacket> ConstructFeedbackPacket(
       QuicPacketSequenceNumber sequence_number) {
     QuicPacketHeader header;
-    header.guid = 0xDEADBEEF;
+    header.public_header.guid = 0xDEADBEEF;
+    header.public_header.reset_flag = false;
+    header.public_header.version_flag = false;
     header.packet_sequence_number = sequence_number;
-    header.flags = PACKET_FLAGS_NONE;
+    header.entropy_flag = false;
+    header.fec_entropy_flag = false;
+    header.fec_flag = false;
     header.fec_group = 0;
 
     QuicCongestionFeedbackFrame frame;
@@ -105,18 +126,21 @@ class QuicStreamFactoryTest : public ::testing::Test {
   scoped_ptr<QuicEncryptedPacket> ConstructPacket(
       const QuicPacketHeader& header,
       const QuicFrame& frame) {
-    QuicFramer framer(QuicDecrypter::Create(kNULL),
+    QuicFramer framer(kQuicVersion1,
+                      QuicDecrypter::Create(kNULL),
                       QuicEncrypter::Create(kNULL));
     QuicFrames frames;
     frames.push_back(frame);
     scoped_ptr<QuicPacket> packet(
-        framer.ConstructFrameDataPacket(header, frames));
-    return scoped_ptr<QuicEncryptedPacket>(framer.EncryptPacket(*packet));
+        framer.ConstructFrameDataPacket(header, frames).packet);
+    return scoped_ptr<QuicEncryptedPacket>(
+        framer.EncryptPacket(header.packet_sequence_number, *packet));
   }
 
   MockHostResolver host_resolver_;
   MockClientSocketFactory socket_factory_;
   MockRandom random_generator_;
+  MockClock* clock_;  // Owned by factory_.
   QuicStreamFactory factory_;
   HostPortProxyPair host_port_proxy_pair_;
   BoundNetLog net_log_;
@@ -130,22 +154,18 @@ TEST_F(QuicStreamFactoryTest, CreateIfSessionExists) {
 
 TEST_F(QuicStreamFactoryTest, Create) {
   scoped_ptr<QuicEncryptedPacket> chlo(ConstructChlo());
-  scoped_ptr<QuicEncryptedPacket> ack(ConstructAckPacket(1, 1));
-  scoped_ptr<QuicEncryptedPacket> rst3(ConstructRstPacket(3, 3));
-  scoped_ptr<QuicEncryptedPacket> rst5(ConstructRstPacket(4, 5));
-  scoped_ptr<QuicEncryptedPacket> rst7(ConstructRstPacket(5, 7));
+  scoped_ptr<QuicEncryptedPacket> rst3(ConstructRstPacket(2, 3));
+  scoped_ptr<QuicEncryptedPacket> rst5(ConstructRstPacket(3, 5));
+  scoped_ptr<QuicEncryptedPacket> rst7(ConstructRstPacket(4, 7));
   MockWrite writes[] = {
     MockWrite(SYNCHRONOUS, chlo->data(), chlo->length()),
-    MockWrite(SYNCHRONOUS, ack->data(), ack->length()),
     MockWrite(SYNCHRONOUS, rst3->data(), rst3->length()),
     MockWrite(SYNCHRONOUS, rst5->data(), rst5->length()),
     MockWrite(SYNCHRONOUS, rst7->data(), rst7->length()),
   };
   scoped_ptr<QuicEncryptedPacket> shlo(ConstructShlo());
-  scoped_ptr<QuicEncryptedPacket> ack2(ConstructAckPacket(2, 0));
   MockRead reads[] = {
     MockRead(SYNCHRONOUS, shlo->data(), shlo->length()),
-    MockRead(SYNCHRONOUS, ack2->data(), ack2->length()),
     MockRead(ASYNC, OK),  // EOF
   };
   StaticSocketDataProvider socket_data(reads, arraysize(reads),
@@ -191,19 +211,15 @@ TEST_F(QuicStreamFactoryTest, CreateError) {
 
 TEST_F(QuicStreamFactoryTest, CancelCreate) {
   scoped_ptr<QuicEncryptedPacket> chlo(ConstructChlo());
-  scoped_ptr<QuicEncryptedPacket> ack(ConstructAckPacket(1, 1));
-  scoped_ptr<QuicEncryptedPacket> rst3(ConstructRstPacket(3, 3));
+  scoped_ptr<QuicEncryptedPacket> rst3(ConstructRstPacket(2, 3));
 
   MockWrite writes[] = {
     MockWrite(SYNCHRONOUS, chlo->data(), chlo->length()),
-    MockWrite(SYNCHRONOUS, ack->data(), ack->length()),
     MockWrite(SYNCHRONOUS, rst3->data(), rst3->length()),
   };
   scoped_ptr<QuicEncryptedPacket> shlo(ConstructShlo());
-  scoped_ptr<QuicEncryptedPacket> ack2(ConstructAckPacket(2, 0));
   MockRead reads[] = {
     MockRead(SYNCHRONOUS, shlo->data(), shlo->length()),
-    MockRead(SYNCHRONOUS, ack2->data(), ack2->length()),
     MockRead(ASYNC, OK),  // EOF
   };
   StaticSocketDataProvider socket_data(reads, arraysize(reads),
@@ -229,17 +245,13 @@ TEST_F(QuicStreamFactoryTest, CancelCreate) {
 
 TEST_F(QuicStreamFactoryTest, CloseAllSessions) {
   scoped_ptr<QuicEncryptedPacket> chlo(ConstructChlo());
-  scoped_ptr<QuicEncryptedPacket> ack(ConstructAckPacket(1, 1));
-  scoped_ptr<QuicEncryptedPacket> rst3(ConstructRstPacket(3, 3));
+  scoped_ptr<QuicEncryptedPacket> rst3(ConstructRstPacket(2, 3));
   MockWrite writes[] = {
     MockWrite(SYNCHRONOUS, chlo->data(), chlo->length()),
-    MockWrite(SYNCHRONOUS, ack->data(), ack->length()),
   };
   scoped_ptr<QuicEncryptedPacket> shlo(ConstructShlo());
-  scoped_ptr<QuicEncryptedPacket> ack2(ConstructAckPacket(2, 0));
   MockRead reads[] = {
     MockRead(SYNCHRONOUS, shlo->data(), shlo->length()),
-    MockRead(SYNCHRONOUS, ack2->data(), ack2->length()),
     MockRead(ASYNC, OK),  // EOF
   };
   StaticSocketDataProvider socket_data(reads, arraysize(reads),
@@ -248,12 +260,10 @@ TEST_F(QuicStreamFactoryTest, CloseAllSessions) {
 
   MockWrite writes2[] = {
     MockWrite(SYNCHRONOUS, chlo->data(), chlo->length()),
-    MockWrite(SYNCHRONOUS, ack->data(), ack->length()),
     MockWrite(SYNCHRONOUS, rst3->data(), rst3->length()),
   };
   MockRead reads2[] = {
     MockRead(SYNCHRONOUS, shlo->data(), shlo->length()),
-    MockRead(SYNCHRONOUS, ack2->data(), ack2->length()),
     MockRead(ASYNC, OK),  // EOF
   };
   StaticSocketDataProvider socket_data2(reads2, arraysize(reads2),

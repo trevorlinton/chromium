@@ -162,6 +162,8 @@ IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(content::GPUVideoMemoryUsageStats)
   IPC_STRUCT_TRAITS_MEMBER(process_map)
+  IPC_STRUCT_TRAITS_MEMBER(bytes_allocated)
+  IPC_STRUCT_TRAITS_MEMBER(bytes_allocated_historical_max)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(content::GPUMemoryUmaStats)
@@ -188,9 +190,10 @@ IPC_STRUCT_TRAITS_BEGIN(content::GpuManagedMemoryStats)
   IPC_STRUCT_TRAITS_MEMBER(backbuffer_requested)
 IPC_STRUCT_TRAITS_END()
 
+IPC_ENUM_TRAITS(gfx::SurfaceType)
 IPC_STRUCT_TRAITS_BEGIN(gfx::GLSurfaceHandle)
   IPC_STRUCT_TRAITS_MEMBER(handle)
-  IPC_STRUCT_TRAITS_MEMBER(transport)
+  IPC_STRUCT_TRAITS_MEMBER(transport_type)
   IPC_STRUCT_TRAITS_MEMBER(parent_gpu_process_id)
   IPC_STRUCT_TRAITS_MEMBER(parent_client_id)
 IPC_STRUCT_TRAITS_END()
@@ -577,11 +580,6 @@ IPC_SYNC_MESSAGE_ROUTED0_1(GpuCommandBufferMsg_InsertSyncPoint,
 // Retires the sync point. Note: this message is not sent explicitly by the
 // renderer, but is synthesized by the GPU process.
 IPC_MESSAGE_ROUTED1(GpuCommandBufferMsg_RetireSyncPoint,
-                    uint32 /* sync_point */)
-
-// Makes this command buffer wait on a sync point. Command buffer message
-// execution will be delayed until the sync point has been reached.
-IPC_MESSAGE_ROUTED1(GpuCommandBufferMsg_WaitSyncPoint,
                     uint32 /* sync_point */)
 
 // Makes this command buffer signal when a sync point is reached, by sending

@@ -21,8 +21,9 @@ message DeviceRegisterRequest {
   // register with type DEVICE in order to retrieve device policies.
   enum Type {
     TT   = 0;       // Register for TT release.
-    USER = 1;       // Register for user polices.
+    USER = 1;       // Register for Chrome OS user polices.
     DEVICE = 2;     // Register for device policies.
+    BROWSER = 3;    // Register for Chrome user policies.
   }
   // NOTE: we also use this field to detect client version.  If this
   // field is missing, then the request comes from TT.  We will remove
@@ -99,6 +100,7 @@ message PolicyFetchRequest {
   //   google/chromeos/device => ChromeDeviceSettingsProto
   //   google/chromeos/user => ChromeSettingsProto
   //   google/chromeos/publicaccount => ChromeSettingsProto
+  //   google/chrome/extension => ExternalPolicyData
   optional string policy_type = 1;
 
   // This is the last policy timestamp that client received from server.
@@ -156,8 +158,8 @@ message PolicyData {
   optional string request_token = 3;
 
   // The serialized value of the actual policy protobuf.  This can be
-  // deserialized to an instance of, for example, ChromeSettingsProto
-  // or ChromeDeviceSettingsProto.
+  // deserialized to an instance of, for example, ChromeSettingsProto,
+  // ChromeDeviceSettingsProto, or ExternalPolicyData.
   optional bytes policy_value = 4;
 
   // The device display name assigned by the server.  It is only

@@ -36,7 +36,7 @@ class MockBridge : public HistoryMenuBridge {
       : HistoryMenuBridge(profile),
         menu_([[NSMenu alloc] initWithTitle:@"History"]) {}
 
-  virtual NSMenu* HistoryMenu() {
+  virtual NSMenu* HistoryMenu() OVERRIDE {
     return menu_.get();
   }
 
@@ -351,7 +351,7 @@ TEST_F(HistoryMenuBridgeTest, GotFaviconData) {
 
   // Pretend to be called back.
   history::FaviconImageResult image_result;
-  image_result.image = gfx::Image(bitmap);
+  image_result.image = gfx::Image::CreateFrom1xBitmap(bitmap);
   GotFaviconData(&item, image_result);
 
   // Make sure the callback works.

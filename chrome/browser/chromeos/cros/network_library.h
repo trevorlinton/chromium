@@ -114,8 +114,9 @@ class NetworkDevice {
     return technology_family() == TECHNOLOGY_FAMILY_GSM &&
            !is_sim_locked() && !sim_present_;
   }
-  const int sim_retries_left() const { return sim_retries_left_; }
+  int sim_retries_left() const { return sim_retries_left_; }
   SimPinRequire sim_pin_required() const { return sim_pin_required_; }
+  bool powered() const { return powered_; }
   const std::string& firmware_revision() const { return firmware_revision_; }
   const std::string& hardware_revision() const { return hardware_revision_; }
   const unsigned int prl_version() const { return prl_version_; }
@@ -224,6 +225,9 @@ class NetworkDevice {
   void set_sim_present(bool sim_present) {
     sim_present_ = sim_present;
   }
+  void set_powered(bool powered) {
+    powered_ = powered;
+  }
   void set_firmware_revision(const std::string& firmware_revision) {
     firmware_revision_ = firmware_revision;
   }
@@ -278,6 +282,7 @@ class NetworkDevice {
   int sim_retries_left_;
   SimPinRequire sim_pin_required_;
   bool sim_present_;
+  bool powered_;
   std::string firmware_revision_;
   std::string hardware_revision_;
   int prl_version_;
@@ -322,7 +327,12 @@ class Network {
   class TestApi {
    public:
     explicit TestApi(Network* network) : network_(network) {}
+    void SetBehindPortal() {
+      network_->set_is_behind_portal_for_testing(true);
+      network_->set_behind_portal();
+    }
     void SetConnected() {
+      network_->set_is_behind_portal_for_testing(false);
       network_->set_connected();
     }
     void SetConnecting() {
@@ -331,6 +341,10 @@ class Network {
     void SetDisconnected() {
       network_->set_disconnected();
     }
+    void SetUserConnectState(UserConnectState user_connect_state) {
+      network_->set_user_connect_state(user_connect_state);
+    }
+
    private:
     Network* network_;
   };
@@ -361,7 +375,10 @@ class Network {
   bool connected() const { return IsConnectedState(state_); }
   bool connecting_or_connected() const { return connecting() || connected(); }
   // True when a user-initiated connection attempt is in progress
-  bool connection_started() const { return connection_started_; }
+  bool connection_started() const {
+    return user_connect_state_ == USER_CONNECT_STARTED;
+  }
+  UserConnectState user_connect_state() const { return user_connect_state_; }
   bool failed() const { return state_ == STATE_FAILURE; }
   bool disconnected() const { return IsDisconnectedState(state_); }
   bool ready() const { return state_ == STATE_READY; }
@@ -526,20 +543,14 @@ class Network {
   friend class NetworkParser;
   friend class NativeNetworkParser;
   friend class NativeVirtualNetworkParser;
-  friend class OncNetworkParser;
   friend class OncWifiNetworkParser;
   friend class OncVirtualNetworkParser;
-
+  // We reach directly into the network for testing purposes.
+  friend class MobileActivatorTest;
   // This allows the implementation classes access to privates.
   NETWORK_LIBRARY_IMPL_FRIENDS;
 
   FRIEND_TEST_ALL_PREFIXES(NetworkLibraryTest, GetUserExpandedValue);
-  FRIEND_TEST_ALL_PREFIXES(OncNetworkParserTest,
-                           TestLoadWifiCertificatePattern);
-  FRIEND_TEST_ALL_PREFIXES(OncNetworkParserTest,
-                           TestLoadVPNCertificatePattern);
-  FRIEND_TEST_ALL_PREFIXES(OncNetworkParserTest,
-                           TestNoCertificatePatternForDevicePolicy);
   FRIEND_TEST_ALL_PREFIXES(NetworkLibraryStubTest, NetworkConnectOncWifi);
   FRIEND_TEST_ALL_PREFIXES(NetworkLibraryStubTest, NetworkConnectOncVPN);
 
@@ -555,6 +566,15 @@ class Network {
   void set_connecting() {
     state_ = STATE_CONNECT_REQUESTED;
   }
+  void set_is_behind_portal_for_testing(bool value) {
+    is_behind_portal_for_testing_ = value;
+  }
+  bool is_behind_portal_for_testing() const {
+    return is_behind_portal_for_testing_;
+  }
+  void set_behind_portal() {
+    state_ = STATE_PORTAL;
+  }
   void set_connected() {
     state_ = STATE_ONLINE;
   }
@@ -562,7 +582,9 @@ class Network {
     state_ = STATE_IDLE;
   }
   void set_connectable(bool connectable) { connectable_ = connectable; }
-  void set_connection_started(bool started) { connection_started_ = started; }
+  void set_user_connect_state(UserConnectState user_connect_state) {
+    user_connect_state_ = user_connect_state;
+  }
   void set_is_active(bool is_active) { is_active_ = is_active; }
   void set_added(bool added) { added_ = added; }
   void set_auto_connect(bool auto_connect) { auto_connect_ = auto_connect; }
@@ -601,7 +623,7 @@ class Network {
   ConnectionState state_;
   ConnectionError error_;
   bool connectable_;
-  bool connection_started_;
+  UserConnectState user_connect_state_;
   bool is_active_;
   int priority_;  // determines order in network list.
   bool auto_connect_;
@@ -644,6 +666,8 @@ class Network {
   // This map stores the set of properties for the network.
   // Not all properties in this map are exposed via get methods.
   PropertyMap property_map_;
+
+  bool is_behind_portal_for_testing_;
 
   DISALLOW_COPY_AND_ASSIGN(Network);
 };
@@ -717,13 +741,10 @@ class VirtualNetwork : public Network {
   // parsers.
   friend class NativeNetworkParser;
   friend class NativeVirtualNetworkParser;
-  friend class OncNetworkParser;
   friend class OncVirtualNetworkParser;
 
   // This allows the implementation classes access to privates.
   NETWORK_LIBRARY_IMPL_FRIENDS;
-
-  FRIEND_TEST_ALL_PREFIXES(OncNetworkParserTest, TestLoadVPNCertificatePattern);
 
   // Use these functions at your peril.  They are used by the various
   // parsers to set state, and really shouldn't be used by anything else
@@ -853,7 +874,8 @@ class CellularNetwork : public WirelessNetwork {
 
   // Starts device activation process. Returns false if the device state does
   // not permit activation.
-  bool StartActivation();
+  virtual bool StartActivation();
+  virtual void CompleteActivation();
 
   bool activate_over_non_cellular_network() const {
     return activate_over_non_cellular_network_;
@@ -907,6 +929,8 @@ class CellularNetwork : public WirelessNetwork {
   // this class can evolve without having to change all the parsers.
   friend class NativeCellularNetworkParser;
   friend class OncCellularNetworkParser;
+  // We reach directly into the network for testing purposes.
+  friend class MobileActivatorTest;
 
   // This allows the implementation classes access to privates.
   NETWORK_LIBRARY_IMPL_FRIENDS;
@@ -1439,7 +1463,7 @@ class NetworkLibrary {
   virtual bool mobile_busy() const = 0;
 
   virtual bool wifi_scanning() const = 0;
-
+  virtual bool cellular_initializing() const = 0;
   virtual bool offline_mode() const = 0;
 
   // Returns list of technologies for which captive portal checking is enabled.
@@ -1547,19 +1571,15 @@ class NetworkLibrary {
   virtual void SetCarrier(const std::string& carrier,
                           const NetworkOperationCallback& completed) = 0;
 
+  // Resets the cellular device, calls the closure once the transition is
+  // complete.
+  virtual void ResetModem() = 0;
+
   // Return true if GSM SIM card can work only with enabled roaming.
   virtual bool IsCellularAlwaysInRoaming() = 0;
 
   // Request a scan for new wifi networks.
   virtual void RequestNetworkScan() = 0;
-
-  // Reads out the results of the last wifi scan. These results are not
-  // pre-cached in the library, so the call may block whilst the results are
-  // read over IPC.
-  // Returns false if an error occurred in reading the results. Note that
-  // a true return code only indicates the result set was successfully read,
-  // it does not imply a scan has successfully completed yet.
-  virtual bool GetWifiAccessPoints(WifiAccessPointVector* result) = 0;
 
   // TODO(joth): Add GetCellTowers to retrieve a CellTowerVector.
 

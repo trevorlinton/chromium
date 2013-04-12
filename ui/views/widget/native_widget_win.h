@@ -164,7 +164,8 @@ class VIEWS_EXPORT NativeWidgetWin : public internal::NativeWidgetPrivate,
   virtual gfx::Rect GetWorkAreaBoundsInScreen() const OVERRIDE;
   virtual void SetInactiveRenderingDisabled(bool value) OVERRIDE;
   virtual Widget::MoveLoopResult RunMoveLoop(
-      const gfx::Vector2d& drag_offset) OVERRIDE;
+      const gfx::Vector2d& drag_offset,
+      Widget::MoveLoopSource source) OVERRIDE;
   virtual void EndMoveLoop() OVERRIDE;
   virtual void SetVisibilityChangedAnimationsEnabled(bool value) OVERRIDE;
   virtual ui::NativeTheme* GetNativeTheme() const OVERRIDE;
@@ -209,6 +210,7 @@ class VIEWS_EXPORT NativeWidgetWin : public internal::NativeWidgetPrivate,
   virtual void HandleAppDeactivated() OVERRIDE;
   virtual void HandleActivationChanged(bool active) OVERRIDE;
   virtual bool HandleAppCommand(short command) OVERRIDE;
+  virtual void HandleCancelMode() OVERRIDE;
   virtual void HandleCaptureLost() OVERRIDE;
   virtual void HandleClose() OVERRIDE;
   virtual bool HandleCommand(int command) OVERRIDE;
@@ -230,6 +232,7 @@ class VIEWS_EXPORT NativeWidgetWin : public internal::NativeWidgetPrivate,
   virtual bool HandleMouseEvent(const ui::MouseEvent& event) OVERRIDE;
   virtual bool HandleKeyEvent(const ui::KeyEvent& event) OVERRIDE;
   virtual bool HandleUntranslatedKeyEvent(const ui::KeyEvent& event) OVERRIDE;
+  virtual bool HandleTouchEvent(const ui::TouchEvent& event) OVERRIDE;
   virtual bool HandleIMEMessage(UINT message,
                                 WPARAM w_param,
                                 LPARAM l_param,

@@ -17,7 +17,7 @@
 class BookmarkModel;
 class BookmarkNode;
 class Browser;
-class PrefServiceSyncable;
+class PrefRegistrySyncable;
 class Profile;
 
 namespace content {
@@ -96,10 +96,6 @@ void PasteFromClipboard(BookmarkModel* model,
 // Returns true if the user can copy from the pasteboard.
 bool CanPasteFromClipboard(const BookmarkNode* node);
 
-// Returns a name for the given URL. Used for drags into bookmark areas when
-// the source doesn't specify a title.
-string16 GetNameForURL(const GURL& url);
-
 // Returns a vector containing up to |max_count| of the most recently modified
 // folders. This never returns an empty vector.
 std::vector<const BookmarkNode*> GetMostRecentlyModifiedFolders(
@@ -164,7 +160,7 @@ const BookmarkNode* ApplyEditsWithPossibleFolderChange(
     const GURL& new_url);
 
 // Register user preferences for BookmarksBar.
-void RegisterUserPrefs(PrefServiceSyncable* prefs);
+void RegisterUserPrefs(PrefRegistrySyncable* registry);
 
 // Returns the parent for newly created folders/bookmarks. If |selection| has
 // one element and it is a folder, |selection[0]| is returned, otherwise
@@ -220,6 +216,9 @@ enum BookmarkLaunchLocation {
 
 // Records the launch of a bookmark for UMA purposes.
 void RecordBookmarkLaunch(BookmarkLaunchLocation location);
+
+// Records the user opening a folder of bookmarks for UMA purposes.
+void RecordBookmarkFolderOpen(BookmarkLaunchLocation location);
 
 #if defined(OS_WIN) || defined(OS_CHROMEOS) || defined(USE_AURA)
 void DisableBookmarkBarViewAnimationsForTesting(bool disabled);

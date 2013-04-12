@@ -6,10 +6,11 @@
 
 #include "base/command_line.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/prefs/pref_registry_syncable.h"
 #if !defined(OS_ANDROID)
 #include "chrome/browser/first_run/first_run.h"
 #endif
-#include "chrome/browser/prefs/pref_service.h"
+#include "base/prefs/pref_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/chrome_version_info.h"
@@ -48,9 +49,9 @@ bool IsLocaleSupported() {
 
 namespace default_apps {
 
-void RegisterUserPrefs(PrefServiceSyncable* prefs) {
-  prefs->RegisterIntegerPref(prefs::kDefaultAppsInstallState, kUnknown,
-                             PrefServiceSyncable::UNSYNCABLE_PREF);
+void RegisterUserPrefs(PrefRegistrySyncable* registry) {
+  registry->RegisterIntegerPref(prefs::kDefaultAppsInstallState, kUnknown,
+                                PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
 bool Provider::ShouldInstallInProfile() {
@@ -132,8 +133,8 @@ bool Provider::ShouldInstallInProfile() {
 Provider::Provider(Profile* profile,
                    VisitorInterface* service,
                    extensions::ExternalLoader* loader,
-                   extensions::Extension::Location crx_location,
-                   extensions::Extension::Location download_location,
+                   extensions::Manifest::Location crx_location,
+                   extensions::Manifest::Location download_location,
                    int creation_flags)
     : extensions::ExternalProviderImpl(service, loader, crx_location,
                                        download_location, creation_flags),

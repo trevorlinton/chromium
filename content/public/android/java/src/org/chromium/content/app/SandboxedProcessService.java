@@ -24,6 +24,7 @@ import org.chromium.content.app.ContentMain;
 import org.chromium.content.browser.SandboxedProcessConnection;
 import org.chromium.content.common.ISandboxedProcessCallback;
 import org.chromium.content.common.ISandboxedProcessService;
+import org.chromium.content.common.ProcessInitException;
 import org.chromium.content.common.SurfaceCallback;
 
 /**
@@ -47,6 +48,8 @@ public class SandboxedProcessService extends Service {
     // Parameters received via IPC, only accessed while holding the mSandboxMainThread monitor.
     private String mNativeLibraryName;  // Must be passed in via the bind command.
     private String[] mCommandLineParams;
+    private int mCpuCount;
+    private long mCpuFeatures;
     // Pairs IDs and file descriptors that should be registered natively.
     private ArrayList<Integer> mFileIds;
     private ArrayList<ParcelFileDescriptor> mFileFds;
@@ -69,6 +72,9 @@ public class SandboxedProcessService extends Service {
                 }
                 // We must have received the command line by now
                 assert mCommandLineParams != null;
+                mCpuCount = args.getInt(SandboxedProcessConnection.EXTRA_CPU_COUNT);
+                mCpuFeatures = args.getLong(SandboxedProcessConnection.EXTRA_CPU_FEATURES);
+                assert mCpuCount > 0;
                 mFileIds = new ArrayList<Integer>();
                 mFileFds = new ArrayList<ParcelFileDescriptor>();
                 for (int i = 0;; i++) {
@@ -142,10 +148,13 @@ public class SandboxedProcessService extends Service {
                     }
                     ContentMain.initApplicationContext(sContext.getApplicationContext());
                     nativeInitSandboxedProcess(sContext.getApplicationContext(),
-                            SandboxedProcessService.this, fileIds, fileFds);
+                            SandboxedProcessService.this, fileIds, fileFds,
+                            mCpuCount, mCpuFeatures);
                     ContentMain.start();
                     nativeExitSandboxedProcess();
                 } catch (InterruptedException e) {
+                    Log.w(TAG, MAIN_THREAD_NAME + " startup failed: " + e);
+                } catch (ProcessInitException e) {
                     Log.w(TAG, MAIN_THREAD_NAME + " startup failed: " + e);
                 }
             }
@@ -249,7 +258,8 @@ public class SandboxedProcessService extends Service {
      * renderer.
      */
     private static native void nativeInitSandboxedProcess(Context applicationContext,
-            SandboxedProcessService service, int[] extraFileIds, int[] extraFileFds);
+            SandboxedProcessService service, int[] extraFileIds, int[] extraFileFds,
+            int cpuCount, long cpuFeatures);
 
     /**
      * Force the sandboxed process to exit.

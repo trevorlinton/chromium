@@ -37,6 +37,8 @@ const OncFieldSignature issuer_subject_pattern_fields[] = {
   { NULL }
 };
 
+// CertificatePattern is converted with function CreateUIData(...) to UIData
+// stored in Shill.
 const OncFieldSignature certificate_pattern_fields[] = {
   { kRecommended, NULL, &kRecommendedSignature },
   { certificate::kEnrollmentURI, NULL, &kStringListSignature },
@@ -54,8 +56,10 @@ const OncFieldSignature eap_fields[] = {
   { eap::kClientCertRef, NULL, &kStringSignature },
   { eap::kClientCertType, NULL, &kStringSignature },
   { eap::kIdentity, flimflam::kEapIdentityProperty, &kStringSignature },
-  { eap::kInner, flimflam::kEapPhase2AuthProperty, &kStringSignature },
-  { eap::kOuter, flimflam::kEapMethodProperty, &kStringSignature },
+  // This field is converted during translation, see onc_translator_*.
+  { eap::kInner, NULL, &kStringSignature },
+  // This field is converted during translation, see onc_translator_*.
+  { eap::kOuter, NULL, &kStringSignature },
   { eap::kPassword, flimflam::kEapPasswordProperty, &kStringSignature },
   { eap::kSaveCredentials, flimflam::kSaveCredentialsProperty,
     &kBoolSignature },
@@ -126,6 +130,7 @@ const OncFieldSignature openvpn_fields[] = {
   { vpn::kSaveCredentials, flimflam::kSaveCredentialsProperty,
     &kBoolSignature },
   { vpn::kServerCARef, flimflam::kOpenVPNCaCertNSSProperty, &kStringSignature },
+  // Not supported, yet.
   { vpn::kServerCertRef, NULL, &kStringSignature },
   { vpn::kServerPollTimeout, flimflam::kOpenVPNServerPollTimeoutProperty,
     &kIntegerSignature },
@@ -136,36 +141,39 @@ const OncFieldSignature openvpn_fields[] = {
     &kStringSignature },
   { vpn::kTLSRemote, flimflam::kOpenVPNTLSRemoteProperty, &kStringSignature },
   { vpn::kUsername, flimflam::kOpenVPNUserProperty, &kStringSignature },
+  // Not supported, yet.
   { vpn::kVerb, NULL, &kStringSignature },
   { NULL }
 };
 
 const OncFieldSignature vpn_fields[] = {
   { kRecommended, NULL, &kRecommendedSignature },
+  { vpn::kAutoConnect, flimflam::kAutoConnectProperty, &kBoolSignature },
   { vpn::kHost, flimflam::kProviderHostProperty, &kStringSignature },
   { vpn::kIPsec, NULL, &kIPsecSignature },
   { vpn::kL2TP, NULL, &kL2TPSignature },
   { vpn::kOpenVPN, NULL, &kOpenVPNSignature },
   // This field is converted during translation, see onc_translator_*.
-  { kType, NULL, &kStringSignature },
+  { vpn::kType, NULL, &kStringSignature },
   { NULL }
 };
 
 const OncFieldSignature ethernet_fields[] = {
   { kRecommended, NULL, &kRecommendedSignature },
+  // Not supported, yet.
   { ethernet::kAuthentication, NULL, &kStringSignature },
   { ethernet::kEAP, NULL, &kEAPSignature },
   { NULL }
 };
 
+// Not supported, yet.
 const OncFieldSignature ipconfig_fields[] = {
   { ipconfig::kGateway, NULL, &kStringSignature },
   { ipconfig::kIPAddress, NULL, &kStringSignature },
-  { kNameServers, NULL, &kStringSignature },
+  { network_config::kNameServers, NULL, &kStringSignature },
   { ipconfig::kRoutingPrefix, NULL, &kIntegerSignature },
-  { kSearchDomains, NULL, &kStringListSignature },
-  // This field is converted during translation, see onc_translator_*.
-  { kType, NULL, &kStringSignature },
+  { network_config::kSearchDomains, NULL, &kStringListSignature },
+  { ipconfig::kType, NULL, &kStringSignature },
   { NULL }
 };
 
@@ -183,57 +191,127 @@ const OncFieldSignature proxy_manual_fields[] = {
   { NULL }
 };
 
+// Proxy settings are converted to Shill by
+// function ConvertOncProxySettingsToProxyConfig(...).
 const OncFieldSignature proxy_settings_fields[] = {
   { kRecommended, NULL, &kRecommendedSignature },
   { proxy::kExcludeDomains, NULL, &kStringListSignature },
   { proxy::kManual, NULL, &kProxyManualSignature },
   { proxy::kPAC, NULL, &kStringSignature },
-  { kType, NULL, &kStringSignature },
+  { proxy::kType, NULL, &kStringSignature },
   { NULL }
 };
 
 const OncFieldSignature wifi_fields[] = {
   { kRecommended, NULL, &kRecommendedSignature },
   { wifi::kAutoConnect, flimflam::kAutoConnectProperty, &kBoolSignature },
+  // This field is read only, and only converted if translating from Shill->ONC.
+  { wifi::kBSSID, NULL, &kStringSignature },
   { wifi::kEAP, NULL, &kEAPSignature },
   { wifi::kHiddenSSID, flimflam::kWifiHiddenSsid, &kBoolSignature },
   { wifi::kPassphrase, flimflam::kPassphraseProperty, &kStringSignature },
   { wifi::kSSID, flimflam::kSSIDProperty, &kStringSignature },
-  { wifi::kSecurity, flimflam::kSecurityProperty, &kStringSignature },
+  // This field is converted during translation, see onc_translator_*.
+  { wifi::kSecurity, NULL, &kStringSignature },
+  { NULL }
+};
+
+const OncFieldSignature cellular_fields[] = {
+  { kRecommended, NULL, &kRecommendedSignature },
+  { cellular::kActivateOverNonCellularNetwork,
+    shill::kActivateOverNonCellularNetworkProperty, &kStringSignature },
+  { cellular::kActivationState,
+    flimflam::kActivationStateProperty, &kStringSignature },
+  { cellular::kAllowRoaming,
+    flimflam::kCellularAllowRoamingProperty, &kStringSignature },
+  { cellular::kAPN, flimflam::kApnProperty, &kStringSignature },
+  { cellular::kCarrier, flimflam::kCarrierProperty, &kStringSignature },
+  { cellular::kESN, flimflam::kEsnProperty, &kStringSignature },
+  { cellular::kFamily, flimflam::kTechnologyFamilyProperty, &kStringSignature },
+  { cellular::kFirmwareRevision,
+    flimflam::kFirmwareRevisionProperty, &kStringSignature },
+  { cellular::kFoundNetworks,
+    flimflam::kFoundNetworksProperty, &kStringSignature },
+  { cellular::kHardwareRevision,
+    flimflam::kHardwareRevisionProperty, &kStringSignature },
+  { cellular::kHomeProvider,
+    flimflam::kHomeProviderProperty, &kStringSignature },
+  { cellular::kICCID, flimflam::kIccidProperty, &kStringSignature },
+  { cellular::kIMEI, flimflam::kImeiProperty, &kStringSignature },
+  { cellular::kIMSI, flimflam::kImsiProperty, &kStringSignature },
+  { cellular::kManufacturer,
+    flimflam::kManufacturerProperty, &kStringSignature },
+  { cellular::kMDN, flimflam::kMdnProperty, &kStringSignature },
+  { cellular::kMEID, flimflam::kMeidProperty, &kStringSignature },
+  { cellular::kMIN, flimflam::kMinProperty, &kStringSignature },
+  { cellular::kModelID, flimflam::kModelIDProperty, &kStringSignature },
+  { cellular::kNetworkTechnology,
+    flimflam::kNetworkTechnologyProperty, &kStringSignature },
+  { cellular::kOperatorCode,
+    flimflam::kOperatorCodeProperty, &kStringSignature },
+  { cellular::kOperatorName,
+    flimflam::kOperatorNameProperty, &kStringSignature },
+  { cellular::kPRLVersion, flimflam::kPRLVersionProperty, &kStringSignature },
+  { cellular::kProviderRequiresRoaming,
+    shill::kProviderRequiresRoamingProperty, &kStringSignature },
+  { cellular::kRoamingState,
+    flimflam::kRoamingStateProperty, &kStringSignature },
+  { cellular::kSelectedNetwork,
+    flimflam::kSelectedNetworkProperty, &kStringSignature },
+  { cellular::kServingOperator,
+    flimflam::kServingOperatorProperty, &kStringSignature },
+  { cellular::kSIMLockStatus,
+    flimflam::kSIMLockStatusProperty, &kStringSignature },
+  { cellular::kSIMPresent, shill::kSIMPresentProperty, &kStringSignature },
+  { cellular::kSupportedCarriers,
+    shill::kSupportedCarriersProperty, &kStringSignature },
+  { cellular::kSupportNetworkScan,
+    flimflam::kSupportNetworkScanProperty, &kStringSignature },
   { NULL }
 };
 
 const OncFieldSignature network_configuration_fields[] = {
   { kRecommended, NULL, &kRecommendedSignature },
-  { kEthernet, NULL, &kEthernetSignature },
-  { kGUID, flimflam::kGuidProperty, &kStringSignature },
-  { kIPConfigs, NULL, &kIPConfigListSignature },
-  { kName, flimflam::kNameProperty, &kStringSignature },
-  { kNameServers, NULL, &kStringListSignature },
-  { kProxySettings, NULL, &kProxySettingsSignature },
+  { network_config::kEthernet, NULL, &kEthernetSignature },
+  { network_config::kGUID, flimflam::kGuidProperty, &kStringSignature },
+  { network_config::kIPConfigs, NULL, &kIPConfigListSignature },
+  // Shill doesn't allow setting the name for non-VPN networks.
+  // This field is conditionally translated, see onc_translator_*.
+  { network_config::kName, NULL, &kStringSignature },
+  // Not supported, yet.
+  { network_config::kNameServers, NULL, &kStringListSignature },
+  { network_config::kProxySettings, NULL, &kProxySettingsSignature },
+  // No need to translate.
   { kRemove, NULL, &kBoolSignature },
-  { kSearchDomains, NULL, &kStringListSignature },
+  // Not supported, yet.
+  { network_config::kSearchDomains, NULL, &kStringListSignature },
   // This field is converted during translation, see onc_translator_*.
-  { kType, NULL, &kStringSignature },
-  { kVPN, NULL, &kVPNSignature },
-  { kWiFi, NULL, &kWiFiSignature },
+  { network_config::kType, NULL, &kStringSignature },
+  { network_config::kVPN, NULL, &kVPNSignature },
+  { network_config::kWiFi, NULL, &kWiFiSignature },
+  { network_config::kCellular, NULL, &kCellularSignature },
+  // This field is converted during translation, see onc_translator_*.
+  // It is only converted when going from Shill->ONC, and ignored otherwise.
+  { network_config::kConnectionState, NULL, &kStringSignature},
   { NULL }
 };
 
+// Certificates are not translated to Shill.
 const OncFieldSignature certificate_fields[] = {
-  { kGUID, flimflam::kGuidProperty, &kStringSignature },
+  { certificate::kGUID, NULL, &kStringSignature },
   { certificate::kPKCS12, NULL, &kStringSignature },
   { kRemove, NULL, &kBoolSignature },
   { certificate::kTrust, NULL, &kStringListSignature },
-  { kType, NULL, &kStringSignature },
+  { certificate::kType, NULL, &kStringSignature },
   { certificate::kX509, NULL, &kStringSignature },
   { NULL }
 };
 
 const OncFieldSignature toplevel_configuration_fields[] = {
-  { kCertificates, NULL, &kCertificateListSignature },
-  { kNetworkConfigurations, NULL, &kNetworkConfigurationListSignature },
-  { kType, NULL, &kStringSignature },
+  { toplevel_config::kCertificates, NULL, &kCertificateListSignature },
+  { toplevel_config::kNetworkConfigurations, NULL,
+    &kNetworkConfigurationListSignature },
+  { toplevel_config::kType, NULL, &kStringSignature },
   { encrypted::kCipher, NULL, &kStringSignature },
   { encrypted::kCiphertext, NULL, &kStringSignature },
   { encrypted::kHMAC, NULL, &kStringSignature },
@@ -288,6 +366,9 @@ const OncValueSignature kProxySettingsSignature = {
 };
 const OncValueSignature kWiFiSignature = {
   Value::TYPE_DICTIONARY, wifi_fields, NULL
+};
+const OncValueSignature kCellularSignature = {
+  Value::TYPE_DICTIONARY, cellular_fields, NULL
 };
 const OncValueSignature kCertificateSignature = {
   Value::TYPE_DICTIONARY, certificate_fields, NULL

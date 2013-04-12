@@ -8,6 +8,7 @@
 
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
+#include "ash/system/tray/hover_highlight_view.h"
 #include "ash/system/tray/system_tray.h"
 #include "ash/system/tray/system_tray_delegate.h"
 #include "ash/system/tray/system_tray_notifier.h"
@@ -16,7 +17,6 @@
 #include "ash/system/tray/tray_item_more.h"
 #include "ash/system/tray/tray_item_view.h"
 #include "ash/system/tray/tray_notification_view.h"
-#include "ash/system/tray/tray_views.h"
 #include "ash/wm/shelf_layout_manager.h"
 #include "base/logging.h"
 #include "base/timer.h"
@@ -102,7 +102,6 @@ class IMEDetailedView : public TrayDetailsView,
     CreateScrollableList();
     for (size_t i = 0; i < list.size(); i++) {
       HoverHighlightView* container = new HoverHighlightView(this);
-      container->set_fixed_height(kTrayPopupItemHeight);
       container->AddLabel(list[i].name,
           list[i].selected ? gfx::Font::BOLD : gfx::Font::NORMAL);
       scroll_content()->AddChildView(container);
@@ -114,7 +113,6 @@ class IMEDetailedView : public TrayDetailsView,
     property_map_.clear();
     for (size_t i = 0; i < property_list.size(); i++) {
       HoverHighlightView* container = new HoverHighlightView(this);
-      container->set_fixed_height(kTrayPopupItemHeight);
       container->AddLabel(
           property_list[i].name,
           property_list[i].selected ? gfx::Font::BOLD : gfx::Font::NORMAL);
@@ -128,7 +126,6 @@ class IMEDetailedView : public TrayDetailsView,
 
   void AppendSettings() {
     HoverHighlightView* container = new HoverHighlightView(this);
-    container->set_fixed_height(kTrayPopupItemHeight);
     container->AddLabel(ui::ResourceBundle::GetSharedInstance().
         GetLocalizedString(IDS_ASH_STATUS_TRAY_IME_SETTINGS),
         gfx::Font::NORMAL);
@@ -137,7 +134,7 @@ class IMEDetailedView : public TrayDetailsView,
   }
 
   // Overridden from ViewClickListener.
-  virtual void ClickedOn(views::View* sender) OVERRIDE {
+  virtual void OnViewClicked(views::View* sender) OVERRIDE {
     SystemTrayDelegate* delegate = Shell::GetInstance()->system_tray_delegate();
     if (sender == footer()->content()) {
       owner()->system_tray()->ShowDefaultView(BUBBLE_USE_EXISTING);

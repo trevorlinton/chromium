@@ -34,6 +34,7 @@ class BalloonNotificationUIManager
   void SetBalloonCollection(BalloonCollection* balloon_collection);
 
   // NotificationUIManager:
+  virtual bool DoesIdExist(const std::string& notification_id) OVERRIDE;
   virtual bool CancelById(const std::string& notification_id) OVERRIDE;
   virtual bool CancelAllBySourceOrigin(const GURL& source_origin) OVERRIDE;
   virtual bool CancelAllByProfile(Profile* profile) OVERRIDE;
@@ -42,7 +43,8 @@ class BalloonNotificationUIManager
   // NotificationUIManagerImpl:
   virtual bool ShowNotification(const Notification& notification,
                                 Profile* profile) OVERRIDE;
-  virtual bool UpdateNotification(const Notification& notification) OVERRIDE;
+  virtual bool UpdateNotification(const Notification& notification,
+                                  Profile* profile) OVERRIDE;
 
   // NotificationPrefsManager:
   virtual BalloonCollection::PositionPreference

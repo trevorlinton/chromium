@@ -90,12 +90,19 @@ public class ContentSettings {
     private PluginState mPluginState = PluginState.OFF;
     private boolean mAppCacheEnabled = false;
     private boolean mDomStorageEnabled = false;
+    private boolean mDatabaseEnabled = false;
+    private boolean mUseWideViewport = false;
+    private boolean mLoadWithOverviewMode = false;
+    private boolean mMediaPlaybackRequiresUserGesture = true;
 
     // Not accessed by the native side.
-    private final String mDefaultUserAgent;
     private boolean mSupportZoom = true;
     private boolean mBuiltInZoomControls = false;
     private boolean mDisplayZoomControls = true;
+    static class LazyDefaultUserAgent {
+        // Lazy Holder pattern
+        private static final String sInstance = nativeGetDefaultUserAgent();
+    }
 
     // Protects access to settings global fields.
     private static final Object sGlobalContentSettingsLock = new Object();
@@ -220,14 +227,12 @@ public class ContentSettings {
         mEventHandler = new EventHandler();
         if (mCanModifySettings) {
             // PERSONALITY_VIEW
-            mDefaultUserAgent = nativeGetDefaultUserAgent();
-            mUserAgent = mDefaultUserAgent;
+            mUserAgent = LazyDefaultUserAgent.sInstance;
             syncToNativeOnUiThread();
         } else {
             // PERSONALITY_CHROME
             // Chrome has zooming enabled by default. These settings are not
             // set by the native code.
-            mDefaultUserAgent = ""; // Unused by PERSONALITY_CHROME but must be initialized.
             mBuiltInZoomControls = true;
             mDisplayZoomControls = false;
             syncFromNativeOnUiThread();
@@ -249,7 +254,7 @@ public class ContentSettings {
      * overridden by {@link #setUserAgentString()}
      */
     public static String getDefaultUserAgent() {
-        return nativeGetDefaultUserAgent();
+        return LazyDefaultUserAgent.sInstance;
     }
 
     /**
@@ -261,7 +266,7 @@ public class ContentSettings {
         synchronized (mContentSettingsLock) {
             final String oldUserAgent = mUserAgent;
             if (ua == null || ua.length() == 0) {
-                mUserAgent = mDefaultUserAgent;
+                mUserAgent = LazyDefaultUserAgent.sInstance;
             } else {
                 mUserAgent = ua;
             }
@@ -371,6 +376,22 @@ public class ContentSettings {
 
     boolean shouldDisplayZoomControls() {
         return supportsMultiTouchZoom() && mDisplayZoomControls;
+    }
+
+    public void setLoadWithOverviewMode(boolean overview) {
+        assert mCanModifySettings;
+        synchronized (mContentSettingsLock) {
+            if (mLoadWithOverviewMode != overview) {
+                mLoadWithOverviewMode = overview;
+                mEventHandler.syncSettingsLocked();
+            }
+        }
+    }
+
+    public boolean getLoadWithOverviewMode() {
+        synchronized (mContentSettingsLock) {
+            return mLoadWithOverviewMode;
+        }
     }
 
     /**
@@ -994,6 +1015,40 @@ public class ContentSettings {
     }
 
     /**
+     * Sets whether the WebView should enable support for the &quot;viewport&quot;
+     * HTML meta tag or should use a wide viewport.
+     * When the value of the setting is false, the layout width is always set to the
+     * width of the WebView control in device-independent (CSS) pixels.
+     * When the value is true and the page contains the viewport meta tag, the value
+     * of the width specified in the tag is used. If the page does not contain the tag or
+     * does not provide a width, then a wide viewport will be used.
+     *
+     * @param use whether to enable support for the viewport meta tag
+     */
+    public void setUseWideViewPort(boolean use) {
+        assert mCanModifySettings;
+        synchronized (mContentSettingsLock) {
+            if (mUseWideViewport != use) {
+                mUseWideViewport = use;
+                mEventHandler.syncSettingsLocked();
+            }
+        }
+    }
+
+    /**
+     * Gets whether the WebView supports the &quot;viewport&quot;
+     * HTML meta tag or will use a wide viewport.
+     *
+     * @return true if the WebView supports the viewport meta tag
+     * @see #setUseWideViewPort
+     */
+    public boolean getUseWideViewPort() {
+        synchronized (mContentSettingsLock) {
+            return mUseWideViewport;
+        }
+    }
+
+    /**
      * Sets whether the Application Caches API should be enabled. The default
      * is false. Note that in order for the Application Caches API to be
      * enabled, a non-empty database path must also be supplied to
@@ -1086,6 +1141,33 @@ public class ContentSettings {
     }
 
     /**
+     * Sets whether the WebSQL storage API is enabled. The default value is false.
+     *
+     * @param flag true if the ContentView should use the WebSQL storage API
+     */
+    public void setDatabaseEnabled(boolean flag) {
+        assert mCanModifySettings;
+        synchronized (mContentSettingsLock) {
+            if (mDatabaseEnabled != flag) {
+                mDatabaseEnabled = flag;
+                mEventHandler.syncSettingsLocked();
+            }
+        }
+    }
+
+    /**
+     * Gets whether the WebSQL Storage APIs are enabled.
+     *
+     * @return true if the WebSQL Storage APIs are enabled
+     * @see #setDatabaseEnabled
+     */
+    public boolean getDatabaseEnabled() {
+       synchronized (mContentSettingsLock) {
+           return mDatabaseEnabled;
+       }
+    }
+
+    /**
      * Set the default text encoding name to use when decoding html pages.
      * @param encoding The text encoding name.
      */
@@ -1109,6 +1191,30 @@ public class ContentSettings {
         }
     }
 
+    /**
+     * Set whether the user gesture is required for media playback.
+     * @param require true if the user gesture is required.
+     */
+    public void setMediaPlaybackRequiresUserGesture(boolean require) {
+        assert mCanModifySettings;
+        synchronized (mContentSettingsLock) {
+            if (mMediaPlaybackRequiresUserGesture != require) {
+                mMediaPlaybackRequiresUserGesture = require;
+                mEventHandler.syncSettingsLocked();
+            }
+        }
+    }
+
+    /**
+     * Get whether the user gesture is required for Media Playback.
+     * @return true if the user gesture is required.
+     */
+    public boolean getMediaPlaybackRequiresUserGesture() {
+        synchronized (mContentSettingsLock) {
+            return mMediaPlaybackRequiresUserGesture;
+        }
+    }
+
     private int clipFontSize(int size) {
         if (size < MINIMUM_FONT_SIZE) {
             return MINIMUM_FONT_SIZE;
@@ -1127,6 +1233,7 @@ public class ContentSettings {
      */
     public void initFrom(ContentSettings settings) {
         setLayoutAlgorithm(settings.getLayoutAlgorithm());
+        setLoadWithOverviewMode(settings.getLoadWithOverviewMode());
         setTextZoom(settings.getTextZoom());
         setStandardFontFamily(settings.getStandardFontFamily());
         setFixedFontFamily(settings.getFixedFontFamily());
@@ -1151,9 +1258,11 @@ public class ContentSettings {
         setPluginState(settings.getPluginState());
         setAppCacheEnabled(settings.mAppCacheEnabled);
         setDomStorageEnabled(settings.getDomStorageEnabled());
+        setDatabaseEnabled(settings.getDatabaseEnabled());
         setSupportZoom(settings.supportZoom());
         setBuiltInZoomControls(settings.getBuiltInZoomControls());
         setDisplayZoomControls(settings.getDisplayZoomControls());
+        setMediaPlaybackRequiresUserGesture(settings.getMediaPlaybackRequiresUserGesture());
     }
 
     /**

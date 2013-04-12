@@ -17,20 +17,20 @@
 #include "content/worker/worker_thread.h"
 #include "ipc/ipc_sync_message_filter.h"
 #include "net/base/mime_util.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebFileInfo.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebBlobRegistry.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebString.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebURL.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebBlobRegistry.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebFileInfo.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebURL.h"
 #include "webkit/base/file_path_string_conversions.h"
 #include "webkit/glue/webfileutilities_impl.h"
 #include "webkit/glue/webkit_glue.h"
 
+using WebKit::Platform;
 using WebKit::WebBlobRegistry;
 using WebKit::WebClipboard;
 using WebKit::WebFileInfo;
 using WebKit::WebFileSystem;
 using WebKit::WebFileUtilities;
-using WebKit::WebKitPlatformSupport;
 using WebKit::WebMessagePortChannel;
 using WebKit::WebMimeRegistry;
 using WebKit::WebSandboxSupport;
@@ -170,7 +170,7 @@ void WorkerWebKitPlatformSupportImpl::dispatchStorageEvent(
   NOTREACHED();
 }
 
-WebKitPlatformSupport::FileHandle
+Platform::FileHandle
 WorkerWebKitPlatformSupportImpl::databaseOpenFile(
     const WebString& vfs_file_name, int desired_flags) {
   return DatabaseUtil::DatabaseOpenFile(vfs_file_name, desired_flags);
@@ -262,14 +262,14 @@ WebString WorkerWebKitPlatformSupportImpl::mimeTypeFromFile(
     const WebString& file_path) {
   std::string mime_type;
   SendSyncMessageFromAnyThread(new MimeRegistryMsg_GetMimeTypeFromFile(
-      FilePath(webkit_base::WebStringToFilePathString(file_path)),
+      base::FilePath(webkit_base::WebStringToFilePathString(file_path)),
       &mime_type));
   return ASCIIToUTF16(mime_type);
 }
 
 WebString WorkerWebKitPlatformSupportImpl::preferredExtensionForMIMEType(
     const WebString& mime_type) {
-  FilePath::StringType file_extension;
+  base::FilePath::StringType file_extension;
   SendSyncMessageFromAnyThread(
       new MimeRegistryMsg_GetPreferredExtensionForMimeType(
           UTF16ToASCII(mime_type), &file_extension));

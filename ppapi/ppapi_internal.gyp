@@ -70,6 +70,8 @@
           },
         }],
       ],
+      # Disable c4267 warnings until we fix size_t to int truncations.
+      'msvs_disabled_warnings': [ 4267, ],
     },
   ],
   'conditions': [
@@ -123,6 +125,8 @@
                 '..',
             ],
           },
+          # Disable c4267 warnings until we fix size_t to int truncations.
+          'msvs_disabled_warnings': [ 4267, ],
         },
       ],
     },
@@ -158,6 +162,8 @@
                 '..',
             ],
           },
+          # Disable c4267 warnings until we fix size_t to int truncations.
+          'msvs_disabled_warnings': [ 4267, ],
         },
         {
           # In component build, this is just a phony target that makes sure
@@ -171,7 +177,7 @@
         },
       ],
     }],
-    ['disable_nacl!=1 and OS=="win"', {
+    ['disable_nacl!=1 and OS=="win" and target_arch=="ia32"', {
       # In windows builds, we also want to define some targets to build in
       # 64-bit mode for use by nacl64.exe (the NaCl helper process for 64-bit
       # Windows).

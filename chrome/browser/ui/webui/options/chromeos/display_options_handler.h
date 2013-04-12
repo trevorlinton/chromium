@@ -16,8 +16,6 @@ class ListValue;
 }
 
 namespace chromeos {
-class OverscanCalibrator;
-
 namespace options {
 
 // Display options overlay page UI handler.
@@ -42,11 +40,14 @@ class DisplayOptionsHandler : public ::options::OptionsPageUIHandler,
 
  private:
   // Updates the display section visibility based on the current display
-  // configurations.
-  void UpdateDisplaySectionVisibility();
+  // configurations. Specify the number of display.
+  void UpdateDisplaySectionVisibility(size_t num_displays);
 
-  // Sends the current display information to the web_ui of options page.
-  void SendDisplayInfo();
+  // Sends all of the current display information to the web_ui of options page.
+  void SendAllDisplayInfo();
+
+  // Sends the specified display information to the web_ui of options page.
+  void SendDisplayInfo(const std::vector<const gfx::Display*> displays);
 
   // Called when the fade-out animation for mirroring status change is finished.
   void OnFadeOutForMirroringFinished(bool is_mirroring);
@@ -62,12 +63,6 @@ class DisplayOptionsHandler : public ::options::OptionsPageUIHandler,
   void HandleMirroring(const base::ListValue* args);
   void HandleSetPrimary(const base::ListValue* args);
   void HandleDisplayLayout(const base::ListValue* args);
-  void HandleStartOverscanCalibration(const base::ListValue* args);
-  void HandleFinishOverscanCalibration(const base::ListValue* args);
-  void HandleClearOverscanCalibration(const base::ListValue* args);
-  void HandleUpdateOverscanCalibration(const base::ListValue* args);
-
-  scoped_ptr<OverscanCalibrator> overscan_calibrator_;
 
   DISALLOW_COPY_AND_ASSIGN(DisplayOptionsHandler);
 };

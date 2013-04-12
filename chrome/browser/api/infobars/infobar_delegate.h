@@ -7,7 +7,7 @@
 
 #include "base/basictypes.h"
 #include "base/string16.h"
-#include "webkit/glue/window_open_disposition.h"
+#include "ui/base/window_open_disposition.h"
 
 class AlternateNavInfoBarDelegate;
 class AutoLoginInfoBarDelegate;
@@ -20,6 +20,7 @@ class MediaStreamInfoBarDelegate;
 class PluginInstallerInfoBarDelegate;
 class RegisterProtocolHandlerInfoBarDelegate;
 class SavePasswordInfoBarDelegate;
+class ScreenCaptureInfoBarDelegate;
 class ThemeInstalledInfoBarDelegate;
 class ThreeDAPIInfoBarDelegate;
 class TranslateInfoBarDelegate;
@@ -93,7 +94,6 @@ class InfoBarDelegate {
   virtual Type GetInfoBarType() const;
 
   // Type-checking downcast routines:
-  virtual AlternateNavInfoBarDelegate* AsAlternateNavInfoBarDelegate();
   virtual AutoLoginInfoBarDelegate* AsAutoLoginInfoBarDelegate();
   virtual ConfirmInfoBarDelegate* AsConfirmInfoBarDelegate();
   virtual ExtensionInfoBarDelegate* AsExtensionInfoBarDelegate();
@@ -101,6 +101,7 @@ class InfoBarDelegate {
   virtual MediaStreamInfoBarDelegate* AsMediaStreamInfoBarDelegate();
   virtual RegisterProtocolHandlerInfoBarDelegate*
       AsRegisterProtocolHandlerInfoBarDelegate();
+  virtual ScreenCaptureInfoBarDelegate* AsScreenCaptureInfoBarDelegate();
   virtual ThemeInstalledInfoBarDelegate* AsThemePreviewInfobarDelegate();
   virtual ThreeDAPIInfoBarDelegate* AsThreeDAPIInfoBarDelegate();
   virtual TranslateInfoBarDelegate* AsTranslateInfoBarDelegate();

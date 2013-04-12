@@ -12,7 +12,6 @@
 #include "base/message_loop.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/browser/extensions/api/commands/command_service.h"
-#include "chrome/browser/extensions/api/commands/command_service_factory.h"
 #include "chrome/browser/extensions/extension_action.h"
 #include "chrome/browser/extensions/extension_action_manager.h"
 #include "chrome/browser/ui/browser.h"
@@ -25,6 +24,7 @@
 #include "chrome/browser/ui/gtk/location_bar_view_gtk.h"
 #include "chrome/browser/ui/singleton_tabs.h"
 #include "chrome/common/chrome_notification_types.h"
+#include "chrome/common/extensions/api/extension_action/action_info.h"
 #include "chrome/common/extensions/api/omnibox/omnibox_handler.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/url_constants.h"
@@ -78,7 +78,8 @@ ExtensionInstalledBubbleGtk::ExtensionInstalledBubbleGtk(
     : extension_(extension),
       browser_(browser),
       icon_(icon),
-      animation_wait_retries_(kAnimationWaitRetries) {
+      animation_wait_retries_(kAnimationWaitRetries),
+      bubble_(NULL) {
   AddRef();  // Balanced in Close().
 
   extensions::ExtensionActionManager* extension_action_manager =
@@ -89,7 +90,7 @@ ExtensionInstalledBubbleGtk::ExtensionInstalledBubbleGtk(
   else if (extension_action_manager->GetBrowserAction(*extension_))
     type_ = BROWSER_ACTION;
   else if (extension_action_manager->GetPageAction(*extension) &&
-           extensions::OmniboxInfo::IsVerboseInstallMessage(extension))
+           extensions::ActionInfo::IsVerboseInstallMessage(extension))
     type_ = PAGE_ACTION;
   else
     type_ = GENERIC;
@@ -247,8 +248,7 @@ void ExtensionInstalledBubbleGtk::ShowInternal() {
   // Browser action label.
   if (type_ == BROWSER_ACTION) {
     extensions::CommandService* command_service =
-        extensions::CommandServiceFactory::GetForProfile(
-            browser_->profile());
+        extensions::CommandService::Get(browser_->profile());
     extensions::Command browser_action_command;
     GtkWidget* info_label;
     if (!command_service->GetBrowserActionCommand(
@@ -271,8 +271,7 @@ void ExtensionInstalledBubbleGtk::ShowInternal() {
   // Page action label.
   if (type_ == PAGE_ACTION) {
     extensions::CommandService* command_service =
-        extensions::CommandServiceFactory::GetForProfile(
-            browser_->profile());
+        extensions::CommandService::Get(browser_->profile());
     extensions::Command page_action_command;
     GtkWidget* info_label;
     if (!command_service->GetPageActionCommand(

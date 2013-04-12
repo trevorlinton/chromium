@@ -19,10 +19,13 @@ class DevToolsFrontendHostDelegate {
   // Should bring DevTools window to front.
   virtual void ActivateWindow() = 0;
 
+  // Changes the height of attached DevTools window.
+  virtual void ChangeAttachedWindowHeight(unsigned height) = 0;
+
   // Closes DevTools front-end window.
   virtual void CloseWindow() = 0;
 
-  // Moves DevTols front-end windo.
+  // Moves DevTools front-end window.
   virtual void MoveWindow(int x, int y) = 0;
 
   // Specifies side for devtools to dock to.
@@ -41,6 +44,15 @@ class DevToolsFrontendHostDelegate {
   // given |url| by SaveToFile method.
   virtual void AppendToFile(const std::string& url,
                             const std::string& content) = 0;
+
+  // Requests the list of filesystems previously added for devtools.
+  virtual void RequestFileSystems() = 0;
+
+  // Shows a dialog to select a folder to which an isolated filesystem is added.
+  virtual void AddFileSystem() = 0;
+
+  // Removes a previously added devtools filesystem given by |file_system_path|.
+  virtual void RemoveFileSystem(const std::string& file_system_path) = 0;
 
   // This method is called when the contents inspected by this devtools frontend
   // is closing.

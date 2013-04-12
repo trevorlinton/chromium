@@ -4,8 +4,11 @@
 
 #include "cc/scrollbar_layer_impl.h"
 
+#include "cc/layer_tree_impl.h"
+#include "cc/layer_tree_settings.h"
 #include "cc/quad_sink.h"
 #include "cc/scrollbar_animation_controller.h"
+#include "cc/solid_color_draw_quad.h"
 #include "cc/texture_draw_quad.h"
 #include "ui/gfx/rect_conversions.h"
 
@@ -14,17 +17,22 @@ using WebKit::WebScrollbar;
 
 namespace cc {
 
-scoped_ptr<ScrollbarLayerImpl> ScrollbarLayerImpl::create(LayerTreeImpl* treeImpl, int id)
+scoped_ptr<ScrollbarLayerImpl> ScrollbarLayerImpl::create(LayerTreeImpl* treeImpl, int id, scoped_ptr<ScrollbarGeometryFixedThumb> geometry)
 {
-    return make_scoped_ptr(new ScrollbarLayerImpl(treeImpl, id));
+    return make_scoped_ptr(new ScrollbarLayerImpl(treeImpl, id, geometry.Pass()));
 }
 
-ScrollbarLayerImpl::ScrollbarLayerImpl(LayerTreeImpl* treeImpl, int id)
+ScrollbarLayerImpl::ScrollbarLayerImpl(LayerTreeImpl* treeImpl, int id, scoped_ptr<ScrollbarGeometryFixedThumb> geometry)
     : ScrollbarLayerImplBase(treeImpl, id)
     , m_scrollbar(this)
     , m_backTrackResourceId(0)
     , m_foreTrackResourceId(0)
     , m_thumbResourceId(0)
+    , m_geometry(geometry.Pass())
+    , m_currentPos(0)
+    , m_totalSize(0)
+    , m_maximum(0)
+    , m_scrollLayerId(-1)
     , m_scrollbarOverlayStyle(WebScrollbar::ScrollbarOverlayStyleDefault)
     , m_orientation(WebScrollbar::Horizontal)
     , m_controlSize(WebScrollbar::RegularScrollbar)
@@ -42,9 +50,9 @@ ScrollbarLayerImpl::~ScrollbarLayerImpl()
 {
 }
 
-void ScrollbarLayerImpl::setScrollbarGeometry(scoped_ptr<ScrollbarGeometryFixedThumb> geometry)
+ScrollbarLayerImpl* ScrollbarLayerImpl::toScrollbarLayer()
 {
-    m_geometry = geometry.Pass();
+    return this;
 }
 
 void ScrollbarLayerImpl::setScrollbarData(WebScrollbar* scrollbar)
@@ -61,8 +69,19 @@ void ScrollbarLayerImpl::setScrollbarData(WebScrollbar* scrollbar)
     m_isOverlayScrollbar = scrollbar->isOverlay();
 
     scrollbar->getTickmarks(m_tickmarks);
+}
 
-    m_geometry->update(scrollbar);
+void ScrollbarLayerImpl::setThumbSize(gfx::Size size)
+{
+    m_thumbSize = size;
+    if (!m_geometry) {
+        // In impl-side painting, the ScrollbarLayerImpl in the pending tree
+        // simply holds properties that are later pushed to the active tree's
+        // layer, but it doesn't hold geometry or append quads.
+        DCHECK(layerTreeImpl()->IsPendingTree());
+        return;
+    }
+    m_geometry->setThumbSize(size);
 }
 
 float ScrollbarLayerImpl::currentPos() const
@@ -98,11 +117,31 @@ gfx::Rect ScrollbarLayerImpl::scrollbarLayerRectToContentRect(const gfx::Rect& l
     return gfx::ToEnclosingRect(contentRect);
 }
 
+scoped_ptr<LayerImpl> ScrollbarLayerImpl::createLayerImpl(LayerTreeImpl* treeImpl)
+{
+    return ScrollbarLayerImpl::create(treeImpl, id(), m_geometry.Pass()).PassAs<LayerImpl>();
+}
+
+void ScrollbarLayerImpl::pushPropertiesTo(LayerImpl* layer)
+{
+    LayerImpl::pushPropertiesTo(layer);
+
+    ScrollbarLayerImpl* scrollbarLayer = static_cast<ScrollbarLayerImpl*>(layer);
+
+    scrollbarLayer->setScrollbarData(&m_scrollbar);
+    scrollbarLayer->setThumbSize(m_thumbSize);
+
+    scrollbarLayer->setBackTrackResourceId(m_backTrackResourceId);
+    scrollbarLayer->setForeTrackResourceId(m_foreTrackResourceId);
+    scrollbarLayer->setThumbResourceId(m_thumbResourceId);
+}
+
 void ScrollbarLayerImpl::appendQuads(QuadSink& quadSink, AppendQuadsData& appendQuadsData)
 {
-    bool premultipledAlpha = false;
+    bool premultipledAlpha = true;
     bool flipped = false;
-    gfx::RectF uvRect(0, 0, 1, 1);
+    gfx::PointF uvTopLeft(0.f, 0.f);
+    gfx::PointF uvBottomRight(1.f, 1.f);
     gfx::Rect boundsRect(gfx::Point(), bounds());
     gfx::Rect contentBoundsRect(gfx::Point(), contentBounds());
 
@@ -114,12 +153,27 @@ void ScrollbarLayerImpl::appendQuads(QuadSink& quadSink, AppendQuadsData& append
     if (!m_geometry->hasThumb(&m_scrollbar))
         thumbRect = WebRect();
 
+    if (layerTreeImpl()->settings().solidColorScrollbars) {
+        int thicknessOverride = layerTreeImpl()->settings().solidColorScrollbarThicknessDIP;
+        if (thicknessOverride != -1) {
+            if (m_scrollbar.orientation() == WebScrollbar::Vertical)
+                thumbRect.width = thicknessOverride;
+            else
+                thumbRect.height = thicknessOverride;
+        }
+        gfx::Rect quadRect(scrollbarLayerRectToContentRect(thumbRect));
+        scoped_ptr<SolidColorDrawQuad> quad = SolidColorDrawQuad::Create();
+        quad->SetNew(sharedQuadState, quadRect, layerTreeImpl()->settings().solidColorScrollbarColor);
+        quadSink.append(quad.PassAs<DrawQuad>(), appendQuadsData);
+        return;
+    }
+
     if (m_thumbResourceId && !thumbRect.isEmpty()) {
         gfx::Rect quadRect(scrollbarLayerRectToContentRect(thumbRect));
         gfx::Rect opaqueRect;
         const float opacity[] = {1.0f, 1.0f, 1.0f, 1.0f};
         scoped_ptr<TextureDrawQuad> quad = TextureDrawQuad::Create();
-        quad->SetNew(sharedQuadState, quadRect, opaqueRect, m_thumbResourceId, premultipledAlpha, uvRect, opacity, flipped);
+        quad->SetNew(sharedQuadState, quadRect, opaqueRect, m_thumbResourceId, premultipledAlpha, uvTopLeft, uvBottomRight, opacity, flipped);
         quadSink.append(quad.PassAs<DrawQuad>(), appendQuadsData);
     }
 
@@ -130,9 +184,10 @@ void ScrollbarLayerImpl::appendQuads(QuadSink& quadSink, AppendQuadsData& append
     if (m_foreTrackResourceId && !foreTrackRect.isEmpty()) {
         gfx::Rect quadRect(scrollbarLayerRectToContentRect(foreTrackRect));
         gfx::Rect opaqueRect(contentsOpaque() ? quadRect : gfx::Rect());
+        gfx::RectF uvRect(toUVRect(foreTrackRect, boundsRect));
         const float opacity[] = {1.0f, 1.0f, 1.0f, 1.0f};
         scoped_ptr<TextureDrawQuad> quad = TextureDrawQuad::Create();
-        quad->SetNew(sharedQuadState, quadRect, opaqueRect, m_foreTrackResourceId, premultipledAlpha, toUVRect(foreTrackRect, boundsRect), opacity, flipped);
+        quad->SetNew(sharedQuadState, quadRect, opaqueRect, m_foreTrackResourceId, premultipledAlpha, uvRect.origin(), uvRect.bottom_right(), opacity, flipped);
         quadSink.append(quad.PassAs<DrawQuad>(), appendQuadsData);
     }
 
@@ -143,7 +198,7 @@ void ScrollbarLayerImpl::appendQuads(QuadSink& quadSink, AppendQuadsData& append
         gfx::Rect opaqueRect(contentsOpaque() ? quadRect : gfx::Rect());
         const float opacity[] = {1.0f, 1.0f, 1.0f, 1.0f};
         scoped_ptr<TextureDrawQuad> quad = TextureDrawQuad::Create();
-        quad->SetNew(sharedQuadState, quadRect, opaqueRect, m_backTrackResourceId, premultipledAlpha, uvRect, opacity, flipped);
+        quad->SetNew(sharedQuadState, quadRect, opaqueRect, m_backTrackResourceId, premultipledAlpha, uvTopLeft, uvBottomRight, opacity, flipped);
         quadSink.append(quad.PassAs<DrawQuad>(), appendQuadsData);
     }
 }
@@ -162,7 +217,7 @@ bool ScrollbarLayerImpl::Scrollbar::isOverlay() const
 
 int ScrollbarLayerImpl::Scrollbar::value() const
 {
-    return m_owner->m_currentPos;
+    return m_owner->currentPos();
 }
 
 WebKit::WebPoint ScrollbarLayerImpl::Scrollbar::location() const
@@ -182,12 +237,12 @@ bool ScrollbarLayerImpl::Scrollbar::enabled() const
 
 int ScrollbarLayerImpl::Scrollbar::maximum() const
 {
-    return m_owner->m_maximum;
+    return m_owner->maximum();
 }
 
 int ScrollbarLayerImpl::Scrollbar::totalSize() const
 {
-    return m_owner->m_totalSize;
+    return m_owner->totalSize();
 }
 
 bool ScrollbarLayerImpl::Scrollbar::isScrollViewScrollbar() const

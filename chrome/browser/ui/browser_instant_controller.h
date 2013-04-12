@@ -13,11 +13,12 @@
 #include "chrome/browser/ui/search/search_model_observer.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
-#include "webkit/glue/window_open_disposition.h"
+#include "ui/base/window_open_disposition.h"
 
 class Browser;
 struct InstantSuggestion;
-class PrefServiceSyncable;
+class PrefRegistrySyncable;
+class PrefService;
 class Profile;
 class ThemeService;
 
@@ -37,40 +38,59 @@ class BrowserInstantController : public content::NotificationObserver,
   explicit BrowserInstantController(Browser* browser);
   virtual ~BrowserInstantController();
 
-  // Returns true if Instant is enabled in a visible, preview-showing mode.
+  // Returns true if Instant is enabled in a visible, overlay-showing mode.
   static bool IsInstantEnabled(Profile* profile);
 
   // Registers Instant related preferences.
-  static void RegisterUserPrefs(PrefServiceSyncable* prefs);
+  static void RegisterUserPrefs(PrefRegistrySyncable* registry);
+
+  // If |url| is the new tab page URL, set |target_contents| to the preloaded
+  // NTP contents from InstantController. If |source_contents| is not NULL, we
+  // replace it with the new |target_contents| in the tabstrip and delete
+  // |source_contents|. Otherwise, the caller owns |target_contents| and is
+  // responsible for inserting it into the tabstrip.
+  //
+  // Returns true if and only if we update |target_contents|.
+  bool MaybeSwapInInstantNTPContents(
+      const GURL& url,
+      content::WebContents* source_contents,
+      content::WebContents** target_contents);
 
   // Commits the current Instant, returning true on success. This is intended
   // for use from OpenCurrentURL.
   bool OpenInstant(WindowOpenDisposition disposition);
 
+  // Returns the Profile associated with the Browser that owns this object.
+  Profile* profile() const;
+
   // Returns the InstantController or NULL if there is no InstantController for
   // this BrowserInstantController.
   InstantController* instant() { return &instant_; }
 
-  // Invoked by |instant_| to commit the |preview| by merging it into the active
-  // tab or adding it as a new tab. We take ownership of |preview|.
-  void CommitInstant(content::WebContents* preview, bool in_new_tab);
+  // Invoked by |instant_| to commit the |overlay| by merging it into the active
+  // tab or adding it as a new tab.
+  void CommitInstant(scoped_ptr<content::WebContents> overlay, bool in_new_tab);
 
   // Invoked by |instant_| to autocomplete the |suggestion| into the omnibox.
   void SetInstantSuggestion(const InstantSuggestion& suggestion);
 
-  // Invoked by |instant_| to get the bounds that the preview is placed at,
-  // in screen coordinated.
+  // Invoked by |instant_| to commit the omnibox's suggested text.
+  // Call-through to OmniboxEditModel::CommitSuggestedText.
+  void CommitSuggestedText(bool skip_inline_autocomplete);
+
+  // Invoked by |instant_| to get the bounds that the overlay is placed at,
+  // in screen coordinates.
   gfx::Rect GetInstantBounds();
 
-  // Invoked by |instant_| to notify that the preview gained focus, usually due
+  // Invoked by |instant_| to notify that the overlay gained focus, usually due
   // to the user clicking on it.
-  void InstantPreviewFocused();
+  void InstantOverlayFocused();
 
   // Invoked by |instant_| to give the omnibox focus invisibly.
   void FocusOmniboxInvisibly();
 
   // Invoked by |instant_| to get the currently active tab, over which the
-  // preview would be shown.
+  // overlay would be shown.
   content::WebContents* GetActiveWebContents() const;
 
   // Invoked by |browser_| when the active tab changes.
@@ -79,19 +99,17 @@ class BrowserInstantController : public content::NotificationObserver,
   // Invoked by |browser_| when the active tab is about to be deactivated.
   void TabDeactivated(content::WebContents* contents);
 
-  // Invoked by |BrowserWindow| during layout to set content height which is
-  // used as theme area height, i.e. the height of the area that the entire
-  // theme background image should fill up.
-  void SetContentHeight(int height);
-
-  // Invoked by |instant_| to update theme information for preview.
-  void UpdateThemeInfoForPreview();
+  // Invoked by |instant_| or |browser_| to update theme information for NTP.
+  // Set |parse_theme_info| to true to force re-parsing of theme information.
+  void UpdateThemeInfo(bool parse_theme_info);
 
   // Invoked by the InstantController when it wants to open a URL.
-  void OpenURLInCurrentTab(const GURL& url, content::PageTransition transition);
+  void OpenURL(const GURL& url,
+               content::PageTransition transition,
+               WindowOpenDisposition disposition);
 
-  // Sets the start and end margins of the omnibox text area.
-  void SetMarginSize(int start, int end);
+  // Sets the stored omnibox bounds.
+  void SetOmniboxBounds(const gfx::Rect& bounds);
 
  private:
   // Sets the value of |instant_| based on value from profile. Invoked
@@ -110,18 +128,19 @@ class BrowserInstantController : public content::NotificationObserver,
   // Helper for handling theme change.
   void OnThemeChanged(ThemeService* theme_service);
 
-  // Helper for handling theme area height change.
-  void OnThemeAreaHeightChanged(int height);
+  // Replaces the contents at tab |index| with |new_contents| and deletes the
+  // existing contents.
+  void ReplaceWebContentsAt(int index,
+                            scoped_ptr<content::WebContents> new_contents);
 
   Browser* const browser_;
 
   InstantController instant_;
   InstantUnloadHandler instant_unload_handler_;
 
-  // Theme-related data for NTP preview to adopt themes.
+  // Theme-related data for NTP overlay to adopt themes.
   bool initialized_theme_info_;  // True if theme_info_ has been initialized.
   ThemeBackgroundInfo theme_info_;
-  int theme_area_height_;
 
   PrefChangeRegistrar profile_pref_registrar_;
 

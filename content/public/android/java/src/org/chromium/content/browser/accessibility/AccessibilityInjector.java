@@ -4,6 +4,7 @@
 
 package org.chromium.content.browser.accessibility;
 
+import android.accessibilityservice.AccessibilityServiceInfo;
 import android.content.Context;
 import android.os.Build;
 import android.os.Bundle;
@@ -54,6 +55,10 @@ public class AccessibilityInjector extends WebContentsObserverAndroid {
     protected boolean mScriptInjected;
 
     private final String mAccessibilityScreenReaderUrl;
+
+    // To support building against the JELLY_BEAN and not JELLY_BEAN_MR1 SDK we need to add this
+    // constant here.
+    private static final int FEEDBACK_BRAILLE = 0x00000020;
 
     // constants for determining script injection strategy
     private static final int ACCESSIBILITY_SCRIPT_INJECTION_UNDEFINED = -1;
@@ -132,7 +137,7 @@ public class AccessibilityInjector extends WebContentsObserverAndroid {
 
                 if (onDeviceScriptInjectionEnabled && js != null && mContentViewCore.isAlive()) {
                     addOrRemoveAccessibilityApisIfNecessary();
-                    mContentViewCore.evaluateJavaScript(js);
+                    mContentViewCore.evaluateJavaScript(js, null);
                     mInjectedScriptEnabled = true;
                     mScriptInjected = true;
                 }
@@ -166,9 +171,16 @@ public class AccessibilityInjector extends WebContentsObserverAndroid {
      * Checks whether or not touch to explore is enabled on the system.
      */
     public boolean accessibilityIsAvailable() {
+        // Need to make sure we actually have a service running that requires injecting
+        // this script.
+        List<AccessibilityServiceInfo> services =
+                getAccessibilityManager().getEnabledAccessibilityServiceList(
+                        FEEDBACK_BRAILLE | AccessibilityServiceInfo.FEEDBACK_SPOKEN);
+
         return getAccessibilityManager().isEnabled() &&
                 mContentViewCore.getContentSettings() != null &&
-                mContentViewCore.getContentSettings().getJavaScriptEnabled();
+                mContentViewCore.getContentSettings().getJavaScriptEnabled() &&
+                services.size() > 0;
     }
 
     /**
@@ -183,7 +195,7 @@ public class AccessibilityInjector extends WebContentsObserverAndroid {
         if (mContentViewCore.isAlive()) {
             String js = String.format(TOGGLE_CHROME_VOX_JAVASCRIPT, Boolean.toString(
                     mInjectedScriptEnabled));
-            mContentViewCore.evaluateJavaScript(js);
+            mContentViewCore.evaluateJavaScript(js, null);
 
             if (!mInjectedScriptEnabled) {
                 // Stop any TTS/Vibration right now.

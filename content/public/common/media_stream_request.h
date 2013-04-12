@@ -27,6 +27,9 @@ enum MediaStreamType {
   MEDIA_TAB_AUDIO_CAPTURE,
   MEDIA_TAB_VIDEO_CAPTURE,
 
+  // Capture content of the screen.
+  MEDIA_SCREEN_VIDEO_CAPTURE,
+
   NUM_MEDIA_TYPES
 };
 
@@ -53,6 +56,13 @@ struct CONTENT_EXPORT MediaStreamDevice {
       const std::string& id,
       const std::string& name);
 
+  MediaStreamDevice(
+      MediaStreamType type,
+      const std::string& id,
+      const std::string& name,
+      int sample_rate,
+      int channel_layout);
+
   ~MediaStreamDevice();
 
   // The device's type.
@@ -63,6 +73,18 @@ struct CONTENT_EXPORT MediaStreamDevice {
 
   // The device's "friendly" name. Not guaranteed to be unique.
   std::string name;
+
+  // Preferred sample rate in samples per second for the device.
+  // Only utilized for audio devices. Will be set to 0 if the constructor
+  // with three parameters (intended for video) is used.
+  int sample_rate;
+
+  // Preferred channel configuration for the device.
+  // Only utilized for audio devices. Will be set to 0 if the constructor
+  // with three parameters (intended for video) is used.
+  // TODO(henrika): ideally, we would like to use media::ChannelLayout here
+  // but including media/base/channel_layout.h violates checkdeps rules.
+  int channel_layout;
 };
 
 typedef std::vector<MediaStreamDevice> MediaStreamDevices;
@@ -76,6 +98,7 @@ struct CONTENT_EXPORT MediaStreamRequest {
       int render_view_id,
       const GURL& security_origin,
       MediaStreamRequestType request_type,
+      const std::string& requested_device_id,
       MediaStreamType audio_type,
       MediaStreamType video_type);
 
@@ -91,10 +114,15 @@ struct CONTENT_EXPORT MediaStreamRequest {
   GURL security_origin;
 
   // Stores the type of request that was made to the media controller. Right now
-  // this is only used to destinguish between WebRTC and Pepper requests, as the
+  // this is only used to distinguish between WebRTC and Pepper requests, as the
   // latter should not be subject to user approval but only to policy check.
   // Pepper requests are signified by the |MEDIA_OPEN_DEVICE| value.
   MediaStreamRequestType request_type;
+
+  // Stores the requested device id. Used only if the |request_type| filed is
+  // set to |MEDIA_OPEN_DEVICE| to indicate which device the request is for as
+  // in that case the decision is not left to the user but to the media client.
+  std::string requested_device_id;
 
   // Flag to indicate if the request contains audio.
   MediaStreamType audio_type;

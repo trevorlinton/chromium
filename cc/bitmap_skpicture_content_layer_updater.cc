@@ -6,6 +6,7 @@
 
 #include "base/time.h"
 #include "cc/layer_painter.h"
+#include "cc/prioritized_resource.h"
 #include "cc/rendering_stats.h"
 #include "cc/resource_update_queue.h"
 #include "third_party/skia/include/core/SkCanvas.h"
@@ -19,16 +20,19 @@ BitmapSkPictureContentLayerUpdater::Resource::Resource(BitmapSkPictureContentLay
 {
 }
 
-void BitmapSkPictureContentLayerUpdater::Resource::update(ResourceUpdateQueue& queue, const gfx::Rect& sourceRect, const gfx::Vector2d& destOffset, bool partialUpdate, RenderingStats& stats)
+void BitmapSkPictureContentLayerUpdater::Resource::update(ResourceUpdateQueue& queue, const gfx::Rect& sourceRect, const gfx::Vector2d& destOffset, bool partialUpdate, RenderingStats* stats)
 {
     m_bitmap.setConfig(SkBitmap::kARGB_8888_Config, sourceRect.width(), sourceRect.height());
     m_bitmap.allocPixels();
     m_bitmap.setIsOpaque(m_updater->layerIsOpaque());
     SkDevice device(m_bitmap);
     SkCanvas canvas(&device);
-    base::TimeTicks paintBeginTime = base::TimeTicks::Now();
+    base::TimeTicks paintBeginTime;
+    if (stats)
+      paintBeginTime = base::TimeTicks::Now();
     updater()->paintContentsRect(&canvas, sourceRect, stats);
-    stats.totalPaintTimeInSeconds += (base::TimeTicks::Now() - paintBeginTime).InSecondsF();
+    if (stats)
+      stats->totalPaintTime += base::TimeTicks::Now() - paintBeginTime;
 
     ResourceUpdate upload = ResourceUpdate::Create(
         texture(), &m_bitmap, sourceRect, sourceRect, destOffset);
@@ -57,15 +61,19 @@ scoped_ptr<LayerUpdater::Resource> BitmapSkPictureContentLayerUpdater::createRes
     return scoped_ptr<LayerUpdater::Resource>(new Resource(this, PrioritizedResource::create(manager)));
 }
 
-void BitmapSkPictureContentLayerUpdater::paintContentsRect(SkCanvas* canvas, const gfx::Rect& sourceRect, RenderingStats& stats)
+void BitmapSkPictureContentLayerUpdater::paintContentsRect(SkCanvas* canvas, const gfx::Rect& sourceRect, RenderingStats* stats)
 {
     // Translate the origin of contentRect to that of sourceRect.
     canvas->translate(contentRect().x() - sourceRect.x(),
                       contentRect().y() - sourceRect.y());
-    base::TimeTicks rasterizeBeginTime = base::TimeTicks::Now();
+    base::TimeTicks rasterizeBeginTime;
+    if (stats)
+      rasterizeBeginTime = base::TimeTicks::Now();
     drawPicture(canvas);
-    stats.totalRasterizeTimeInSeconds += (base::TimeTicks::Now() - rasterizeBeginTime).InSecondsF();
-    stats.totalPixelsRasterized += sourceRect.width() * sourceRect.height();
+    if (stats) {
+      stats->totalRasterizeTime += base::TimeTicks::Now() - rasterizeBeginTime;
+      stats->totalPixelsRasterized += sourceRect.width() * sourceRect.height();
+    }
 }
 
 }  // namespace cc

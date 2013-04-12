@@ -4,6 +4,7 @@
 
 #import "chrome/browser/ui/cocoa/extensions/extension_action_context_menu.h"
 
+#include "base/prefs/pref_service.h"
 #include "base/prefs/public/pref_change_registrar.h"
 #include "base/sys_string_conversions.h"
 #include "chrome/browser/extensions/extension_action.h"
@@ -12,11 +13,9 @@
 #include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/extension_uninstall_dialog.h"
-#include "chrome/browser/prefs/pref_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/cocoa/browser_window_cocoa.h"
 #include "chrome/browser/ui/cocoa/browser_window_controller.h"
@@ -26,9 +25,11 @@
 #include "chrome/browser/ui/cocoa/last_active_browser_cocoa.h"
 #import "chrome/browser/ui/cocoa/location_bar/location_bar_view_mac.h"
 #include "chrome/browser/ui/cocoa/toolbar/toolbar_controller.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
+#include "chrome/common/extensions/manifest_url_handler.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/notification_details.h"
@@ -54,18 +55,18 @@ class AsyncUninstaller : public ExtensionUninstallDialog::Delegate {
       : extension_(extension),
         profile_(browser->profile()) {
     extension_uninstall_dialog_.reset(
-        ExtensionUninstallDialog::Create(browser, this));
+        ExtensionUninstallDialog::Create(profile_, browser, this));
     extension_uninstall_dialog_->ConfirmUninstall(extension_);
   }
 
-  ~AsyncUninstaller() {}
+  virtual ~AsyncUninstaller() {}
 
   // ExtensionUninstallDialog::Delegate:
-  virtual void ExtensionUninstallAccepted() {
+  virtual void ExtensionUninstallAccepted() OVERRIDE {
     extensions::ExtensionSystem::Get(profile_)->extension_service()->
         UninstallExtension(extension_->id(), false, NULL);
   }
-  virtual void ExtensionUninstallCanceled() {}
+  virtual void ExtensionUninstallCanceled() OVERRIDE {}
 
  private:
   // The extension that we're loading the icon for. Weak.
@@ -146,7 +147,7 @@ enum {
         l10n_util::GetNSStringWithFixup(IDS_EXTENSIONS_UNINSTALL),
         l10n_util::GetNSStringWithFixup(IDS_EXTENSIONS_HIDE_BUTTON),
         [NSMenuItem separatorItem],
-        l10n_util::GetNSStringWithFixup(IDS_MANAGE_EXTENSIONS),
+        l10n_util::GetNSStringWithFixup(IDS_MANAGE_EXTENSION),
         l10n_util::GetNSStringWithFixup(IDS_EXTENSION_ACTION_INSPECT_POPUP),
         nil];
 
@@ -204,7 +205,7 @@ enum {
       break;
     }
     case kExtensionContextOptions: {
-      DCHECK(!extension_->options_url().is_empty());
+      DCHECK(!extensions::ManifestURL::GetOptionsPage(extension_).is_empty());
       extensions::ExtensionSystem::Get(browser_->profile())->process_manager()->
           OpenOptionsPage(extension_, browser_);
       break;
@@ -221,7 +222,7 @@ enum {
       break;
     }
     case kExtensionContextManage: {
-      chrome::ShowExtensions(browser_);
+      chrome::ShowExtensions(browser_, extension_->id());
       break;
     }
     case kExtensionContextInspect: {
@@ -247,7 +248,8 @@ enum {
         NOTREACHED() << "action_ is not a page action or browser action?";
       }
 
-      content::WebContents* active_tab = chrome::GetActiveWebContents(browser_);
+      content::WebContents* active_tab =
+          browser_->tab_strip_model()->GetActiveWebContents();
       if (!active_tab)
          break;
 
@@ -273,7 +275,8 @@ enum {
 - (BOOL)validateMenuItem:(NSMenuItem*)menuItem {
   if ([menuItem tag] == kExtensionContextOptions) {
     // Disable 'Options' if there are no options to set.
-    return extension_->options_url().spec().length() > 0;
+    return extensions::ManifestURL::
+        GetOptionsPage(extension_).spec().length() > 0;
   }
   return YES;
 }

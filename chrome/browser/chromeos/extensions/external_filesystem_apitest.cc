@@ -3,8 +3,8 @@
 // found in the LICENSE file.
 
 #include "base/bind.h"
-#include "base/file_path.h"
 #include "base/file_util.h"
+#include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/memory/scoped_ptr.h"
@@ -16,9 +16,12 @@
 #include "chrome/browser/chromeos/drive/drive_system_service.h"
 #include "chrome/browser/extensions/event_router.h"
 #include "chrome/browser/extensions/extension_apitest.h"
+#include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_test_message_listener.h"
-#include "chrome/browser/google_apis/dummy_drive_service.h"
+#include "chrome/browser/google_apis/fake_drive_service.h"
 #include "chrome/browser/google_apis/gdata_wapi_parser.h"
+#include "chrome/browser/google_apis/test_util.h"
 #include "chrome/browser/google_apis/time_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -29,40 +32,129 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
-#include "content/public/browser/storage_partition.h"
 #include "content/public/test/test_utils.h"
-#include "webkit/fileapi/file_system_context.h"
-#include "webkit/fileapi/file_system_mount_point_provider.h"
+#include "webkit/fileapi/external_mount_points.h"
+
+// Tests for access to external file systems (as defined in
+// webkit/fileapi/file_system_types.h) from extensions with fileBrowserPrivate
+// and fileBrowserHandler extension permissions.
+// The tests cover following external file system types:
+// - local (kFileSystemTypeLocalNative): a local file system on which files are
+//   accessed using native local path.
+// - restricted (kFileSystemTypeRestrictedLocalNative): a *read-only* local file
+//   system which can only be accessed by extensions that have full access to
+//   external file systems (i.e. extensions with fileBrowserPrivate permission).
+// - drive (kFileSystemTypeDrive): a file system that provides access to Google
+//   Drive.
+//
+// The tests cover following scenarios:
+// - Performing file system operations on external file systems from an
+//   extension with fileBrowserPrivate permission (i.e. a file browser
+//   extension).
+// - Performing read/write operations from file handler extensions. These
+//   extensions need a file browser extension to give them permissions to access
+//   files. This also includes file handler extensions in filesystem API.
+// - Observing directory changes from a file browser extension (using
+//   fileBrowserPrivate API).
+// - Doing searches on drive file system from file browser extension (using
+//   fileBrowserPrivate API).
 
 using content::BrowserContext;
+using extensions::Extension;
 
 namespace {
 
-// These should match the counterparts in remote.js.
-// Also, the size of the file in |kTestRootFeed| has to be set to
-// length of kTestFileContent string.
-const char kTestFileContent[] = "hello, world!";
+// Root dirs for local and restricted file systems expected by the test
+// extensions.
+// NOTE: Expected root dir for drive file system id 'drive', but this value is
+// set by Chrome's drive implementation rather than this test.
+const char kLocalMountPointName[] = "local";
+const char kRestrictedMountPointName[] = "restricted";
 
-// Contains a folder entry for the folder 'Folder' that will be 'created'.
-const char kTestDirectory[] = "new_folder_entry.json";
+// Default file content for the test files.
+// The content format is influenced by fake drive service implementation which
+// fills the file with 'x' characters until its size matches the size declared
+// in the root feed.
+// The size of the files in |kTestRootFeed| has to be set to the length of
+// |kTestFileContent| string.
+const char kTestFileContent[] = "xxxxxxxxxxxxx";
 
-// Contains a folder named Folder that has a file File.aBc inside of it.
-const char kTestRootFeed[] = "remote_file_system_apitest_root_feed.json";
+// Contains feed for drive file system. The file system hiearchy is the same for
+// local and restricted file systems:
+//   test_dir/ - - subdir/
+//              |
+//               - empty_test_dir/
+//              |
+//               - empty_test_file.foo
+//              |
+//               - test_file.xul
+//              |
+//               - test_file.xul.foo
+//              |
+//               - test_file.tiff
+//              |
+//               - test_file.tiff.foo
+//
+// All files except test_dir/empty_file.foo, which is empty, initially contain
+// kTestFileContent.
+const char kTestRootFeed[] = "gdata/remote_file_system_apitest_root_feed.json";
 
-// Contains metadata of the  document that will be "downloaded" in test.
-const char kTestDocumentToDownloadEntry[] =
-    "remote_file_system_apitest_document_to_download.json";
+// Creates a test file with predetermined content. Returns true on success.
+bool CreateFileWithContent(const base::FilePath& path,
+                           const std::string& content) {
+  int content_size = static_cast<int>(content.length());
+  int written = file_util::WriteFile(path, content.c_str(), content_size);
+  return written == content_size;
+}
 
-// The ID of the file browser extension.
-const char kFileBrowserExtensionId[] = "ddammdhioacbehjngdmkjcjbnfginlla";
+// Sets up the initial file system state for native local and restricted native
+// local file systems. The hierarchy is the same as for the drive file system.
+bool InitializeLocalFileSystem(base::ScopedTempDir* tmp_dir,
+                               base::FilePath* mount_point_dir) {
+  if (!tmp_dir->CreateUniqueTempDir())
+    return false;
 
-// Flags used to run the tests with a COMPONENT extension.
-const int kComponentFlags = ExtensionApiTest::kFlagEnableFileAccess |
-                            ExtensionApiTest::kFlagLoadAsComponent;
+  *mount_point_dir = tmp_dir->path().Append("mount");
+  // Create the mount point.
+  if (!file_util::CreateDirectory(*mount_point_dir))
+    return false;
+
+  base::FilePath test_dir = mount_point_dir->Append("test_dir");
+  if (!file_util::CreateDirectory(test_dir))
+    return false;
+
+  base::FilePath test_subdir = test_dir.Append("empty_test_dir");
+  if (!file_util::CreateDirectory(test_subdir))
+    return false;
+
+  test_subdir = test_dir.AppendASCII("subdir");
+  if (!file_util::CreateDirectory(test_subdir))
+    return false;
+
+  base::FilePath test_file = test_dir.AppendASCII("test_file.xul");
+  if (!CreateFileWithContent(test_file, kTestFileContent))
+    return false;
+
+  test_file = test_dir.AppendASCII("test_file.xul.foo");
+  if (!CreateFileWithContent(test_file, kTestFileContent))
+    return false;
+
+  test_file = test_dir.AppendASCII("test_file.tiff");
+  if (!CreateFileWithContent(test_file, kTestFileContent))
+    return false;
+
+  test_file = test_dir.AppendASCII("test_file.tiff.foo");
+  if (!CreateFileWithContent(test_file, kTestFileContent))
+    return false;
+
+  test_file = test_dir.AppendASCII("empty_test_file.foo");
+  if (!CreateFileWithContent(test_file, ""))
+    return false;
+
+  return true;
+}
 
 // Helper class to wait for a background page to load or close again.
-// TODO(tbarzic): We can probably share this with e.g.
-//                lazy_background_page_apitest.
 class BackgroundObserver {
  public:
   BackgroundObserver()
@@ -72,8 +164,6 @@ class BackgroundObserver {
                      content::NotificationService::AllSources()) {
   }
 
-  // TODO(tbarzic): Use this for file handlers in the rest of the tests
-  // (instead of calling chrome.test.succeed in js).
   void WaitUntilLoaded() {
     page_created_.Wait();
   }
@@ -87,358 +177,339 @@ class BackgroundObserver {
   content::WindowedNotificationObserver page_closed_;
 };
 
-// TODO(tbarzic): We should probably share GetTestFilePath and LoadJSONFile
-// with drive_file_system_unittest.
-// Generates file path in gdata test directory for a file with name |filename|.
-FilePath GetTestFilePath(const FilePath::StringType& filename) {
-  FilePath path;
-  std::string error;
-  PathService::Get(chrome::DIR_TEST_DATA, &path);
-   path = path.AppendASCII("chromeos")
-       .AppendASCII("gdata")
-       .AppendASCII(filename);
-  EXPECT_TRUE(file_util::PathExists(path)) <<
-      "Couldn't find " << path.value();
-  return path;
-}
-
-// Loads and deserializes a json file in gdata test directory whose name is
-// |filename|. Returns new Value object the file is deserialized to.
-base::Value* LoadJSONFile(const std::string& filename) {
-  FilePath path = GetTestFilePath(filename);
-  std::string error;
-  JSONFileValueSerializer serializer(path);
-  Value* value = serializer.Deserialize(NULL, &error);
-  EXPECT_TRUE(value) <<
-      "Parse error " << path.value() << ": " << error;
-  return value;
-}
-
-// Adds a next feed URL property to the given feed value.
-bool AddNextFeedURLToFeedValue(const std::string& url, base::Value* feed) {
-  DictionaryValue* feed_as_dictionary;
-  if (!feed->GetAsDictionary(&feed_as_dictionary))
-    return false;
-
-  ListValue* links;
-  if (!feed_as_dictionary->GetList("feed.link", &links))
-    return false;
-
-  DictionaryValue* link_value = new DictionaryValue();
-  link_value->SetString("href", url);
-  link_value->SetString("rel", "next");
-  link_value->SetString("type", "application/atom_xml");
-
-  links->Append(link_value);
-
-  return true;
-}
-
-// Creates a cache representation of the test file with predetermined content.
-void CreateFileWithContent(const FilePath& path, const std::string& content) {
-  int content_size = static_cast<int>(content.length());
-  ASSERT_EQ(content_size,
-            file_util::WriteFile(path, content.c_str(), content_size));
-}
-
-// Fake google_apis::DriveServiceInterface implementation used by
-// RemoteFileSystemExtensionApiTest.
-class FakeDriveService : public google_apis::DummyDriveService {
+// Base class for FileSystemExtensionApi tests.
+class FileSystemExtensionApiTestBase : public ExtensionApiTest {
  public:
-  // google_apis::DriveServiceInterface overrides:
-  virtual void GetResourceList(
-      const GURL& feed_url,
-      int64 start_changestamp,
-      const std::string& search_string,
-      bool shared_with_me,
-      const std::string& directory_resource_id,
-      const google_apis::GetResourceListCallback& callback) OVERRIDE {
-    scoped_ptr<base::Value> value(LoadJSONFile(kTestRootFeed));
-    if (!search_string.empty()) {
-      // Search results will be returned in two parts:
-      // 1. Search will be given empty initial feed url. The returned feed will
-      //    have next feed URL set to mock the situation when server returns
-      //    partial result feed.
-      // 2. Search will be given next feed URL from the first call as the
-      //    initial feed url. Result feed will not have next feed url set.
-      // In both cases search will return all files and directories in test root
-      // feed.
-      if (feed_url.is_empty()) {
-        ASSERT_TRUE(
-            AddNextFeedURLToFeedValue("https://next_feed", value.get()));
-      } else {
-        EXPECT_EQ(GURL("https://next_feed"), feed_url);
-      }
-    }
-    scoped_ptr<google_apis::ResourceList> result(
-        google_apis::ResourceList::ExtractAndParse(*value));
-    base::MessageLoopProxy::current()->PostTask(
-        FROM_HERE,
-        base::Bind(callback, google_apis::HTTP_SUCCESS, base::Passed(&result)));
-  }
+  enum Flags {
+    FLAGS_NONE = 0,
+    FLAGS_USE_FILE_HANDLER = 1 << 1,
+    FLAGS_LAZY_FILE_HANDLER = 1 << 2
+  };
 
-  virtual void GetResourceEntry(
-      const std::string& resource_id,
-      const google_apis::GetResourceEntryCallback& callback) OVERRIDE {
-    EXPECT_EQ("file:1_file_resource_id", resource_id);
-
-    scoped_ptr<base::Value> file_to_download_value(
-        LoadJSONFile(kTestDocumentToDownloadEntry));
-    scoped_ptr<google_apis::ResourceEntry> file_to_download(
-        google_apis::ResourceEntry::ExtractAndParse(*file_to_download_value));
-
-    base::MessageLoopProxy::current()->PostTask(
-        FROM_HERE,
-        base::Bind(callback, google_apis::HTTP_SUCCESS,
-                   base::Passed(&file_to_download)));
-  }
-
-  virtual void GetAccountMetadata(
-      const google_apis::GetAccountMetadataCallback& callback) OVERRIDE {
-    scoped_ptr<google_apis::AccountMetadataFeed> account_metadata(
-        new google_apis::AccountMetadataFeed);
-    base::MessageLoopProxy::current()->PostTask(
-        FROM_HERE,
-        base::Bind(callback, google_apis::HTTP_SUCCESS,
-                   base::Passed(&account_metadata)));
-  }
-
-  virtual void AddNewDirectory(
-      const GURL& parent_content_url,
-      const FilePath::StringType& directory_name,
-      const google_apis::GetResourceEntryCallback& callback) OVERRIDE {
-    scoped_ptr<base::Value> dir_value(LoadJSONFile(kTestDirectory));
-    scoped_ptr<google_apis::ResourceEntry> dir_resource_entry(
-        google_apis::ResourceEntry::ExtractAndParse(*dir_value));
-    base::MessageLoopProxy::current()->PostTask(
-        FROM_HERE,
-        base::Bind(callback, google_apis::HTTP_SUCCESS,
-                   base::Passed(&dir_resource_entry)));
-  }
-
-  virtual void DownloadFile(
-      const FilePath& virtual_path,
-      const FilePath& local_cache_path,
-      const GURL& content_url,
-      const google_apis::DownloadActionCallback& download_action_callback,
-      const google_apis::GetContentCallback& get_content_callback) OVERRIDE {
-    EXPECT_EQ(GURL("https://file_content_url_changed"), content_url);
-    ASSERT_TRUE(content::BrowserThread::PostBlockingPoolTaskAndReply(
-        FROM_HERE,
-        base::Bind(&CreateFileWithContent, local_cache_path, kTestFileContent),
-        base::Bind(download_action_callback, google_apis::HTTP_SUCCESS,
-                   local_cache_path)));
-  }
-};
-
-}  // namespace
-
-class FileSystemExtensionApiTest : public ExtensionApiTest {
- public:
-  FileSystemExtensionApiTest() : test_mount_point_("/tmp") {
-  }
-
-  virtual ~FileSystemExtensionApiTest() {}
-
-  void SetUpCommandLine(CommandLine* command_line) {
-    ExtensionApiTest::SetUpCommandLine(command_line);
-    command_line->AppendSwitch(switches::kEnableExperimentalExtensionApis);
-  }
-
-  // Adds a local mount point at at mount point /tmp.
-  void AddTmpMountPoint() {
-    fileapi::ExternalFileSystemMountPointProvider* provider =
-        BrowserContext::GetDefaultStoragePartition(
-            browser()->profile())->GetFileSystemContext()->external_provider();
-    provider->AddLocalMountPoint(test_mount_point_);
-  }
-
-  // Loads the extension, which temporarily starts the lazy background page
-  // to dispatch the onInstalled event. We wait until it shuts down again.
-  const extensions::Extension* LoadExtensionAndWait(
-      const std::string& test_name) {
-    BackgroundObserver page_complete;
-    FilePath extdir = test_data_dir_.AppendASCII(test_name);
-    const extensions::Extension* extension = LoadExtension(extdir);
-    if (extension)
-      page_complete.WaitUntilClosed();
-    return extension;
-  }
-
- private:
-  FilePath test_mount_point_;
-};
-
-class RestrictedFileSystemExtensionApiTest : public ExtensionApiTest {
- public:
-  RestrictedFileSystemExtensionApiTest() {}
-
-  virtual ~RestrictedFileSystemExtensionApiTest() {}
+  FileSystemExtensionApiTestBase() {}
+  virtual ~FileSystemExtensionApiTestBase() {}
 
   virtual void SetUp() OVERRIDE {
-    FilePath tmp_path;
-    PathService::Get(base::DIR_TEMP, &tmp_path);
-    ASSERT_TRUE(tmp_dir_.CreateUniqueTempDirUnderPath(tmp_path));
-    mount_point_dir_ = tmp_dir_.path().Append("mount");
-    // Create the mount point.
-    file_util::CreateDirectory(mount_point_dir_);
-
-    FilePath test_dir = mount_point_dir_.Append("test_dir");
-    file_util::CreateDirectory(test_dir);
-
-    FilePath test_file = test_dir.AppendASCII("test_file.foo");
-    CreateFileWithContent(test_file, kTestFileContent);
-
-    test_file = test_dir.AppendASCII("mutable_test_file.foo");
-    CreateFileWithContent(test_file, kTestFileContent);
-
-    test_file = test_dir.AppendASCII("test_file_to_delete.foo");
-    CreateFileWithContent(test_file, kTestFileContent);
-
-    test_file = test_dir.AppendASCII("test_file_to_move.foo");
-    CreateFileWithContent(test_file, kTestFileContent);
-
-    // Create test files.
+    InitTestFileSystem();
     ExtensionApiTest::SetUp();
   }
 
-  virtual void TearDown() OVERRIDE {
-    ExtensionApiTest::TearDown();
+  virtual void SetUpOnMainThread() OVERRIDE {
+    AddTestMountPoint();
+    ExtensionApiTest::SetUpOnMainThread();
   }
 
-  void AddRestrictedMountPoint() {
-    fileapi::ExternalFileSystemMountPointProvider* provider =
-        BrowserContext::GetDefaultStoragePartition(
-            browser()->profile())->GetFileSystemContext()->external_provider();
-    provider->AddRestrictedLocalMountPoint(mount_point_dir_);
+  // Runs a file system extension API test.
+  // It loads test component extension at |filebrowser_path| with manifest
+  // at |filebrowser_manifest|. The |filebrowser_manifest| should be a path
+  // relative to |filebrowser_path|. The method waits until the test extension
+  // sends test succeed or fail message. It returns true if the test succeeds.
+  // If |FLAGS_USE_FILE_HANDLER| flag is set, the file handler extension at path
+  // |filehandler_path| will be loaded before the file browser extension.
+  // If the flag FLAGS_LAZY_FILE_HANDLER is set, the file handler extension must
+  // not have persistent background page. The test will wait until the file
+  // handler's background page is closed after initial load before the file
+  // browser extension is loaded.
+  // If |RunFileSystemExtensionApiTest| fails, |message_| will contain a failure
+  // message.
+  bool RunFileSystemExtensionApiTest(
+      const std::string& filebrowser_path,
+      const base::FilePath::CharType* filebrowser_manifest,
+      const std::string& filehandler_path,
+      int flags) {
+    if (flags & FLAGS_USE_FILE_HANDLER) {
+      if (filehandler_path.empty()) {
+        message_ = "Missing file handler path.";
+        return false;
+      }
+
+      BackgroundObserver page_complete;
+      const Extension* file_handler =
+          LoadExtension(test_data_dir_.AppendASCII(filehandler_path));
+      if (!file_handler)
+        return false;
+
+      if (flags & FLAGS_LAZY_FILE_HANDLER) {
+        page_complete.WaitUntilClosed();
+      } else {
+        page_complete.WaitUntilLoaded();
+      }
+    }
+
+    ResultCatcher catcher;
+
+    const Extension* file_browser = LoadExtensionAsComponentWithManifest(
+        test_data_dir_.AppendASCII(filebrowser_path),
+        filebrowser_manifest);
+    if (!file_browser)
+      return false;
+
+    if (!catcher.GetNextResult()) {
+      message_ = catcher.message();
+      return false;
+    }
+
+    return true;
   }
 
  protected:
-  base::ScopedTempDir tmp_dir_;
-  FilePath mount_point_dir_;
+  // Sets up initial test file system hierarchy. See comment for kTestRootFeed
+  // for the actual hierarchy.
+  virtual void InitTestFileSystem() = 0;
+  // Registers mount point used in the test.
+  virtual void AddTestMountPoint() = 0;
 };
 
-
-class RemoteFileSystemExtensionApiTest : public ExtensionApiTest {
+// Tests for a native local file system.
+class LocalFileSystemExtensionApiTest : public FileSystemExtensionApiTestBase {
  public:
-  RemoteFileSystemExtensionApiTest() {}
+  LocalFileSystemExtensionApiTest() {}
+  virtual ~LocalFileSystemExtensionApiTest() {}
 
-  virtual ~RemoteFileSystemExtensionApiTest() {}
+  // FileSystemExtensionApiTestBase OVERRIDE.
+  virtual void InitTestFileSystem() OVERRIDE {
+    ASSERT_TRUE(InitializeLocalFileSystem(&tmp_dir_, &mount_point_dir_))
+        << "Failed to initialize file system.";
+  }
 
-  virtual void SetUp() OVERRIDE {
+  // FileSystemExtensionApiTestBase OVERRIDE.
+  virtual void AddTestMountPoint() OVERRIDE {
+    EXPECT_TRUE(content::BrowserContext::GetMountPoints(browser()->profile())->
+        RegisterFileSystem(kLocalMountPointName,
+                            fileapi::kFileSystemTypeNativeLocal,
+                            mount_point_dir_));
+  }
+
+ private:
+  base::ScopedTempDir tmp_dir_;
+  base::FilePath mount_point_dir_;
+};
+
+// Tests for restricted native local file systems.
+class RestrictedFileSystemExtensionApiTest
+    : public FileSystemExtensionApiTestBase {
+ public:
+  RestrictedFileSystemExtensionApiTest() {}
+  virtual ~RestrictedFileSystemExtensionApiTest() {}
+
+  // FileSystemExtensionApiTestBase OVERRIDE.
+  virtual void InitTestFileSystem() OVERRIDE {
+    ASSERT_TRUE(InitializeLocalFileSystem(&tmp_dir_, &mount_point_dir_))
+        << "Failed to initialize file system.";
+  }
+
+  // FileSystemExtensionApiTestBase OVERRIDE.
+  virtual void AddTestMountPoint() OVERRIDE {
+    EXPECT_TRUE(content::BrowserContext::GetMountPoints(browser()->profile())->
+        RegisterFileSystem(kRestrictedMountPointName,
+                           fileapi::kFileSystemTypeRestrictedNativeLocal,
+                           mount_point_dir_));
+  }
+
+ private:
+  base::ScopedTempDir tmp_dir_;
+  base::FilePath mount_point_dir_;
+};
+
+// Tests for a drive file system.
+class DriveFileSystemExtensionApiTest : public FileSystemExtensionApiTestBase {
+ public:
+  DriveFileSystemExtensionApiTest() : fake_drive_service_(NULL) {}
+  virtual ~DriveFileSystemExtensionApiTest() {}
+
+  // FileSystemExtensionApiTestBase OVERRIDE.
+  virtual void InitTestFileSystem() OVERRIDE {
     // Set up cache root and documents service to be used when creating gdata
     // system service. This has to be done early on (before the browser is
     // created) because the system service instance is initialized very early
     // by FileBrowserEventRouter.
-    FilePath tmp_dir_path;
+    base::FilePath tmp_dir_path;
     PathService::Get(base::DIR_TEMP, &tmp_dir_path);
     ASSERT_TRUE(test_cache_root_.CreateUniqueTempDirUnderPath(tmp_dir_path));
 
     drive::DriveSystemServiceFactory::SetFactoryForTest(
-        base::Bind(&RemoteFileSystemExtensionApiTest::CreateDriveSystemService,
+        base::Bind(&DriveFileSystemExtensionApiTest::CreateDriveSystemService,
                    base::Unretained(this)));
+  }
 
-    ExtensionApiTest::SetUp();
+  // FileSystemExtensionApiTestBase OVERRIDE.
+  virtual void AddTestMountPoint() OVERRIDE {
+    // Nothing needs to be done here. Drive mount point is added by the browser.
   }
 
  protected:
   // DriveSystemService factory function for this test.
   drive::DriveSystemService* CreateDriveSystemService(Profile* profile) {
+    fake_drive_service_ = new google_apis::FakeDriveService;
+    fake_drive_service_->LoadResourceListForWapi(kTestRootFeed);
+    fake_drive_service_->LoadAccountMetadataForWapi(
+        "gdata/account_metadata.json");
+
     return new drive::DriveSystemService(profile,
-                                         new FakeDriveService(),
+                                         fake_drive_service_,
                                          test_cache_root_.path(),
                                          NULL);
   }
 
   base::ScopedTempDir test_cache_root_;
+  google_apis::FakeDriveService* fake_drive_service_;
 };
 
-IN_PROC_BROWSER_TEST_F(FileSystemExtensionApiTest, LocalFileSystem) {
-  AddTmpMountPoint();
-  ASSERT_TRUE(RunComponentExtensionTest("local_filesystem")) << message_;
+//
+// LocalFileSystemExtensionApiTests.
+//
+IN_PROC_BROWSER_TEST_F(LocalFileSystemExtensionApiTest, FileSystemOperations) {
+  EXPECT_TRUE(RunFileSystemExtensionApiTest(
+      "file_browser/filesystem_operations_test",
+      FILE_PATH_LITERAL("manifests_v1.json"),
+      "",
+      FLAGS_NONE)) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(FileSystemExtensionApiTest, FileBrowserTest) {
-  AddTmpMountPoint();
-  ASSERT_TRUE(RunExtensionTest("filesystem_handler")) << message_;
-  ASSERT_TRUE(RunExtensionSubtest(
-      "filebrowser_component", "read.html", kComponentFlags)) << message_;
+IN_PROC_BROWSER_TEST_F(LocalFileSystemExtensionApiTest,
+                       FileSystemOperations_Packaged) {
+  EXPECT_TRUE(RunFileSystemExtensionApiTest(
+      "file_browser/filesystem_operations_test",
+      FILE_PATH_LITERAL("manifests_v2.json"),
+      "",
+      FLAGS_NONE)) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(FileSystemExtensionApiTest, FileBrowserTestLazy) {
-  AddTmpMountPoint();
-  ASSERT_TRUE(LoadExtensionAndWait("filesystem_handler_lazy_background"))
-      << message_;
-  ASSERT_TRUE(RunExtensionSubtest(
-      "filebrowser_component", "read.html", kComponentFlags)) << message_;
+IN_PROC_BROWSER_TEST_F(LocalFileSystemExtensionApiTest, FileWatch) {
+  EXPECT_TRUE(RunFileSystemExtensionApiTest(
+      "file_browser/file_watcher_test",
+      FILE_PATH_LITERAL("manifest.json"),
+      "",
+      FLAGS_NONE)) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(FileSystemExtensionApiTest, FileBrowserWebIntentTest) {
-  AddTmpMountPoint();
-
-  ResultCatcher catcher;
-  base::ScopedTempDir tmp_dir;
-  ASSERT_TRUE(tmp_dir.CreateUniqueTempDir());
-
-  // Create a test file inside the base::ScopedTempDir.
-  FilePath test_file = tmp_dir.path().AppendASCII("text_file.xul");
-  CreateFileWithContent(test_file, kTestFileContent);
-
-  ASSERT_TRUE(LoadExtension(
-      test_data_dir_.AppendASCII("webintent_handler"))) << message_;
-
-  // Load the source component, with the fileUrl within the virtual mount
-  // point.
-  const extensions::Extension* extension = LoadExtensionAsComponent(
-      test_data_dir_.AppendASCII("filebrowser_component"));
-  ASSERT_TRUE(extension) << message_;
-  std::string path = "filesystem:chrome-extension://" + extension->id() +
-      "/external" + test_file.value();
-  GURL url = extension->GetResourceURL("intent.html#" + path);
-  ui_test_utils::NavigateToURL(browser(), url);
-
-  // The webintent_handler sends chrome.test.succeed() on successful receipt
-  // of the incoming Web Intent.
-  ASSERT_TRUE(catcher.GetNextResult()) << message_;
+IN_PROC_BROWSER_TEST_F(LocalFileSystemExtensionApiTest, FileBrowserHandlers) {
+  EXPECT_TRUE(RunFileSystemExtensionApiTest(
+      "file_browser/handler_test_runner",
+      FILE_PATH_LITERAL("manifest_v1.json"),
+      "file_browser/file_browser_handler",
+      FLAGS_USE_FILE_HANDLER)) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(FileSystemExtensionApiTest, FileBrowserTestWrite) {
-  AddTmpMountPoint();
-  ASSERT_TRUE(RunExtensionTest("filesystem_handler_write")) << message_;
-  ASSERT_TRUE(RunExtensionSubtest(
-      "filebrowser_component", "write.html", kComponentFlags)) << message_;
+IN_PROC_BROWSER_TEST_F(LocalFileSystemExtensionApiTest,
+                       FileBrowserHandlers_Packaged) {
+  EXPECT_TRUE(RunFileSystemExtensionApiTest(
+      "file_browser/handler_test_runner",
+      FILE_PATH_LITERAL("manifest_v2.json"),
+      "file_browser/file_browser_handler",
+      FLAGS_USE_FILE_HANDLER)) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(FileSystemExtensionApiTest,
-                       FileBrowserTestWriteReadOnly) {
-  AddTmpMountPoint();
-  ASSERT_TRUE(RunExtensionTest("filesystem_handler_write")) << message_;
-  ASSERT_FALSE(RunExtensionSubtest(
-      "filebrowser_component", "write.html#def", kComponentFlags)) << message_;
+IN_PROC_BROWSER_TEST_F(LocalFileSystemExtensionApiTest,
+                       FileBrowserHandlersLazy) {
+  EXPECT_TRUE(RunFileSystemExtensionApiTest(
+      "file_browser/handler_test_runner",
+      FILE_PATH_LITERAL("manifest_v1.json"),
+      "file_browser/file_browser_handler_lazy",
+      FLAGS_USE_FILE_HANDLER | FLAGS_LAZY_FILE_HANDLER)) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(FileSystemExtensionApiTest,
-                       FileBrowserTestWriteComponent) {
-  AddTmpMountPoint();
-  ASSERT_TRUE(RunComponentExtensionTest("filesystem_handler_write"))
-      << message_;
-  ASSERT_TRUE(RunExtensionSubtest(
-      "filebrowser_component", "write.html", kComponentFlags)) << message_;
+IN_PROC_BROWSER_TEST_F(LocalFileSystemExtensionApiTest,
+                       FileBrowserHandlersLazy_Packaged) {
+  EXPECT_TRUE(RunFileSystemExtensionApiTest(
+      "file_browser/handler_test_runner",
+      FILE_PATH_LITERAL("manifest_v2.json"),
+      "file_browser/file_browser_handler_lazy",
+      FLAGS_USE_FILE_HANDLER | FLAGS_LAZY_FILE_HANDLER)) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(RestrictedFileSystemExtensionApiTest, Basic) {
-  AddRestrictedMountPoint();
-  ASSERT_TRUE(RunExtensionSubtest(
-      "filebrowser_component", "restricted.html", kComponentFlags)) << message_;
+IN_PROC_BROWSER_TEST_F(LocalFileSystemExtensionApiTest, AppFileHanlder) {
+  EXPECT_TRUE(RunFileSystemExtensionApiTest(
+      "file_browser/handler_test_runner",
+      FILE_PATH_LITERAL("manifest_v2.json"),
+      "file_browser/app_file_handler",
+      FLAGS_USE_FILE_HANDLER)) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(RemoteFileSystemExtensionApiTest, RemoteMountPoint) {
-  EXPECT_TRUE(RunExtensionTest("filesystem_handler")) << message_;
-  EXPECT_TRUE(RunExtensionSubtest("filebrowser_component", "remote.html",
-      kComponentFlags)) << message_;
+//
+// RestrictedFileSystemExtensionApiTests.
+//
+IN_PROC_BROWSER_TEST_F(RestrictedFileSystemExtensionApiTest,
+                       FileSystemOperations) {
+  EXPECT_TRUE(RunFileSystemExtensionApiTest(
+      "file_browser/filesystem_operations_test",
+      FILE_PATH_LITERAL("manifests_v1.json"),
+      "",
+      FLAGS_NONE)) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(RemoteFileSystemExtensionApiTest, ContentSearch) {
-  EXPECT_TRUE(RunExtensionSubtest("filebrowser_component", "remote_search.html",
-      kComponentFlags)) << message_;
+IN_PROC_BROWSER_TEST_F(RestrictedFileSystemExtensionApiTest,
+                       FileSystemOperations_Packaged) {
+  EXPECT_TRUE(RunFileSystemExtensionApiTest(
+      "file_browser/filesystem_operations_test",
+      FILE_PATH_LITERAL("manifests_v2.json"),
+      "",
+      FLAGS_NONE)) << message_;
 }
+
+//
+// DriveFileSystemExtensionApiTests.
+//
+IN_PROC_BROWSER_TEST_F(DriveFileSystemExtensionApiTest, FileSystemOperations) {
+  EXPECT_TRUE(RunFileSystemExtensionApiTest(
+      "file_browser/filesystem_operations_test",
+      FILE_PATH_LITERAL("manifests_v1.json"),
+      "",
+      FLAGS_NONE)) << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(DriveFileSystemExtensionApiTest,
+                       FileSystemOperations_Packaged) {
+  EXPECT_TRUE(RunFileSystemExtensionApiTest(
+      "file_browser/filesystem_operations_test",
+      FILE_PATH_LITERAL("manifests_v2.json"),
+      "",
+      FLAGS_NONE)) << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(DriveFileSystemExtensionApiTest, FileWatch) {
+  EXPECT_TRUE(RunFileSystemExtensionApiTest(
+      "file_browser/file_watcher_test",
+      FILE_PATH_LITERAL("manifest.json"),
+      "",
+      FLAGS_NONE)) << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(DriveFileSystemExtensionApiTest, FileBrowserHandlers) {
+  EXPECT_TRUE(RunFileSystemExtensionApiTest(
+      "file_browser/handler_test_runner",
+      FILE_PATH_LITERAL("manifest_v1.json"),
+      "file_browser/file_browser_handler",
+      FLAGS_USE_FILE_HANDLER)) << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(DriveFileSystemExtensionApiTest,
+                       FileBrowserHandlers_Packaged) {
+  EXPECT_TRUE(RunFileSystemExtensionApiTest(
+      "file_browser/handler_test_runner",
+      FILE_PATH_LITERAL("manifest_v2.json"),
+      "file_browser/file_browser_handler",
+      FLAGS_USE_FILE_HANDLER)) << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(DriveFileSystemExtensionApiTest,
+                       FileBrowserHandlersLazy) {
+  EXPECT_TRUE(RunFileSystemExtensionApiTest(
+      "file_browser/handler_test_runner",
+      FILE_PATH_LITERAL("manifest_v1.json"),
+      "file_browser/file_browser_handler_lazy",
+      FLAGS_USE_FILE_HANDLER | FLAGS_LAZY_FILE_HANDLER)) << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(DriveFileSystemExtensionApiTest, Search) {
+  // Configure the drive service to return only one search result at a time
+  // to simulate paginated searches.
+  fake_drive_service_->set_default_max_results(1);
+  EXPECT_TRUE(RunFileSystemExtensionApiTest(
+      "file_browser/drive_search_test",
+      FILE_PATH_LITERAL("manifest.json"),
+      "",
+      FLAGS_NONE)) << message_;
+}
+
+}  // namespace

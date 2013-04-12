@@ -7,6 +7,8 @@
 #include <string>
 
 #include "base/time.h"
+#include "chrome/common/autofill/autocheckout_status.h"
+#include "chrome/common/autofill/web_element_descriptor.h"
 #include "chrome/common/common_param_traits_macros.h"
 #include "chrome/common/form_data.h"
 #include "chrome/common/form_data_predictions.h"
@@ -24,6 +26,15 @@
 
 #define IPC_MESSAGE_START AutofillMsgStart
 
+IPC_ENUM_TRAITS(autofill::AutocheckoutStatus)
+
+IPC_STRUCT_TRAITS_BEGIN(autofill::WebElementDescriptor)
+  IPC_STRUCT_TRAITS_MEMBER(descriptor)
+  IPC_STRUCT_TRAITS_MEMBER(retrieval_method)
+IPC_STRUCT_TRAITS_END()
+
+IPC_ENUM_TRAITS(autofill::WebElementDescriptor::RetrievalMethod)
+
 IPC_STRUCT_TRAITS_BEGIN(FormFieldData)
   IPC_STRUCT_TRAITS_MEMBER(label)
   IPC_STRUCT_TRAITS_MEMBER(name)
@@ -32,6 +43,8 @@ IPC_STRUCT_TRAITS_BEGIN(FormFieldData)
   IPC_STRUCT_TRAITS_MEMBER(autocomplete_attribute)
   IPC_STRUCT_TRAITS_MEMBER(max_length)
   IPC_STRUCT_TRAITS_MEMBER(is_autofilled)
+  IPC_STRUCT_TRAITS_MEMBER(is_checked)
+  IPC_STRUCT_TRAITS_MEMBER(is_checkable)
   IPC_STRUCT_TRAITS_MEMBER(is_focusable)
   IPC_STRUCT_TRAITS_MEMBER(should_autocomplete)
   IPC_STRUCT_TRAITS_MEMBER(option_values)
@@ -137,16 +150,18 @@ IPC_MESSAGE_ROUTED1(AutofillMsg_AcceptPasswordAutofillSuggestion,
 IPC_MESSAGE_ROUTED1(AutofillMsg_FormNotBlacklisted,
                     content::PasswordForm /* form checked */)
 
-// Sent when requestAutocomplete() succeeds. Tells the renderer to Autofill the
-// form that requested autocomplete with the |form_data| values input by the
-// user.
-IPC_MESSAGE_ROUTED1(AutofillMsg_RequestAutocompleteSuccess,
+// Sent when requestAutocomplete() finishes (either succesfully or with an
+// error). If it was a success, the renderer fills the form that requested
+// autocomplete with the |form_data| values input by the user.
+IPC_MESSAGE_ROUTED2(AutofillMsg_RequestAutocompleteResult,
+                    WebKit::WebFormElement::AutocompleteResult /* result */,
                     FormData /* form_data */)
 
-// Sent when requestAutocomplete() fails. Currently, this happens when a form is
-// requested to be autocompleted with no input or select tags with autocomplete
-// attributes.
-IPC_MESSAGE_ROUTED0(AutofillMsg_RequestAutocompleteError)
+// Sent when a page should be filled using Autocheckout. This happens when the
+// Autofill server hints that a page is Autocheckout enabled.
+IPC_MESSAGE_ROUTED2(AutofillMsg_FillFormsAndClick,
+                    std::vector<FormData> /* form_data */,
+                    autofill::WebElementDescriptor /* element_descriptor */)
 
 // Autofill messages sent from the renderer to the browser.
 
@@ -185,7 +200,7 @@ IPC_MESSAGE_ROUTED5(AutofillHostMsg_QueryFormFieldAutofill,
                     int /* id of this message */,
                     FormData /* the form */,
                     FormFieldData /* the form field */,
-                    gfx::Rect /* input field bounds, window-relative */,
+                    gfx::RectF /* input field bounds, window-relative */,
                     bool /* display warning if autofill disabled */)
 
 // Sent when the popup with Autofill suggestions for a form is shown.
@@ -228,6 +243,12 @@ IPC_MESSAGE_ROUTED0(AutofillHostMsg_DidEndTextFieldEditing)
 // Instructs the browser to hide the Autofill popup.
 IPC_MESSAGE_ROUTED0(AutofillHostMsg_HideAutofillPopup)
 
+// Sent when the renderer attempts to click an element in an Autocheckout flow
+// and either the element could not be found or the click did not have the
+// desired effect.
+IPC_MESSAGE_ROUTED1(AutofillHostMsg_ClickFailed,
+                    autofill::AutocheckoutStatus /* status */)
+
 // Instructs the browser to show the password generation bubble at the
 // specified location. This location should be specified in the renderers
 // coordinate system. Form is the form associated with the password field.
@@ -245,7 +266,7 @@ IPC_MESSAGE_ROUTED2(AutofillHostMsg_AddPasswordFormMapping,
 // password manager.
 IPC_MESSAGE_ROUTED3(AutofillHostMsg_ShowPasswordSuggestions,
                     FormFieldData /* the form field */,
-                    gfx::Rect /* input field bounds, window-relative */,
+                    gfx::RectF /* input field bounds, window-relative */,
                     std::vector<string16> /* suggestions */)
 
 // Inform browser of data list values for the curent field.

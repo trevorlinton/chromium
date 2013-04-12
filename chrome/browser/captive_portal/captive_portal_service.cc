@@ -9,7 +9,7 @@
 #include "base/logging.h"
 #include "base/message_loop.h"
 #include "base/metrics/histogram.h"
-#include "chrome/browser/prefs/pref_service.h"
+#include "base/prefs/pref_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/pref_names.h"
@@ -44,7 +44,7 @@ void RecordRepeatHistograms(Result result,
   // pointers, so have to use the histogram functions directly.
 
   // Record number of times the last result was received in a row.
-  base::Histogram* result_repeated_histogram =
+  base::HistogramBase* result_repeated_histogram =
       base::Histogram::FactoryGet(
           "CaptivePortal.ResultRepeated." +
               CaptivePortalDetector::CaptivePortalResultToString(result),
@@ -58,7 +58,7 @@ void RecordRepeatHistograms(Result result,
     return;
 
   // Time between first request that returned |result| and now.
-  base::Histogram* result_duration_histogram =
+  base::HistogramBase* result_duration_histogram =
       base::Histogram::FactoryTimeGet(
           "CaptivePortal.ResultDuration." +
               CaptivePortalDetector::CaptivePortalResultToString(result),

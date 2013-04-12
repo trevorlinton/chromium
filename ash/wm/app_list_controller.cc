@@ -12,8 +12,8 @@
 #include "ash/wm/property_util.h"
 #include "ash/wm/shelf_layout_manager.h"
 #include "ui/app_list/app_list_constants.h"
-#include "ui/app_list/app_list_view.h"
 #include "ui/app_list/pagination_model.h"
+#include "ui/app_list/views/app_list_view.h"
 #include "ui/aura/client/focus_client.h"
 #include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
@@ -49,7 +49,8 @@ views::BubbleBorder::ArrowLocation GetBubbleArrowLocation(
       SelectValueForShelfAlignment(
           views::BubbleBorder::BOTTOM_CENTER,
           views::BubbleBorder::LEFT_CENTER,
-          views::BubbleBorder::RIGHT_CENTER);
+          views::BubbleBorder::RIGHT_CENTER,
+          views::BubbleBorder::TOP_CENTER);
 }
 
 // Offset given |rect| towards shelf.
@@ -68,8 +69,8 @@ gfx::Rect OffsetTowardsShelf(const gfx::Rect& rect, views::Widget* widget) {
     case SHELF_ALIGNMENT_RIGHT:
       offseted.Offset(kAnimationOffset, 0);
       break;
-    default:
-      NOTREACHED() << "Unknown shelf alignment " << shelf_alignment;
+    case SHELF_ALIGNMENT_TOP:
+      offseted.Offset(0, -kAnimationOffset);
       break;
   }
 
@@ -124,7 +125,8 @@ void AppListController::SetVisible(bool visible, aura::Window* window) {
         pagination_model_.get(),
         Launcher::ForWindow(container)->GetAppListButtonView(),
         gfx::Point(),
-        GetBubbleArrowLocation(container));
+        GetBubbleArrowLocation(container),
+        true /* border_accepts_events */);
     SetView(view);
   }
 }
@@ -275,7 +277,7 @@ void AppListController::OnImplicitAnimationsCompleted() {
 ////////////////////////////////////////////////////////////////////////////////
 // AppListController, views::WidgetObserver implementation:
 
-void AppListController::OnWidgetClosing(views::Widget* widget) {
+void AppListController::OnWidgetDestroying(views::Widget* widget) {
   DCHECK(view_->GetWidget() == widget);
   if (is_visible_)
     SetVisible(false, widget->GetNativeView());

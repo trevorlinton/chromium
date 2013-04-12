@@ -22,7 +22,7 @@ class TestRenderPass;
 // Adds a new render pass with the provided properties to the given
 // render pass list.
 TestRenderPass* addRenderPass(
-    ScopedPtrVector<RenderPass>& passList,
+    RenderPassList& passList,
     RenderPass::Id id,
     const gfx::Rect& outputRect,
     const gfx::Transform& rootTransform);
@@ -31,6 +31,11 @@ TestRenderPass* addRenderPass(
 SolidColorDrawQuad* addQuad(TestRenderPass* pass,
                             const gfx::Rect& rect,
                             SkColor color);
+
+// Adds a solid quad to a given render pass and sets is_clipped=true.
+SolidColorDrawQuad* addClippedQuad(TestRenderPass* pass,
+                                   const gfx::Rect& rect,
+                                   SkColor color);
 
 // Adds a render pass quad to an existing render pass.
 void addRenderPassQuad(TestRenderPass* toPass,

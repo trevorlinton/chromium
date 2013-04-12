@@ -52,7 +52,7 @@ ContentClient::ContentClient()
 ContentClient::~ContentClient() {
 }
 
-bool ContentClient::HasWebUIScheme(const GURL& url) const {
+bool ContentClient::CanSendWhileSwappedOut(const IPC::Message* message) {
   return false;
 }
 
@@ -76,6 +76,11 @@ base::StringPiece ContentClient::GetDataResource(
     int resource_id,
     ui::ScaleFactor scale_factor) const {
   return base::StringPiece();
+}
+
+base::RefCountedStaticMemory* ContentClient::GetDataResourceBytes(
+    int resource_id) const {
+  return NULL;
 }
 
 gfx::Image& ContentClient::GetNativeImageNamed(int resource_id) const {

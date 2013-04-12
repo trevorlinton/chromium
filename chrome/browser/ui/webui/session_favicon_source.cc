@@ -12,12 +12,14 @@
 using browser_sync::SessionModelAssociator;
 
 SessionFaviconSource::SessionFaviconSource(Profile* profile)
-    : FaviconSource(profile,
-                    FaviconSource::FAVICON,
-                    chrome::kChromeUISessionFaviconHost) {
+    : FaviconSource(profile, FaviconSource::FAVICON) {
 }
 
 SessionFaviconSource::~SessionFaviconSource() {
+}
+
+std::string SessionFaviconSource::GetSource() {
+  return chrome::kChromeUISessionFaviconHost;
 }
 
 std::string SessionFaviconSource::GetMimeType(const std::string&) const {
@@ -49,7 +51,7 @@ bool SessionFaviconSource::HandleMissingResource(const IconRequest& request) {
     scoped_refptr<base::RefCountedString> response =
         new base::RefCountedString();
     response->data() = favicon_data;
-    SendResponse(request.request_id, response);
+    request.callback.Run(response);
     return true;
   }
   return false;

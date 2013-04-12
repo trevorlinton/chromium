@@ -8,17 +8,16 @@
 #include <cmath>
 #include <set>
 
-#include "base/string_number_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/bookmarks/bookmark_model.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/search/search.h"
-#include "chrome/browser/ui/search/search_model.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/views/bookmarks/bookmark_menu_delegate.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "content/public/browser/host_zoom_map.h"
@@ -435,6 +434,12 @@ class WrenchMenu::CutCopyPasteView : public WrenchMenuView {
       cut->SetEnabledColor(kTouchButtonText);
       copy->SetEnabledColor(kTouchButtonText);
       paste->SetEnabledColor(kTouchButtonText);
+    } else {
+      SkColor text_color = GetNativeTheme()->GetSystemColor(
+          ui::NativeTheme::kColorId_EnabledMenuItemForegroundColor);
+      cut->SetEnabledColor(text_color);
+      copy->SetEnabledColor(text_color);
+      paste->SetEnabledColor(text_color);
     }
     copy_background->SetOtherButtons(cut, paste);
   }
@@ -480,8 +485,7 @@ static const int kTouchZoomPadding = 14;
 // ZoomView contains the various zoom controls: two buttons to increase/decrease
 // the zoom, a label showing the current zoom percent, and a button to go
 // full-screen.
-class WrenchMenu::ZoomView : public WrenchMenuView,
-                             public content::NotificationObserver {
+class WrenchMenu::ZoomView : public WrenchMenuView {
  public:
   ZoomView(WrenchMenu* menu,
            MenuModel* menu_model,
@@ -490,11 +494,17 @@ class WrenchMenu::ZoomView : public WrenchMenuView,
            int fullscreen_index)
       : WrenchMenuView(menu, menu_model),
         fullscreen_index_(fullscreen_index),
+        zoom_callback_(base::Bind(&WrenchMenu::ZoomView::OnZoomLevelChanged,
+                                  base::Unretained(this))),
         increment_button_(NULL),
         zoom_label_(NULL),
         decrement_button_(NULL),
         fullscreen_button_(NULL),
         zoom_label_width_(0) {
+    HostZoomMap::GetForBrowserContext(
+        menu_->browser_->profile())->AddZoomLevelChangedCallback(
+            zoom_callback_);
+
     decrement_button_ = CreateButtonWithAccName(
         IDS_ZOOM_MINUS2, MenuButtonBackground::LEFT_BUTTON, decrement_index,
         NULL, IDS_ACCNAME_ZOOM_MINUS2);
@@ -534,7 +544,15 @@ class WrenchMenu::ZoomView : public WrenchMenuView,
       decrement_button_->SetEnabledColor(kTouchButtonText);
       increment_button_->SetEnabledColor(kTouchButtonText);
     } else {
-      zoom_label_->SetEnabledColor(menu_config.text_color);
+      SkColor enabled_text_color = GetNativeTheme()->GetSystemColor(
+          ui::NativeTheme::kColorId_EnabledMenuItemForegroundColor);
+      zoom_label_->SetEnabledColor(enabled_text_color);
+      decrement_button_->SetEnabledColor(enabled_text_color);
+      increment_button_->SetEnabledColor(enabled_text_color);
+      SkColor disabled_text_color = GetNativeTheme()->GetSystemColor(
+          ui::NativeTheme::kColorId_DisabledMenuItemForegroundColor);
+      decrement_button_->SetDisabledColor(disabled_text_color);
+      increment_button_->SetDisabledColor(disabled_text_color);
     }
 
     fullscreen_button_->set_focusable(true);
@@ -555,11 +573,12 @@ class WrenchMenu::ZoomView : public WrenchMenuView,
     AddChildView(fullscreen_button_);
 
     UpdateZoomControls();
+  }
 
-    registrar_.Add(
-        this, content::NOTIFICATION_ZOOM_LEVEL_CHANGED,
-        content::Source<HostZoomMap>(
-            HostZoomMap::GetForBrowserContext(menu->browser_->profile())));
+  virtual ~ZoomView() {
+    HostZoomMap::GetForBrowserContext(
+        menu_->browser_->profile())->RemoveZoomLevelChangedCallback(
+            zoom_callback_);
   }
 
   // Overridden from View.
@@ -613,35 +632,21 @@ class WrenchMenu::ZoomView : public WrenchMenuView,
     }
   }
 
-  // Overridden from content::NotificationObserver.
-  virtual void Observe(int type,
-                       const content::NotificationSource& source,
-                       const content::NotificationDetails& details) OVERRIDE {
-    DCHECK_EQ(content::NOTIFICATION_ZOOM_LEVEL_CHANGED, type);
+ private:
+  void OnZoomLevelChanged(const std::string& host) {
     UpdateZoomControls();
   }
 
- private:
   void UpdateZoomControls() {
+    bool enable_increment = false;
+    bool enable_decrement = false;
+    WebContents* selected_tab =
+        menu_->browser_->tab_strip_model()->GetActiveWebContents();
     int zoom = 100;
-    // Don't override initial states of increment and decrement buttons when
-    // instant extended API is enabled and mode is NTP; they are properly
-    // updated in ToolbarView::ModeChanged() via CommandUpdater, and queried
-    // via WrenchMenuModel::IsCommandIdEnabled() when the buttons were created
-    // in CreateButtonWithAccName().
-    if (!(chrome::search::IsInstantExtendedAPIEnabled(
-              menu_->browser_->profile()) &&
-          menu_->browser_->search_model()->mode().is_ntp())) {
-      bool enable_increment = false;
-      bool enable_decrement = false;
-      WebContents* selected_tab = chrome::GetActiveWebContents(menu_->browser_);
-      if (selected_tab) {
-        zoom = selected_tab->GetZoomPercent(&enable_increment,
-                                            &enable_decrement);
-      }
-      increment_button_->SetEnabled(enable_increment);
-      decrement_button_->SetEnabled(enable_decrement);
-    }
+    if (selected_tab)
+      zoom = selected_tab->GetZoomPercent(&enable_increment, &enable_decrement);
+    increment_button_->SetEnabled(enable_increment);
+    decrement_button_->SetEnabled(enable_decrement);
     zoom_label_->SetText(
         l10n_util::GetStringFUTF16Int(IDS_ZOOM_PERCENT, zoom));
 
@@ -656,7 +661,8 @@ class WrenchMenu::ZoomView : public WrenchMenuView,
 
     int max_w = 0;
 
-    WebContents* selected_tab = chrome::GetActiveWebContents(menu_->browser_);
+    WebContents* selected_tab =
+        menu_->browser_->tab_strip_model()->GetActiveWebContents();
     if (selected_tab) {
       int min_percent = selected_tab->GetMinimumZoomPercent();
       int max_percent = selected_tab->GetMaximumZoomPercent();
@@ -678,6 +684,7 @@ class WrenchMenu::ZoomView : public WrenchMenuView,
   // Index of the fullscreen menu item in the model.
   const int fullscreen_index_;
 
+  content::HostZoomMap::ZoomLevelChangedCallback zoom_callback_;
   content::NotificationRegistrar registrar_;
 
   // Button for incrementing the zoom.
@@ -927,9 +934,11 @@ bool WrenchMenu::IsCommandEnabled(int id) const {
 
   const Entry& entry = id_to_entry_.find(id)->second;
   int command_id = entry.first->GetCommandIdAt(entry.second);
-  // The items representing the cut menu (cut/copy/paste) are always enabled.
-  // The child views of these items enabled state updates appropriately.
-  return command_id == IDC_CUT || entry.first->IsEnabledAt(entry.second);
+  // The items representing the cut menu (cut/copy/paste) and zoom menu
+  // (increment/decrement/reset) are always enabled. The child views of these
+  // items enabled state updates appropriately.
+  return command_id == IDC_CUT || command_id == IDC_ZOOM_MINUS ||
+      entry.first->IsEnabledAt(entry.second);
 }
 
 void WrenchMenu::ExecuteCommand(int id, int mouse_event_flags) {
@@ -1019,44 +1028,38 @@ void WrenchMenu::Observe(int type,
 void WrenchMenu::PopulateMenu(MenuItemView* parent,
                               MenuModel* model,
                               int* next_id) {
-  int index_offset = model->GetFirstItemIndex(NULL);
   for (int i = 0, max = model->GetItemCount(); i < max; ++i) {
-    int index = i + index_offset;
-
     // The button container menu items have a special height which we have to
     // use instead of the normal height.
     int height = 0;
     if (use_new_menu_ &&
-        (model->GetCommandIdAt(index) == IDC_CUT ||
-         model->GetCommandIdAt(index) == IDC_ZOOM_MINUS))
+        (model->GetCommandIdAt(i) == IDC_CUT ||
+         model->GetCommandIdAt(i) == IDC_ZOOM_MINUS))
       height = kMenuItemContainingButtonsHeight;
 
     MenuItemView* item = AppendMenuItem(
-        parent, model, index, model->GetTypeAt(index), next_id, height);
+        parent, model, i, model->GetTypeAt(i), next_id, height);
 
-    if (model->GetTypeAt(index) == MenuModel::TYPE_SUBMENU)
-      PopulateMenu(item, model->GetSubmenuModelAt(index), next_id);
+    if (model->GetTypeAt(i) == MenuModel::TYPE_SUBMENU)
+      PopulateMenu(item, model->GetSubmenuModelAt(i), next_id);
 
-    switch (model->GetCommandIdAt(index)) {
+    switch (model->GetCommandIdAt(i)) {
       case IDC_CUT:
-        DCHECK_EQ(MenuModel::TYPE_COMMAND, model->GetTypeAt(index));
+        DCHECK_EQ(MenuModel::TYPE_COMMAND, model->GetTypeAt(i));
         DCHECK_LT(i + 2, max);
-        DCHECK_EQ(IDC_COPY, model->GetCommandIdAt(index + 1));
-        DCHECK_EQ(IDC_PASTE, model->GetCommandIdAt(index + 2));
+        DCHECK_EQ(IDC_COPY, model->GetCommandIdAt(i + 1));
+        DCHECK_EQ(IDC_PASTE, model->GetCommandIdAt(i + 2));
         item->SetTitle(l10n_util::GetStringUTF16(IDS_EDIT2));
-        item->AddChildView(
-            new CutCopyPasteView(
-                this, model, index, index + 1, index + 2));
+        item->AddChildView(new CutCopyPasteView(this, model, i, i + 1, i + 2));
         i += 2;
         break;
 
       case IDC_ZOOM_MINUS:
-        DCHECK_EQ(MenuModel::TYPE_COMMAND, model->GetTypeAt(index));
-        DCHECK_EQ(IDC_ZOOM_PLUS, model->GetCommandIdAt(index + 1));
-        DCHECK_EQ(IDC_FULLSCREEN, model->GetCommandIdAt(index + 2));
+        DCHECK_EQ(MenuModel::TYPE_COMMAND, model->GetTypeAt(i));
+        DCHECK_EQ(IDC_ZOOM_PLUS, model->GetCommandIdAt(i + 1));
+        DCHECK_EQ(IDC_FULLSCREEN, model->GetCommandIdAt(i + 2));
         item->SetTitle(l10n_util::GetStringUTF16(IDS_ZOOM_MENU2));
-        item->AddChildView(
-            new ZoomView(this, model, index, index + 1, index + 2));
+        item->AddChildView(new ZoomView(this, model, i, i + 1, i + 2));
         i += 2;
         break;
 
@@ -1075,7 +1078,7 @@ void WrenchMenu::PopulateMenu(MenuItemView* parent,
             browser_->profile()));
         DCHECK(!recent_tabs_menu_model_delegate_.get());
         recent_tabs_menu_model_delegate_.reset(
-            new RecentTabsMenuModelDelegate(model->GetSubmenuModelAt(index),
+            new RecentTabsMenuModelDelegate(model->GetSubmenuModelAt(i),
                                             item));
         break;
 

@@ -1,14 +1,13 @@
-#!/usr/bin/env python
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 import os
 
-from telemetry import multi_page_benchmark
+from telemetry.page import page_benchmark
 
 _JS = 'chrome.gpuBenchmarking.printToSkPicture("{0}");'
 
-class SkPicturePrinter(multi_page_benchmark.MultiPageBenchmark):
+class SkPicturePrinter(page_benchmark.PageBenchmark):
   def AddCommandLineOptions(self, parser):
     parser.add_option('-o', '--outdir', help='Output directory')
 
@@ -22,5 +21,5 @@ class SkPicturePrinter(multi_page_benchmark.MultiPageBenchmark):
     outpath = os.path.abspath(outpath)
     # Replace win32 path separator char '\' with '\\'.
     js = _JS.format(outpath.replace('\\', '\\\\'))
-    tab.runtime.Evaluate(js)
+    tab.EvaluateJavaScript(js)
     results.Add('output_path', 'path', outpath)

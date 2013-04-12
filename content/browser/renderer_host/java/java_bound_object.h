@@ -9,12 +9,16 @@
 #include <map>
 #include <string>
 
+#include "base/android/jni_helper.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/memory/linked_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "content/browser/renderer_host/java/java_method.h"
 #include "third_party/npapi/bindings/npruntime.h"
 
 namespace content {
+
+class JavaBridgeDispatcherHostManager;
 
 // Wrapper around a Java object.
 //
@@ -31,16 +35,19 @@ class JavaBoundObject {
   // propagates to all Objects that get implicitly exposed as return values as
   // well. Returns an NPObject with a ref count of one which owns the
   // JavaBoundObject.
+  // See also comment below for |manager_|.
   static NPObject* Create(
       const base::android::JavaRef<jobject>& object,
-      base::android::JavaRef<jclass>& safe_annotation_clazz);
+      const base::android::JavaRef<jclass>& safe_annotation_clazz,
+      const base::WeakPtr<JavaBridgeDispatcherHostManager>& manager);
 
   virtual ~JavaBoundObject();
 
-  // Gets a global ref to the underlying JavaObject from a JavaBoundObject
-  // wrapped as an NPObject. Ownership of the global ref is retained by the
-  // JavaBoundObject: the caller must NOT release it.
-  static jobject GetJavaObject(NPObject* object);
+  // Gets a local ref to the underlying JavaObject from a JavaBoundObject
+  // wrapped as an NPObject. May return null if the underlying object has
+  // been garbage collected.
+  static base::android::ScopedJavaLocalRef<jobject> GetJavaObject(
+      NPObject* object);
 
   // Methods to implement the NPObject callbacks.
   bool HasMethod(const std::string& name) const;
@@ -50,13 +57,20 @@ class JavaBoundObject {
  private:
   explicit JavaBoundObject(
       const base::android::JavaRef<jobject>& object,
-      base::android::JavaRef<jclass>& safe_annotation_clazz);
+      const base::android::JavaRef<jclass>& safe_annotation_clazz,
+      const base::WeakPtr<JavaBridgeDispatcherHostManager>& manager_);
 
   void EnsureMethodsAreSetUp() const;
 
-  // The global ref to the underlying Java object that this JavaBoundObject
+  // The weak ref to the underlying Java object that this JavaBoundObject
   // instance represents.
-  base::android::ScopedJavaGlobalRef<jobject> java_object_;
+  JavaObjectWeakGlobalRef java_object_;
+
+  // Keep a pointer back to the JavaBridgeDispatcherHostManager so that we
+  // can notify it when this JavaBoundObject is destroyed. JavaBoundObjects
+  // may outlive the manager so keep a WeakPtr. Note the WeakPtr may only be
+  // dereferenced on the UI thread.
+  base::WeakPtr<JavaBridgeDispatcherHostManager> manager_;
 
   // Map of public methods, from method name to Method instance. Multiple
   // entries will be present for overloaded methods. Note that we can't use

@@ -146,6 +146,7 @@ class NetworkLibraryImplBase : public NetworkLibrary {
   virtual bool cellular_busy() const OVERRIDE;
   virtual bool mobile_busy() const OVERRIDE;
   virtual bool wifi_scanning() const OVERRIDE;
+  virtual bool cellular_initializing() const OVERRIDE;
   virtual bool offline_mode() const OVERRIDE;
   virtual std::string GetCheckPortalList() const OVERRIDE;
   // virtual SetCheckPortalList implemented in derived classes.
@@ -192,9 +193,9 @@ class NetworkLibraryImplBase : public NetworkLibrary {
   // virtual RequestCellularRegister implemented in derived classes.
   // virtual SetCellularDataRoamingAllowed implemented in derived classes.
   // virtual SetCarrier implemented in derived classes.
+  // virtual ResetModem implemented in derived classes.
   // virtual IsCellularAlwaysInRoaming implemented in derived classes.
   // virtual RequestNetworkScan implemented in derived classes.
-  // virtual GetWifiAccessPoints implemented in derived classes.
 
   virtual bool HasProfileType(NetworkProfileType type) const OVERRIDE;
   virtual bool CanConnectToNetwork(const Network* network) const OVERRIDE;
@@ -438,15 +439,15 @@ class NetworkLibraryImplBase : public NetworkLibrary {
   // The current available network devices. Bitwise flag of ConnectionTypes.
   int available_devices_;
 
+  // The current uninitialized network devices. Bitwise flag of ConnectionTypes.
+  int uninitialized_devices_;
+
   // The current enabled network devices. Bitwise flag of ConnectionTypes.
   int enabled_devices_;
 
   // The current busy network devices. Bitwise flag of ConnectionTypes.
   // Busy means device is switching from enable/disable state.
   int busy_devices_;
-
-  // The current connected network devices. Bitwise flag of ConnectionTypes.
-  int connected_devices_;
 
   // True if we are currently scanning for wifi networks.
   bool wifi_scanning_;

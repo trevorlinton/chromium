@@ -9,7 +9,7 @@
 
 #include "base/basictypes.h"
 #include "base/callback_forward.h"
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -34,6 +34,17 @@ class CONTENT_EXPORT DownloadItemImpl
     : public DownloadItem,
       public DownloadDestinationObserver {
  public:
+  enum ResumeMode {
+    RESUME_MODE_INVALID = 0,
+    RESUME_MODE_IMMEDIATE_CONTINUE,
+    RESUME_MODE_IMMEDIATE_RESTART,
+    RESUME_MODE_USER_CONTINUE,
+    RESUME_MODE_USER_RESTART
+  };
+
+  // The maximum number of attempts we will make to resume automatically.
+  static const int kMaxAutoResumeAttempts;
+
   // Note that it is the responsibility of the caller to ensure that a
   // DownloadItemImplDelegate passed to a DownloadItemImpl constructor
   // outlives the DownloadItemImpl.
@@ -42,14 +53,17 @@ class CONTENT_EXPORT DownloadItemImpl
   // |bound_net_log| is constructed externally for our use.
   DownloadItemImpl(DownloadItemImplDelegate* delegate,
                    DownloadId download_id,
-                   const FilePath& path,
-                   const GURL& url,
+                   const base::FilePath& current_path,
+                   const base::FilePath& target_path,
+                   const std::vector<GURL>& url_chain,
                    const GURL& referrer_url,
                    const base::Time& start_time,
                    const base::Time& end_time,
                    int64 received_bytes,
                    int64 total_bytes,
                    DownloadItem::DownloadState state,
+                   DownloadDangerType danger_type,
+                   DownloadInterruptReason interrupt_reason,
                    bool opened,
                    const net::BoundNetLog& bound_net_log);
 
@@ -57,13 +71,12 @@ class CONTENT_EXPORT DownloadItemImpl
   // |bound_net_log| is constructed externally for our use.
   DownloadItemImpl(DownloadItemImplDelegate* delegate,
                    const DownloadCreateInfo& info,
-                   scoped_ptr<DownloadRequestHandleInterface> request_handle,
                    const net::BoundNetLog& bound_net_log);
 
   // Constructing for the "Save Page As..." feature:
   // |bound_net_log| is constructed externally for our use.
   DownloadItemImpl(DownloadItemImplDelegate* delegate,
-                   const FilePath& path,
+                   const base::FilePath& path,
                    const GURL& url,
                    DownloadId download_id,
                    const std::string& mime_type,
@@ -78,6 +91,7 @@ class CONTENT_EXPORT DownloadItemImpl
   virtual void DangerousDownloadValidated() OVERRIDE;
   virtual void Pause() OVERRIDE;
   virtual void Resume() OVERRIDE;
+  virtual void ResumeInterruptedDownload() OVERRIDE;
   virtual void Cancel(bool user_cancel) OVERRIDE;
   virtual void Delete(DeleteReason reason) OVERRIDE;
   virtual void Remove() OVERRIDE;
@@ -108,16 +122,15 @@ class CONTENT_EXPORT DownloadItemImpl
   virtual const std::string& GetLastModifiedTime() const OVERRIDE;
   virtual const std::string& GetETag() const OVERRIDE;
   virtual bool IsSavePackageDownload() const OVERRIDE;
-  virtual const FilePath& GetFullPath() const OVERRIDE;
-  virtual const FilePath& GetTargetFilePath() const OVERRIDE;
-  virtual const FilePath& GetForcedFilePath() const OVERRIDE;
-  virtual FilePath GetUserVerifiedFilePath() const OVERRIDE;
-  virtual FilePath GetFileNameToReportUser() const OVERRIDE;
+  virtual const base::FilePath& GetFullPath() const OVERRIDE;
+  virtual const base::FilePath& GetTargetFilePath() const OVERRIDE;
+  virtual const base::FilePath& GetForcedFilePath() const OVERRIDE;
+  virtual base::FilePath GetUserVerifiedFilePath() const OVERRIDE;
+  virtual base::FilePath GetFileNameToReportUser() const OVERRIDE;
   virtual TargetDisposition GetTargetDisposition() const OVERRIDE;
   virtual const std::string& GetHash() const OVERRIDE;
   virtual const std::string& GetHashState() const OVERRIDE;
   virtual bool GetFileExternallyRemoved() const OVERRIDE;
-  virtual SafetyState GetSafetyState() const OVERRIDE;
   virtual bool IsDangerous() const OVERRIDE;
   virtual DownloadDangerType GetDangerType() const OVERRIDE;
   virtual bool TimeRemaining(base::TimeDelta* remaining) const OVERRIDE;
@@ -140,23 +153,23 @@ class CONTENT_EXPORT DownloadItemImpl
   virtual void SetOpenWhenComplete(bool open) OVERRIDE;
   virtual void SetIsTemporary(bool temporary) OVERRIDE;
   virtual void SetOpened(bool opened) OVERRIDE;
-  virtual void SetDisplayName(const FilePath& name) OVERRIDE;
+  virtual void SetDisplayName(const base::FilePath& name) OVERRIDE;
   virtual std::string DebugString(bool verbose) const OVERRIDE;
-  virtual void MockDownloadOpenForTesting() OVERRIDE;
 
   // All remaining public interfaces virtual to allow for DownloadItemImpl
   // mocks.
 
-  // Main entry points for regular downloads, in order -------------------------
+  virtual ResumeMode GetResumeMode() const;
 
-  // TODO(rdsmith): Fold the process that uses these fully into
-  // DownloadItemImpl and pass callbacks to the delegate so that all of
-  // these other than Start() can be made private.
+  // State transition operations on regular downloads --------------------------
 
-  // Start the download
-  virtual void Start(scoped_ptr<DownloadFile> download_file);
+  // Start the download.
+  // |download_file| is the associated file on the storage medium.
+  // |req_handle| is the new request handle associated with the download.
+  virtual void Start(scoped_ptr<DownloadFile> download_file,
+                     scoped_ptr<DownloadRequestHandleInterface> req_handle);
 
-  // Needed because of interwining with DownloadManagerImpl --------------------
+  // Needed because of intertwining with DownloadManagerImpl -------------------
 
   // TODO(rdsmith): Unwind DownloadManagerImpl and DownloadItemImpl,
   // removing these from the public interface.
@@ -168,9 +181,11 @@ class CONTENT_EXPORT DownloadItemImpl
 
   // Provide a weak pointer reference to a DownloadDestinationObserver
   // for use by download destinations.
-  base::WeakPtr<DownloadDestinationObserver> DestinationObserverAsWeakPtr();
+  virtual base::WeakPtr<DownloadDestinationObserver>
+      DestinationObserverAsWeakPtr();
 
-  // For dispatching on whether we're dealing with a SavePackage download.
+  // Get the download's BoundNetLog.
+  virtual const net::BoundNetLog& GetBoundNetLog() const;
 
   // DownloadItemImpl routines only needed by SavePackage ----------------------
 
@@ -246,16 +261,16 @@ class CONTENT_EXPORT DownloadItemImpl
   // |target_path| as determined by the caller. |intermediate_path| is the path
   // to use to store the download until OnDownloadCompleting() is called.
   virtual void OnDownloadTargetDetermined(
-      const FilePath& target_path,
+      const base::FilePath& target_path,
       TargetDisposition disposition,
       DownloadDangerType danger_type,
-      const FilePath& intermediate_path);
+      const base::FilePath& intermediate_path);
 
   // Callback from file thread when we initialize the DownloadFile.
   void OnDownloadFileInitialized(DownloadInterruptReason result);
 
   void OnDownloadRenamedToIntermediateName(
-      DownloadInterruptReason reason, const FilePath& full_path);
+      DownloadInterruptReason reason, const base::FilePath& full_path);
 
   // If all pre-requisites have been met, complete download processing, i.e. do
   // internal cleanup, file rename, and potentially auto-open.  (Dangerous
@@ -268,7 +283,7 @@ class CONTENT_EXPORT DownloadItemImpl
   void OnDownloadCompleting();
 
   void OnDownloadRenamedToFinalName(DownloadInterruptReason reason,
-                                    const FilePath& full_path);
+                                    const base::FilePath& full_path);
 
   // Called if the embedder took over opening a download, to indicate that
   // the download has been opened.
@@ -297,9 +312,10 @@ class CONTENT_EXPORT DownloadItemImpl
   // Set the |danger_type_| and invoke obserers if necessary.
   void SetDangerType(DownloadDangerType danger_type);
 
-  void SetFullPath(const FilePath& new_path);
+  void SetFullPath(const base::FilePath& new_path);
 
-  // Mapping between internal and external states.
+  void AutoResumeIfValid();
+
   static DownloadState InternalToExternalState(
       DownloadInternalState internal_state);
   static DownloadInternalState ExternalToInternalState(
@@ -307,6 +323,7 @@ class CONTENT_EXPORT DownloadItemImpl
 
   // Debugging routines --------------------------------------------------------
   static const char* DebugDownloadStateString(DownloadInternalState state);
+  static const char* DebugResumeModeString(ResumeMode mode);
 
   // Will be false for save package downloads retrieved from the history.
   // TODO(rdsmith): Replace with a generalized enum for "download source".
@@ -321,18 +338,18 @@ class CONTENT_EXPORT DownloadItemImpl
 
   // Display name for the download. If this is empty, then the display name is
   // considered to be |target_path_.BaseName()|.
-  FilePath display_name_;
+  base::FilePath display_name_;
 
   // Full path to the downloaded or downloading file. This is the path to the
   // physical file, if one exists. The final target path is specified by
   // |target_path_|. |current_path_| can be empty if the in-progress path hasn't
   // been determined.
-  FilePath current_path_;
+  base::FilePath current_path_;
 
   // Target path of an in-progress download. We may be downloading to a
   // temporary or intermediate file (specified by |current_path_|.  Once the
   // download completes, we will rename the file to |target_path_|.
-  FilePath target_path_;
+  base::FilePath target_path_;
 
   // Whether the target should be overwritten, uniquified or prompted for.
   TargetDisposition target_disposition_;
@@ -350,7 +367,7 @@ class CONTENT_EXPORT DownloadItemImpl
 
   // If non-empty, contains an externally supplied path that should be used as
   // the target path.
-  FilePath forced_file_path_;
+  base::FilePath forced_file_path_;
 
   // Page transition that triggerred the download.
   PageTransition transition_type_;
@@ -425,15 +442,14 @@ class CONTENT_EXPORT DownloadItemImpl
   // In progress downloads may be paused by the user, we note it here.
   bool is_paused_;
 
+  // The number of times this download has been resumed automatically.
+  int auto_resume_count_;
+
   // A flag for indicating if the download should be opened at completion.
   bool open_when_complete_;
 
   // A flag for indicating if the downloaded file is externally removed.
   bool file_externally_removed_;
-
-  // Indicates if the download is considered potentially safe or dangerous
-  // (executable files are typically considered dangerous).
-  SafetyState safety_state_;
 
   // True if the download was auto-opened. We set this rather than using
   // an observer as it's frequently possible for the download to be auto opened
@@ -451,9 +467,6 @@ class CONTENT_EXPORT DownloadItemImpl
   // when the user closes the shelf before the item has been opened but should
   // be treated as though the user opened it.
   bool opened_;
-
-  // Do we actually open downloads when requested?  For testing purposes only.
-  bool open_enabled_;
 
   // Did the delegate delay calling Complete on this download?
   bool delegate_delayed_complete_;

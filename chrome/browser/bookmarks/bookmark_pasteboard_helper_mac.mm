@@ -6,6 +6,7 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include "base/files/file_path.h"
 #include "base/sys_string_conversions.h"
 #include "chrome/browser/bookmarks/bookmark_model.h"
 
@@ -241,7 +242,7 @@ namespace bookmark_pasteboard_helper_mac {
 
 void WriteToPasteboard(PasteboardType type,
                        const std::vector<BookmarkNodeData::Element>& elements,
-                       FilePath::StringType profile_path) {
+                       const base::FilePath& profile_path) {
   if (elements.empty())
     return;
 
@@ -255,7 +256,7 @@ void WriteToPasteboard(PasteboardType type,
                                              kChromiumProfilePathPboardType,
                                              nil];
   [pb declareTypes:types owner:nil];
-  [pb setString:base::SysUTF8ToNSString(profile_path)
+  [pb setString:base::SysUTF8ToNSString(profile_path.value())
         forType:kChromiumProfilePathPboardType];
   WriteBookmarkDictionaryListPboardType(pb, elements);
   WriteSimplifiedBookmarkTypes(pb, elements);
@@ -263,12 +264,12 @@ void WriteToPasteboard(PasteboardType type,
 
 bool ReadFromPasteboard(PasteboardType type,
                         std::vector<BookmarkNodeData::Element>& elements,
-                        FilePath* profile_path) {
+                        base::FilePath* profile_path) {
   NSPasteboard* pb = PasteboardFromType(type);
 
   elements.clear();
   NSString* profile = [pb stringForType:kChromiumProfilePathPboardType];
-  *profile_path = FilePath(base::SysNSStringToUTF8(profile));
+  *profile_path = base::FilePath(base::SysNSStringToUTF8(profile));
   return ReadBookmarkDictionaryListPboardType(pb, elements) ||
          ReadWebURLsWithTitlesPboardType(pb, elements) ||
          ReadNSURLPboardType(pb, elements);

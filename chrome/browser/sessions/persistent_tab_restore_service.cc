@@ -10,7 +10,7 @@
 #include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/compiler_specific.h"
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_vector.h"
@@ -238,7 +238,7 @@ class PersistentTabRestoreService::Delegate
 
 PersistentTabRestoreService::Delegate::Delegate(Profile* profile)
     : BaseSessionService(BaseSessionService::TAB_RESTORE, profile,
-                         FilePath()),
+                         base::FilePath()),
       tab_restore_service_helper_(NULL),
       entries_to_write_(0),
       entries_written_(0),
@@ -937,8 +937,9 @@ const TabRestoreService::Entries& PersistentTabRestoreService::entries() const {
 }
 
 void PersistentTabRestoreService::RestoreMostRecentEntry(
-    TabRestoreServiceDelegate* delegate) {
-  helper_.RestoreMostRecentEntry(delegate);
+    TabRestoreServiceDelegate* delegate,
+    chrome::HostDesktopType host_desktop_type) {
+  helper_.RestoreMostRecentEntry(delegate, host_desktop_type);
 }
 
 TabRestoreService::Tab* PersistentTabRestoreService::RemoveTabEntryById(
@@ -949,8 +950,9 @@ TabRestoreService::Tab* PersistentTabRestoreService::RemoveTabEntryById(
 void PersistentTabRestoreService::RestoreEntryById(
     TabRestoreServiceDelegate* delegate,
     SessionID::id_type id,
+    chrome::HostDesktopType host_desktop_type,
     WindowOpenDisposition disposition) {
-  helper_.RestoreEntryById(delegate, id, disposition);
+  helper_.RestoreEntryById(delegate, id, host_desktop_type, disposition);
 }
 
 bool PersistentTabRestoreService::IsLoaded() const {

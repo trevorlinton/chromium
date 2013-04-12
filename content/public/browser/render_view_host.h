@@ -12,7 +12,6 @@
 #include "content/public/common/stop_find_action.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebDragOperation.h"
 
-class FilePath;
 class GURL;
 struct WebDropData;
 
@@ -21,6 +20,7 @@ class Point;
 }
 
 namespace base {
+class FilePath;
 class Value;
 }
 
@@ -113,7 +113,7 @@ class CONTENT_EXPORT RenderViewHost : virtual public RenderWidgetHost {
   // Notifies the listener that a directory enumeration is complete.
   virtual void DirectoryEnumerationFinished(
       int request_id,
-      const std::vector<FilePath>& files) = 0;
+      const std::vector<base::FilePath>& files) = 0;
 
   // Tells the renderer not to add scrollbars with height and width below a
   // threshold.
@@ -177,27 +177,11 @@ class CONTENT_EXPORT RenderViewHost : virtual public RenderWidgetHost {
                                            const string16& jscript) = 0;
 
   // Runs some javascript within the context of a frame in the page. The result
-  // is sent back via the notification NOTIFICATION_EXECUTE_JAVASCRIPT_RESULT.
-  // This returns an int, used as a key to identify the corresponding
-  // notification.
-  // OBSOLETE. Use ExecuteJavascriptInWebFrameCallbackResult instead.
-  virtual int ExecuteJavascriptInWebFrameNotifyResult(
-      const string16& frame_xpath,
-      const string16& jscript) = 0;
-
-  // Runs some javascript within the context of a frame in the page. The result
   // is sent back via the provided callback.
   virtual void ExecuteJavascriptInWebFrameCallbackResult(
       const string16& frame_xpath,
       const string16& jscript,
       const JavascriptResultCallback& callback) = 0;
-
-  // Runs some javascript within the context of a frame in the page. A nested
-  // message loop is run to wait for the result, which is returned. THIS SHOULD
-  // ONLY BE USED BY TESTS. TODO(avi): Move into a test file.
-  virtual base::Value* ExecuteJavascriptAndGetValue(
-      const string16& frame_xpath,
-      const string16& jscript) = 0;
 
   // Tells the renderer to perform the given action on the plugin located at
   // the given point.
@@ -248,6 +232,10 @@ class CONTENT_EXPORT RenderViewHost : virtual public RenderWidgetHost {
   // Returns true if the RenderView is active and has not crashed. Virtual
   // because it is overridden by TestRenderViewHost.
   virtual bool IsRenderViewLive() const = 0;
+
+  // Returns true if the RenderView is responsible for displaying a subframe
+  // in a different process from its parent page.
+  virtual bool IsSubframe() const = 0;
 
   // Let the renderer know that the menu has been closed.
   virtual void NotifyContextMenuClosed(

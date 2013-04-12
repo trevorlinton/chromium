@@ -9,7 +9,8 @@
 
 var watchForTag = require("tagWatcher").watchForTag;
 
-var WEB_VIEW_ATTRIBUTES = ['src', 'partition'];
+var WEB_VIEW_ATTRIBUTES = ['name', 'src', 'partition', 'autosize', 'minheight',
+    'minwidth', 'maxheight', 'maxwidth'];
 
 // All exposed api methods for <webview>, these are forwarded to the browser
 // plugin.
@@ -48,20 +49,27 @@ function WebView(node) {
 
   this.objectNode_ = document.createElement('object');
   this.objectNode_.type = 'application/browser-plugin';
-  // The <object> node fills in the <browser> container.
+  // The <object> node fills in the <webview> container.
   this.objectNode_.style.width = '100%';
   this.objectNode_.style.height = '100%';
   WEB_VIEW_ATTRIBUTES.forEach(function(attributeName) {
-    this.objectNode_.setAttribute(
-        attributeName, this.node_.getAttribute(attributeName));
+    // Only copy attributes that have been assigned values, rather than copying
+    // a series of undefined attributes to BrowserPlugin.
+    if (this.node_.hasAttribute(attributeName)) {
+      this.objectNode_.setAttribute(
+          attributeName, this.node_.getAttribute(attributeName));
+    }
   }, this);
 
   shadowRoot.appendChild(this.objectNode_);
 
-  // this.objectNode_[apiMethod] are defined after the shadow object is appended
-  // to the shadow root.
+  // this.objectNode_[apiMethod] are not necessarily defined immediately after
+  // the shadow object is appended to the shadow root.
+  var self = this;
   WEB_VIEW_API_METHODS.forEach(function(apiMethod) {
-    node[apiMethod] = this.objectNode_[apiMethod].bind(this.objectNode_);
+    node[apiMethod] = function(var_args) {
+      return self.objectNode_[apiMethod].apply(self.objectNode_, arguments);
+    };
   }, this);
 
   // Map attribute modifications on the <webview> tag to property changes in
@@ -102,7 +110,10 @@ function WebView(node) {
     get: function() {
       // TODO(fsamuel): This is a workaround to enable
       // contentWindow.postMessage until http://crbug.com/152006 is fixed.
-      return objectNode.contentWindow.self;
+      if (objectNode.contentWindow)
+        return objectNode.contentWindow.self;
+      console.error('contentWindow is not available at this time. ' +
+          'It will become available when the page has finished loading.');
     },
     // No setter.
     enumerable: true
@@ -111,12 +122,19 @@ function WebView(node) {
   for (var eventName in WEB_VIEW_EVENTS) {
     this.setupEvent_(eventName, WEB_VIEW_EVENTS[eventName]);
   }
+  this.maybeSetupPermissionEvent_();
+  this.maybeSetupExecuteScript_();
 }
 
 /**
  * @private
  */
 WebView.prototype.handleMutation_ = function(mutation) {
+  // This observer monitors mutations to attributes of the <webview> and
+  // updates the BrowserPlugin properties accordingly. In turn, updating
+  // a BrowserPlugin property will update the corresponding BrowserPlugin
+  // attribute, if necessary. See BrowserPlugin::UpdateDOMAttribute for more
+  // details.
   this.objectNode_[mutation.attributeName] =
       this.node_.getAttribute(mutation.attributeName);
 };
@@ -125,8 +143,26 @@ WebView.prototype.handleMutation_ = function(mutation) {
  * @private
  */
 WebView.prototype.handleObjectMutation_ = function(mutation) {
-  this.node_.setAttribute(mutation.attributeName,
-      this.objectNode_.getAttribute(mutation.attributeName));
+  // This observer monitors mutations to attributes of the BrowserPlugin and
+  // updates the <webview> attributes accordingly.
+  if (!this.objectNode_.hasAttribute(mutation.attributeName)) {
+    // If an attribute is removed from the BrowserPlugin, then remove it
+    // from the <webview> as well.
+    this.node_.removeAttribute(mutation.attributeName);
+  } else {
+    // Update the <webview> attribute to match the BrowserPlugin attribute.
+    // Note: Calling setAttribute on <webview> will trigger its mutation
+    // observer which will then propagate that attribute to BrowserPlugin. In
+    // cases where we permit assigning a BrowserPlugin attribute the same value
+    // again (such as navigation when crashed), this could end up in an infinite
+    // loop. Thus, we avoid this loop by only updating the <webview> attribute
+    // if the BrowserPlugin attributes differs from it.
+    var oldValue = this.node_.getAttribute(mutation.attributeName);
+    var newValue = this.objectNode_.getAttribute(mutation.attributeName);
+    if (newValue != oldValue) {
+      this.node_.setAttribute(mutation.attributeName, newValue);
+    }
+  }
 };
 
 /**
@@ -135,11 +171,25 @@ WebView.prototype.handleObjectMutation_ = function(mutation) {
 WebView.prototype.setupEvent_ = function(eventname, attribs) {
   var node = this.node_;
   this.objectNode_.addEventListener('-internal-' + eventname, function(e) {
-    var evt = new Event(eventname);
+    var evt = new Event(eventname, { bubbles: true });
     var detail = e.detail ? JSON.parse(e.detail) : {};
     attribs.forEach(function(attribName) {
       evt[attribName] = detail[attribName];
     });
     node.dispatchEvent(evt);
   });
-}
+};
+
+/**
+ * Implemented when experimental permission is available.
+ * @private
+ */
+WebView.prototype.maybeSetupPermissionEvent_ = function() {};
+
+/**
+ * Implemented when experimental permission is available.
+ * @private
+ */
+WebView.prototype.maybeSetupExecuteScript_ = function() {};
+
+exports.WebView = WebView;

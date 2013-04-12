@@ -18,7 +18,6 @@ class UsbDevice;
 
 namespace extensions {
 
-class ApiResourceEventNotifier;
 class UsbDeviceResource;
 
 class UsbAsyncApiFunction : public AsyncApiFunction {
@@ -58,7 +57,7 @@ class UsbAsyncApiTransferFunction : public UsbAsyncApiFunction {
 
 class UsbFindDevicesFunction : public UsbAsyncApiFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("usb.findDevices");
+  DECLARE_EXTENSION_FUNCTION("usb.findDevices", USB_FINDDEVICES)
 
   UsbFindDevicesFunction();
 
@@ -71,12 +70,16 @@ class UsbFindDevicesFunction : public UsbAsyncApiFunction {
   virtual void AsyncWorkStart() OVERRIDE;
 
  private:
+  void OnCompleted();
+
+  scoped_ptr<base::ListValue> result_;
+  std::vector<scoped_refptr<UsbDevice> > devices_;
   scoped_ptr<extensions::api::usb::FindDevices::Params> parameters_;
 };
 
 class UsbCloseDeviceFunction : public UsbAsyncApiFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("usb.closeDevice");
+  DECLARE_EXTENSION_FUNCTION("usb.closeDevice", USB_CLOSEDEVICE)
 
   UsbCloseDeviceFunction();
 
@@ -94,7 +97,7 @@ class UsbCloseDeviceFunction : public UsbAsyncApiFunction {
 
 class UsbClaimInterfaceFunction : public UsbAsyncApiFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("usb.claimInterface");
+  DECLARE_EXTENSION_FUNCTION("usb.claimInterface", USB_CLAIMINTERFACE)
 
   UsbClaimInterfaceFunction();
 
@@ -112,7 +115,7 @@ class UsbClaimInterfaceFunction : public UsbAsyncApiFunction {
 
 class UsbReleaseInterfaceFunction : public UsbAsyncApiFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("usb.releaseInterface");
+  DECLARE_EXTENSION_FUNCTION("usb.releaseInterface", USB_RELEASEINTERFACE)
 
   UsbReleaseInterfaceFunction();
 
@@ -130,7 +133,8 @@ class UsbReleaseInterfaceFunction : public UsbAsyncApiFunction {
 
 class UsbSetInterfaceAlternateSettingFunction : public UsbAsyncApiFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("usb.setInterfaceAlternateSetting");
+  DECLARE_EXTENSION_FUNCTION("usb.setInterfaceAlternateSetting",
+                             USB_SETINTERFACEALTERNATESETTING)
 
   UsbSetInterfaceAlternateSettingFunction();
 
@@ -148,7 +152,7 @@ class UsbSetInterfaceAlternateSettingFunction : public UsbAsyncApiFunction {
 
 class UsbControlTransferFunction : public UsbAsyncApiTransferFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("usb.controlTransfer");
+  DECLARE_EXTENSION_FUNCTION("usb.controlTransfer", USB_CONTROLTRANSFER)
 
   UsbControlTransferFunction();
 
@@ -164,7 +168,7 @@ class UsbControlTransferFunction : public UsbAsyncApiTransferFunction {
 
 class UsbBulkTransferFunction : public UsbAsyncApiTransferFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("usb.bulkTransfer");
+  DECLARE_EXTENSION_FUNCTION("usb.bulkTransfer", USB_BULKTRANSFER)
 
   UsbBulkTransferFunction();
 
@@ -181,7 +185,7 @@ class UsbBulkTransferFunction : public UsbAsyncApiTransferFunction {
 
 class UsbInterruptTransferFunction : public UsbAsyncApiTransferFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("usb.interruptTransfer");
+  DECLARE_EXTENSION_FUNCTION("usb.interruptTransfer", USB_INTERRUPTTRANSFER)
 
   UsbInterruptTransferFunction();
 
@@ -197,7 +201,7 @@ class UsbInterruptTransferFunction : public UsbAsyncApiTransferFunction {
 
 class UsbIsochronousTransferFunction : public UsbAsyncApiTransferFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("usb.isochronousTransfer");
+  DECLARE_EXTENSION_FUNCTION("usb.isochronousTransfer", USB_ISOCHRONOUSTRANSFER)
 
   UsbIsochronousTransferFunction();
 

@@ -4,8 +4,11 @@
 
 #include "chrome/browser/chrome_browser_main_android.h"
 
+#include "base/command_line.h"
 #include "base/path_service.h"
 #include "chrome/app/breakpad_linux.h"
+#include "chrome/browser/android/crash_dump_manager.h"
+#include "chrome/common/chrome_switches.h"
 #include "content/public/browser/android/compositor.h"
 #include "content/public/common/main_function_params.h"
 #include "net/android/network_change_notifier_factory_android.h"
@@ -23,10 +26,24 @@ ChromeBrowserMainPartsAndroid::~ChromeBrowserMainPartsAndroid() {
 
 void ChromeBrowserMainPartsAndroid::PreProfileInit() {
 #if defined(USE_LINUX_BREAKPAD)
+#if defined(GOOGLE_CHROME_BUILD)
   // TODO(jcivelli): we should not initialize the crash-reporter when it was not
   // enabled. Right now if it is disabled we still generate the minidumps but we
   // do not upload them.
-  InitCrashReporter();
+  bool breakpad_enabled = true;
+#else
+  bool breakpad_enabled = false;
+#endif
+
+  // Allow Breakpad to be enabled in Chromium builds for testing purposes.
+  if (!breakpad_enabled)
+    breakpad_enabled = CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kEnableCrashReporterForTesting);
+
+  if (breakpad_enabled) {
+    InitCrashReporter();
+    crash_dump_manager_.reset(new CrashDumpManager());
+  }
 #endif
 
   ChromeBrowserMainParts::PreProfileInit();
@@ -52,7 +69,7 @@ int ChromeBrowserMainPartsAndroid::PreCreateThreads() {
   const int result = ChromeBrowserMainParts::PreCreateThreads();
 
   // Add devtools_resources.pak which is used in Chromium TestShell.
-  FilePath paks_path;
+  base::FilePath paks_path;
   PathService::Get(ui::DIR_RESOURCE_PAKS_ANDROID, &paks_path);
   ResourceBundle::GetSharedInstance().AddOptionalDataPackFromPath(
       paks_path.Append(FILE_PATH_LITERAL("devtools_resources.pak")),

@@ -40,21 +40,6 @@ def RunUnittests(input_api, output_api):
   return results
 
 
-# If any .srpc files were changed, run run_srpcgen.py --diff_mode.
-def CheckSrpcChange(input_api, output_api):
-  if [True for filename in input_api.LocalPaths() if
-      os.path.splitext(filename)[1] == '.srpc']:
-    return RunCmdAndCheck([sys.executable,
-                           os.path.join(input_api.PresubmitLocalPath(),
-                                        'native_client', 'src',
-                                        'shared', 'ppapi_proxy',
-                                        'run_srpcgen.py'),
-                           '--diff_mode'],
-                          'PPAPI SRPC Diff detected: Run run_srpcgen.py.',
-                          output_api)
-  return []
-
-
 # Verify that the files do not contain a 'TODO' in them.
 RE_TODO = re.compile(r'\WTODO\W', flags=re.I)
 def CheckTODO(input_api, output_api):
@@ -126,8 +111,6 @@ def CheckUnversionedPPB(input_api, output_api):
 def CheckChange(input_api, output_api):
   results = []
 
-  results.extend(CheckSrpcChange(input_api, output_api))
-
   results.extend(RunUnittests(input_api, output_api))
 
   results.extend(CheckTODO(input_api, output_api))
@@ -182,6 +165,22 @@ def CheckChange(input_api, output_api):
   for filename in h_files:
     if filename not in set(idl_files):
       name_parts = filename.split(os.sep)
+
+      if name_parts[-1] == 'pp_macros':
+        # The C header generator adds a PPAPI_RELEASE macro based on all the
+        # IDL files, so pp_macros.h may change while its IDL does not.
+        lines = input_api.RightHandSideLines(
+            lambda f: f.LocalPath() == 'ppapi/c/%s.h' % filename)
+        releaseChanged = False
+        for line in lines:
+          if line[2].split()[:2] == ['#define', 'PPAPI_RELEASE']:
+            results.append(
+                output_api.PresubmitNotifyResult(
+                    'PPAPI_RELEASE has changed', long_text=line[2]))
+            releaseChanged = True
+            break
+        if releaseChanged:
+          continue
 
       if 'trusted' in name_parts:
         missing_priv.append('  ppapi/c/%s.h' % filename)

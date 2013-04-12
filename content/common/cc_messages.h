@@ -21,6 +21,7 @@
 #include "cc/video_layer_impl.h"
 #include "cc/yuv_video_draw_quad.h"
 #include "content/common/content_export.h"
+#include "gpu/ipc/gpu_command_buffer_traits.h"
 #include "ipc/ipc_message_macros.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebFilterOperation.h"
 
@@ -75,16 +76,16 @@ struct CONTENT_EXPORT ParamTraits<cc::RenderPass> {
 };
 
 template<>
-struct CONTENT_EXPORT ParamTraits<cc::Mailbox> {
-  typedef cc::Mailbox param_type;
+struct CONTENT_EXPORT ParamTraits<cc::CompositorFrame> {
+  typedef cc::CompositorFrame param_type;
   static void Write(Message* m, const param_type& p);
   static bool Read(const Message* m, PickleIterator* iter, param_type* p);
   static void Log(const param_type& p, std::string* l);
 };
 
 template<>
-struct CONTENT_EXPORT ParamTraits<cc::CompositorFrame> {
-  typedef cc::CompositorFrame param_type;
+struct CONTENT_EXPORT ParamTraits<cc::CompositorFrameAck> {
+  typedef cc::CompositorFrameAck param_type;
   static void Write(Message* m, const param_type& p);
   static bool Read(const Message* m, PickleIterator* iter, param_type* p);
   static void Log(const param_type& p, std::string* l);
@@ -176,7 +177,12 @@ IPC_STRUCT_TRAITS_BEGIN(cc::TextureDrawQuad)
   IPC_STRUCT_TRAITS_PARENT(cc::DrawQuad)
   IPC_STRUCT_TRAITS_MEMBER(resource_id)
   IPC_STRUCT_TRAITS_MEMBER(premultiplied_alpha)
-  IPC_STRUCT_TRAITS_MEMBER(uv_rect)
+  IPC_STRUCT_TRAITS_MEMBER(uv_top_left)
+  IPC_STRUCT_TRAITS_MEMBER(uv_bottom_right)
+  IPC_STRUCT_TRAITS_MEMBER(vertex_opacity[0])
+  IPC_STRUCT_TRAITS_MEMBER(vertex_opacity[1])
+  IPC_STRUCT_TRAITS_MEMBER(vertex_opacity[2])
+  IPC_STRUCT_TRAITS_MEMBER(vertex_opacity[3])
   IPC_STRUCT_TRAITS_MEMBER(flipped)
 IPC_STRUCT_TRAITS_END()
 
@@ -186,10 +192,6 @@ IPC_STRUCT_TRAITS_BEGIN(cc::TileDrawQuad)
   IPC_STRUCT_TRAITS_MEMBER(tex_coord_rect)
   IPC_STRUCT_TRAITS_MEMBER(texture_size)
   IPC_STRUCT_TRAITS_MEMBER(swizzle_contents)
-  IPC_STRUCT_TRAITS_MEMBER(left_edge_aa)
-  IPC_STRUCT_TRAITS_MEMBER(top_edge_aa)
-  IPC_STRUCT_TRAITS_MEMBER(right_edge_aa)
-  IPC_STRUCT_TRAITS_MEMBER(bottom_edge_aa)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(cc::YUVVideoDrawQuad)
@@ -202,8 +204,8 @@ IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(cc::SharedQuadState)
   IPC_STRUCT_TRAITS_MEMBER(content_to_target_transform)
+  IPC_STRUCT_TRAITS_MEMBER(content_bounds)
   IPC_STRUCT_TRAITS_MEMBER(visible_content_rect)
-  IPC_STRUCT_TRAITS_MEMBER(clipped_rect_in_target)
   IPC_STRUCT_TRAITS_MEMBER(clip_rect)
   IPC_STRUCT_TRAITS_MEMBER(is_clipped)
   IPC_STRUCT_TRAITS_MEMBER(opacity)
@@ -211,18 +213,11 @@ IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(cc::TransferableResource)
   IPC_STRUCT_TRAITS_MEMBER(id)
+  IPC_STRUCT_TRAITS_MEMBER(sync_point)
   IPC_STRUCT_TRAITS_MEMBER(format)
+  IPC_STRUCT_TRAITS_MEMBER(filter)
   IPC_STRUCT_TRAITS_MEMBER(size)
   IPC_STRUCT_TRAITS_MEMBER(mailbox)
-IPC_STRUCT_TRAITS_END()
-
-IPC_STRUCT_TRAITS_BEGIN(cc::TransferableResourceList)
-  IPC_STRUCT_TRAITS_MEMBER(sync_point)
-  IPC_STRUCT_TRAITS_MEMBER(resources)
-IPC_STRUCT_TRAITS_END()
-
-IPC_STRUCT_TRAITS_BEGIN(cc::CompositorFrameAck)
-  IPC_STRUCT_TRAITS_MEMBER(resources)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(cc::CompositorFrameMetadata)
@@ -233,9 +228,11 @@ IPC_STRUCT_TRAITS_BEGIN(cc::CompositorFrameMetadata)
   IPC_STRUCT_TRAITS_MEMBER(min_page_scale_factor)
   IPC_STRUCT_TRAITS_MEMBER(max_page_scale_factor)
   IPC_STRUCT_TRAITS_MEMBER(location_bar_offset)
+  IPC_STRUCT_TRAITS_MEMBER(location_bar_content_translation)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(cc::GLFrameData)
   IPC_STRUCT_TRAITS_MEMBER(mailbox)
   IPC_STRUCT_TRAITS_MEMBER(sync_point)
+  IPC_STRUCT_TRAITS_MEMBER(size)
 IPC_STRUCT_TRAITS_END()

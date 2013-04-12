@@ -9,12 +9,13 @@
 
 #include "base/basictypes.h"
 #include "base/callback_forward.h"
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/prefs/public/pref_member.h"
 #include "base/synchronization/lock.h"
+#include "chrome/browser/custom_handlers/protocol_handler_registry.h"
 #include "chrome/browser/io_thread.h"
 #include "chrome/browser/net/chrome_url_request_context.h"
 #include "chrome/browser/profiles/storage_partition_descriptor.h"
@@ -29,6 +30,7 @@ class CookieSettings;
 class DesktopNotificationService;
 class ExtensionInfoMap;
 class HostContentSettingsMap;
+class ManagedModeURLFilter;
 class Profile;
 class ProtocolHandlerRegistry;
 class SigninNamesOnIOThread;
@@ -77,19 +79,40 @@ class ProfileIOData {
 
   // Called by Profile.
   content::ResourceContext* GetResourceContext() const;
-  ChromeURLDataManagerBackend* GetChromeURLDataManagerBackend() const;
 
-  // These should only be called at most once each. Ownership is reversed when
-  // they get called, from ProfileIOData owning ChromeURLRequestContext to vice
-  // versa.
+  // Initializes the ProfileIOData object and primes the RequestContext
+  // generation. Must be called prior to any of the Get*() methods other than
+  // GetResouceContext or GetMetricsEnabledStateOnIOThread.
+  void Init(
+      scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+          blob_protocol_handler,
+      scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+          file_system_protocol_handler,
+      scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+          developer_protocol_handler,
+      scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+          chrome_protocol_handler,
+      scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+          chrome_devtools_protocol_handler) const;
+
   ChromeURLRequestContext* GetMainRequestContext() const;
   ChromeURLRequestContext* GetMediaRequestContext() const;
   ChromeURLRequestContext* GetExtensionsRequestContext() const;
   ChromeURLRequestContext* GetIsolatedAppRequestContext(
       ChromeURLRequestContext* main_context,
       const StoragePartitionDescriptor& partition_descriptor,
-      scoped_ptr<net::URLRequestJobFactory::Interceptor>
-          protocol_handler_interceptor) const;
+      scoped_ptr<ProtocolHandlerRegistry::JobInterceptorFactory>
+          protocol_handler_interceptor,
+      scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+          blob_protocol_handler,
+      scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+          file_system_protocol_handler,
+      scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+          developer_protocol_handler,
+      scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+          chrome_protocol_handler,
+      scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+          chrome_devtools_protocol_handler) const;
   ChromeURLRequestContext* GetIsolatedMediaRequestContext(
       ChromeURLRequestContext* app_context,
       const StoragePartitionDescriptor& partition_descriptor) const;
@@ -124,6 +147,14 @@ class ProfileIOData {
     return &reverse_autologin_enabled_;
   }
 
+  const std::string& reverse_autologin_pending_email() const {
+    return reverse_autologin_pending_email_;
+  }
+
+  void set_reverse_autologin_pending_email(const std::string& email) {
+    reverse_autologin_pending_email_ = email;
+  }
+
   StringListPrefMember* one_click_signin_rejected_email_list() const {
     return &one_click_signin_rejected_email_list_;
   }
@@ -140,6 +171,14 @@ class ProfileIOData {
     return &printing_enabled_;
   }
 
+  BooleanPrefMember* sync_disabled() const {
+    return &sync_disabled_;
+  }
+
+  BooleanPrefMember* signin_allowed() const {
+    return &signin_allowed_;
+  }
+
   net::TransportSecurityState* transport_security_state() const {
     return transport_security_state_.get();
   }
@@ -152,6 +191,12 @@ class ProfileIOData {
       resource_prefetch_predictor_observer() const {
     return resource_prefetch_predictor_observer_.get();
   }
+
+#if defined(ENABLE_MANAGED_USERS)
+  const ManagedModeURLFilter* managed_mode_url_filter() const {
+    return managed_mode_url_filter_.get();
+  }
+#endif
 
   // Initialize the member needed to track the metrics enabled state. This is
   // only to be called on the UI thread.
@@ -205,7 +250,7 @@ class ProfileIOData {
     ProfileParams();
     ~ProfileParams();
 
-    FilePath path;
+    base::FilePath path;
     IOThread* io_thread;
     scoped_refptr<CookieSettings> cookie_settings;
     scoped_refptr<net::SSLConfigService> ssl_config_service;
@@ -218,17 +263,22 @@ class ProfileIOData {
     DesktopNotificationService* notification_service;
 #endif
 
-    // This pointer exists only as a means of conveying a url interceptor
+    // This pointer exists only as a means of conveying a url job factory
     // pointer from the protocol handler registry on the UI thread to the
-    // the URLRequestJobFactory on the IO thread. The consumer MUST take
+    // the URLRequestContext on the IO thread. The consumer MUST take
     // ownership of the object by calling release() on this pointer.
-    scoped_ptr<net::URLRequestJobFactory::Interceptor>
+    scoped_ptr<ProtocolHandlerRegistry::JobInterceptorFactory>
         protocol_handler_interceptor;
 
     // We need to initialize the ProxyConfigService from the UI thread
     // because on linux it relies on initializing things through gconf,
     // and needs to be on the main thread.
     scoped_ptr<net::ProxyConfigService> proxy_config_service;
+
+#if defined(ENABLE_MANAGED_USERS)
+    scoped_refptr<const ManagedModeURLFilter> managed_mode_url_filter;
+#endif
+
     // The profile this struct was populated from. It's passed as a void* to
     // ensure it's not accidently used on the IO thread. Before using it on the
     // UI thread, call ProfileManager::IsValidProfile to ensure it's alive.
@@ -242,26 +292,16 @@ class ProfileIOData {
   void InitializeOnUIThread(Profile* profile);
   void ApplyProfileParamsToContext(ChromeURLRequestContext* context) const;
 
-  void SetUpJobFactoryDefaults(
-      net::URLRequestJobFactoryImpl* job_factory,
-      scoped_ptr<net::URLRequestJobFactory::Interceptor>
+  scoped_ptr<net::URLRequestJobFactory> SetUpJobFactoryDefaults(
+      scoped_ptr<net::URLRequestJobFactoryImpl> job_factory,
+      scoped_ptr<ProtocolHandlerRegistry::JobInterceptorFactory>
           protocol_handler_interceptor,
       net::NetworkDelegate* network_delegate,
       net::FtpTransactionFactory* ftp_transaction_factory,
       net::FtpAuthCache* ftp_auth_cache) const;
 
-  // Lazy initializes the ProfileIOData object the first time a request context
-  // is requested. The lazy logic is implemented here. The actual initialization
-  // is done in LazyInitializeInternal(), implemented by subtypes. Static helper
-  // functions have been provided to assist in common operations.
-  void LazyInitialize() const;
-
   // Called when the profile is destroyed.
   void ShutdownOnUIThread();
-
-  ChromeURLDataManagerBackend* chrome_url_data_manager_backend() const {
-    return chrome_url_data_manager_backend_.get();
-  }
 
   // A ServerBoundCertService object is created by a derived class of
   // ProfileIOData, and the derived class calls this method to set the
@@ -295,6 +335,10 @@ class ProfileIOData {
     return load_time_stats_;
   }
 
+  bool initialized() const {
+    return initialized_;
+  }
+
   // Destroys the ResourceContext first, to cancel any URLRequests that are
   // using it still, before we destroy the member variables that those
   // URLRequests may be accessing.
@@ -323,8 +367,6 @@ class ProfileIOData {
    private:
     friend class ProfileIOData;
 
-    void EnsureInitialized();
-
     ProfileIOData* const io_data_;
 
     net::HostResolver* host_resolver_;
@@ -342,7 +384,18 @@ class ProfileIOData {
 
   // Does the actual initialization of the ProfileIOData subtype. Subtypes
   // should use the static helper functions above to implement this.
-  virtual void LazyInitializeInternal(ProfileParams* profile_params) const = 0;
+  virtual void InitializeInternal(
+      ProfileParams* profile_params,
+      scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+          blob_protocol_handler,
+      scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+          file_system_protocol_handler,
+      scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+          developer_protocol_handler,
+      scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+          chrome_protocol_handler,
+      scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+          chrome_devtools_protocol_handler) const = 0;
 
   // Initializes the RequestContext for extensions.
   virtual void InitializeExtensionsRequestContext(
@@ -352,8 +405,18 @@ class ProfileIOData {
   virtual ChromeURLRequestContext* InitializeAppRequestContext(
       ChromeURLRequestContext* main_context,
       const StoragePartitionDescriptor& details,
-      scoped_ptr<net::URLRequestJobFactory::Interceptor>
-          protocol_handler_interceptor) const = 0;
+      scoped_ptr<ProtocolHandlerRegistry::JobInterceptorFactory>
+          protocol_handler_interceptor,
+      scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+          blob_protocol_handler,
+      scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+          file_system_protocol_handler,
+      scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+          developer_protocol_handler,
+      scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+          chrome_protocol_handler,
+      scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+          chrome_devtools_protocol_handler) const = 0;
 
   // Does an on-demand initialization of a media RequestContext for the given
   // isolated app.
@@ -369,8 +432,18 @@ class ProfileIOData {
       AcquireIsolatedAppRequestContext(
           ChromeURLRequestContext* main_context,
           const StoragePartitionDescriptor& partition_descriptor,
-          scoped_ptr<net::URLRequestJobFactory::Interceptor>
-              protocol_handler_interceptor) const = 0;
+          scoped_ptr<ProtocolHandlerRegistry::JobInterceptorFactory>
+              protocol_handler_interceptor,
+          scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+              blob_protocol_handler,
+          scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+              file_system_protocol_handler,
+          scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+              developer_protocol_handler,
+          scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+              chrome_protocol_handler,
+          scoped_ptr<net::URLRequestJobFactory::ProtocolHandler>
+              chrome_devtools_protocol_handler) const = 0;
   virtual ChromeURLRequestContext*
       AcquireIsolatedMediaRequestContext(
           ChromeURLRequestContext* app_context,
@@ -406,6 +479,11 @@ class ProfileIOData {
   mutable StringPrefMember google_services_username_;
   mutable StringPrefMember google_services_username_pattern_;
   mutable BooleanPrefMember reverse_autologin_enabled_;
+
+  // During the reverse autologin request chain processing, this member saves
+  // the email of the google account that is being signed into.
+  std::string reverse_autologin_pending_email_;
+
   mutable StringListPrefMember one_click_signin_rejected_email_list_;
 
   // Member variables which are pointed to by the various context objects.
@@ -414,6 +492,8 @@ class ProfileIOData {
   mutable BooleanPrefMember force_safesearch_;
   mutable BooleanPrefMember safe_browsing_enabled_;
   mutable BooleanPrefMember printing_enabled_;
+  mutable BooleanPrefMember sync_disabled_;
+  mutable BooleanPrefMember signin_allowed_;
   // TODO(marja): Remove session_startup_pref_ if no longer needed.
   mutable IntegerPrefMember session_startup_pref_;
 
@@ -431,8 +511,6 @@ class ProfileIOData {
 
   // Pointed to by URLRequestContext.
   mutable scoped_refptr<ExtensionInfoMap> extension_info_map_;
-  mutable scoped_ptr<ChromeURLDataManagerBackend>
-      chrome_url_data_manager_backend_;
   mutable scoped_ptr<net::ServerBoundCertService> server_bound_cert_service_;
   mutable scoped_ptr<ChromeNetworkDelegate> network_delegate_;
   mutable scoped_ptr<net::FraudulentCertificateReporter>
@@ -468,6 +546,10 @@ class ProfileIOData {
       chrome_http_user_agent_settings_;
 
   mutable chrome_browser_net::LoadTimeStats* load_time_stats_;
+
+#if defined(ENABLE_MANAGED_USERS)
+  mutable scoped_refptr<const ManagedModeURLFilter> managed_mode_url_filter_;
+#endif
 
   // TODO(jhawkins): Remove once crbug.com/102004 is fixed.
   bool initialized_on_UI_thread_;

@@ -14,7 +14,7 @@
 #include "base/basictypes.h"
 #include "base/memory/ref_counted.h"
 #include "base/string16.h"
-#include "chrome/browser/history/history.h"
+#include "chrome/browser/history/history_service.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -23,17 +23,20 @@
 #include "googleurl/src/gurl.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/keycodes/keyboard_codes.h"
+#include "ui/base/window_open_disposition.h"
 #include "ui/gfx/native_widget_types.h"
-#include "webkit/glue/window_open_disposition.h"
 
 class AppModalDialog;
 class BookmarkModel;
 class Browser;
-class FilePath;
 class LocationBar;
 class Profile;
 class SkBitmap;
 class TemplateURLService;
+
+namespace base {
+class FilePath;
+}
 
 namespace chrome {
 struct NavigateParams;
@@ -74,10 +77,6 @@ enum BrowserTestWaitFlags {
 // Puts the current tab title in |title|. Returns true on success.
 bool GetCurrentTabTitle(const Browser* browser, string16* title);
 
-// Waits for a new tab to be added to |browser|. TODO(gbillock): remove this
-// race hazard. Use WindowedNotificationObserver instead.
-void WaitForNewTab(Browser* browser);
-
 // Opens |url| in an incognito browser window with the incognito profile of
 // |profile|, blocking until the navigation finishes. This will create a new
 // browser if a browser with the incognito profile does not exist. Returns the
@@ -111,17 +110,18 @@ void NavigateToURLBlockUntilNavigationsComplete(Browser* browser,
 // Generate the file path for testing a particular test.
 // The file for the tests is all located in
 // test_root_directory/dir/<file>
-// The returned path is FilePath format.
-FilePath GetTestFilePath(const FilePath& dir, const FilePath& file);
+// The returned path is base::FilePath format.
+base::FilePath GetTestFilePath(const base::FilePath& dir,
+                               const base::FilePath& file);
 
 // Generate the URL for testing a particular test.
 // HTML for the tests is all located in
 // test_root_directory/dir/<file>
 // The returned path is GURL format.
-GURL GetTestUrl(const FilePath& dir, const FilePath& file);
+GURL GetTestUrl(const base::FilePath& dir, const base::FilePath& file);
 
 // Generate the path of the build directory, relative to the source root.
-bool GetRelativeBuildDirectory(FilePath* build_dir);
+bool GetRelativeBuildDirectory(base::FilePath* build_dir);
 
 // Blocks until an application modal dialog is showns and returns it.
 AppModalDialog* WaitForAppModalDialog();
@@ -279,12 +279,12 @@ bool TakeEntirePageSnapshot(content::RenderViewHost* rvh,
 // Saves a snapshot of the entire screen to a file named
 // ChromiumSnapshotYYYYMMDDHHMMSS.png to |directory|, returning true on success.
 // The path to the file produced is returned in |screenshot_path| if non-NULL.
-bool SaveScreenSnapshotToDirectory(const FilePath& directory,
-                                   FilePath* screenshot_path);
+bool SaveScreenSnapshotToDirectory(const base::FilePath& directory,
+                                   base::FilePath* screenshot_path);
 
 // Saves a snapshot of the entire screen as above to the current user's desktop.
 // The Chrome path provider must be registered prior to calling this function.
-bool SaveScreenSnapshotToDesktop(FilePath* screenshot_path);
+bool SaveScreenSnapshotToDesktop(base::FilePath* screenshot_path);
 #endif
 
 // Configures the geolocation provider to always return the given position.

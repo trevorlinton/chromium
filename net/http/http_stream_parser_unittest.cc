@@ -4,8 +4,8 @@
 
 #include "net/http/http_stream_parser.h"
 
-#include "base/file_path.h"
 #include "base/file_util.h"
+#include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/ref_counted.h"
 #include "base/string_piece.h"
@@ -121,12 +121,12 @@ TEST(HttpStreamParser, ShouldMergeRequestHeadersAndBody_FileBody) {
   // Create an empty temporary file.
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
-  FilePath temp_file_path;
+  base::FilePath temp_file_path;
   ASSERT_TRUE(file_util::CreateTemporaryFileInDir(temp_dir.path(),
                                                   &temp_file_path));
 
   element_readers.push_back(new UploadFileElementReader(
-      temp_file_path, 0, 0, base::Time()));
+      base::MessageLoopProxy::current(), temp_file_path, 0, 0, base::Time()));
 
   scoped_ptr<UploadDataStream> body(new UploadDataStream(&element_readers, 0));
   TestCompletionCallback callback;

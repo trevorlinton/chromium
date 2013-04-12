@@ -447,13 +447,10 @@ double ProcessMetrics::GetCPUUsage() {
   if (time_delta == 0)
     return 0;
 
-  // We add time_delta / 2 so the result is rounded.
-  double cpu = static_cast<double>((system_time_delta * 100.0) / time_delta);
-
   last_system_time_ = task_time;
   last_time_ = time;
 
-  return cpu;
+  return static_cast<double>(system_time_delta * 100.0) / time_delta;
 }
 
 mach_port_t ProcessMetrics::TaskForPid(ProcessHandle process) const {
@@ -1207,14 +1204,14 @@ void WaitForChildToDie(pid_t child, int timeout) {
       // Keep track of the elapsed time to be able to restart kevent if it's
       // interrupted.
       TimeDelta remaining_delta = TimeDelta::FromSeconds(timeout);
-      Time deadline = Time::Now() + remaining_delta;
+      TimeTicks deadline = TimeTicks::Now() + remaining_delta;
       result = -1;
       struct kevent event = {0};
       while (remaining_delta.InMilliseconds() > 0) {
         const struct timespec remaining_timespec = remaining_delta.ToTimeSpec();
         result = kevent(kq, NULL, 0, &event, 1, &remaining_timespec);
         if (result == -1 && errno == EINTR) {
-          remaining_delta = deadline - Time::Now();
+          remaining_delta = deadline - TimeTicks::Now();
           result = 0;
         } else {
           break;

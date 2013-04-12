@@ -1,6 +1,7 @@
 {
-  'TOOLS': ['win', 'linux'],
-  'SEARCH' : [
+  'TOOLS': ['newlib', 'glibc', 'pnacl', 'win', 'linux'],
+  'SEARCH': [
+      '.',
       '../../../../ppapi/cpp',
       '../../../../ppapi/utility',
       '../../../../ppapi/utility/graphics',

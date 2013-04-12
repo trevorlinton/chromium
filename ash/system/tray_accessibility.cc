@@ -6,6 +6,7 @@
 
 #include "ash/shell.h"
 #include "ash/shell_delegate.h"
+#include "ash/system/tray/hover_highlight_view.h"
 #include "ash/system/tray/system_tray.h"
 #include "ash/system/tray/system_tray_delegate.h"
 #include "ash/system/tray/system_tray_notifier.h"
@@ -13,7 +14,6 @@
 #include "ash/system/tray/tray_details_view.h"
 #include "ash/system/tray/tray_item_more.h"
 #include "ash/system/tray/tray_notification_view.h"
-#include "ash/system/tray/tray_views.h"
 #include "grit/ash_resources.h"
 #include "grit/ash_strings.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -44,7 +44,7 @@ uint32 GetAccessibilityState() {
     state |= A11Y_SPOKEN_FEEDBACK;
   if (shell_delegate->IsHighContrastEnabled())
     state |= A11Y_HIGH_CONTRAST;
-  if (shell_delegate->GetMagnifierType() != ash::MAGNIFIER_OFF)
+  if (shell_delegate->IsMagnifierEnabled())
     state |= A11Y_SCREEN_MAGNIFIER;
   return state;
 }
@@ -138,8 +138,7 @@ void AccessibilityDetailedView::AppendAccessibilityList() {
           IDS_ASH_STATUS_TRAY_ACCESSIBILITY_HIGH_CONTRAST_MODE),
       high_contrast_enabled_ ? gfx::Font::BOLD : gfx::Font::NORMAL,
       high_contrast_enabled_);
-  screen_magnifier_enabled_ =
-      shell_delegate->GetMagnifierType() == ash::MAGNIFIER_FULL;
+  screen_magnifier_enabled_ = shell_delegate->IsMagnifierEnabled();
   screen_magnifier_view_ = AddScrollListItem(
       bundle.GetLocalizedString(
           IDS_ASH_STATUS_TRAY_ACCESSIBILITY_SCREEN_MAGNIFIER),
@@ -183,13 +182,12 @@ HoverHighlightView* AccessibilityDetailedView::AddScrollListItem(
     gfx::Font::FontStyle style,
     bool checked) {
   HoverHighlightView* container = new HoverHighlightView(this);
-  container->set_fixed_height(kTrayPopupItemHeight);
   container->AddCheckableLabel(text, style, checked);
   scroll_content()->AddChildView(container);
   return container;
 }
 
-void AccessibilityDetailedView::ClickedOn(views::View* sender) {
+void AccessibilityDetailedView::OnViewClicked(views::View* sender) {
   ShellDelegate* shell_delegate = Shell::GetInstance()->delegate();
   if (sender == footer()->content()) {
     owner()->system_tray()->ShowDefaultView(BUBBLE_USE_EXISTING);
@@ -198,10 +196,7 @@ void AccessibilityDetailedView::ClickedOn(views::View* sender) {
   } else if (sender == high_contrast_view_) {
     shell_delegate->ToggleHighContrast();
   } else if (sender == screen_magnifier_view_) {
-    bool screen_magnifier_enabled =
-        shell_delegate->GetMagnifierType() == ash::MAGNIFIER_FULL;
-    shell_delegate->SetMagnifier(
-        screen_magnifier_enabled ? ash::MAGNIFIER_OFF : ash::MAGNIFIER_FULL);
+    shell_delegate->SetMagnifierEnabled(!shell_delegate->IsMagnifierEnabled());
   }
 }
 
@@ -226,7 +221,8 @@ TrayAccessibility::TrayAccessibility(SystemTray* system_tray)
       request_popup_view_(false),
       tray_icon_visible_(false),
       login_(GetCurrentLoginStatus()),
-      previous_accessibility_state_(GetAccessibilityState()) {
+      previous_accessibility_state_(GetAccessibilityState()),
+      show_a11y_menu_on_lock_screen_(true) {
   DCHECK(Shell::GetInstance()->delegate());
   DCHECK(system_tray);
   Shell::GetInstance()->system_tray_notifier()->AddAccessibilityObserver(this);
@@ -266,6 +262,8 @@ views::View* TrayAccessibility::CreateDefaultView(user::LoginStatus status) {
   ShellDelegate* delegate = Shell::GetInstance()->delegate();
   if (login_ != user::LOGGED_IN_NONE &&
       !delegate->ShouldAlwaysShowAccessibilityMenu() &&
+      // On login screen, keeps the initial visivility of the menu.
+      (status != user::LOGGED_IN_LOCKED || !show_a11y_menu_on_lock_screen_) &&
       GetAccessibilityState() == A11Y_NONE)
     return NULL;
 
@@ -301,6 +299,10 @@ void TrayAccessibility::DestroyDetailedView() {
 }
 
 void TrayAccessibility::UpdateAfterLoginStatusChange(user::LoginStatus status) {
+  // Stores the a11y feature status on just entering the lock screen.
+  if (login_ != user::LOGGED_IN_LOCKED && status == user::LOGGED_IN_LOCKED)
+    show_a11y_menu_on_lock_screen_ = (GetAccessibilityState() != A11Y_NONE);
+
   login_ = status;
   SetTrayIconVisible(GetInitialVisibility());
 }

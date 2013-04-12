@@ -86,6 +86,7 @@
                 },
                 'mac_bundle_resources': [
                   '<(ios_unittest_info_plist_path)',
+                  '<(DEPTH)/testing/gtest_ios/Default-568h@2x.png',
                 ],
                 'mac_bundle_resources!': [
                   '<(ios_unittest_info_plist_path)',
@@ -140,7 +141,7 @@
             ],
           },
         }],
-        ['OS=="win" and MSVS_VERSION=="2012"', {
+        ['OS=="win" and (MSVS_VERSION=="2012" or MSVS_VERSION=="2012e")', {
           'defines': [
             '_VARIADIC_MAX=10',
           ],

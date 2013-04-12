@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -28,6 +28,7 @@
 #include "chrome/browser/autocomplete/autocomplete_input.h"
 #include "chrome/browser/autocomplete/autocomplete_match.h"
 #include "chrome/browser/autocomplete/keyword_provider.h"
+#include "chrome/browser/bookmarks/bookmark_node_data.h"
 #include "chrome/browser/command_updater.h"
 #include "chrome/browser/net/url_fixer_upper.h"
 #include "chrome/browser/profiles/profile.h"
@@ -37,6 +38,7 @@
 #include "chrome/browser/ui/omnibox/omnibox_popup_model.h"
 #include "chrome/browser/ui/search/search.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
+#include "chrome/browser/ui/views/missing_system_file_dialog_win.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_view_views.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "content/public/browser/user_metrics.h"
@@ -127,13 +129,18 @@ bool IsDrag(const POINT& origin, const POINT& current) {
       gfx::Point(current) - gfx::Point(origin));
 }
 
-// Write |text| and an optional |url| to the clipboard.
-void DoCopy(const string16& text, const GURL* url) {
+// Copies |selected_text| as text to the primary clipboard.
+void DoCopyText(const string16& selected_text) {
   ui::ScopedClipboardWriter scw(ui::Clipboard::GetForCurrentThread(),
                                 ui::Clipboard::BUFFER_STANDARD);
-  scw.WriteText(text);
-  if (url != NULL)
-    scw.WriteBookmark(text, url->spec());
+  scw.WriteText(selected_text);
+}
+
+// Writes |url| and |text| to the clipboard as a well-formed URL.
+void DoCopyURL(const GURL& url, const string16& text) {
+  BookmarkNodeData data;
+  data.ReadFromTuple(url, text);
+  data.WriteToClipboard(NULL);
 }
 
 }  // namespace
@@ -486,6 +493,13 @@ OmniboxViewWin::OmniboxViewWin(OmniboxEditController* controller,
   if (!loaded_library_module_)
     loaded_library_module_ = LoadLibrary(kRichEditDLLName);
 
+  if (!loaded_library_module_) {
+    // RichEdit DLL is not available. This is a rare error.
+    MissingSystemFileDialog::ShowDialog(
+        GetAncestor(location_bar->GetWidget()->GetNativeView(), GA_ROOT),
+        parent_view_->profile());
+  }
+
   saved_selection_for_focus_change_.cpMin = -1;
 
   g_paint_patcher.Pointer()->RefPatch();
@@ -494,6 +508,12 @@ OmniboxViewWin::OmniboxViewWin(OmniboxEditController* controller,
          l10n_util::GetExtendedStyles());
   SetReadOnly(popup_window_mode_);
   SetFont(font_.GetNativeFont());
+
+  // Disable auto font changing. Otherwise, characters come from
+  // auto-completion and characters come from keyboard may be rendered with
+  // different fonts. See http://crbug.com/168480 for details.
+  const LRESULT lang_option = SendMessage(m_hWnd, EM_GETLANGOPTIONS, 0, 0);
+  SendMessage(m_hWnd, EM_SETLANGOPTIONS, 0, lang_option & ~IMF_AUTOFONT);
 
   // NOTE: Do not use SetWordBreakProcEx() here, that is no longer supported as
   // of Rich Edit 2.0 onward.
@@ -840,7 +860,8 @@ void OmniboxViewWin::InsertText(int position, const string16& text) {
 }
 
 void OmniboxViewWin::OnTemporaryTextMaybeChanged(const string16& display_text,
-                                                 bool save_original_selection) {
+                                                 bool save_original_selection,
+                                                 bool notify_text_changed) {
   if (save_original_selection)
     GetSelection(original_selection_);
 
@@ -852,7 +873,8 @@ void OmniboxViewWin::OnTemporaryTextMaybeChanged(const string16& display_text,
   // text and then arrowed to another entry with the same text, we'd still want
   // to move the caret.
   ScopedFreeze freeze(this, GetTextObjectModel());
-  SetWindowTextAndCaretPos(display_text, display_text.length(), false, true);
+  SetWindowTextAndCaretPos(display_text, display_text.length(), false,
+                           notify_text_changed);
 }
 
 bool OmniboxViewWin::OnInlineAutocompleteTextMaybeChanged(
@@ -878,7 +900,6 @@ bool OmniboxViewWin::OnInlineAutocompleteTextMaybeChanged(
 
 void OmniboxViewWin::OnRevertTemporaryText() {
   SetSelectionRange(original_selection_);
-  TextChanged();
 }
 
 void OmniboxViewWin::OnBeforePossibleChange() {
@@ -1093,7 +1114,7 @@ int OmniboxViewWin::OnPerformDropImpl(const ui::DropTargetEvent& event,
 }
 
 void OmniboxViewWin::CopyURL() {
-  DoCopy(toolbar_model()->GetText(false), &toolbar_model()->GetURL());
+  DoCopyURL(toolbar_model()->GetURL(), toolbar_model()->GetText(false));
 }
 
 bool OmniboxViewWin::SkipDefaultKeyEventProcessing(const ui::KeyEvent& event) {
@@ -1135,7 +1156,6 @@ bool OmniboxViewWin::SkipDefaultKeyEventProcessing(const ui::KeyEvent& event) {
       return !event.IsAltDown() && event.IsControlDown();
 
     case ui::VKEY_BACK:
-    case ui::VKEY_OEM_PLUS:
       return true;
 
     default:
@@ -1428,7 +1448,10 @@ void OmniboxViewWin::OnCopy() {
   // GetSel() doesn't preserve selection direction, so sel.cpMin will always be
   // the smaller value.
   model()->AdjustTextForCopy(sel.cpMin, IsSelectAll(), &text, &url, &write_url);
-  DoCopy(text, write_url ? &url : NULL);
+  if (write_url)
+    DoCopyURL(url, text);
+  else
+    DoCopyText(text);
 }
 
 LRESULT OmniboxViewWin::OnCreate(const CREATESTRUCTW* /*create_struct*/) {
@@ -1671,8 +1694,25 @@ void OmniboxViewWin::OnLButtonDblClk(UINT keys, const CPoint& point) {
   // track "changes" made by clicking the mouse button.
   ScopedFreeze freeze(this, GetTextObjectModel());
   OnBeforePossibleChange();
+
   DefWindowProc(WM_LBUTTONDBLCLK, keys,
                 MAKELPARAM(ClipXCoordToVisibleText(point.x, false), point.y));
+
+  // Rich Edit 4.1 doesn't select the last word when the user double clicks
+  // past the text. Do it manually.
+  CHARRANGE selection;
+  GetSelection(selection);
+  // The default window proc for Rich Edit 4.1 seems to select the CHARRANGE
+  // {text_length, text_length + 1} after a double click past the text.
+  int length = GetTextLength();
+  if (selection.cpMin == length && selection.cpMax == length + 1) {
+    string16 text = GetText();
+    int word_break = WordBreakProc(&text[0], length, length, WB_LEFT);
+    selection.cpMin = word_break;
+    selection.cpMax = length;
+    SetSelectionRange(selection);
+  }
+
   OnAfterPossibleChange();
 
   gaining_focus_.reset();  // See NOTE in OnMouseActivate().
@@ -2761,7 +2801,7 @@ void OmniboxViewWin::BuildContextMenu() {
     context_menu_contents_->AddSeparator(ui::NORMAL_SEPARATOR);
     context_menu_contents_->AddItemWithStringId(IDC_CUT, IDS_CUT);
     context_menu_contents_->AddItemWithStringId(IDC_COPY, IDS_COPY);
-    if (chrome::search::IsInstantExtendedAPIEnabled(parent_view_->profile()))
+    if (chrome::search::IsQueryExtractionEnabled(parent_view_->profile()))
       context_menu_contents_->AddItemWithStringId(IDC_COPY_URL, IDS_COPY_URL);
     context_menu_contents_->AddItemWithStringId(IDC_PASTE, IDS_PASTE);
     // GetContextualLabel() will override this next label with the

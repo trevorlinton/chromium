@@ -27,6 +27,7 @@ class Size;
 
 namespace content {
 class GpuMessageFilter;
+class PeerConnectionTrackerHost;
 class RendererMainThread;
 class RenderWidgetHelper;
 class RenderWidgetHost;
@@ -80,7 +81,7 @@ class CONTENT_EXPORT RenderProcessHostImpl
   virtual StoragePartition* GetStoragePartition() const OVERRIDE;
   virtual bool FastShutdownIfPossible() OVERRIDE;
   virtual void DumpHandles() OVERRIDE;
-  virtual base::ProcessHandle GetHandle() OVERRIDE;
+  virtual base::ProcessHandle GetHandle() const OVERRIDE;
   virtual TransportDIB* GetTransportDIB(TransportDIB::Id dib_id) OVERRIDE;
   virtual BrowserContext* GetBrowserContext() const OVERRIDE;
   virtual bool InSameStoragePartition(
@@ -307,6 +308,10 @@ class CONTENT_EXPORT RenderProcessHostImpl
   // Indicates whether this is a RenderProcessHost of a Browser Plugin guest
   // renderer.
   bool is_guest_;
+
+  // Forwards messages between WebRTCInternals in the browser process
+  // and PeerConnectionTracker in the renderer process.
+  scoped_refptr<PeerConnectionTrackerHost> peer_connection_tracker_host_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderProcessHostImpl);
 };

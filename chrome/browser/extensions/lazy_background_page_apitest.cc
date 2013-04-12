@@ -3,10 +3,10 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/utf_string_conversions.h"
-#include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/bookmarks/bookmark_model.h"
+#include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/bookmarks/bookmark_utils.h"
 #include "chrome/browser/extensions/browser_action_test_util.h"
 #include "chrome/browser/extensions/extension_apitest.h"
@@ -17,7 +17,6 @@
 #include "chrome/browser/extensions/lazy_background_page_test_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/omnibox/location_bar.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -60,7 +59,7 @@ class LoadedIncognitoObserver : public content::NotificationObserver {
   virtual void Observe(
       int type,
       const content::NotificationSource& source,
-      const content::NotificationDetails& details) {
+      const content::NotificationDetails& details) OVERRIDE {
     original_complete_.reset(new LazyBackgroundObserver(profile_));
     incognito_complete_.reset(
         new LazyBackgroundObserver(profile_->GetOffTheRecordProfile()));
@@ -76,19 +75,19 @@ class LoadedIncognitoObserver : public content::NotificationObserver {
 
 class LazyBackgroundPageApiTest : public ExtensionApiTest {
  public:
-  void SetUpCommandLine(CommandLine* command_line) {
+  virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE {
     ExtensionApiTest::SetUpCommandLine(command_line);
     command_line->AppendSwitch(switches::kEnableExperimentalExtensionApis);
     // Set shorter delays to prevent test timeouts.
     command_line->AppendSwitchASCII(switches::kEventPageIdleTime, "1");
-    command_line->AppendSwitchASCII(switches::kEventPageUnloadingTime, "1");
+    command_line->AppendSwitchASCII(switches::kEventPageSuspendingTime, "1");
   }
 
   // Loads the extension, which temporarily starts the lazy background page
   // to dispatch the onInstalled event. We wait until it shuts down again.
   const Extension* LoadExtensionAndWait(const std::string& test_name) {
     LazyBackgroundObserver page_complete;
-    FilePath extdir = test_data_dir_.AppendASCII("lazy_background_page").
+    base::FilePath extdir = test_data_dir_.AppendASCII("lazy_background_page").
         AppendASCII(test_name);
     const Extension* extension = LoadExtension(extdir);
     if (extension)
@@ -104,7 +103,7 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, BrowserActionCreateTab) {
   ExtensionProcessManager* pm =
       extensions::ExtensionSystem::Get(browser()->profile())->process_manager();
   EXPECT_FALSE(pm->GetBackgroundHostForExtension(last_loaded_extension_id_));
-  int num_tabs_before = browser()->tab_count();
+  int num_tabs_before = browser()->tab_strip_model()->count();
 
   // Observe background page being created and closed after
   // the browser action is clicked.
@@ -114,7 +113,7 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, BrowserActionCreateTab) {
 
   // Background page created a new tab before it closed.
   EXPECT_FALSE(pm->GetBackgroundHostForExtension(last_loaded_extension_id_));
-  EXPECT_EQ(num_tabs_before + 1, browser()->tab_count());
+  EXPECT_EQ(num_tabs_before + 1, browser()->tab_strip_model()->count());
   EXPECT_EQ(std::string(chrome::kChromeUIExtensionsURL),
             browser()->tab_strip_model()->GetActiveWebContents()->
                 GetURL().spec());
@@ -128,7 +127,7 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest,
   ExtensionProcessManager* pm =
       extensions::ExtensionSystem::Get(browser()->profile())->process_manager();
   EXPECT_FALSE(pm->GetBackgroundHostForExtension(last_loaded_extension_id_));
-  int num_tabs_before = browser()->tab_count();
+  int num_tabs_before = browser()->tab_strip_model()->count();
 
   // Observe background page being created and closed after
   // the browser action is clicked.
@@ -138,7 +137,7 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest,
 
   // Background page is closed after creating a new tab.
   EXPECT_FALSE(pm->GetBackgroundHostForExtension(last_loaded_extension_id_));
-  EXPECT_EQ(num_tabs_before + 1, browser()->tab_count());
+  EXPECT_EQ(num_tabs_before + 1, browser()->tab_strip_model()->count());
 }
 
 IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, BroadcastEvent) {
@@ -206,7 +205,7 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, OnInstalled) {
 IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, WaitForView) {
   LazyBackgroundObserver page_complete;
   ResultCatcher catcher;
-  FilePath extdir = test_data_dir_.AppendASCII("lazy_background_page").
+  base::FilePath extdir = test_data_dir_.AppendASCII("lazy_background_page").
       AppendASCII("wait_for_view");
   const Extension* extension = LoadExtension(extdir);
   ASSERT_TRUE(extension);
@@ -240,7 +239,7 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, WaitForRequest) {
 
   LazyBackgroundObserver page_complete;
   ResultCatcher catcher;
-  FilePath extdir = test_data_dir_.AppendASCII("lazy_background_page").
+  base::FilePath extdir = test_data_dir_.AppendASCII("lazy_background_page").
       AppendASCII("wait_for_request");
   const Extension* extension = LoadExtension(extdir);
   ASSERT_TRUE(extension);
@@ -266,10 +265,16 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, WaitForRequest) {
 
 // Tests that the lazy background page stays alive until all visible views are
 // closed.
-IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, WaitForNTP) {
+// http://crbug.com/175778; test fails frequently on OS X
+#if defined(OS_MACOSX)
+#define MAYBE_WaitForNTP DISABLED_WaitForNTP
+#else
+#define MAYBE_WaitForNTP WaitForNTP
+#endif
+IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, MAYBE_WaitForNTP) {
   LazyBackgroundObserver lazybg;
   ResultCatcher catcher;
-  FilePath extdir = test_data_dir_.AppendASCII("lazy_background_page").
+  base::FilePath extdir = test_data_dir_.AppendASCII("lazy_background_page").
       AppendASCII("wait_for_ntp");
   const Extension* extension = LoadExtension(extdir);
   ASSERT_TRUE(extension);
@@ -304,7 +309,7 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, IncognitoSplitMode) {
   // Load the extension with incognito enabled.
   {
     LoadedIncognitoObserver loaded(browser()->profile());
-    FilePath extdir = test_data_dir_.AppendASCII("lazy_background_page").
+    base::FilePath extdir = test_data_dir_.AppendASCII("lazy_background_page").
         AppendASCII("incognito_split");
     ASSERT_TRUE(LoadExtensionIncognito(extdir));
     loaded.Wait();
@@ -371,7 +376,7 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, Messaging) {
   ExtensionProcessManager* pm =
       extensions::ExtensionSystem::Get(browser()->profile())->process_manager();
   EXPECT_FALSE(pm->GetBackgroundHostForExtension(last_loaded_extension_id_));
-  EXPECT_EQ(1, browser()->tab_count());
+  EXPECT_EQ(1, browser()->tab_strip_model()->count());
 
   // Navigate to a page that opens a message channel to the background page.
   ResultCatcher catcher;

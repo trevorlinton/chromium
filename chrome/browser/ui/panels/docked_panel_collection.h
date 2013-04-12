@@ -30,7 +30,7 @@ class DockedPanelCollection :
   virtual ~DockedPanelCollection();
 
   // PanelCollection OVERRIDES:
-  virtual void OnDisplayAreaChanged(const gfx::Rect& old_display_area) OVERRIDE;
+  virtual void OnDisplayChanged() OVERRIDE;
 
   // Rearranges the positions of the panels in the collection
   // and reduces their width when there is not enough room.
@@ -42,7 +42,7 @@ class DockedPanelCollection :
   // one that is transitioning from another grouping of panels.
   virtual void AddPanel(Panel* panel,
                         PositioningMask positioning_mask) OVERRIDE;
-  virtual void RemovePanel(Panel* panel) OVERRIDE;
+  virtual void RemovePanel(Panel* pane, RemovalReason reasonl) OVERRIDE;
   virtual void CloseAll() OVERRIDE;
   virtual void ResizePanelWindow(
       Panel* panel,
@@ -57,18 +57,19 @@ class DockedPanelCollection :
   virtual void ActivatePanel(Panel* panel) OVERRIDE;
   virtual void MinimizePanel(Panel* panel) OVERRIDE;
   virtual void RestorePanel(Panel* panel) OVERRIDE;
-  virtual void MinimizeAll() OVERRIDE;
-  virtual void RestoreAll() OVERRIDE;
-  virtual bool CanMinimizePanel(const Panel* panel) const OVERRIDE;
+  virtual void OnMinimizeButtonClicked(Panel* panel,
+                                       panel::ClickModifier modifier) OVERRIDE;
+  virtual void OnRestoreButtonClicked(Panel* panel,
+                                      panel::ClickModifier modifier) OVERRIDE;
+  virtual bool CanShowMinimizeButton(const Panel* panel) const OVERRIDE;
+  virtual bool CanShowRestoreButton(const Panel* panel) const OVERRIDE;
   virtual bool IsPanelMinimized(const Panel* panel) const OVERRIDE;
   virtual void SavePanelPlacement(Panel* panel) OVERRIDE;
   virtual void RestorePanelToSavedPlacement() OVERRIDE;
   virtual void DiscardSavedPanelPlacement() OVERRIDE;
   virtual void UpdatePanelOnCollectionChange(Panel* panel) OVERRIDE;
+  virtual void OnPanelExpansionStateChanged(Panel* panel) OVERRIDE;
   virtual void OnPanelActiveStateChanged(Panel* panel) OVERRIDE;
-
-  // Invoked when a panel's expansion state changes.
-  void OnPanelExpansionStateChanged(Panel* panel);
 
   // Returns true if we should bring up the titlebars, given the current mouse
   // point.
@@ -101,7 +102,7 @@ class DockedPanelCollection :
   const Panels& panels() const { return panels_; }
   Panel* last_panel() const { return panels_.empty() ? NULL : panels_.back(); }
 
-  gfx::Rect display_area() const { return display_area_; }
+  gfx::Rect work_area() const { return work_area_; }
 
   int StartingRightPosition() const;
 
@@ -136,12 +137,19 @@ class DockedPanelCollection :
   virtual void OnAutoHidingDesktopBarVisibilityChanged(
       DisplaySettingsProvider::DesktopBarAlignment alignment,
       DisplaySettingsProvider::DesktopBarVisibility visibility) OVERRIDE;
+  virtual void OnAutoHidingDesktopBarThicknessChanged(
+      DisplaySettingsProvider::DesktopBarAlignment alignment,
+      int thickness) OVERRIDE;
 
   // Schedules a layout refresh with a short delay to avoid too much flicker.
   void ScheduleLayoutRefresh();
 
   // Keep track of the minimized panels to control mouse watching.
   void UpdateMinimizedPanelCount();
+
+  // Minimizes or restores all panels in the collection.
+  void MinimizeAll();
+  void RestoreAll();
 
   // Makes sure the panel's bounds reflect its expansion state and the
   // panel is aligned at the bottom of the screen. Does not touch the x
@@ -160,7 +168,7 @@ class DockedPanelCollection :
   PanelManager* panel_manager_;  // Weak, owns us.
 
   // All panels in the collection must fit within this area.
-  gfx::Rect display_area_;
+  gfx::Rect work_area_;
 
   Panels panels_;
 

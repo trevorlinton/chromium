@@ -16,7 +16,7 @@ import os
 import sys
 import unittest
 import jni_generator
-from jni_generator import CalledByNative, NativeMethod, Param
+from jni_generator import CalledByNative, JniParams, NativeMethod, Param
 
 
 class TestGenerator(unittest.TestCase):
@@ -1912,11 +1912,17 @@ class Foo {
                     jni_generator.JniParams._inner_classes)
     self.assertTrue('Lorg/chromium/content/app/Foo$PasswordListObserver' in
                     jni_generator.JniParams._inner_classes)
-    self.assertEquals('Lorg/chromium/content/app/ContentMain$Inner',
+    self.assertEquals('Lorg/chromium/content/app/ContentMain$Inner;',
                       jni_generator.JniParams.JavaToJni('ContentMain.Inner'))
     self.assertRaises(SyntaxError,
                       jni_generator.JniParams.JavaToJni,
                       'AnException')
+
+  def testJniParamsJavaToJni(self):
+    self.assertTextEquals('I', JniParams.JavaToJni('int'))
+    self.assertTextEquals('[B', JniParams.JavaToJni('byte[]'))
+    self.assertTextEquals(
+        '[Ljava/nio/ByteBuffer;', JniParams.JavaToJni('java/nio/ByteBuffer[]'))
 
 
 if __name__ == '__main__':

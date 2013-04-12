@@ -4,7 +4,7 @@
 
 {
   "activeTab": {
-    "channel": "dev",
+    "channel": "stable",
     "extension_types": ["extension", "packaged_app"],
     "min_manifest_version": 2
   },
@@ -24,13 +24,14 @@
   "developerPrivate": {
     "channel": "dev",
     "extension_types": ["packaged_app"],
-    "location": "component"
+    "location": "component",
+    "whitelist": "lphgohfeebnhcpiohjndkgbhhkoapkjc" // Apps Debugger
   },
   "appNotifications": {
     "channel": "stable",
     "extension_types": ["packaged_app", "hosted_app"]
   },
-    "autotestPrivate": {
+  "autotestPrivate": {
     "channel": "stable",
     "extension_types": ["extension", "packaged_app"],
     "location": "component"
@@ -118,10 +119,22 @@
     "channel": "stable",
     "extension_types": ["extension", "packaged_app"]
   },
-  "declarativeWebRequest": {
-    "channel": "beta",
-    "extension_types": ["extension", "packaged_app"]
+  "declarativeContent": {
+    "channel": "trunk",
+    "extension_types": ["extension"]
   },
+  "declarativeWebRequest": [
+    {
+      "channel": "beta",
+      "extension_types": ["extension", "packaged_app"]
+    },
+    {
+      "channel": "stable",
+      "extension_types": ["extension", "packaged_app"],
+      // Legacy Browser Support (remove once this API hits stable).
+      "whitelist": ["heildphpnddilhkemkielfhnkaagiabh"]
+    }
+  ],
   "downloads": {
     "channel": "dev",
     "extension_types": [
@@ -163,6 +176,10 @@
   "fontSettings": {
     "channel": "stable",
     "extension_types": ["extension", "packaged_app"]
+  },
+  "fullscreen": {
+    "channel": "stable",
+    "extension_types": ["platform_app"]
   },
   "geolocation": {
     "channel": "stable",
@@ -215,14 +232,15 @@
     "channel": "stable",
     "extension_types": [ "platform_app" ]
   },
-  // TODO(thestig) Remove this as part of http:://crbug.com/144496
+  // TODO(thestig) Remove this as part of http://crbug.com/144496
   "mediaGalleriesPrivate": {
     "channel": "stable",
     "extension_types": [ "platform_app" ],
     "whitelist": [
-      "ebpbnabdhheoknfklmpddcdijjkmklkp",
-      "efjnaogkjbogokcnohkmnjdojkikgobo",
-      "ejegoaikibpmikoejfephaneibodccma"
+      "dhgjflpimlbndbpamnkoepaacagejgda",
+      "ebpbnabdhheoknfklmpddcdijjkmklkp",  // G+ Photos staging
+      "efjnaogkjbogokcnohkmnjdojkikgobo",  // G+ Photos prod
+      "ejegoaikibpmikoejfephaneibodccma"   // G+ Photos dev
     ]
   },
   "mediaPlayerPrivate": {
@@ -241,6 +259,15 @@
       "hhaomjibdihmijegdhdafkllkbggdgoj",  // File manager
       "gbkeegbaiigmenfmjfclcdgdpimamgkj",  // Quickoffice
       "ionpfmkccalenbmnddpbmocokhaknphg"   // Quickoffice dev
+    ]
+  },
+  "networkingPrivate": {
+    "channel": "dev",
+    "extension_types": ["extension", "packaged_app"],
+    "whitelist": [
+      "pkedcjkdefgpdelpbcmbmeomcjbeemfm",  // CV
+      "fmfcbgogabcbclcofgocippekhfcmgfj",  // CV Staging
+      "hfaagokkkhdbgiakmmlclaapfelnkoah"   // CV Canary
     ]
   },
   "notifications": {
@@ -295,16 +322,24 @@
     "extension_types": ["extension", "packaged_app", "platform_app"],
     "min_manifest_version": 2
   },
+  "screensaver": {
+    "channel": "stable",
+    "extension_types": ["packaged_app", "hosted_app", "platform_app"]
+  },
   "serial": {
     "channel": "stable",
     "extension_types": ["platform_app"]
+  },
+  "sessionRestore": {
+    "channel": "dev",
+    "extension_types": ["extension", "packaged_app"]
   },
   "socket": {
     "channel": "stable",
     "extension_types": ["platform_app"]
   },
   "syncFileSystem": {
-    "channel": "trunk",
+    "channel": "dev",
     "extension_types": ["platform_app"]
   },
   "systemIndicator": {
@@ -315,6 +350,10 @@
     "channel": "stable",
     "extension_types": ["extension", "packaged_app", "platform_app"],
     "min_manifest_version": 2
+  },
+  "systemInfo.display": {
+    "channel": "stable",
+    "extension_types": ["extension", "packaged_app", "platform_app"]
   },
   "systemPrivate": {
     "channel": "stable",
@@ -327,7 +366,7 @@
   },
   "tabCapture": [{
     "channel": "dev",
-    "extension_types": ["extension", "packaged_app"]
+    "extension_types": ["extension", "packaged_app", "platform_app"]
   }, {
     "channel": "stable",
     "extension_types": ["extension", "packaged_app"],
@@ -364,11 +403,11 @@
     ]
   },
   "usb": {
-    "channel": "dev",
+    "channel": "stable",
     "extension_types": ["platform_app"]
   },
   "usbDevices": {
-    "channel": "dev",
+    "channel": "stable",
     "extension_types": ["platform_app"]
   },
   "videoCapture": {

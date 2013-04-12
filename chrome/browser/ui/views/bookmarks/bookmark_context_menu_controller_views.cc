@@ -5,18 +5,18 @@
 #include "chrome/browser/ui/views/bookmarks/bookmark_context_menu_controller_views.h"
 
 #include "base/compiler_specific.h"
+#include "base/prefs/pref_service.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/bookmarks/bookmark_editor.h"
 #include "chrome/browser/bookmarks/bookmark_model.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/bookmarks/bookmark_utils.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
-#include "chrome/browser/prefs/pref_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/bookmarks/bookmark_utils.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/chrome_pages.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/user_metrics.h"
@@ -115,8 +115,9 @@ void BookmarkContextMenuControllerViews::ExecuteCommand(int id) {
           bookmark_utils::GetParentForNewNodes(parent_, selection_, &index);
       GURL url;
       string16 title;
-      chrome::GetURLAndTitleToBookmark(chrome::GetActiveWebContents(browser_),
-                                       &url, &title);
+      chrome::GetURLAndTitleToBookmark(
+          browser_->tab_strip_model()->GetActiveWebContents(),
+          &url, &title);
       BookmarkEditor::Show(parent_widget_->GetNativeWindow(),
                            profile_,
                            BookmarkEditor::EditDetails::AddNodeInFolder(
@@ -201,7 +202,8 @@ bool BookmarkContextMenuControllerViews::IsCommandEnabled(int id) const {
              incognito_avail != IncognitoModePrefs::DISABLED;
 
     case IDC_BOOKMARK_BAR_OPEN_ALL_INCOGNITO:
-      return chrome::HasBookmarkURLs(selection_) &&
+      return chrome::HasBookmarkURLsAllowedInIncognitoMode(selection_, profile_)
+             &&
              !profile_->IsOffTheRecord() &&
              incognito_avail != IncognitoModePrefs::DISABLED;
 

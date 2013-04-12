@@ -16,7 +16,7 @@
 #include "chrome/browser/extensions/api/content_settings/content_settings_store.h"
 #include "chrome/browser/extensions/extension_prefs_scope.h"
 #include "chrome/browser/extensions/extension_scoped_prefs.h"
-#include "chrome/browser/media_gallery/media_galleries_preferences.h"
+#include "chrome/browser/media_galleries/media_galleries_preferences.h"
 #include "chrome/common/extensions/extension.h"
 #include "extensions/common/url_pattern_set.h"
 #include "sync/api/string_ordinal.h"
@@ -24,12 +24,16 @@
 class ExtensionPrefValueMap;
 class ExtensionSorting;
 class PrefService;
-class PrefServiceSyncable;
+class PrefRegistrySyncable;
 
 namespace extensions {
 class ExtensionPrefsUninstallExtension;
 class URLPatternSet;
 struct ExtensionOmniboxSuggestion;
+
+namespace app_file_handler_util {
+struct SavedFileEntry;
+}
 
 // Class for managing global and per-extension preferences.
 //
@@ -93,16 +97,16 @@ class ExtensionPrefs : public ContentSettingsStore::Observer,
   // Creates and initializes an ExtensionPrefs object.
   // Does not take ownership of |prefs| and |extension_pref_value_map|.
   static scoped_ptr<ExtensionPrefs> Create(
-      PrefServiceSyncable* prefs,
-      const FilePath& root_dir,
+      PrefService* prefs,
+      const base::FilePath& root_dir,
       ExtensionPrefValueMap* extension_pref_value_map,
       bool extensions_disabled);
 
   // A version of Create which allows injection of a custom base::Time provider.
   // Use this as needed for testing.
   static scoped_ptr<ExtensionPrefs> Create(
-      PrefServiceSyncable* prefs,
-      const FilePath& root_dir,
+      PrefService* prefs,
+      const base::FilePath& root_dir,
       ExtensionPrefValueMap* extension_pref_value_map,
       bool extensions_disabled,
       scoped_ptr<TimeProvider> time_provider);
@@ -145,7 +149,7 @@ class ExtensionPrefs : public ContentSettingsStore::Observer,
 
   // Called when an extension is uninstalled, so that prefs get cleaned up.
   void OnExtensionUninstalled(const std::string& extension_id,
-                              const Extension::Location& location,
+                              const Manifest::Location& location,
                               bool external_uninstall);
 
   // Called to change the extension's state when it is enabled/disabled.
@@ -192,10 +196,10 @@ class ExtensionPrefs : public ContentSettingsStore::Observer,
   void UpdateManifest(const Extension* extension);
 
   // Returns extension path based on extension ID, or empty FilePath on error.
-  FilePath GetExtensionPath(const std::string& extension_id);
+  base::FilePath GetExtensionPath(const std::string& extension_id);
 
   // Returns base extensions install directory.
-  const FilePath& install_directory() const { return install_directory_; }
+  const base::FilePath& install_directory() const { return install_directory_; }
 
   // Returns whether the extension with |id| has its blacklist bit set.
   //
@@ -204,9 +208,6 @@ class ExtensionPrefs : public ContentSettingsStore::Observer,
   // sources of blacklist information, such as safebrowsing. You probably want
   // to use Blacklist::GetBlacklistedIDs rather than this method.
   bool IsExtensionBlacklisted(const std::string& id) const;
-
-  // Based on extension id, checks prefs to see if it is orphaned.
-  bool IsExtensionOrphaned(const std::string& id);
 
   // Increment the count of how many times we prompted the user to acknowledge
   // the given extension, and return the new count.
@@ -223,10 +224,6 @@ class ExtensionPrefs : public ContentSettingsStore::Observer,
   // Whether the user has acknowledged a blacklisted extension.
   bool IsBlacklistedExtensionAcknowledged(const std::string& extension_id);
   void AcknowledgeBlacklistedExtension(const std::string& extension_id);
-
-  // Whether the user has acknowledged an orphaned extension.
-  bool IsOrphanedExtensionAcknowledged(const std::string& extension_id);
-  void AcknowledgeOrphanedExtension(const std::string& extension_id);
 
   // Returns true if the extension notification code has already run for the
   // first time for this profile. Currently we use this flag to mean that any
@@ -328,6 +325,15 @@ class ExtensionPrefs : public ContentSettingsStore::Observer,
   // Returns whether or not this extension is marked as running. This is used to
   // restart apps across browser restarts.
   bool IsExtensionRunning(const std::string& extension_id);
+
+  void AddSavedFileEntry(const std::string& extension_id,
+                         const std::string& id,
+                         const base::FilePath& file_path,
+                         bool writable);
+  void ClearSavedFileEntries(const std::string& extension_id);
+  void GetSavedFileEntries(
+      const std::string& extension_id,
+      std::vector<app_file_handler_util::SavedFileEntry>* out);
 
   // Controls the omnibox default suggestion as set by the extension.
   ExtensionOmniboxSuggestion GetOmniboxDefaultSuggestion(
@@ -486,14 +492,14 @@ class ExtensionPrefs : public ContentSettingsStore::Observer,
   // found.
   base::Time GetInstallTime(const std::string& extension_id) const;
 
-  static void RegisterUserPrefs(PrefServiceSyncable* prefs);
+  static void RegisterUserPrefs(PrefRegistrySyncable* registry);
 
   ContentSettingsStore* content_settings_store() {
     return content_settings_store_.get();
   }
 
   // The underlying PrefService.
-  PrefServiceSyncable* pref_service() const { return prefs_; }
+  PrefService* pref_service() const { return prefs_; }
 
   // The underlying ExtensionSorting.
   ExtensionSorting* extension_sorting() const {
@@ -522,8 +528,8 @@ class ExtensionPrefs : public ContentSettingsStore::Observer,
   friend class ExtensionPrefsUninstallExtension;     // Unit test.
 
   // See the Create methods.
-  ExtensionPrefs(PrefServiceSyncable* prefs,
-                 const FilePath& root_dir,
+  ExtensionPrefs(PrefService* prefs,
+                 const base::FilePath& root_dir,
                  ExtensionPrefValueMap* extension_pref_value_map,
                  scoped_ptr<TimeProvider> time_provider);
 
@@ -642,10 +648,10 @@ class ExtensionPrefs : public ContentSettingsStore::Observer,
       DictionaryValue* extension_dict);
 
   // The pref service specific to this set of extension prefs. Owned by profile.
-  PrefServiceSyncable* prefs_;
+  PrefService* prefs_;
 
   // Base extensions install directory.
-  FilePath install_directory_;
+  base::FilePath install_directory_;
 
   // Weak pointer, owned by Profile.
   ExtensionPrefValueMap* extension_pref_value_map_;

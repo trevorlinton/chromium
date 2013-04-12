@@ -8,7 +8,7 @@
 #include "base/message_loop.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
-#include "ui/ui_controls/ui_controls.h"
+#include "chrome/test/base/ui_controls.h"
 #include "ui/views/focus/focus_manager.h"
 
 namespace ui_test_utils {
@@ -47,8 +47,10 @@ void MoveMouseToCenterAndPress(views::View* view,
   DCHECK(view->GetWidget());
   gfx::Point view_center(view->width() / 2, view->height() / 2);
   views::View::ConvertPointToScreen(view, &view_center);
-  ui_controls::SendMouseMove(view_center.x(), view_center.y());
-  ui_controls::SendMouseEventsNotifyWhenDone(button, state, closure);
+  ui_controls::SendMouseMoveNotifyWhenDone(
+      view_center.x(),
+      view_center.y(),
+      base::Bind(&internal::ClickTask, button, state, closure));
 }
 
 }  // namespace ui_test_utils

@@ -14,9 +14,9 @@
 #include "base/stl_util.h"
 #include "base/sys_info.h"
 #include "base/time.h"
-#include "remoting/capturer/capture_data.h"
-#include "remoting/capturer/mouse_cursor_shape.h"
-#include "remoting/capturer/video_frame_capturer.h"
+#include "media/video/capture/screen/mouse_cursor_shape.h"
+#include "media/video/capture/screen/screen_capture_data.h"
+#include "media/video/capture/screen/screen_capturer.h"
 #include "remoting/proto/control.pb.h"
 #include "remoting/proto/internal.pb.h"
 #include "remoting/proto/video.pb.h"
@@ -36,7 +36,7 @@ scoped_refptr<VideoScheduler> VideoScheduler::Create(
     scoped_refptr<base::SingleThreadTaskRunner> capture_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> encode_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> network_task_runner,
-    VideoFrameCapturer* capturer,
+    scoped_ptr<media::ScreenCapturer> capturer,
     scoped_ptr<VideoEncoder> encoder,
     protocol::CursorShapeStub* cursor_stub,
     protocol::VideoStub* video_stub) {
@@ -48,7 +48,7 @@ scoped_refptr<VideoScheduler> VideoScheduler::Create(
 
   scoped_refptr<VideoScheduler> scheduler = new VideoScheduler(
       capture_task_runner, encode_task_runner, network_task_runner,
-      capturer, encoder.Pass(), cursor_stub, video_stub);
+      capturer.Pass(), encoder.Pass(), cursor_stub, video_stub);
   capture_task_runner->PostTask(
       FROM_HERE, base::Bind(&VideoScheduler::StartOnCaptureThread, scheduler));
 
@@ -58,7 +58,7 @@ scoped_refptr<VideoScheduler> VideoScheduler::Create(
 // Public methods --------------------------------------------------------------
 
 void VideoScheduler::OnCaptureCompleted(
-    scoped_refptr<CaptureData> capture_data) {
+    scoped_refptr<media::ScreenCaptureData> capture_data) {
   DCHECK(capture_task_runner_->BelongsToCurrentThread());
 
   if (capture_data) {
@@ -78,7 +78,7 @@ void VideoScheduler::OnCaptureCompleted(
 }
 
 void VideoScheduler::OnCursorShapeChanged(
-    scoped_ptr<MouseCursorShape> cursor_shape) {
+    scoped_ptr<media::MouseCursorShape> cursor_shape) {
   DCHECK(capture_task_runner_->BelongsToCurrentThread());
 
   scoped_ptr<protocol::CursorShapeInfo> cursor_proto(
@@ -94,16 +94,15 @@ void VideoScheduler::OnCursorShapeChanged(
                             base::Passed(&cursor_proto)));
 }
 
-void VideoScheduler::Stop(const base::Closure& done_task) {
+void VideoScheduler::Stop() {
   DCHECK(network_task_runner_->BelongsToCurrentThread());
-  DCHECK(!done_task.is_null());
 
   // Clear stubs to prevent further updates reaching the client.
   cursor_stub_ = NULL;
   video_stub_ = NULL;
 
   capture_task_runner_->PostTask(FROM_HERE,
-      base::Bind(&VideoScheduler::StopOnCaptureThread, this, done_task));
+      base::Bind(&VideoScheduler::StopOnCaptureThread, this));
 }
 
 void VideoScheduler::Pause(bool pause) {
@@ -141,14 +140,14 @@ VideoScheduler::VideoScheduler(
     scoped_refptr<base::SingleThreadTaskRunner> capture_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> encode_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> network_task_runner,
-    VideoFrameCapturer* capturer,
+    scoped_ptr<media::ScreenCapturer> capturer,
     scoped_ptr<VideoEncoder> encoder,
     protocol::CursorShapeStub* cursor_stub,
     protocol::VideoStub* video_stub)
     : capture_task_runner_(capture_task_runner),
       encode_task_runner_(encode_task_runner),
       network_task_runner_(network_task_runner),
-      capturer_(capturer),
+      capturer_(capturer.Pass()),
       encoder_(encoder.Pass()),
       cursor_stub_(cursor_stub),
       video_stub_(video_stub),
@@ -166,7 +165,7 @@ VideoScheduler::~VideoScheduler() {
 void VideoScheduler::StartOnCaptureThread() {
   DCHECK(capture_task_runner_->BelongsToCurrentThread());
 
-  // Start the capturer and let it notify us of cursor shape changes.
+  // Start the capturer and let it notify us if cursor shape changes.
   capturer_->Start(this);
 
   capture_timer_.reset(new base::OneShotTimer<VideoScheduler>());
@@ -175,22 +174,23 @@ void VideoScheduler::StartOnCaptureThread() {
   CaptureNextFrame();
 }
 
-void VideoScheduler::StopOnCaptureThread(const base::Closure& done_task) {
+void VideoScheduler::StopOnCaptureThread() {
   DCHECK(capture_task_runner_->BelongsToCurrentThread());
 
   // Stop |capturer_| and clear it to prevent pending tasks from using it.
   capturer_->Stop();
-  capturer_ = NULL;
 
   // |capture_timer_| must be destroyed on the thread on which it is used.
   capture_timer_.reset();
 
-  // Ensure that the encode thread is no longer processing capture data,
-  // otherwise tearing down |capturer_| will crash it.  See crbug.com/163641.
+  // Schedule deletion of |capturer_| once the encode thread is no longer
+  // processing capture data. See http://crbug.com/163641. This also clears
+  // |capturer_| pointer to prevent pending tasks from using it.
   // TODO(wez): Make it safe to tear down capturer while buffers remain, and
   // remove this work-around.
-  encode_task_runner_->PostTask(FROM_HERE,
-      base::Bind(&VideoScheduler::StopOnEncodeThread, this, done_task));
+  encode_task_runner_->PostTask(
+      FROM_HERE, base::Bind(&VideoScheduler::StopOnEncodeThread, this,
+                            base::Passed(&capturer_)));
 }
 
 void VideoScheduler::ScheduleNextCapture() {
@@ -278,10 +278,18 @@ void VideoScheduler::SendCursorShape(
   cursor_stub_->SetCursorShape(*cursor_shape);
 }
 
+void VideoScheduler::StopOnNetworkThread(
+    scoped_ptr<media::ScreenCapturer> capturer) {
+  DCHECK(network_task_runner_->BelongsToCurrentThread());
+
+  // This is posted by StopOnEncodeThread meaning that both capture and encode
+  // threads are stopped now and it is safe to delete |capturer|.
+}
+
 // Encoder thread --------------------------------------------------------------
 
 void VideoScheduler::EncodeFrame(
-    scoped_refptr<CaptureData> capture_data) {
+    scoped_refptr<media::ScreenCaptureData> capture_data) {
   DCHECK(encode_task_runner_->BelongsToCurrentThread());
 
   // If there is nothing to encode then send an empty keep-alive packet.
@@ -314,12 +322,16 @@ void VideoScheduler::EncodedDataAvailableCallback(
                             base::Passed(&packet)));
 }
 
-void VideoScheduler::StopOnEncodeThread(const base::Closure& done_task) {
+void VideoScheduler::StopOnEncodeThread(
+    scoped_ptr<media::ScreenCapturer> capturer) {
   DCHECK(encode_task_runner_->BelongsToCurrentThread());
 
   // This is posted by StopOnCaptureThread, so we know that by the time we
-  // process it there are no more encode tasks queued.
-  network_task_runner_->PostTask(FROM_HERE, done_task);
+  // process it there are no more encode tasks queued. Pass |capturer_| for
+  // deletion on the thread that created it.
+  network_task_runner_->PostTask(
+      FROM_HERE, base::Bind(&VideoScheduler::StopOnNetworkThread, this,
+                            base::Passed(&capturer)));
 }
 
 }  // namespace remoting

@@ -4,17 +4,18 @@
 
 #include "chrome/browser/managed_mode/managed_mode_url_filter.h"
 
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/hash_tables.h"
 #include "base/json/json_file_value_serializer.h"
+#include "base/metrics/histogram.h"
 #include "base/sha1.h"
-#include "base/string_number_conversions.h"
 #include "base/string_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/task_runner_util.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "chrome/browser/policy/url_blacklist_manager.h"
-#include "chrome/common/extensions/matcher/url_matcher.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/common/matcher/url_matcher.h"
 #include "googleurl/src/gurl.h"
 
 using content::BrowserThread;
@@ -157,8 +158,7 @@ scoped_ptr<ManagedModeURLFilter::Contents> LoadWhitelistsOnBlockingPoolThread(
 }  // namespace
 
 ManagedModeURLFilter::ManagedModeURLFilter()
-    : ALLOW_THIS_IN_INITIALIZER_LIST(weak_ptr_factory_(this)),
-      default_behavior_(ALLOW),
+    : default_behavior_(ALLOW),
       contents_(new Contents()) {
   // Detach from the current thread so we can be constructed on a different
   // thread than the one where we're used.
@@ -177,6 +177,18 @@ ManagedModeURLFilter::BehaviorFromInt(int behavior_value) {
   return static_cast<FilteringBehavior>(behavior_value);
 }
 
+// static
+GURL ManagedModeURLFilter::Normalize(const GURL& url) {
+  GURL normalized_url = url;
+  GURL::Replacements replacements;
+  // Strip username, password, query, and ref.
+  replacements.ClearUsername();
+  replacements.ClearPassword();
+  replacements.ClearQuery();
+  replacements.ClearRef();
+  return url.ReplaceComponents(replacements);
+}
+
 ManagedModeURLFilter::FilteringBehavior
 ManagedModeURLFilter::GetFilteringBehaviorForURL(const GURL& url) const {
   DCHECK(CalledOnValidThread());
@@ -190,6 +202,17 @@ ManagedModeURLFilter::GetFilteringBehaviorForURL(const GURL& url) const {
   if (!policy::URLBlacklist::HasStandardScheme(url))
     return ALLOW;
 #endif
+
+  // Check manual overrides for the exact URL.
+  std::map<GURL, bool>::const_iterator url_it = url_map_.find(Normalize(url));
+  if (url_it != url_map_.end())
+    return url_it->second ? ALLOW : BLOCK;
+
+  // Check manual overrides for the hostname.
+  std::map<std::string, bool>::const_iterator host_it =
+      host_map_.find(url.host());
+  if (host_it != host_map_.end())
+    return host_it->second ? ALLOW : BLOCK;
 
   // Check the list of URL patterns.
   std::set<URLMatcherConditionSet::ID> matching_ids =
@@ -240,8 +263,7 @@ void ManagedModeURLFilter::SetDefaultFilteringBehavior(
 }
 
 void ManagedModeURLFilter::LoadWhitelists(
-    ScopedVector<ManagedModeSiteList> site_lists,
-    const base::Closure& continuation) {
+    ScopedVector<ManagedModeSiteList> site_lists) {
   DCHECK(CalledOnValidThread());
 
   base::PostTaskAndReplyWithResult(
@@ -249,26 +271,46 @@ void ManagedModeURLFilter::LoadWhitelists(
       FROM_HERE,
       base::Bind(&LoadWhitelistsOnBlockingPoolThread,
                  base::Passed(&site_lists)),
-      base::Bind(&ManagedModeURLFilter::SetContents,
-                 weak_ptr_factory_.GetWeakPtr(), continuation));
+      base::Bind(&ManagedModeURLFilter::SetContents, this));
 }
 
 void ManagedModeURLFilter::SetFromPatterns(
-    const std::vector<std::string>& patterns,
-    const base::Closure& continuation) {
+    const std::vector<std::string>& patterns) {
   DCHECK(CalledOnValidThread());
 
   base::PostTaskAndReplyWithResult(
       BrowserThread::GetBlockingPool(),
       FROM_HERE,
       base::Bind(&CreateWhitelistFromPatterns, patterns),
-      base::Bind(&ManagedModeURLFilter::SetContents,
-                 weak_ptr_factory_.GetWeakPtr(), continuation));
+      base::Bind(&ManagedModeURLFilter::SetContents, this));
 }
 
-void ManagedModeURLFilter::SetContents(const base::Closure& continuation,
-                                       scoped_ptr<Contents> contents) {
+void ManagedModeURLFilter::SetManualHosts(
+    const std::map<std::string, bool>* host_map) {
+  DCHECK(CalledOnValidThread());
+  host_map_ = *host_map;
+  UMA_HISTOGRAM_CUSTOM_COUNTS("ManagedMode.ManualHostsEntries",
+                              host_map->size(), 1, 1000, 50);
+}
+
+void ManagedModeURLFilter::SetManualURLs(
+    const std::map<GURL, bool>* url_map) {
+  DCHECK(CalledOnValidThread());
+  url_map_ = *url_map;
+  UMA_HISTOGRAM_CUSTOM_COUNTS("ManagedMode.ManualURLsEntries",
+                              url_map->size(), 1, 1000, 50);
+}
+
+void ManagedModeURLFilter::AddObserver(Observer* observer) {
+  observers_.AddObserver(observer);
+}
+
+void ManagedModeURLFilter::RemoveObserver(Observer* observer) {
+  observers_.RemoveObserver(observer);
+}
+
+void ManagedModeURLFilter::SetContents(scoped_ptr<Contents> contents) {
   DCHECK(CalledOnValidThread());
   contents_ = contents.Pass();
-  continuation.Run();
+  FOR_EACH_OBSERVER(Observer, observers_, OnSiteListUpdated());
 }

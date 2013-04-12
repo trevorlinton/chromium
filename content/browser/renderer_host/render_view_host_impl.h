@@ -27,7 +27,7 @@
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebConsoleMessage.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebPopupType.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebTextDirection.h"
-#include "webkit/glue/window_open_disposition.h"
+#include "ui/base/window_open_disposition.h"
 
 class SkBitmap;
 class ViewMsg_Navigate;
@@ -36,6 +36,7 @@ struct MediaPlayerAction;
 struct ViewHostMsg_CreateWindow_Params;
 struct ViewHostMsg_DidFailProvisionalLoadWithError_Params;
 struct ViewHostMsg_OpenURL_Params;
+struct ViewHostMsg_SelectionBounds_Params;
 struct ViewHostMsg_ShowPopup_Params;
 struct ViewMsg_Navigate_Params;
 struct ViewMsg_PostMessage_Params;
@@ -43,7 +44,6 @@ struct ViewMsg_StopFinding_Params;
 
 namespace base {
 class ListValue;
-class Value;
 }
 
 namespace ui {
@@ -68,27 +68,6 @@ struct ShowDesktopNotificationHostMsgParams;
 #if defined(OS_ANDROID)
 class MediaPlayerManagerAndroid;
 #endif
-
-// NotificationObserver used to listen for EXECUTE_JAVASCRIPT_RESULT
-// notifications.
-class ExecuteNotificationObserver : public NotificationObserver {
- public:
-  explicit ExecuteNotificationObserver(int id);
-  virtual ~ExecuteNotificationObserver();
-  virtual void Observe(int type,
-                       const NotificationSource& source,
-                       const NotificationDetails& details) OVERRIDE;
-
-  int id() const { return id_; }
-
-  base::Value* value() const { return value_.get(); }
-
- private:
-  int id_;
-  scoped_ptr<base::Value> value_;
-
-  DISALLOW_COPY_AND_ASSIGN(ExecuteNotificationObserver);
-};
 
 #if defined(COMPILER_MSVC)
 // RenderViewHostImpl is the bottom of a diamond-shaped hierarchy,
@@ -158,7 +137,7 @@ class CONTENT_EXPORT RenderViewHostImpl
   virtual void DesktopNotificationPostClick(int notification_id) OVERRIDE;
   virtual void DirectoryEnumerationFinished(
       int request_id,
-      const std::vector<FilePath>& files) OVERRIDE;
+      const std::vector<base::FilePath>& files) OVERRIDE;
   virtual void DisableScrollbarsForThreshold(const gfx::Size& size) OVERRIDE;
   virtual void DragSourceEndedAt(
       int client_x, int client_y, int screen_x, int screen_y,
@@ -192,16 +171,10 @@ class CONTENT_EXPORT RenderViewHostImpl
       const WebKit::WebMediaPlayerAction& action) OVERRIDE;
   virtual void ExecuteJavascriptInWebFrame(const string16& frame_xpath,
                                            const string16& jscript) OVERRIDE;
-  virtual int ExecuteJavascriptInWebFrameNotifyResult(
-      const string16& frame_xpath,
-      const string16& jscript) OVERRIDE;
   virtual void ExecuteJavascriptInWebFrameCallbackResult(
       const string16& frame_xpath,
       const string16& jscript,
       const JavascriptResultCallback& callback) OVERRIDE;
-  virtual base::Value* ExecuteJavascriptAndGetValue(
-      const string16& frame_xpath,
-      const string16& jscript) OVERRIDE;
   virtual void ExecutePluginActionAtLocation(
       const gfx::Point& location,
       const WebKit::WebPluginAction& action) OVERRIDE;
@@ -219,6 +192,7 @@ class CONTENT_EXPORT RenderViewHostImpl
   virtual void InsertCSS(const string16& frame_xpath,
                          const std::string& css) OVERRIDE;
   virtual bool IsRenderViewLive() const OVERRIDE;
+  virtual bool IsSubframe() const OVERRIDE;
   virtual void NotifyContextMenuClosed(
       const CustomContextMenuContext& context) OVERRIDE;
   virtual void NotifyMoveOrResizeStarted() OVERRIDE;
@@ -361,8 +335,8 @@ class CONTENT_EXPORT RenderViewHostImpl
   // contain all saved auxiliary files included all sub frames and resouces.
   void GetSerializedHtmlDataForCurrentPageWithLocalLinks(
       const std::vector<GURL>& links,
-      const std::vector<FilePath>& local_paths,
-      const FilePath& local_directory_name);
+      const std::vector<base::FilePath>& local_paths,
+      const base::FilePath& local_directory_name);
 
   // Notifies the RenderViewHost that its load state changed.
   void LoadStateChanged(const GURL& url,
@@ -420,6 +394,12 @@ class CONTENT_EXPORT RenderViewHostImpl
   // User rotated the screen. Calls the "onorientationchange" Javascript hook.
   void SendOrientationChangeEvent(int orientation);
 
+  // Sets a bit indicating whether the RenderView is responsible for displaying
+  // a subframe in a different process from its parent page.
+  void set_is_subframe(bool is_subframe) {
+    is_subframe_ = is_subframe;
+  }
+
   const std::string& frame_tree() const {
     return frame_tree_;
   }
@@ -441,6 +421,14 @@ class CONTENT_EXPORT RenderViewHostImpl
   const AccessibilityNodeData& accessibility_tree_for_testing() {
     return accessibility_tree_;
   }
+
+  // Set accessibility callbacks.
+  void SetAccessibilityLayoutCompleteCallbackForTesting(
+      const base::Closure& callback);
+  void SetAccessibilityLoadCompleteCallbackForTesting(
+      const base::Closure& callback);
+  void SetAccessibilityOtherCallbackForTesting(
+      const base::Closure& callback);
 
   bool is_waiting_for_unload_ack_for_testing() {
     return is_waiting_for_unload_ack_;
@@ -516,6 +504,7 @@ class CONTENT_EXPORT RenderViewHostImpl
   void OnToggleFullscreen(bool enter_fullscreen);
   void OnOpenURL(const ViewHostMsg_OpenURL_Params& params);
   void OnDidContentsPreferredSizeChange(const gfx::Size& new_size);
+  void OnDidChangeScrollOffset();
   void OnDidChangeScrollbarsForMainFrame(bool has_horizontal_scrollbar,
                                          bool has_vertical_scrollbar);
   void OnDidChangeScrollOffsetPinningForMainFrame(bool is_pinned_to_left,
@@ -524,10 +513,8 @@ class CONTENT_EXPORT RenderViewHostImpl
   void OnSelectionChanged(const string16& text,
                           size_t offset,
                           const ui::Range& range);
-  void OnSelectionBoundsChanged(const gfx::Rect& start_rect,
-                                WebKit::WebTextDirection start_direction,
-                                const gfx::Rect& end_rect,
-                                WebKit::WebTextDirection end_direction);
+  void OnSelectionBoundsChanged(
+      const ViewHostMsg_SelectionBounds_Params& params);
   void OnPasteFromSelectionClipboard();
   void OnRouteCloseEvent();
   void OnRouteMessageEvent(const ViewMsg_PostMessage_Params& params);
@@ -583,11 +570,6 @@ class CONTENT_EXPORT RenderViewHostImpl
   void OnShowPopup(const ViewHostMsg_ShowPopup_Params& params);
 #endif
 
-#if defined(OS_ANDROID)
-  void OnDidChangeBodyBackgroundColor(SkColor color);
-  void OnStartContentIntent(const GURL& content_url);
-#endif
-
  private:
   friend class TestRenderViewHost;
 
@@ -636,6 +618,10 @@ class CONTENT_EXPORT RenderViewHostImpl
   // being rendered by another process.
   bool is_swapped_out_;
 
+  // Whether this RenderView is responsible for displaying a subframe in a
+  // different process from its parent page.
+  bool is_subframe_;
+
   // If we were asked to RunModal, then this will hold the reply_msg that we
   // must return to the renderer to unblock it.
   IPC::Message* run_modal_reply_msg_;
@@ -668,6 +654,11 @@ class CONTENT_EXPORT RenderViewHostImpl
   // ExecuteJavascriptInWebFrameCallbackResult and their corresponding
   // callbacks.
   std::map<int, JavascriptResultCallback> javascript_callbacks_;
+
+  // Accessibility callbacks.
+  base::Closure accessibility_layout_callback_;
+  base::Closure accessibility_load_callback_;
+  base::Closure accessibility_other_callback_;
 
   // True if the render view can be shut down suddenly.
   bool sudden_termination_allowed_;

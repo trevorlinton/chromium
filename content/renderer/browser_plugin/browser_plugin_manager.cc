@@ -25,8 +25,7 @@ BrowserPluginManager* BrowserPluginManager::Create(
 
 BrowserPluginManager::BrowserPluginManager(RenderViewImpl* render_view)
     : RenderViewObserver(render_view),
-      render_view_(render_view->AsWeakPtr()),
-      browser_plugin_counter_(0) {
+      render_view_(render_view->AsWeakPtr()) {
 }
 
 BrowserPluginManager::~BrowserPluginManager() {
@@ -46,13 +45,10 @@ BrowserPlugin* BrowserPluginManager::GetBrowserPlugin(int instance_id) const {
   return instances_.Lookup(instance_id);
 }
 
-void BrowserPluginManager::SetEmbedderFocus(const RenderViewImpl* embedder,
-                                            bool focused) {
+void BrowserPluginManager::UpdateFocusState() {
   IDMap<BrowserPlugin>::iterator iter(&instances_);
   while (!iter.IsAtEnd()) {
-    BrowserPlugin* browser_plugin = iter.GetCurrentValue();
-    if (browser_plugin->render_view() == embedder)
-      browser_plugin->SetEmbedderFocus(focused);
+    iter.GetCurrentValue()->UpdateGuestFocusState();
     iter.Advance();
   }
 }

@@ -11,6 +11,7 @@
 #include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/values.h"
+#include "chromeos/network/network_state.h"
 #include "chromeos/network/onc/onc_constants.h"
 #include "chromeos/network/onc/onc_signature.h"
 #include "chromeos/network/onc/onc_translation_tables.h"
@@ -26,10 +27,11 @@ namespace {
 scoped_ptr<base::Value> ConvertStringToValue(const std::string& str,
                                              base::Value::Type type) {
   base::Value* value;
-  if (type == base::Value::TYPE_STRING)
+  if (type == base::Value::TYPE_STRING) {
     value = base::Value::CreateStringValue(str);
-  else
+  } else {
     value = base::JSONReader::Read(str);
+  }
 
   if (value == NULL || value->GetType() != type) {
     delete value;
@@ -40,8 +42,8 @@ scoped_ptr<base::Value> ConvertStringToValue(const std::string& str,
 
 // This class implements the translation of properties from the given
 // |shill_dictionary| to a new ONC object of signature |onc_signature|. Using
-// recursive calls to TranslateShillServiceToONCPart, nested objects are
-// translated.
+// recursive calls to CreateTranslatedONCObject of new instances, nested objects
+// are translated.
 class ShillToONCTranslator {
  public:
   ShillToONCTranslator(const base::DictionaryValue& shill_dictionary,
@@ -57,6 +59,7 @@ class ShillToONCTranslator {
  private:
   void TranslateOpenVPN();
   void TranslateVPN();
+  void TranslateWiFi();
   void TranslateNetworkConfiguration();
 
   // Creates an ONC object from |shill_dictionary| according to the signature
@@ -64,9 +67,12 @@ class ShillToONCTranslator {
   // |onc_field_name|.
   void TranslateAndAddNestedObject(const std::string& onc_field_name);
 
-  // Copies all entries from |shill_dictionary_| to |onc_object_| for which a
-  // translation (shill_property_name) is defined by |onc_signature_|.
+  // Applies function CopyProperty to each field of |onc_object_|.
   void CopyPropertiesAccordingToSignature();
+
+  // If |shill_property_name| is defined in |field_signature|, copies this
+  // entry from |shill_dictionary_| to |onc_object_| if it exists.
+  void CopyProperty(const OncFieldSignature* field_signature);
 
   // If existent, translates the entry at |shill_property_name| in
   // |shill_dictionary_| using |table|. It is an error if no matching table
@@ -86,14 +92,17 @@ class ShillToONCTranslator {
 scoped_ptr<base::DictionaryValue>
 ShillToONCTranslator::CreateTranslatedONCObject() {
   onc_object_.reset(new base::DictionaryValue);
-  if (onc_signature_ == &kNetworkConfigurationSignature)
+  if (onc_signature_ == &kNetworkConfigurationSignature) {
     TranslateNetworkConfiguration();
-  else if (onc_signature_ == &kVPNSignature)
+  } else if (onc_signature_ == &kVPNSignature) {
     TranslateVPN();
-  else if (onc_signature_ == &kOpenVPNSignature)
+  } else if (onc_signature_ == &kOpenVPNSignature) {
     TranslateOpenVPN();
-  else
+  } else if (onc_signature_ == &kWiFiSignature) {
+    TranslateWiFi();
+  } else {
     CopyPropertiesAccordingToSignature();
+  }
   return onc_object_.Pass();
 }
 
@@ -110,7 +119,14 @@ void ShillToONCTranslator::TranslateOpenVPN() {
 
   for (const OncFieldSignature* field_signature = onc_signature_->fields;
        field_signature->onc_field_name != NULL; ++field_signature) {
-    const base::Value* shill_value;
+    const std::string& onc_field_name = field_signature->onc_field_name;
+    if (onc_field_name == vpn::kSaveCredentials ||
+        onc_field_name == vpn::kRemoteCertKU) {
+      CopyProperty(field_signature);
+      continue;
+    }
+
+    const base::Value* shill_value = NULL;
     if (field_signature->shill_property_name == NULL ||
         !shill_dictionary_->GetWithoutPathExpansion(
             field_signature->shill_property_name, &shill_value)) {
@@ -119,11 +135,7 @@ void ShillToONCTranslator::TranslateOpenVPN() {
 
     scoped_ptr<base::Value> translated;
     std::string shill_str;
-    const std::string& onc_field_name = field_signature->onc_field_name;
-    if (onc_field_name == vpn::kSaveCredentials ||
-        onc_field_name == vpn::kRemoteCertKU) {
-      translated.reset(shill_value->DeepCopy());
-    } else if (shill_value->GetAsString(&shill_str)) {
+    if (shill_value->GetAsString(&shill_str)) {
       // Shill wants all Provider/VPN fields to be strings. Translates these
       // strings back to the correct ONC type.
       translated = ConvertStringToValue(
@@ -132,32 +144,47 @@ void ShillToONCTranslator::TranslateOpenVPN() {
 
       if (translated.get() == NULL) {
         LOG(ERROR) << "Shill property '" << field_signature->shill_property_name
-                   << "' with value '" << shill_value
-                   << "' couldn't be converted to base::Value::Type "
+                   << "' with value " << *shill_value
+                   << " couldn't be converted to base::Value::Type "
                    << field_signature->value_signature->onc_type;
+      } else {
+        onc_object_->SetWithoutPathExpansion(onc_field_name,
+                                             translated.release());
       }
     } else {
       LOG(ERROR) << "Shill property '" << field_signature->shill_property_name
-                 << "' has value '" << shill_value
-                 << "', but expected a string";
+                 << "' has value " << *shill_value
+                 << ", but expected a string";
     }
-    onc_object_->SetWithoutPathExpansion(onc_field_name, translated.release());
   }
 }
 
 void ShillToONCTranslator::TranslateVPN() {
   TranslateWithTableAndSet(flimflam::kProviderTypeProperty, kVPNTypeTable,
-                           kType);
+                           vpn::kType);
   CopyPropertiesAccordingToSignature();
 
   std::string vpn_type;
-  if (onc_object_->GetStringWithoutPathExpansion(kType, &vpn_type)) {
+  if (onc_object_->GetStringWithoutPathExpansion(vpn::kType,
+                                                 &vpn_type)) {
     if (vpn_type == vpn::kTypeL2TP_IPsec) {
       TranslateAndAddNestedObject(vpn::kIPsec);
       TranslateAndAddNestedObject(vpn::kL2TP);
     } else {
       TranslateAndAddNestedObject(vpn_type);
     }
+  }
+}
+
+void ShillToONCTranslator::TranslateWiFi() {
+  TranslateWithTableAndSet(flimflam::kTypeProperty, kNetworkTypeTable,
+                           network_config::kType);
+  CopyPropertiesAccordingToSignature();
+
+  std::string bssid;
+  if (shill_dictionary_->GetStringWithoutPathExpansion(flimflam::kWifiBSsid,
+                                                       &bssid)) {
+    onc_object_->SetStringWithoutPathExpansion(wifi::kBSSID, bssid);
   }
 }
 
@@ -173,26 +200,65 @@ void ShillToONCTranslator::TranslateAndAddNestedObject(
 }
 
 void ShillToONCTranslator::TranslateNetworkConfiguration() {
-  TranslateWithTableAndSet(flimflam::kTypeProperty, kNetworkTypeTable, kType);
+  TranslateWithTableAndSet(flimflam::kTypeProperty, kNetworkTypeTable,
+                           network_config::kType);
   CopyPropertiesAccordingToSignature();
 
   std::string network_type;
-  if (onc_object_->GetStringWithoutPathExpansion(kType, &network_type))
+  if (onc_object_->GetStringWithoutPathExpansion(network_config::kType,
+                                                 &network_type))
     TranslateAndAddNestedObject(network_type);
+
+  // Since Name is a read only field in Shill unless it's a VPN, it is copied
+  // here, but not when going the other direction (if it's not a VPN).
+  std::string name;
+  shill_dictionary_->GetStringWithoutPathExpansion(flimflam::kNameProperty,
+                                                   &name);
+  onc_object_->SetStringWithoutPathExpansion(network_config::kName, name);
+
+  std::string state;
+  if (shill_dictionary_->GetStringWithoutPathExpansion(flimflam::kStateProperty,
+                                                       &state)) {
+    std::string onc_state = connection_state::kNotConnected;
+    if (NetworkState::StateIsConnected(state)) {
+      onc_state = connection_state::kConnected;
+    } else if (NetworkState::StateIsConnecting(state)) {
+      onc_state = connection_state::kConnecting;
+    }
+    onc_object_->SetStringWithoutPathExpansion(network_config::kConnectionState,
+                                               onc_state);
+  }
 }
 
 void ShillToONCTranslator::CopyPropertiesAccordingToSignature() {
   for (const OncFieldSignature* field_signature = onc_signature_->fields;
        field_signature->onc_field_name != NULL; ++field_signature) {
-    const base::Value* shill_value;
-    if (field_signature->shill_property_name == NULL ||
-        !shill_dictionary_->GetWithoutPathExpansion(
-            field_signature->shill_property_name, &shill_value)) {
-      continue;
-    }
-    onc_object_->SetWithoutPathExpansion(
-        field_signature->onc_field_name, shill_value->DeepCopy());
+    CopyProperty(field_signature);
   }
+}
+
+void ShillToONCTranslator::CopyProperty(
+    const OncFieldSignature* field_signature) {
+  const base::Value* shill_value = NULL;
+  if (field_signature->shill_property_name == NULL ||
+      !shill_dictionary_->GetWithoutPathExpansion(
+          field_signature->shill_property_name,
+          &shill_value)) {
+    return;
+  }
+
+  if (shill_value->GetType() != field_signature->value_signature->onc_type) {
+    LOG(ERROR) << "Shill property '" << field_signature->shill_property_name
+               << "' with value " << *shill_value
+               << " has base::Value::Type " << shill_value->GetType()
+               << " but ONC field '" << field_signature->onc_field_name
+               << "' requires type "
+               << field_signature->value_signature->onc_type << ".";
+    return;
+  }
+
+ onc_object_->SetWithoutPathExpansion(field_signature->onc_field_name,
+                                      shill_value->DeepCopy());
 }
 
 void ShillToONCTranslator::TranslateWithTableAndSet(
@@ -204,16 +270,13 @@ void ShillToONCTranslator::TranslateWithTableAndSet(
                                                         &shill_value)) {
     return;
   }
-
-  for (int i = 0; table[i].onc_value != NULL; ++i) {
-    if (shill_value != table[i].shill_value)
-      continue;
-    onc_object_->SetStringWithoutPathExpansion(onc_field_name,
-                                               table[i].onc_value);
+  std::string onc_value;
+  if (TranslateStringToONC(table, shill_value, &onc_value)) {
+    onc_object_->SetStringWithoutPathExpansion(onc_field_name, onc_value);
     return;
   }
-  LOG(ERROR) << "Shill property '" << shill_property_name << "' with value '"
-             << shill_value << "' couldn't be translated to ONC";
+  LOG(ERROR) << "Shill property '" << shill_property_name << "' with value "
+             << shill_value << " couldn't be translated to ONC";
 }
 
 }  // namespace

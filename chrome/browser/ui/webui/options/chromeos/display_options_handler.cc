@@ -13,12 +13,10 @@
 #include "ash/shell.h"
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/string_number_conversions.h"
 #include "base/stringprintf.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/display/display_preferences.h"
-#include "chrome/browser/chromeos/display/overscan_calibrator.h"
-#include "chrome/common/pref_names.h"
 #include "chromeos/display/output_configurator.h"
 #include "content/public/browser/web_ui.h"
 #include "grit/generated_resources.h"
@@ -27,8 +25,17 @@
 #include "ui/gfx/rect.h"
 #include "ui/gfx/screen.h"
 
+using ash::internal::DisplayManager;
+
 namespace chromeos {
 namespace options {
+namespace {
+
+DisplayManager* GetDisplayManager() {
+  return ash::Shell::GetInstance()->display_manager();
+}
+
+}  // namespace
 
 DisplayOptionsHandler::DisplayOptionsHandler() {
   ash::Shell::GetScreen()->AddObserver(this);
@@ -53,20 +60,14 @@ void DisplayOptionsHandler::GetLocalizedValues(
       IDS_OPTIONS_SETTINGS_DISPLAY_OPTIONS_APPLY_RESULT));
   localized_strings->SetString("resolution", l10n_util::GetStringUTF16(
       IDS_OPTIONS_SETTINGS_DISPLAY_OPTIONS_RESOLUTION));
-  localized_strings->SetString(
-      "startCalibratingOverscan", l10n_util::GetStringUTF16(
-          IDS_OPTIONS_SETTINGS_DISPLAY_OPTIONS_START_CALIBRATING_OVERSCAN));
-  localized_strings->SetString(
-      "finishCalibratingOverscan", l10n_util::GetStringUTF16(
-          IDS_OPTIONS_SETTINGS_DISPLAY_OPTIONS_FINISH_CALIBRATING_OVERSCAN));
-  localized_strings->SetString(
-      "clearCalibratingOverscan", l10n_util::GetStringUTF16(
-          IDS_OPTIONS_SETTINGS_DISPLAY_OPTIONS_CLEAR_CALIBRATING_OVERSCAN));
+    localized_strings->SetString(
+        "startCalibratingOverscan", l10n_util::GetStringUTF16(
+            IDS_OPTIONS_SETTINGS_DISPLAY_OPTIONS_START_CALIBRATING_OVERSCAN));
 }
 
 void DisplayOptionsHandler::InitializePage() {
   DCHECK(web_ui());
-  UpdateDisplaySectionVisibility();
+  UpdateDisplaySectionVisibility(GetDisplayManager()->GetNumDisplays());
 }
 
 void DisplayOptionsHandler::RegisterMessages() {
@@ -86,22 +87,6 @@ void DisplayOptionsHandler::RegisterMessages() {
       "setDisplayLayout",
       base::Bind(&DisplayOptionsHandler::HandleDisplayLayout,
                  base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(
-      "startOverscanCalibration",
-      base::Bind(&DisplayOptionsHandler::HandleStartOverscanCalibration,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(
-      "finishOverscanCalibration",
-      base::Bind(&DisplayOptionsHandler::HandleFinishOverscanCalibration,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(
-      "clearOverscanCalibration",
-      base::Bind(&DisplayOptionsHandler::HandleClearOverscanCalibration,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(
-      "updateOverscanCalibration",
-      base::Bind(&DisplayOptionsHandler::HandleUpdateOverscanCalibration,
-                 base::Unretained(this)));
 }
 
 void DisplayOptionsHandler::OnDisplayBoundsChanged(
@@ -109,29 +94,50 @@ void DisplayOptionsHandler::OnDisplayBoundsChanged(
 }
 
 void DisplayOptionsHandler::OnDisplayAdded(const gfx::Display& new_display) {
-  UpdateDisplaySectionVisibility();
-  SendDisplayInfo();
+  UpdateDisplaySectionVisibility(GetDisplayManager()->GetNumDisplays());
+  SendAllDisplayInfo();
 }
 
 void DisplayOptionsHandler::OnDisplayRemoved(const gfx::Display& old_display) {
-  UpdateDisplaySectionVisibility();
-  SendDisplayInfo();
+  DisplayManager* display_manager = GetDisplayManager();
+  UpdateDisplaySectionVisibility(display_manager->GetNumDisplays() - 1);
+
+  std::vector<const gfx::Display*> displays;
+  for (size_t i = 0; i < display_manager->GetNumDisplays(); ++i) {
+    const gfx::Display* display = display_manager->GetDisplayAt(i);
+    if (display->id() != old_display.id())
+      displays.push_back(display);
+  }
+  SendDisplayInfo(displays);
 }
 
-void DisplayOptionsHandler::UpdateDisplaySectionVisibility() {
+void DisplayOptionsHandler::UpdateDisplaySectionVisibility(
+    size_t num_displays) {
+  DisplayManager* display_manager = GetDisplayManager();
+  size_t min_displays_to_show = display_manager->HasInternalDisplay() ? 2 : 1;
+
   chromeos::OutputState output_state =
       ash::Shell::GetInstance()->output_configurator()->output_state();
   base::FundamentalValue show_options(
-      output_state != chromeos::STATE_INVALID &&
-      output_state != chromeos::STATE_HEADLESS &&
-      output_state != chromeos::STATE_SINGLE);
+      num_displays >= min_displays_to_show ||
+      output_state == chromeos::STATE_DUAL_MIRROR);
   web_ui()->CallJavascriptFunction(
       "options.BrowserOptions.showDisplayOptions", show_options);
 }
 
-void DisplayOptionsHandler::SendDisplayInfo() {
-  ash::internal::DisplayManager* display_manager =
-      ash::Shell::GetInstance()->display_manager();
+void DisplayOptionsHandler::SendAllDisplayInfo() {
+  DisplayManager* display_manager = GetDisplayManager();
+
+  std::vector<const gfx::Display*> displays;
+  for (size_t i = 0; i < display_manager->GetNumDisplays(); ++i) {
+    displays.push_back(display_manager->GetDisplayAt(i));
+  }
+  SendDisplayInfo(displays);
+}
+
+void DisplayOptionsHandler::SendDisplayInfo(
+    const std::vector<const gfx::Display*> displays) {
+  DisplayManager* display_manager = GetDisplayManager();
   ash::DisplayController* display_controller =
       ash::Shell::GetInstance()->display_controller();
   chromeos::OutputConfigurator* output_configurator =
@@ -140,9 +146,9 @@ void DisplayOptionsHandler::SendDisplayInfo() {
       output_configurator->output_state() == chromeos::STATE_DUAL_MIRROR);
 
   int64 primary_id = ash::Shell::GetScreen()->GetPrimaryDisplay().id();
-  base::ListValue displays;
-  for (size_t i = 0; i < display_manager->GetNumDisplays(); ++i) {
-    const gfx::Display* display = display_manager->GetDisplayAt(i);
+  base::ListValue display_info;
+  for (size_t i = 0; i < displays.size(); ++i) {
+    const gfx::Display* display = displays[i];
     const gfx::Rect& bounds = display->bounds();
     base::DictionaryValue* js_display = new base::DictionaryValue();
     js_display->SetString("id", base::Int64ToString(display->id()));
@@ -153,59 +159,43 @@ void DisplayOptionsHandler::SendDisplayInfo() {
     js_display->SetString("name",
                           display_manager->GetDisplayNameFor(*display));
     js_display->SetBoolean("isPrimary", display->id() == primary_id);
-    js_display->SetBoolean("isInternal",
-                           display_manager->IsInternalDisplayId(display->id()));
-    base::DictionaryValue* js_insets = new base::DictionaryValue();
-    const gfx::Insets& insets =
-        display_controller->GetOverscanInsets(display->id());
-    js_insets->SetInteger("top", insets.top());
-    js_insets->SetInteger("left", insets.left());
-    js_insets->SetInteger("bottom", insets.bottom());
-    js_insets->SetInteger("right", insets.right());
-    js_display->Set("overscan", js_insets);
-    displays.Set(i, js_display);
+    js_display->SetBoolean("isInternal", display->IsInternal());
+    display_info.Set(i, js_display);
   }
 
   scoped_ptr<base::Value> layout_value(base::Value::CreateNullValue());
   scoped_ptr<base::Value> offset_value(base::Value::CreateNullValue());
   if (display_manager->GetNumDisplays() > 1) {
-    const gfx::Display secondary_display =
-        ash::ScreenAsh::GetSecondaryDisplay();
-    const ash::DisplayLayout& layout =
-        display_controller->GetLayoutForDisplay(secondary_display);
+    const ash::DisplayLayout layout =
+        display_controller->GetCurrentDisplayLayout();
     layout_value.reset(new base::FundamentalValue(layout.position));
     offset_value.reset(new base::FundamentalValue(layout.offset));
   }
 
   web_ui()->CallJavascriptFunction(
       "options.DisplayOptions.setDisplayInfo",
-      mirroring, displays, *layout_value.get(), *offset_value.get());
+      mirroring, display_info, *layout_value.get(), *offset_value.get());
 }
 
 void DisplayOptionsHandler::OnFadeOutForMirroringFinished(bool is_mirroring) {
-  // We use 'PRIMARY_ONLY' for non-mirroring state for now.
-  // TODO(mukai): fix this and support multiple display modes.
   chromeos::OutputState new_state =
-      is_mirroring ? STATE_DUAL_MIRROR : STATE_DUAL_PRIMARY_ONLY;
+      is_mirroring ? STATE_DUAL_MIRROR : STATE_DUAL_EXTENDED;
   ash::Shell::GetInstance()->output_configurator()->SetDisplayMode(new_state);
-  SendDisplayInfo();
+  SendAllDisplayInfo();
   // Not necessary to start fade-in animation.  OutputConfigurator will do that.
 }
 
 void DisplayOptionsHandler::OnFadeOutForDisplayLayoutFinished(
     int layout, int offset) {
-  const gfx::Display& secondary_display = ash::ScreenAsh::GetSecondaryDisplay();
-  if (secondary_display.is_valid())
-    SetDisplayLayoutPref(secondary_display, layout, offset);
-
-  SendDisplayInfo();
+  SetAndStoreDisplayLayoutPref(layout, offset);
+  SendAllDisplayInfo();
   ash::Shell::GetInstance()->output_configurator_animation()->
       StartFadeInAnimation();
 }
 
 void DisplayOptionsHandler::HandleDisplayInfo(
     const base::ListValue* unused_args) {
-  SendDisplayInfo();
+  SendAllDisplayInfo();
 }
 
 void DisplayOptionsHandler::HandleMirroring(const base::ListValue* args) {
@@ -235,8 +225,8 @@ void DisplayOptionsHandler::HandleSetPrimary(const base::ListValue* args) {
     return;
   }
 
-  SetPrimaryDisplayIDPref(display_id);
-  SendDisplayInfo();
+  SetAndStorePrimaryDisplayIDPref(display_id);
+  SendAllDisplayInfo();
 }
 
 void DisplayOptionsHandler::HandleDisplayLayout(const base::ListValue* args) {
@@ -244,7 +234,7 @@ void DisplayOptionsHandler::HandleDisplayLayout(const base::ListValue* args) {
   double offset = -1;
   if (!args->GetDouble(0, &layout) || !args->GetDouble(1, &offset)) {
     LOG(ERROR) << "Invalid parameter";
-    SendDisplayInfo();
+    SendAllDisplayInfo();
     return;
   }
   DCHECK_LE(ash::DisplayLayout::TOP, layout);
@@ -255,62 +245,6 @@ void DisplayOptionsHandler::HandleDisplayLayout(const base::ListValue* args) {
           base::Unretained(this),
           static_cast<int>(layout),
           static_cast<int>(offset)));
-}
-
-void DisplayOptionsHandler::HandleStartOverscanCalibration(
-    const base::ListValue* args) {
-  int64 display_id = gfx::Display::kInvalidDisplayID;
-  std::string id_value;
-  if (!args->GetString(0, &id_value)) {
-    LOG(ERROR) << "Can't find ID";
-    return;
-  }
-  if (!base::StringToInt64(id_value, &display_id) ||
-      display_id == gfx::Display::kInvalidDisplayID) {
-    LOG(ERROR) << "Invalid parameter: " << id_value;
-    return;
-  }
-
-  const gfx::Display& display = ash::ScreenAsh::GetDisplayForId(display_id);
-  DCHECK(display.is_valid());
-  ash::DisplayController* display_controller =
-      ash::Shell::GetInstance()->display_controller();
-  overscan_calibrator_.reset(new OverscanCalibrator(
-      display,
-      display_controller->GetOverscanInsets(display_id)));
-}
-
-void DisplayOptionsHandler::HandleFinishOverscanCalibration(
-    const base::ListValue* args) {
-  if (overscan_calibrator_.get()) {
-    overscan_calibrator_->Commit();
-    overscan_calibrator_.reset();
-  }
-  SendDisplayInfo();
-}
-
-void DisplayOptionsHandler::HandleClearOverscanCalibration(
-    const base::ListValue* args) {
-  if (overscan_calibrator_.get()) {
-    overscan_calibrator_->UpdateInsets(gfx::Insets());
-    overscan_calibrator_->Commit();
-  }
-  SendDisplayInfo();
-}
-
-void DisplayOptionsHandler::HandleUpdateOverscanCalibration(
-    const base::ListValue* args) {
-  if (!overscan_calibrator_.get())
-    return;
-
-  double top = 0, left = 0, bottom = 0, right = 0;
-  if (!args->GetDouble(0, &top) || !args->GetDouble(1, &left) ||
-      !args->GetDouble(2, &bottom) || !args->GetDouble(3, &right)) {
-    LOG(ERROR) << "Can't find overscan insets data.";
-    return;
-  }
-
-  overscan_calibrator_->UpdateInsets(gfx::Insets(top, left, bottom, right));
 }
 
 }  // namespace options

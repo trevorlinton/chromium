@@ -12,15 +12,15 @@
 #include "base/values.h"
 #include "chrome/browser/google/google_util.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/webui/chrome_url_data_manager.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/jstemplate_builder.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "grit/browser_resources.h"
 #include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/webui/jstemplate_builder.h"
+#include "ui/webui/web_ui_util.h"
 
 using content::BrowserThread;
 
@@ -102,7 +102,7 @@ void NTPResourceCache::CreateNewTabHTML() {
   localized_strings.SetString("bookmarkstitle",
       l10n_util::GetStringUTF16(IDS_ACCNAME_BOOKMARKS));
 
-  ChromeURLDataManager::DataSource::SetFontAndTextDirection(&localized_strings);
+  webui::SetFontAndTextDirection(&localized_strings);
 
   base::StringPiece new_tab_html(ResourceBundle::GetSharedInstance().
                                  GetRawDataResource(IDR_NEW_TAB_ANDROID_HTML));
@@ -123,7 +123,7 @@ void NTPResourceCache::CreateNewTabHTML() {
   // Inject the template data into the HTML so that it is available before any
   // layout is needed.
   std::string json_html;
-  jstemplate_builder::AppendJsonHtml(&localized_strings, &json_html);
+  webui::AppendJsonHtml(&localized_strings, &json_html);
 
   static const base::StringPiece template_data_placeholder(
       "<!-- template data placeholder -->");

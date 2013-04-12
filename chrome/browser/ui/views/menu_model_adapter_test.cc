@@ -5,10 +5,10 @@
 #include "base/callback.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/test/base/interactive_test_utils.h"
+#include "chrome/test/base/ui_controls.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "chrome/test/base/view_event_test_base.h"
 #include "ui/base/models/menu_model.h"
-#include "ui/ui_controls/ui_controls.h"
 #include "ui/views/controls/button/menu_button.h"
 #include "ui/views/controls/button/menu_button_listener.h"
 #include "ui/views/controls/menu/menu_controller.h"
@@ -107,7 +107,7 @@ class SubMenuModel : public CommonMenuModel {
       : showing_(false) {
   }
 
-  ~SubMenuModel() {
+  virtual ~SubMenuModel() {
   }
 
   bool showing() const {
@@ -132,12 +132,12 @@ class SubMenuModel : public CommonMenuModel {
     return ASCIIToUTF16("Item");
   }
 
-  virtual void MenuWillShow() {
+  virtual void MenuWillShow() OVERRIDE {
     showing_ = true;
   }
 
   // Called when the menu has been closed.
-  virtual void MenuClosed() {
+  virtual void MenuClosed() OVERRIDE {
     showing_ = false;
   }
 
@@ -151,7 +151,7 @@ class TopMenuModel : public CommonMenuModel {
   TopMenuModel() {
   }
 
-  ~TopMenuModel() {
+  virtual ~TopMenuModel() {
   }
 
   bool IsSubmenuShowing() {

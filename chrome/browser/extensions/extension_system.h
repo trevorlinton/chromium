@@ -9,6 +9,7 @@
 
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/time/default_clock.h"
 #include "chrome/browser/extensions/api/api_resource_manager.h"
 #include "chrome/browser/extensions/api/serial/serial_connection.h"
 #include "chrome/browser/extensions/api/socket/socket.h"
@@ -89,6 +90,9 @@ class ExtensionSystem : public ProfileKeyedService {
   // The rules store is created at startup.
   virtual StateStore* rules_store() = 0;
 
+  // The extension prefs.
+  virtual ExtensionPrefs* extension_prefs() = 0;
+
   // The ShellWindowGeometryCache is created at startup.
   virtual ShellWindowGeometryCache* shell_window_geometry_cache() = 0;
 
@@ -164,6 +168,7 @@ class ExtensionSystemImpl : public ExtensionSystem {
   virtual AlarmManager* alarm_manager() OVERRIDE;
   virtual StateStore* state_store() OVERRIDE;  // shared
   virtual StateStore* rules_store() OVERRIDE;  // shared
+  virtual ExtensionPrefs* extension_prefs() OVERRIDE;  // shared
   virtual ShellWindowGeometryCache* shell_window_geometry_cache()
       OVERRIDE;  // shared
   virtual LazyBackgroundTaskQueue* lazy_background_task_queue()
@@ -207,8 +212,10 @@ class ExtensionSystemImpl : public ExtensionSystem {
     // ProfileKeyedService implementation.
     virtual void Shutdown() OVERRIDE;
 
+    base::Clock* clock();
     StateStore* state_store();
     StateStore* rules_store();
+    ExtensionPrefs* extension_prefs();
     ShellWindowGeometryCache* shell_window_geometry_cache();
     ExtensionService* extension_service();
     ManagementPolicy* management_policy();
@@ -225,6 +232,7 @@ class ExtensionSystemImpl : public ExtensionSystem {
 
     // The services that are shared between normal and incognito profiles.
 
+    base::DefaultClock clock_;
     scoped_ptr<StateStore> state_store_;
     scoped_ptr<StateStore> rules_store_;
     scoped_ptr<ExtensionPrefs> extension_prefs_;

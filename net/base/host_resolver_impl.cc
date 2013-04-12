@@ -1016,17 +1016,24 @@ class HostResolverImpl::DnsTask : public base::SupportsWeakPtr<DnsTask> {
                              int net_error,
                              const DnsResponse* response) {
     DCHECK(transaction);
+    base::TimeDelta duration = base::TimeTicks::Now() - start_time;
     // Run |callback_| last since the owning Job will then delete this DnsTask.
     if (net_error != OK) {
-      DNS_HISTOGRAM("AsyncDNS.TransactionFailure",
-                    base::TimeTicks::Now() - start_time);
+      DNS_HISTOGRAM("AsyncDNS.TransactionFailure", duration);
       OnFailure(net_error, DnsResponse::DNS_PARSE_OK);
       return;
     }
 
     CHECK(response);
-    DNS_HISTOGRAM("AsyncDNS.TransactionSuccess",
-                  base::TimeTicks::Now() - start_time);
+    DNS_HISTOGRAM("AsyncDNS.TransactionSuccess", duration);
+    switch (transaction->GetType()) {
+      case dns_protocol::kTypeA:
+        DNS_HISTOGRAM("AsyncDNS.TransactionSuccess_A", duration);
+        break;
+      case dns_protocol::kTypeAAAA:
+        DNS_HISTOGRAM("AsyncDNS.TransactionSuccess_AAAA", duration);
+        break;
+    }
     AddressList addr_list;
     base::TimeDelta ttl;
     DnsResponse::Result result = response->ParseToAddressList(&addr_list, &ttl);
@@ -1398,6 +1405,20 @@ class HostResolverImpl::Job : public PrioritizedDispatcher::Job {
                           const AddressList& addr_list) {
     DCHECK(is_proc_running());
 
+    if (!resolver_->resolved_known_ipv6_hostname_ &&
+        net_error == OK &&
+        key_.address_family == ADDRESS_FAMILY_UNSPECIFIED) {
+      if (key_.hostname == "www.google.com") {
+        resolver_->resolved_known_ipv6_hostname_ = true;
+        bool got_ipv6_address = false;
+        for (size_t i = 0; i < addr_list.size(); ++i) {
+          if (addr_list[i].GetFamily() == ADDRESS_FAMILY_IPV6)
+            got_ipv6_address = true;
+        }
+        UMA_HISTOGRAM_BOOLEAN("Net.UnspecResolvedIPv6", got_ipv6_address);
+      }
+    }
+
     if (dns_task_error_ != OK) {
       base::TimeDelta duration = base::TimeTicks::Now() - start_time;
       if (net_error == OK) {
@@ -1470,6 +1491,18 @@ class HostResolverImpl::Job : public PrioritizedDispatcher::Job {
       return;
     }
     DNS_HISTOGRAM("AsyncDNS.ResolveSuccess", duration);
+    // Log DNS lookups based on |address_family|.
+    switch(key_.address_family) {
+      case ADDRESS_FAMILY_IPV4:
+        DNS_HISTOGRAM("AsyncDNS.ResolveSuccess_FAMILY_IPV4", duration);
+        break;
+      case ADDRESS_FAMILY_IPV6:
+        DNS_HISTOGRAM("AsyncDNS.ResolveSuccess_FAMILY_IPV6", duration);
+        break;
+      case ADDRESS_FAMILY_UNSPECIFIED:
+        DNS_HISTOGRAM("AsyncDNS.ResolveSuccess_FAMILY_UNSPEC", duration);
+        break;
+    }
 
     UmaAsyncDnsResolveStatus(RESOLVE_STATUS_DNS_SUCCESS);
     RecordTTL(ttl);
@@ -1640,14 +1673,15 @@ HostResolverImpl::HostResolverImpl(
       dispatcher_(job_limits),
       max_queued_jobs_(job_limits.total_jobs * 100u),
       proc_params_(proc_params),
+      net_log_(net_log),
       default_address_family_(ADDRESS_FAMILY_UNSPECIFIED),
       weak_ptr_factory_(this),
       probe_weak_ptr_factory_(this),
       received_dns_config_(false),
       num_dns_failures_(0),
       ipv6_probe_monitoring_(false),
-      additional_resolver_flags_(0),
-      net_log_(net_log) {
+      resolved_known_ipv6_hostname_(false),
+      additional_resolver_flags_(0) {
 
   DCHECK_GE(dispatcher_.num_priorities(), static_cast<size_t>(NUM_PRIORITIES));
 
@@ -2040,6 +2074,7 @@ void HostResolverImpl::TryServingAllJobsFromHosts() {
 }
 
 void HostResolverImpl::OnIPAddressChanged() {
+  resolved_known_ipv6_hostname_ = false;
   // Abandon all ProbeJobs.
   probe_weak_ptr_factory_.InvalidateWeakPtrs();
   if (cache_.get())
@@ -2095,7 +2130,14 @@ void HostResolverImpl::OnDNSChanged() {
 }
 
 bool HostResolverImpl::HaveDnsConfig() const {
-  return (dns_client_.get() != NULL) && (dns_client_->GetConfig() != NULL);
+  // Use DnsClient only if it's fully configured and there is no override by
+  // ScopedDefaultHostResolverProc.
+  // The alternative is to use NetworkChangeNotifier to override DnsConfig,
+  // but that would introduce construction order requirements for NCN and SDHRP.
+  return (dns_client_.get() != NULL) &&
+         (dns_client_->GetConfig() != NULL) &&
+         !(proc_params_.resolver_proc == NULL &&
+           HostResolverProc::GetDefault() != NULL);
 }
 
 void HostResolverImpl::OnDnsTaskResolve(int net_error) {

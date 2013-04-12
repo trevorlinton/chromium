@@ -9,6 +9,7 @@
 #define GL_GLEXT_PROTOTYPES 1
 #endif
 #include <GLES2/gl2ext.h>
+#include <GLES2/gl2extchromium.h>
 
 #include <algorithm>
 #include <set>
@@ -23,7 +24,6 @@
 #include "base/memory/singleton.h"
 #include "base/message_loop.h"
 #include "base/metrics/histogram.h"
-#include "base/string_tokenizer.h"
 #include "base/synchronization/lock.h"
 #include "gpu/command_buffer/client/gles2_implementation.h"
 #include "gpu/command_buffer/client/gles2_lib.h"
@@ -706,10 +706,6 @@ void WebGraphicsContext3DInProcessCommandBufferImpl::reshape(
   // ClearContext();
 
   gl_->ResizeCHROMIUM(width, height);
-
-#ifdef FLIP_FRAMEBUFFER_VERTICALLY
-  scanline_.reset(new uint8[width * 4]);
-#endif  // FLIP_FRAMEBUFFER_VERTICALLY
 }
 
 WebGLId WebGraphicsContext3DInProcessCommandBufferImpl::createCompositorTexture(
@@ -731,9 +727,10 @@ void WebGraphicsContext3DInProcessCommandBufferImpl::FlipVertically(
     uint8* framebuffer,
     unsigned int width,
     unsigned int height) {
-  uint8* scanline = scanline_.get();
-  if (!scanline)
+  if (width == 0)
     return;
+  scanline_.resize(width * 4);
+  uint8* scanline = &scanline_[0];
   unsigned int row_bytes = width * 4;
   unsigned int count = height / 2;
   for (unsigned int i = 0; i < count; i++) {

@@ -6,14 +6,14 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/string_split.h"
 #include "base/string_util.h"
 #include "base/stringprintf.h"
+#include "base/strings/string_split.h"
 #include "base/values.h"
-#include "chrome/browser/history/top_sites.h"
 #include "chrome/browser/extensions/extension_icon_manager.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
+#include "chrome/browser/history/top_sites.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/extension_resource.h"
 #include "chrome/common/url_constants.h"
@@ -53,10 +53,9 @@ class ExtensionIconColorManager : public ExtensionIconManager {
         handler_(handler) {}
   virtual ~ExtensionIconColorManager() {}
 
-  virtual void OnImageLoaded(const gfx::Image& image,
-                             const std::string& extension_id,
-                             int index) OVERRIDE {
-    ExtensionIconManager::OnImageLoaded(image, extension_id, index);
+  virtual void OnImageLoaded(const std::string& extension_id,
+                             const gfx::Image& image) OVERRIDE {
+    ExtensionIconManager::OnImageLoaded(extension_id, image);
     handler_->NotifyAppIconReady(extension_id);
   }
 
@@ -152,7 +151,7 @@ void FaviconWebUIHandler::HandleGetAppIconDominantColor(
       extension_id, false);
   if (!extension)
     return;
-  app_icon_color_manager_->LoadIcon(extension);
+  app_icon_color_manager_->LoadIcon(extension_service->profile(), extension);
 }
 
 void FaviconWebUIHandler::NotifyAppIconReady(const std::string& extension_id) {

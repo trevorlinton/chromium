@@ -32,6 +32,25 @@ void SetMockGamepads(const WebKit::WebGamepads& pads);
 // Disable logging to the console from the appcache system.
 void DisableAppCacheLogging();
 
+// Enable testing support in the devtools client.
+void EnableDevToolsFrontendTesting();
+
+// Returns the length of the local session history of a render view.
+int GetLocalSessionHistoryLength(RenderView* render_view);
+
+void SetAllowOSMesaImageTransportForTesting();
+
+// Do not require a user gesture for focus change events.
+void DoNotRequireUserGestureForFocusChanges();
+
+// Sync the current session history to the browser process.
+void SyncNavigationState(RenderView* render_view);
+
+// Sets the focus of the render view depending on |enable|. This only overrides
+// the state of the renderer, and does not sync the focus to the browser
+// process.
+void SetFocusAndActivate(RenderView* render_view, bool enable);
+
 }  // namespace content
 
 #endif  // CONTENT_PUBLIC_TEST_LAYOUTTEST_SUPPORT_H_

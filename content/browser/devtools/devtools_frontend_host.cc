@@ -31,8 +31,7 @@ void DevToolsClientHost::SetupDevToolsFrontendClient(
 DevToolsFrontendHost::DevToolsFrontendHost(
     WebContentsImpl* web_contents,
     DevToolsFrontendHostDelegate* delegate)
-    : RenderViewHostObserver(web_contents->GetRenderViewHost()),
-      web_contents_(web_contents),
+    : WebContentsObserver(web_contents),
       delegate_(delegate) {
 }
 
@@ -43,7 +42,7 @@ DevToolsFrontendHost::~DevToolsFrontendHost() {
 void DevToolsFrontendHost::DispatchOnInspectorFrontend(
     const std::string& message) {
   RenderViewHostImpl* target_host =
-      static_cast<RenderViewHostImpl*>(web_contents_->GetRenderViewHost());
+      static_cast<RenderViewHostImpl*>(web_contents()->GetRenderViewHost());
   target_host->Send(new DevToolsClientMsg_DispatchOnInspectorFrontend(
       target_host->GetRoutingID(),
       message));
@@ -63,6 +62,8 @@ bool DevToolsFrontendHost::OnMessageReceived(
     IPC_MESSAGE_HANDLER(DevToolsAgentMsg_DispatchOnInspectorBackend,
                         OnDispatchOnInspectorBackend)
     IPC_MESSAGE_HANDLER(DevToolsHostMsg_ActivateWindow, OnActivateWindow)
+    IPC_MESSAGE_HANDLER(DevToolsHostMsg_ChangeAttachedWindowHeight,
+                        OnChangeAttachedWindowHeight)
     IPC_MESSAGE_HANDLER(DevToolsHostMsg_CloseWindow, OnCloseWindow)
     IPC_MESSAGE_HANDLER(DevToolsHostMsg_MoveWindow, OnMoveWindow)
     IPC_MESSAGE_HANDLER(DevToolsHostMsg_RequestSetDockSide,
@@ -70,6 +71,10 @@ bool DevToolsFrontendHost::OnMessageReceived(
     IPC_MESSAGE_HANDLER(DevToolsHostMsg_OpenInNewTab, OnOpenInNewTab)
     IPC_MESSAGE_HANDLER(DevToolsHostMsg_Save, OnSave)
     IPC_MESSAGE_HANDLER(DevToolsHostMsg_Append, OnAppend)
+    IPC_MESSAGE_HANDLER(DevToolsHostMsg_RequestFileSystems,
+                        OnRequestFileSystems)
+    IPC_MESSAGE_HANDLER(DevToolsHostMsg_AddFileSystem, OnAddFileSystem)
+    IPC_MESSAGE_HANDLER(DevToolsHostMsg_RemoveFileSystem, OnRemoveFileSystem)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
@@ -83,6 +88,10 @@ void DevToolsFrontendHost::OnDispatchOnInspectorBackend(
 
 void DevToolsFrontendHost::OnActivateWindow() {
   delegate_->ActivateWindow();
+}
+
+void DevToolsFrontendHost::OnChangeAttachedWindowHeight(unsigned height) {
+  delegate_->ChangeAttachedWindowHeight(height);
 }
 
 void DevToolsFrontendHost::OnCloseWindow() {
@@ -108,6 +117,19 @@ void DevToolsFrontendHost::OnAppend(
     const std::string& url,
     const std::string& content) {
   delegate_->AppendToFile(url, content);
+}
+
+void DevToolsFrontendHost::OnRequestFileSystems() {
+  delegate_->RequestFileSystems();
+}
+
+void DevToolsFrontendHost::OnAddFileSystem() {
+  delegate_->AddFileSystem();
+}
+
+void DevToolsFrontendHost::OnRemoveFileSystem(
+    const std::string& file_system_path) {
+  delegate_->RemoveFileSystem(file_system_path);
 }
 
 void DevToolsFrontendHost::OnRequestSetDockSide(const std::string& side) {

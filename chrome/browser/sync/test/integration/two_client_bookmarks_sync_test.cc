@@ -146,7 +146,8 @@ IN_PROC_BROWSER_TEST_F(TwoClientBookmarksSyncTest, SC_AddFirstBMWithFavicon) {
 
   ASSERT_TRUE(bookmark != NULL);
   ASSERT_TRUE(GetClient(0)->AwaitMutualSyncCycleCompletion(GetClient(1)));
-  SetFavicon(0, bookmark, icon_url, CreateFavicon(SK_ColorWHITE));
+  SetFavicon(0, bookmark, icon_url, CreateFavicon(SK_ColorWHITE),
+             bookmarks_helper::FROM_UI);
   ASSERT_TRUE(GetClient(0)->AwaitMutualSyncCycleCompletion(GetClient(1)));
   ASSERT_TRUE(AllModelsMatchVerifier());
 }
@@ -175,16 +176,19 @@ IN_PROC_BROWSER_TEST_F(TwoClientBookmarksSyncTest, SC_SetFaviconHiDPI) {
   const BookmarkNode* bookmark0 = AddURL(0, kGenericURLTitle, page_url);
   ASSERT_TRUE(bookmark0 != NULL);
   ASSERT_TRUE(GetClient(0)->AwaitMutualSyncCycleCompletion(GetClient(1)));
-  SetFavicon(0, bookmark0, icon_url1, CreateFavicon(SK_ColorWHITE));
+  SetFavicon(0, bookmark0, icon_url1, CreateFavicon(SK_ColorWHITE),
+             bookmarks_helper::FROM_UI);
   ASSERT_TRUE(GetClient(0)->AwaitMutualSyncCycleCompletion(GetClient(1)));
   ASSERT_TRUE(AllModelsMatchVerifier());
 
   const BookmarkNode* bookmark1 = GetUniqueNodeByURL(1, page_url);
-  SetFavicon(1, bookmark1, icon_url1, CreateFavicon(SK_ColorBLUE));
+  SetFavicon(1, bookmark1, icon_url1, CreateFavicon(SK_ColorBLUE),
+             bookmarks_helper::FROM_UI);
   ASSERT_TRUE(GetClient(1)->AwaitMutualSyncCycleCompletion(GetClient(0)));
   ASSERT_TRUE(AllModelsMatchVerifier());
 
-  SetFavicon(0, bookmark0, icon_url2, CreateFavicon(SK_ColorGREEN));
+  SetFavicon(0, bookmark0, icon_url2, CreateFavicon(SK_ColorGREEN),
+             bookmarks_helper::FROM_UI);
   ASSERT_TRUE(GetClient(0)->AwaitMutualSyncCycleCompletion(GetClient(1)));
   ASSERT_TRUE(AllModelsMatchVerifier());
 }

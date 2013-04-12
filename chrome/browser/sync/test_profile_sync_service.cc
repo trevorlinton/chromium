@@ -26,9 +26,10 @@ using syncer::sessions::SyncSessionSnapshot;
 using syncer::sessions::SyncSourceInfo;
 using syncer::UserShare;
 using syncer::syncable::Directory;
-using syncer::NIGORI;
 using syncer::DEVICE_INFO;
 using syncer::EXPERIMENTS;
+using syncer::NIGORI;
+using syncer::PRIORITY_PREFERENCES;
 
 namespace browser_sync {
 
@@ -103,6 +104,7 @@ void SyncBackendHostForProfileSyncTest::UpdateCredentials(
 void SyncBackendHostForProfileSyncTest::RequestConfigureSyncer(
     syncer::ConfigureReason reason,
     syncer::ModelTypeSet types_to_config,
+    syncer::ModelTypeSet failed_types,
     const syncer::ModelSafeRoutingInfo& routing_info,
     const base::Callback<void(syncer::ModelTypeSet)>& ready_task,
     const base::Closure& retry_callback) {
@@ -136,7 +138,7 @@ void SyncBackendHostForProfileSyncTest
     if (!directory->InitialSyncEndedForType(NIGORI)) {
       syncer::TestUserShare::CreateRoot(NIGORI, user_share);
 
-      // A side effect of adding the NIGORI mode (normally done by the
+      // A side effect of adding the NIGORI node (normally done by the
       // syncer) is a decryption attempt, which will fail the first time.
     }
 
@@ -146,6 +148,10 @@ void SyncBackendHostForProfileSyncTest
 
     if (!directory->InitialSyncEndedForType(EXPERIMENTS)) {
       syncer::TestUserShare::CreateRoot(EXPERIMENTS, user_share);
+    }
+
+    if (!directory->InitialSyncEndedForType(PRIORITY_PREFERENCES)) {
+      syncer::TestUserShare::CreateRoot(PRIORITY_PREFERENCES, user_share);
     }
 
     restored_types = syncer::ModelTypeSet::All();
@@ -173,9 +179,8 @@ void SyncBackendHostForProfileSyncTest::EmitOnInvalidatorStateChange(
 }
 
 void SyncBackendHostForProfileSyncTest::EmitOnIncomingInvalidation(
-    const syncer::ObjectIdInvalidationMap& invalidation_map,
-    const syncer::IncomingInvalidationSource source) {
-  frontend()->OnIncomingInvalidation(invalidation_map, source);
+    const syncer::ObjectIdInvalidationMap& invalidation_map) {
+  frontend()->OnIncomingInvalidation(invalidation_map);
 }
 
 void SyncBackendHostForProfileSyncTest::ContinueInitialization(

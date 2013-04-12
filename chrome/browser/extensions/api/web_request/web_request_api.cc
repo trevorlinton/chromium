@@ -10,8 +10,8 @@
 #include "base/bind_helpers.h"
 #include "base/json/json_writer.h"
 #include "base/metrics/histogram.h"
-#include "base/string_number_conversions.h"
 #include "base/string_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/time.h"
 #include "base/utf_string_conversions.h"
 #include "base/values.h"
@@ -19,7 +19,6 @@
 #include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/extensions/api/declarative_webrequest/request_stage.h"
 #include "chrome/browser/extensions/api/declarative_webrequest/webrequest_constants.h"
-#include "chrome/browser/extensions/api/declarative_webrequest/webrequest_rule.h"
 #include "chrome/browser/extensions/api/declarative_webrequest/webrequest_rules_registry.h"
 #include "chrome/browser/extensions/api/web_navigation/web_navigation_api_helpers.h"
 #include "chrome/browser/extensions/api/web_request/upload_data_presenter.h"
@@ -29,16 +28,15 @@
 #include "chrome/browser/extensions/event_router.h"
 #include "chrome/browser/extensions/extension_info_map.h"
 #include "chrome/browser/extensions/extension_prefs.h"
+#include "chrome/browser/extensions/extension_renderer_state.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_system.h"
-#include "chrome/browser/extensions/extension_tab_id_map.h"
 #include "chrome/browser/extensions/extension_warning_service.h"
 #include "chrome/browser/extensions/extension_warning_set.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/renderer_host/chrome_render_message_filter.h"
 #include "chrome/common/extensions/api/web_request.h"
-#include "chrome/common/extensions/event_filtering_info.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_messages.h"
@@ -49,6 +47,7 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/resource_request_info.h"
 #include "extensions/common/error_utils.h"
+#include "extensions/common/event_filtering_info.h"
 #include "extensions/common/url_pattern.h"
 #include "googleurl/src/gurl.h"
 #include "grit/generated_resources.h"
@@ -95,12 +94,6 @@ const char* const kWebRequestEvents[] = {
 };
 
 #define ARRAYEND(array) (array + arraysize(array))
-
-// Access to request body (crbug.com/91191/) is currently only enabled in dev
-// and canary channels.
-bool IsWebRequestBodyDataAccessEnabled() {
-  return Feature::GetCurrentChannel() <= VersionInfo::CHANNEL_DEV;
-}
 
 const char* GetRequestStageAsString(
     ExtensionWebRequestEventRouter::EventTypes type) {
@@ -160,17 +153,21 @@ void ExtractRequestInfoDetails(net::URLRequest* request,
                                int64* parent_frame_id,
                                int* tab_id,
                                int* window_id,
+                               int* render_process_host_id,
+                               int* routing_id,
                                ResourceType::Type* resource_type) {
   if (!request->GetUserData(NULL))
     return;
 
   const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request);
-  ExtensionTabIdMap::GetInstance()->GetTabAndWindowId(
+  ExtensionRendererState::GetInstance()->GetTabAndWindowId(
       info->GetChildID(), info->GetRouteID(), tab_id, window_id);
   *frame_id = info->GetFrameID();
   *is_main_frame = info->IsMainFrame();
   *parent_frame_id = info->GetParentFrameID();
   *parent_is_main_frame = info->ParentIsMainFrame();
+  *render_process_host_id = info->GetChildID();
+  *routing_id = info->GetRouteID();
 
   // Restrict the resource type to the values we care about.
   if (helpers::IsRelevantResourceType(info->GetResourceType()))
@@ -191,10 +188,13 @@ void ExtractRequestInfo(net::URLRequest* request, DictionaryValue* out) {
   int parent_frame_id_for_extension = -1;
   int tab_id = -1;
   int window_id = -1;
+  int render_process_host_id = -1;
+  int routing_id = -1;
   ResourceType::Type resource_type = ResourceType::LAST_TYPE;
   ExtractRequestInfoDetails(request, &is_main_frame, &frame_id,
                             &parent_is_main_frame, &parent_frame_id, &tab_id,
-                            &window_id, &resource_type);
+                            &window_id, &render_process_host_id, &routing_id,
+                            &resource_type);
   frame_id_for_extension = GetFrameId(is_main_frame, frame_id);
   parent_frame_id_for_extension = GetFrameId(parent_is_main_frame,
                                              parent_frame_id);
@@ -369,12 +369,17 @@ void SendOnMessageEventOnUI(
 // Represents a single unique listener to an event, along with whatever filter
 // parameters and extra_info_spec were specified at the time the listener was
 // added.
+// NOTE(benjhayden) New APIs should not use this sub_event_name trick! It does
+// not play well with event pages. See downloads.onDeterminingFilename and
+// ExtensionDownloadsEventRouter for an alternative approach.
 struct ExtensionWebRequestEventRouter::EventListener {
   std::string extension_id;
   std::string extension_name;
   std::string sub_event_name;
   RequestFilter filter;
   int extra_info_spec;
+  int target_process_id;
+  int target_route_id;
   base::WeakPtr<IPC::Sender> ipc_sender;
   mutable std::set<uint64> blocked_requests;
 
@@ -525,8 +530,7 @@ bool ExtensionWebRequestEventRouter::ExtraInfoSpec::InitFromValue(
     else if (str == "asyncBlocking")
       *extra_info_spec |= ASYNC_BLOCKING;
     else if (str == "requestBody")
-      *extra_info_spec |=
-          IsWebRequestBodyDataAccessEnabled() ? REQUEST_BODY : 0;
+      *extra_info_spec |= REQUEST_BODY;
     else
       return false;
 
@@ -1060,7 +1064,7 @@ void ExtensionWebRequestEventRouter::ClearPendingCallbacks(
 }
 
 bool ExtensionWebRequestEventRouter::DispatchEvent(
-    void* profile,
+    void* profile_id,
     net::URLRequest* request,
     const std::vector<const EventListener*>& listeners,
     const ListValue& args) {
@@ -1079,7 +1083,8 @@ bool ExtensionWebRequestEventRouter::DispatchEvent(
       dict->Remove(keys::kResponseHeadersKey, NULL);
 
     extensions::EventRouter::DispatchEvent(
-        (*it)->ipc_sender.get(), (*it)->extension_id, (*it)->sub_event_name,
+        (*it)->ipc_sender.get(), profile_id,
+        (*it)->extension_id, (*it)->sub_event_name,
         args_filtered.Pass(), GURL(),
         extensions::EventRouter::USER_GESTURE_UNKNOWN,
         extensions::EventFilteringInfo());
@@ -1135,6 +1140,8 @@ bool ExtensionWebRequestEventRouter::AddEventListener(
     const std::string& sub_event_name,
     const RequestFilter& filter,
     int extra_info_spec,
+    int target_process_id,
+    int target_route_id,
     base::WeakPtr<IPC::Sender> ipc_sender) {
   if (!IsWebRequestEvent(event_name))
     return false;
@@ -1146,6 +1153,8 @@ bool ExtensionWebRequestEventRouter::AddEventListener(
   listener.filter = filter;
   listener.extra_info_spec = extra_info_spec;
   listener.ipc_sender = ipc_sender;
+  listener.target_process_id = target_process_id;
+  listener.target_route_id = target_route_id;
 
   if (listeners_[profile][event_name].count(listener) != 0u) {
     // This is likely an abuse of the API by a malicious extension.
@@ -1216,11 +1225,14 @@ bool ExtensionWebRequestEventRouter::IsPageLoad(
   int64 parent_frame_id = -1;
   int tab_id = -1;
   int window_id = -1;
+  int render_process_host_id = -1;
+  int routing_id = -1;
   ResourceType::Type resource_type = ResourceType::LAST_TYPE;
 
   ExtractRequestInfoDetails(request, &is_main_frame, &frame_id,
                             &parent_is_main_frame, &parent_frame_id,
-                            &tab_id, &window_id, &resource_type);
+                            &tab_id, &window_id, &render_process_host_id,
+                            &routing_id, &resource_type);
 
   return resource_type == ResourceType::MAIN_FRAME;
 }
@@ -1257,12 +1269,17 @@ void ExtensionWebRequestEventRouter::GetMatchingListenersImpl(
     const GURL& url,
     int tab_id,
     int window_id,
+    int render_process_host_id,
+    int routing_id,
     ResourceType::Type resource_type,
     bool is_async_request,
     bool is_request_from_extension,
     int* extra_info_spec,
     std::vector<const ExtensionWebRequestEventRouter::EventListener*>*
         matching_listeners) {
+  ExtensionRendererState::WebViewInfo web_view_info;
+  bool is_guest = ExtensionRendererState::GetInstance()->
+      GetWebViewInfo(render_process_host_id, routing_id, &web_view_info);
   std::set<EventListener>& listeners = listeners_[profile][event_name];
   for (std::set<EventListener>::iterator it = listeners.begin();
        it != listeners.end(); ++it) {
@@ -1271,6 +1288,10 @@ void ExtensionWebRequestEventRouter::GetMatchingListenersImpl(
       // via a call to RemoveEventListener. For now, just skip it.
       continue;
     }
+
+    if (is_guest && (it->target_process_id != render_process_host_id||
+                     it->target_route_id != routing_id))
+      continue;
 
     if (!it->filter.urls.is_empty() && !it->filter.urls.MatchesURL(url))
       continue;
@@ -1325,12 +1346,15 @@ ExtensionWebRequestEventRouter::GetMatchingListeners(
   int64 parent_frame_id = -1;
   int tab_id = -1;
   int window_id = -1;
+  int render_process_host_id = -1;
+  int routing_id = -1;
   ResourceType::Type resource_type = ResourceType::LAST_TYPE;
   const GURL& url = request->url();
 
   ExtractRequestInfoDetails(request, &is_main_frame, &frame_id,
                             &parent_is_main_frame, &parent_frame_id,
-                            &tab_id, &window_id, &resource_type);
+                            &tab_id, &window_id, &render_process_host_id,
+                            &routing_id, &resource_type);
 
   std::vector<const ExtensionWebRequestEventRouter::EventListener*>
       matching_listeners;
@@ -1345,14 +1369,16 @@ ExtensionWebRequestEventRouter::GetMatchingListeners(
 
   GetMatchingListenersImpl(
       profile, extension_info_map, false, event_name, url,
-      tab_id, window_id, resource_type, is_async_request,
-      is_request_from_extension, extra_info_spec, &matching_listeners);
+      tab_id, window_id, render_process_host_id, routing_id, resource_type,
+      is_async_request, is_request_from_extension, extra_info_spec,
+      &matching_listeners);
   void* cross_profile = GetCrossProfile(profile);
   if (cross_profile) {
     GetMatchingListenersImpl(
         cross_profile, extension_info_map, true, event_name, url, tab_id,
-        window_id, resource_type, is_async_request, is_request_from_extension,
-        extra_info_spec, &matching_listeners);
+        window_id, render_process_host_id, routing_id, resource_type,
+        is_async_request, is_request_from_extension, extra_info_spec,
+        &matching_listeners);
   }
 
   return matching_listeners;
@@ -1471,7 +1497,7 @@ void ExtensionWebRequestEventRouter::SendMessages(
           base::Bind(&SendOnMessageEventOnUI,
                      profile,
                      (*delta)->extension_id,
-                     base::Passed(argument.Pass())));
+                     base::Passed(&argument)));
     }
   }
 }
@@ -1611,10 +1637,8 @@ bool ExtensionWebRequestEventRouter::ProcessDeclarativeRules(
         std::make_pair(rules_registries_[cross_profile].get(), true));
   }
 
-  // TODO(mpcomplete): Eventually we'll want to turn this on, but for now,
-  // we won't block startup for declarative webrequest. I want to measure
-  // its effect first.
-#if defined(BLOCK_STARTUP_ON_DECLARATIVE_RULES)
+  // The following block is experimentally enabled and its impact on load time
+  // logged with UMA Extensions.NetworkDelayRegistryLoad. crbug.com/175961
   for (RelevantRegistries::iterator i = relevant_registries.begin();
        i != relevant_registries.end(); ++i) {
     extensions::WebRequestRulesRegistry* rules_registry = i->first;
@@ -1636,7 +1660,6 @@ bool ExtensionWebRequestEventRouter::ProcessDeclarativeRules(
       return true;
     }
   }
-#endif
 
   base::Time start = base::Time::Now();
 
@@ -1648,7 +1671,7 @@ bool ExtensionWebRequestEventRouter::ProcessDeclarativeRules(
     helpers::EventResponseDeltas result =
         rules_registry->CreateDeltas(
             extension_info_map,
-            extensions::WebRequestRule::RequestData(
+            extensions::WebRequestData(
                 request, request_stage, original_response_headers),
             i->second);
 
@@ -1678,6 +1701,10 @@ void ExtensionWebRequestEventRouter::OnRulesRegistryReady(
     return;
 
   BlockedRequest& blocked_request = blocked_requests_[request_id];
+  base::TimeDelta block_time =
+      base::Time::Now() - blocked_request.blocking_time;
+  UMA_HISTOGRAM_TIMES("Extensions.NetworkDelayRegistryLoad", block_time);
+
   ProcessDeclarativeRules(profile, blocked_request.extension_info_map,
                           event_name, blocked_request.request, request_stage,
                           blocked_request.original_response_headers);
@@ -1706,7 +1733,7 @@ void ExtensionWebRequestEventRouter::ClearSignaled(uint64 request_id,
   iter->second &= ~event_type;
 }
 
-// Special QuotaLimitHeuristic for WebRequestHandlerBehaviorChanged.
+// Special QuotaLimitHeuristic for WebRequestHandlerBehaviorChangedFunction.
 //
 // Each call of webRequest.handlerBehaviorChanged() clears the in-memory cache
 // of WebKit at the time of the next page load (top level navigation event).
@@ -1778,7 +1805,6 @@ void ClearCacheQuotaHeuristic::OnPageLoad(Bucket* bucket) {
 
 bool WebRequestAddEventListener::RunImpl() {
   // Argument 0 is the callback, which we don't use here.
-
   ExtensionWebRequestEventRouter::RequestFilter filter;
   DictionaryValue* value = NULL;
   error_.clear();
@@ -1835,7 +1861,7 @@ bool WebRequestAddEventListener::RunImpl() {
       ExtensionWebRequestEventRouter::GetInstance()->AddEventListener(
           profile_id(), extension_id(), extension_name,
           event_name, sub_event_name, filter,
-          extra_info_spec, ipc_sender_weak());
+          extra_info_spec, -1, -1, ipc_sender_weak());
   EXTENSION_FUNCTION_VALIDATE(success);
 
   helpers::ClearCacheOnNavigation();
@@ -1955,7 +1981,7 @@ bool WebRequestEventHandled::RunImpl() {
   return true;
 }
 
-void WebRequestHandlerBehaviorChanged::GetQuotaLimitHeuristics(
+void WebRequestHandlerBehaviorChangedFunction::GetQuotaLimitHeuristics(
     QuotaLimitHeuristics* heuristics) const {
   QuotaLimitHeuristic::Config config = {
     // See web_request.json for current value.
@@ -1969,7 +1995,7 @@ void WebRequestHandlerBehaviorChanged::GetQuotaLimitHeuristics(
   heuristics->push_back(heuristic);
 }
 
-void WebRequestHandlerBehaviorChanged::OnQuotaExceeded(
+void WebRequestHandlerBehaviorChangedFunction::OnQuotaExceeded(
     const std::string& violation_error) {
   // Post warning message.
   ExtensionWarningSet warnings;
@@ -1985,7 +2011,7 @@ void WebRequestHandlerBehaviorChanged::OnQuotaExceeded(
   Run();
 }
 
-bool WebRequestHandlerBehaviorChanged::RunImpl() {
+bool WebRequestHandlerBehaviorChangedFunction::RunImpl() {
   helpers::ClearCacheOnNavigation();
   return true;
 }

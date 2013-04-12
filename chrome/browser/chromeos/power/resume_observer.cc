@@ -4,21 +4,20 @@
 
 #include "chrome/browser/chromeos/power/resume_observer.h"
 
-#include "chrome/browser/extensions/system/system_api.h"
+#include "chrome/browser/extensions/api/system_private/system_private_api.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/root_power_manager_client.h"
 
 namespace chromeos {
 
 ResumeObserver::ResumeObserver() {
-  DBusThreadManager::Get()->GetRootPowerManagerClient()->AddObserver(this);
+  DBusThreadManager::Get()->GetPowerManagerClient()->AddObserver(this);
 }
 
 ResumeObserver::~ResumeObserver() {
-  DBusThreadManager::Get()->GetRootPowerManagerClient()->RemoveObserver(this);
+  DBusThreadManager::Get()->GetPowerManagerClient()->RemoveObserver(this);
 }
 
-void ResumeObserver::OnResume(const base::TimeDelta& sleep_duration) {
+void ResumeObserver::SystemResumed(const base::TimeDelta& sleep_duration) {
   extensions::DispatchWokeUpEvent();
 }
 

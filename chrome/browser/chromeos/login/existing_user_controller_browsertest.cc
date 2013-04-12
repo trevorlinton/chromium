@@ -26,6 +26,7 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "chromeos/dbus/mock_dbus_thread_manager.h"
 #include "chromeos/dbus/mock_session_manager_client.h"
+#include "chromeos/dbus/mock_shill_manager_client.h"
 #include "google_apis/gaia/mock_url_fetcher_factory.h"
 #include "grit/generated_resources.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -67,6 +68,7 @@ class MockLoginDisplay : public LoginDisplay {
   MOCK_METHOD1(ShowErrorScreen, void(LoginDisplay::SigninError));
   MOCK_METHOD1(ShowGaiaPasswordChanged, void(const std::string&));
   MOCK_METHOD1(ShowPasswordChangedDialog, void(bool));
+  MOCK_METHOD1(ShowSigninUI, void(const std::string&));
   MOCK_METHOD1(OnBeforeUserRemoved, void(const std::string&));
   MOCK_METHOD1(OnUserRemoved, void(const std::string&));
 
@@ -130,6 +132,18 @@ class ExistingUserControllerTest : public CrosInProcessBrowserTest {
         new MockDBusThreadManager;
     EXPECT_CALL(*mock_dbus_thread_manager, GetSystemBus())
         .WillRepeatedly(Return(reinterpret_cast<dbus::Bus*>(NULL)));
+    EXPECT_CALL(*mock_dbus_thread_manager, GetIBusInputContextClient())
+        .WillRepeatedly(
+            Return(reinterpret_cast<IBusInputContextClient*>(NULL)));
+    EXPECT_CALL(*mock_dbus_thread_manager->mock_shill_manager_client(),
+                GetProperties(_))
+        .Times(AnyNumber());
+    EXPECT_CALL(*mock_dbus_thread_manager->mock_shill_manager_client(),
+                AddPropertyChangedObserver(_))
+        .Times(AnyNumber());
+    EXPECT_CALL(*mock_dbus_thread_manager->mock_shill_manager_client(),
+                RemovePropertyChangedObserver(_))
+        .Times(AnyNumber());
     DBusThreadManager::InitializeForTesting(mock_dbus_thread_manager);
     CrosInProcessBrowserTest::SetUpInProcessBrowserTestFixture();
     cros_mock_->InitStatusAreaMocks();
@@ -172,6 +186,9 @@ class ExistingUserControllerTest : public CrosInProcessBrowserTest {
         .Times(AnyNumber())
         .WillRepeatedly(Return(false));
     EXPECT_CALL(*mock_user_manager_.user_manager(), IsLoggedInAsDemoUser())
+        .Times(AnyNumber())
+        .WillRepeatedly(Return(false));
+    EXPECT_CALL(*mock_user_manager_.user_manager(), IsLoggedInAsPublicAccount())
         .Times(AnyNumber())
         .WillRepeatedly(Return(false));
     EXPECT_CALL(*mock_user_manager_.user_manager(), IsSessionStarted())
@@ -244,13 +261,15 @@ class ExistingUserControllerTest : public CrosInProcessBrowserTest {
 };
 
 IN_PROC_BROWSER_TEST_F(ExistingUserControllerTest, ExistingUserLogin) {
+  // This is disabled twice: once right after signin but before checking for
+  // auto-enrollment, and again after doing an ownership status check.
   EXPECT_CALL(*mock_login_display_, SetUIEnabled(false))
-      .Times(1);
+      .Times(2);
   EXPECT_CALL(*mock_login_utils_, CreateAuthenticator(_))
       .Times(1)
       .WillOnce(WithArg<0>(Invoke(CreateAuthenticator)));
   EXPECT_CALL(*mock_login_utils_,
-              PrepareProfile(kUsername, _, kPassword, false, _, _, _))
+              PrepareProfile(kUsername, _, kPassword, _, _, _))
       .Times(1)
       .WillOnce(InvokeWithoutArgs(&profile_prepared_cb_,
                                   &base::Callback<void(void)>::Run));
@@ -265,7 +284,7 @@ IN_PROC_BROWSER_TEST_F(ExistingUserControllerTest, ExistingUserLogin) {
   EXPECT_CALL(*mock_login_display_, OnFadeOut())
       .Times(1);
   EXPECT_CALL(*mock_login_display_host_,
-              StartWizard(WizardController::kUserImageScreenName, NULL))
+              StartWizard(WizardController::kTermsOfServiceScreenName, NULL))
       .Times(0);
   EXPECT_CALL(*mock_user_manager_.user_manager(), IsCurrentUserNew())
       .Times(AnyNumber())
@@ -285,10 +304,15 @@ IN_PROC_BROWSER_TEST_F(ExistingUserControllerTest, AutoEnrollAfterSignIn) {
   EXPECT_CALL(*mock_user_manager_.user_manager(), IsCurrentUserNew())
       .Times(AnyNumber())
       .WillRepeatedly(Return(false));
-  // The UI should not be disabled if the enrollment screen is shown after
-  // the user signs in.
-  EXPECT_CALL(*mock_login_display_, SetUIEnabled(_))
-      .Times(0);
+  // The order of these expected calls matters: the UI if first disabled
+  // during the login sequence, and is enabled again for the enrollment screen.
+  Sequence uiEnabledSequence;
+  EXPECT_CALL(*mock_login_display_, SetUIEnabled(false))
+      .Times(1)
+      .InSequence(uiEnabledSequence);
+  EXPECT_CALL(*mock_login_display_, SetUIEnabled(true))
+      .Times(1)
+      .InSequence(uiEnabledSequence);
   existing_user_controller()->DoAutoEnrollment();
   existing_user_controller()->CompleteLogin(kUsername, kPassword);
   content::RunAllPendingInMessageLoop();
@@ -299,18 +323,20 @@ IN_PROC_BROWSER_TEST_F(ExistingUserControllerTest,
   EXPECT_CALL(*mock_login_display_host_,
               StartWizard(WizardController::kEnterpriseEnrollmentScreenName, _))
       .Times(0);
-  // That will be sign in of a new user and (legacy) registration screen is
-  // activated. In a real WizardController instance that is immediately switched
-  // to image screen but this tests uses MockLoginDisplayHost instead.
+  // This will be the first sign-in of a new user, which may cause the (legacy)
+  // registration to be activated. A real WizardController instance immediately
+  // advances to the Terms of Service or user image screen but this test uses
+  // MockLoginDisplayHost Instead.
   EXPECT_CALL(*mock_login_display_host_,
               StartWizard(AnyOf(WizardController::kRegistrationScreenName,
-                                WizardController::kUserImageScreenName), _))
+                                WizardController::kTermsOfServiceScreenName),
+                          NULL))
       .Times(1);
   EXPECT_CALL(*mock_login_utils_, CreateAuthenticator(_))
       .Times(1)
       .WillOnce(WithArg<0>(Invoke(CreateAuthenticatorNewUser)));
   EXPECT_CALL(*mock_login_utils_,
-              PrepareProfile(kNewUsername, _, kPassword, false, _, _, _))
+              PrepareProfile(kNewUsername, _, kPassword, _, _, _))
       .Times(1)
       .WillOnce(InvokeWithoutArgs(&profile_prepared_cb_,
                                   &base::Callback<void(void)>::Run));
@@ -327,8 +353,10 @@ IN_PROC_BROWSER_TEST_F(ExistingUserControllerTest,
   // The order of these expected calls matters: the UI if first disabled
   // during the login sequence, and is enabled again after login completion.
   Sequence uiEnabledSequence;
+  // This is disabled twice: once right after signin but before checking for
+  // auto-enrollment, and again after doing an ownership status check.
   EXPECT_CALL(*mock_login_display_, SetUIEnabled(false))
-      .Times(1)
+      .Times(2)
       .InSequence(uiEnabledSequence);
   EXPECT_CALL(*mock_login_display_, SetUIEnabled(true))
       .Times(1)

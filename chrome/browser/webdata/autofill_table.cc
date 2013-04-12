@@ -14,7 +14,7 @@
 #include "base/guid.h"
 #include "base/i18n/case_conversion.h"
 #include "base/logging.h"
-#include "base/string_number_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/time.h"
 #include "base/tuple.h"
 #include "chrome/browser/autofill/autofill_country.h"
@@ -1866,7 +1866,8 @@ bool AutofillTable::MigrateToVersion33ProfilesBasedOnFirstName() {
 // we need a migration.  It is possible that the new |autofill_profiles|
 // schema is in place because the table was newly created when migrating
 // from a pre-version-22 database.
-bool AutofillTable::MigrateToVersion34ProfilesBasedOnCountryCode() {
+bool AutofillTable::MigrateToVersion34ProfilesBasedOnCountryCode(
+    const std::string& app_locale) {
   if (!db_->DoesColumnExist("autofill_profiles", "country_code")) {
     if (!db_->Execute("ALTER TABLE autofill_profiles ADD COLUMN "
                       "country_code VARCHAR")) {
@@ -1883,7 +1884,6 @@ bool AutofillTable::MigrateToVersion34ProfilesBasedOnCountryCode() {
                                   "SET country_code=? WHERE guid=?"));
 
       string16 country = s.ColumnString16(1);
-      std::string app_locale = AutofillCountry::ApplicationLocale();
       update_s.BindString(0, AutofillCountry::GetCountryCode(country,
                                                              app_locale));
       update_s.BindString(1, s.ColumnString(0));

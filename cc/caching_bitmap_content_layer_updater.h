@@ -7,6 +7,7 @@
 
 #include "base/compiler_specific.h"
 #include "cc/bitmap_content_layer_updater.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 
 namespace cc {
 
@@ -21,7 +22,7 @@ class CachingBitmapContentLayerUpdater
                                float contents_width_scale,
                                float contents_height_scale,
                                gfx::Rect& resulting_opaque_rect,
-                               RenderingStats&) OVERRIDE;
+                               RenderingStats*) OVERRIDE;
 
   bool pixelsDidChange() const;
 

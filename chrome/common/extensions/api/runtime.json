@@ -5,6 +5,7 @@
 [
   {
     "namespace": "runtime",
+    "dependencies": [ "events", "tabs" ],
     "documentation_permissions_required": ["runtime"],
     "types": [
       {
@@ -179,14 +180,6 @@
             "type": "string",
             "name": "appName",
             "description": "The name of the registered app to connect to."
-          },
-          {
-            "name": "connectionMessage",
-            "description": "The object that will be passed to the registered native app on connection.",
-            "type": "object",
-            "additionalProperties": {
-              "type": "any"
-            }
           }
         ],
         "returns": {
@@ -292,7 +285,7 @@
       {
         "name": "onSuspendCanceled",
         "type": "function",
-        "description": "Sent after onSuspend() to indicate that the app won't be unloaded after all."
+        "description": "Sent after onSuspend to indicate that the app won't be unloaded after all."
       },
       {
         "name": "onUpdateAvailable",
@@ -312,6 +305,12 @@
             "description": "The manifest details of the available update."
           }
         ]
+      },
+      {
+        "name": "onBrowserUpdateAvailable",
+        "type": "function",
+        "description": "Fired when a Chrome update is available, but isn't installed immediately because a browser restart is required.",
+        "parameters": []
       },
       {
         "name": "onConnect",

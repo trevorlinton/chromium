@@ -14,8 +14,8 @@
 #include "content/common/gpu/client/command_buffer_proxy_impl.h"
 #include "content/common/gpu/gpu_process_launch_causes.h"
 #include "googleurl/src/gurl.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebGraphicsContext3D.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebString.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebGraphicsContext3D.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebView.h"
 #include "ui/gl/gpu_preference.h"
 #include "ui/gfx/native_widget_types.h"
@@ -31,6 +31,7 @@ class TransferBuffer;
 namespace gles2 {
 class GLES2CmdHelper;
 class GLES2Implementation;
+class GLES2Interface;
 }
 }
 
@@ -103,7 +104,7 @@ class WebGraphicsContext3DCommandBufferImpl
 
   CommandBufferProxyImpl* GetCommandBufferProxy() { return command_buffer_; }
 
-  gpu::gles2::GLES2Implementation* GetImplementation() { return gl_; }
+  gpu::gles2::GLES2Implementation* GetImplementation() { return real_gl_; }
 
   // Return true if GPU process reported context lost or there was a
   // problem communicating with the GPU process.
@@ -758,7 +759,9 @@ class WebGraphicsContext3DCommandBufferImpl
   CommandBufferProxyImpl* command_buffer_;
   gpu::gles2::GLES2CmdHelper* gles2_helper_;
   gpu::TransferBuffer* transfer_buffer_;
-  gpu::gles2::GLES2Implementation* gl_;
+  gpu::gles2::GLES2Interface* gl_;
+  gpu::gles2::GLES2Implementation* real_gl_;
+  gpu::gles2::GLES2Interface* trace_gl_;
   Error last_error_;
   int frame_number_;
   bool bind_generates_resources_;

@@ -1,4 +1,4 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright (c) 2013 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -26,6 +26,18 @@ class UI_EXPORT GestureConfiguration {
     return default_radius_;
   }
   static void set_default_radius(int radius) { default_radius_ = radius; }
+  static int fling_max_cancel_to_down_time_in_ms() {
+    return fling_max_cancel_to_down_time_in_ms_;
+  }
+  static void set_fling_max_cancel_to_down_time_in_ms(int val) {
+    fling_max_cancel_to_down_time_in_ms_ = val;
+  }
+  static int fling_max_tap_gap_time_in_ms() {
+    return fling_max_tap_gap_time_in_ms_;
+  }
+  static void set_fling_max_tap_gap_time_in_ms(int val) {
+    fling_max_tap_gap_time_in_ms_ = val;
+  }
   static double long_press_time_in_seconds() {
     return long_press_time_in_seconds_;
   }
@@ -167,6 +179,12 @@ class UI_EXPORT GestureConfiguration {
   static void set_fling_velocity_cap(float val) {
     fling_velocity_cap_ = val;
   }
+  static int tab_scrub_activation_delay_in_ms() {
+    return tab_scrub_activation_delay_in_ms_;
+  }
+  static void set_tab_scrub_activation_delay_in_ms(int val) {
+    tab_scrub_activation_delay_in_ms_ = val;
+  }
 
  private:
   // These are listed in alphabetical order ignoring underscores, to
@@ -185,6 +203,14 @@ class UI_EXPORT GestureConfiguration {
   // The maximum allowed size for the radius of a touch region used in
   // forming an ET_GESTURE_TAP event.
   static int max_radius_;
+
+  // Maximum time between a GestureFlingCancel and a mousedown such that the
+  // mousedown is considered associated with the cancel event.
+  static int fling_max_cancel_to_down_time_in_ms_;
+
+  // Maxium time between a mousedown/mouseup pair that is considered to be a
+  // suppressable tap.
+  static int fling_max_tap_gap_time_in_ms_;
 
   static double long_press_time_in_seconds_;
   static double semi_long_press_time_in_seconds_;
@@ -209,6 +235,7 @@ class UI_EXPORT GestureConfiguration {
   static double rail_start_proportion_;
   static float fling_acceleration_curve_coefficients_[NumAccelParams];
   static float fling_velocity_cap_;
+  static int tab_scrub_activation_delay_in_ms_;
 
   DISALLOW_COPY_AND_ASSIGN(GestureConfiguration);
 };

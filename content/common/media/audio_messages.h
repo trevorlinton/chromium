@@ -11,7 +11,7 @@
 #include "base/shared_memory.h"
 #include "base/sync_socket.h"
 #include "content/common/content_export.h"
-#include "content/common/media/audio_param_traits.h"
+#include "content/common/media/media_param_traits.h"
 #include "ipc/ipc_message_macros.h"
 #include "media/audio/audio_buffers_state.h"
 #include "media/audio/audio_input_ipc.h"
@@ -63,6 +63,13 @@ IPC_MESSAGE_CONTROL4(AudioInputMsg_NotifyStreamCreated,
                      uint32 /* length */)
 #endif
 
+// Notification message sent from AudioRendererHost to renderer after an output
+// device change has occurred.
+IPC_MESSAGE_CONTROL3(AudioMsg_NotifyDeviceChanged,
+                     int /* stream_id */,
+                     int /* new_buffer_size */,
+                     int /* new_sample_rate */)
+
 // Notification message sent from AudioRendererHost to renderer for state
 // update after the renderer has requested a Create/Start/Close.
 IPC_MESSAGE_CONTROL2(AudioMsg_NotifyStreamStateChanged,
@@ -85,10 +92,9 @@ IPC_MESSAGE_CONTROL2(AudioInputMsg_NotifyDeviceStarted,
 // Messages sent from the renderer to the browser.
 
 // Request that got sent to browser for creating an audio output stream
-IPC_MESSAGE_CONTROL3(AudioHostMsg_CreateStream,
+IPC_MESSAGE_CONTROL2(AudioHostMsg_CreateStream,
                      int /* stream_id */,
-                     media::AudioParameters, /* params */
-                     int /* input_channels */)
+                     media::AudioParameters /* params */)
 
 // Request that got sent to browser for creating an audio input stream
 IPC_MESSAGE_CONTROL4(AudioInputHostMsg_CreateStream,

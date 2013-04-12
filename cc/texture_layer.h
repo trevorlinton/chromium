@@ -5,8 +5,12 @@
 #ifndef CC_TEXTURE_LAYER_H_
 #define CC_TEXTURE_LAYER_H_
 
+#include <string>
+
+#include "base/callback.h"
 #include "cc/cc_export.h"
 #include "cc/layer.h"
+#include "cc/texture_mailbox.h"
 
 namespace WebKit {
 class WebGraphicsContext3D;
@@ -24,6 +28,9 @@ public:
     // are driven by an external process.
     static scoped_refptr<TextureLayer> create(TextureLayerClient*);
 
+    // Used when mailbox names are specified instead of texture IDs.
+    static scoped_refptr<TextureLayer> createForMailbox();
+
     void clearClient() { m_client = 0; }
 
     virtual scoped_ptr<LayerImpl> createLayerImpl(LayerTreeImpl* treeImpl) OVERRIDE;
@@ -31,8 +38,8 @@ public:
     // Sets whether this texture should be Y-flipped at draw time. Defaults to true.
     void setFlipped(bool);
 
-    // Sets a UV transform to be used at draw time. Defaults to (0, 0, 1, 1).
-    void setUVRect(const gfx::RectF&);
+    // Sets a UV transform to be used at draw time. Defaults to (0, 0) and (1, 1).
+    void setUV(gfx::PointF topLeft, gfx::PointF bottomRight);
 
     // Sets an opacity value per vertex. It will be multiplied by the layer opacity value.
     void setVertexOpacity(float bottomLeft, float topLeft, float topRight, float bottomRight);
@@ -48,25 +55,32 @@ public:
     // Code path for plugins which supply their own texture ID.
     void setTextureId(unsigned);
 
+    // Code path for plugins which supply their own texture ID.
+    void setTextureMailbox(const TextureMailbox&);
+
     void willModifyTexture();
 
     virtual void setNeedsDisplayRect(const gfx::RectF&) OVERRIDE;
 
     virtual void setLayerTreeHost(LayerTreeHost*) OVERRIDE;
     virtual bool drawsContent() const OVERRIDE;
-    virtual void update(ResourceUpdateQueue&, const OcclusionTracker*, RenderingStats&) OVERRIDE;
+    virtual void update(ResourceUpdateQueue&, const OcclusionTracker*, RenderingStats*) OVERRIDE;
     virtual void pushPropertiesTo(LayerImpl*) OVERRIDE;
     virtual bool blocksPendingCommit() const OVERRIDE;
 
+    virtual bool canClipSelf() const OVERRIDE;
+
 protected:
-    explicit TextureLayer(TextureLayerClient*);
+    TextureLayer(TextureLayerClient*, bool usesMailbox);
     virtual ~TextureLayer();
 
 private:
     TextureLayerClient* m_client;
+    bool m_usesMailbox;
 
     bool m_flipped;
-    gfx::RectF m_uvRect;
+    gfx::PointF m_uvTopLeft;
+    gfx::PointF m_uvBottomRight;
     // [bottom left, top left, top right, bottom right]
     float m_vertexOpacity[4];
     bool m_premultipliedAlpha;
@@ -75,6 +89,8 @@ private:
     bool m_contentCommitted;
 
     unsigned m_textureId;
+    TextureMailbox m_textureMailbox;
+    bool m_ownMailbox;
 };
 
 }

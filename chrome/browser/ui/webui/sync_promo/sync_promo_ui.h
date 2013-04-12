@@ -8,16 +8,20 @@
 #include "content/public/browser/web_ui_controller.h"
 
 class Profile;
-class PrefServiceSyncable;
+class PrefRegistrySyncable;
 
 // The Web UI handler for chrome://signin.
 class SyncPromoUI : public content::WebUIController {
  public:
+  // Please keep this in sync with enums in sync_promo_trial.cc.
   enum Source {
     SOURCE_START_PAGE = 0, // This must be first.
     SOURCE_NTP_LINK,
     SOURCE_MENU,
     SOURCE_SETTINGS,
+    SOURCE_EXTENSION_INSTALL_BUBBLE,
+    SOURCE_WEBSTORE_INSTALL,
+    SOURCE_APP_LAUNCHER,
     SOURCE_UNKNOWN, // This must be last.
   };
 
@@ -46,7 +50,7 @@ class SyncPromoUI : public content::WebUIController {
   static void SetUserSkippedSyncPromo(Profile* profile);
 
   // Registers the preferences the Sync Promo UI needs.
-  static void RegisterUserPrefs(PrefServiceSyncable* prefs);
+  static void RegisterUserPrefs(PrefRegistrySyncable* registry);
 
   // Returns the sync promo URL wth the given arguments in the query.
   // |next_page| is the URL to navigate to when the user completes or skips the
@@ -71,6 +75,9 @@ class SyncPromoUI : public content::WebUIController {
   // chrome should use the ClientLogin flow.  This function will return true
   // only for platforms where |ENABLE_ONE_CLICK_SIGNIN| is defined.
   static bool UseWebBasedSigninFlow();
+
+  // Forces UseWebBasedSigninFlow() to return true when set; used in tests only.
+  static void ForceWebBasedSigninFlowForTesting(bool force);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(SyncPromoUI);

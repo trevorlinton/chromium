@@ -22,7 +22,6 @@
 #include "chrome/browser/browser_about_handler.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/webui/chrome_url_data_manager.h"
 #include "chrome/browser/ui/webui/options/autofill_options_handler.h"
 #include "chrome/browser/ui/webui/options/browser_options_handler.h"
 #include "chrome/browser/ui/webui/options/clear_browser_data_handler.h"
@@ -36,6 +35,7 @@
 #include "chrome/browser/ui/webui/options/language_dictionary_overlay_handler.h"
 #include "chrome/browser/ui/webui/options/language_options_handler.h"
 #include "chrome/browser/ui/webui/options/manage_profile_handler.h"
+#include "chrome/browser/ui/webui/options/managed_user_passphrase_handler.h"
 #include "chrome/browser/ui/webui/options/managed_user_settings_handler.h"
 #include "chrome/browser/ui/webui/options/media_devices_selection_handler.h"
 #include "chrome/browser/ui/webui/options/media_galleries_handler.h"
@@ -44,11 +44,11 @@
 #include "chrome/browser/ui/webui/options/search_engine_manager_handler.h"
 #include "chrome/browser/ui/webui/options/startup_pages_handler.h"
 #include "chrome/browser/ui/webui/theme_source.h"
-#include "chrome/common/jstemplate_builder.h"
 #include "chrome/common/time_format.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_view_host.h"
+#include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_ui.h"
@@ -59,6 +59,8 @@
 #include "grit/theme_resources.h"
 #include "net/base/escape.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/webui/jstemplate_builder.h"
+#include "ui/webui/web_ui_util.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/system/pointer_device_observer.h"
@@ -68,8 +70,10 @@
 #include "chrome/browser/ui/webui/options/chromeos/core_chromeos_options_handler.h"
 #include "chrome/browser/ui/webui/options/chromeos/cros_language_options_handler.h"
 #include "chrome/browser/ui/webui/options/chromeos/display_options_handler.h"
+#include "chrome/browser/ui/webui/options/chromeos/display_overscan_handler.h"
 #include "chrome/browser/ui/webui/options/chromeos/internet_options_handler.h"
 #include "chrome/browser/ui/webui/options/chromeos/keyboard_handler.h"
+#include "chrome/browser/ui/webui/options/chromeos/kiosk_apps_handler.h"
 #include "chrome/browser/ui/webui/options/chromeos/language_chewing_handler.h"
 #include "chrome/browser/ui/webui/options/chromeos/language_hangul_handler.h"
 #include "chrome/browser/ui/webui/options/chromeos/language_mozc_handler.h"
@@ -101,17 +105,19 @@ namespace options {
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-class OptionsUIHTMLSource : public ChromeURLDataManager::DataSource {
+class OptionsUIHTMLSource : public content::URLDataSource {
  public:
   // The constructor takes over ownership of |localized_strings|.
   explicit OptionsUIHTMLSource(DictionaryValue* localized_strings);
 
-  // Called when the network layer has requested a resource underneath
-  // the path we registered.
-  virtual void StartDataRequest(const std::string& path,
-                                bool is_incognito,
-                                int request_id);
-  virtual std::string GetMimeType(const std::string&) const;
+  // content::URLDataSource implementation.
+  virtual std::string GetSource() OVERRIDE;
+  virtual void StartDataRequest(
+      const std::string& path,
+      bool is_incognito,
+      const content::URLDataSource::GotDataCallback& callback) OVERRIDE;
+  virtual std::string GetMimeType(const std::string&) const OVERRIDE;
+  virtual bool ShouldDenyXFrameOptions() const OVERRIDE;
 
  private:
   virtual ~OptionsUIHTMLSource();
@@ -122,23 +128,27 @@ class OptionsUIHTMLSource : public ChromeURLDataManager::DataSource {
   DISALLOW_COPY_AND_ASSIGN(OptionsUIHTMLSource);
 };
 
-OptionsUIHTMLSource::OptionsUIHTMLSource(DictionaryValue* localized_strings)
-    : DataSource(chrome::kChromeUISettingsFrameHost, MessageLoop::current()) {
+OptionsUIHTMLSource::OptionsUIHTMLSource(DictionaryValue* localized_strings) {
   DCHECK(localized_strings);
   localized_strings_.reset(localized_strings);
 }
 
-void OptionsUIHTMLSource::StartDataRequest(const std::string& path,
-                                            bool is_incognito,
-                                            int request_id) {
+std::string OptionsUIHTMLSource::GetSource() {
+  return chrome::kChromeUISettingsFrameHost;
+}
+
+void OptionsUIHTMLSource::StartDataRequest(
+    const std::string& path,
+    bool is_incognito,
+    const content::URLDataSource::GotDataCallback& callback) {
   scoped_refptr<base::RefCountedMemory> response_bytes;
-  SetFontAndTextDirection(localized_strings_.get());
+  webui::SetFontAndTextDirection(localized_strings_.get());
 
   if (path == kLocalizedStringsFile) {
     // Return dynamically-generated strings from memory.
-    jstemplate_builder::UseVersion2 version;
+    webui::UseVersion2 version;
     std::string strings_js;
-    jstemplate_builder::AppendJsonJS(localized_strings_.get(), &strings_js);
+    webui::AppendJsonJS(localized_strings_.get(), &strings_js);
     response_bytes = base::RefCountedString::TakeString(&strings_js);
   } else if (path == kOptionsBundleJsFile) {
     // Return (and cache) the options javascript code.
@@ -150,7 +160,7 @@ void OptionsUIHTMLSource::StartDataRequest(const std::string& path,
         LoadDataResourceBytes(IDR_OPTIONS_HTML);
   }
 
-  SendResponse(request_id, response_bytes);
+  callback.Run(response_bytes);
 }
 
 std::string OptionsUIHTMLSource::GetMimeType(const std::string& path) const {
@@ -158,6 +168,10 @@ std::string OptionsUIHTMLSource::GetMimeType(const std::string& path) const {
     return "application/javascript";
 
   return "text/html";
+}
+
+bool OptionsUIHTMLSource::ShouldDenyXFrameOptions() const {
+  return false;
 }
 
 OptionsUIHTMLSource::~OptionsUIHTMLSource() {}
@@ -253,6 +267,8 @@ OptionsUI::OptionsUI(content::WebUI* web_ui)
   AddOptionsPageUIHandler(localized_strings,
                           new LanguageDictionaryOverlayHandler());
   AddOptionsPageUIHandler(localized_strings, new ManageProfileHandler());
+  AddOptionsPageUIHandler(localized_strings,
+                          new ManagedUserPassphraseHandler());
   AddOptionsPageUIHandler(localized_strings, new ManagedUserSettingsHandler());
   AddOptionsPageUIHandler(localized_strings, new PasswordManagerHandler());
   AddOptionsPageUIHandler(localized_strings, new SearchEngineManagerHandler());
@@ -267,11 +283,15 @@ OptionsUI::OptionsUI(content::WebUI* web_ui)
                           new chromeos::options::BluetoothOptionsHandler());
   AddOptionsPageUIHandler(localized_strings,
                           new chromeos::options::DisplayOptionsHandler());
+  AddOptionsPageUIHandler(localized_strings,
+                          new chromeos::options::DisplayOverscanHandler());
   AddOptionsPageUIHandler(localized_strings, new InternetOptionsHandler());
   AddOptionsPageUIHandler(localized_strings,
                           new chromeos::options::LanguageChewingHandler());
   AddOptionsPageUIHandler(localized_strings,
                           new chromeos::options::KeyboardHandler());
+  AddOptionsPageUIHandler(localized_strings,
+                          new chromeos::options::KioskAppsHandler());
   AddOptionsPageUIHandler(localized_strings,
                           new chromeos::options::LanguageHangulHandler());
   AddOptionsPageUIHandler(localized_strings,
@@ -302,17 +322,17 @@ OptionsUI::OptionsUI(content::WebUI* web_ui)
 
   // Set up the chrome://settings-frame/ source.
   Profile* profile = Profile::FromWebUI(web_ui);
-  ChromeURLDataManager::AddDataSource(profile, html_source);
+  content::URLDataSource::Add(profile, html_source);
 
   // Set up the chrome://theme/ source.
   ThemeSource* theme = new ThemeSource(profile);
-  ChromeURLDataManager::AddDataSource(profile, theme);
+  content::URLDataSource::Add(profile, theme);
 
 #if defined(OS_CHROMEOS)
   // Set up the chrome://userimage/ source.
   chromeos::options::UserImageSource* user_image_source =
       new chromeos::options::UserImageSource();
-  ChromeURLDataManager::AddDataSource(profile, user_image_source);
+  content::URLDataSource::Add(profile, user_image_source);
 
   pointer_device_observer_.reset(
       new chromeos::system::PointerDeviceObserver());

@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "base/logging.h"
-#include "base/prefs/public/pref_service_base.h"
+#include "base/prefs/pref_service.h"
 #include "base/rand_util.h"
 #include "base/stl_util.h"
 #include "base/string_util.h"
@@ -42,6 +42,18 @@ static void LogUploadRequest(const GURL& url, const std::string& signature,
 
 };
 
+// static
+std::string AutofillDownloadManager::AutofillRequestTypeToString(
+    const AutofillRequestType type) {
+  switch (type) {
+    case AutofillDownloadManager::REQUEST_QUERY:
+      return "query";
+    case AutofillDownloadManager::REQUEST_UPLOAD:
+      return "upload";
+  }
+  return std::string();
+}
+
 struct AutofillDownloadManager::FormRequestData {
   std::vector<std::string> form_signatures;
   AutofillRequestType request_type;
@@ -58,8 +70,8 @@ AutofillDownloadManager::AutofillDownloadManager(BrowserContext* context,
       negative_upload_rate_(0),
       fetcher_id_for_unittest_(0) {
   DCHECK(observer_);
-  PrefServiceBase* preferences =
-      PrefServiceBase::FromBrowserContext(browser_context_);
+  PrefService* preferences =
+      PrefServiceFromBrowserContext(browser_context_);
   positive_upload_rate_ =
       preferences->GetDouble(prefs::kAutofillPositiveUploadRate);
   negative_upload_rate_ =
@@ -148,7 +160,7 @@ void AutofillDownloadManager::SetPositiveUploadRate(double rate) {
   positive_upload_rate_ = rate;
   DCHECK_GE(rate, 0.0);
   DCHECK_LE(rate, 1.0);
-  PrefServiceBase* preferences = PrefServiceBase::FromBrowserContext(
+  PrefService* preferences = PrefServiceFromBrowserContext(
       browser_context_);
   preferences->SetDouble(prefs::kAutofillPositiveUploadRate, rate);
 }
@@ -159,7 +171,7 @@ void AutofillDownloadManager::SetNegativeUploadRate(double rate) {
   negative_upload_rate_ = rate;
   DCHECK_GE(rate, 0.0);
   DCHECK_LE(rate, 1.0);
-  PrefServiceBase* preferences = PrefServiceBase::FromBrowserContext(
+  PrefService* preferences = PrefServiceFromBrowserContext(
       browser_context_);
   preferences->SetDouble(prefs::kAutofillNegativeUploadRate, rate);
 }
@@ -188,6 +200,11 @@ bool AutofillDownloadManager::StartRequest(
   fetcher->SetLoadFlags(net::LOAD_DO_NOT_SAVE_COOKIES |
                         net::LOAD_DO_NOT_SEND_COOKIES);
   fetcher->Start();
+
+  DVLOG(1) << "Sending AutofillDownloadManager "
+           << AutofillRequestTypeToString(request_data.request_type)
+           << " request: " << form_xml;
+
   return true;
 }
 
@@ -255,8 +272,7 @@ void AutofillDownloadManager::OnURLFetchComplete(
     return;
   }
   std::string type_of_request(
-      it->second.request_type == AutofillDownloadManager::REQUEST_QUERY ?
-          "query" : "upload");
+      AutofillRequestTypeToString(it->second.request_type));
   const int kHttpResponseOk = 200;
   const int kHttpInternalServerError = 500;
   const int kHttpBadGateway = 502;
@@ -298,10 +314,11 @@ void AutofillDownloadManager::OnURLFetchComplete(
                                     it->second.request_type,
                                     source->GetResponseCode());
   } else {
-    DVLOG(1) << "AutofillDownloadManager: " << type_of_request
-             << " request has succeeded";
     std::string response_body;
     source->GetResponseAsString(&response_body);
+    DVLOG(1) << "AutofillDownloadManager: " << type_of_request
+             << " request has succeeded with response body: "
+             << response_body;
     if (it->second.request_type == AutofillDownloadManager::REQUEST_QUERY) {
       CacheQueryRequest(it->second.form_signatures, response_body);
       observer_->OnLoadedServerPredictions(response_body);

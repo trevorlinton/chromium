@@ -19,13 +19,13 @@
 #include "base/memory/weak_ptr.h"
 #include "base/string16.h"
 #include "build/build_config.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebFileSystem.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebGraphicsContext3D.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebRect.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebContextMenuData.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebFileSystem.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebFrameClient.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebRect.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebPopupType.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebViewClient.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebGraphicsContext3D.h"
 #include "webkit/glue/webcursor.h"
 #include "webkit/plugins/npapi/webplugin_page_delegate.h"
 #include "webkit/tools/test_shell/mock_spellcheck.h"
@@ -236,10 +236,10 @@ class TestWebViewDelegate : public WebKit::WebViewClient,
 
   // webkit::npapi::WebPluginPageDelegate
   virtual webkit::npapi::WebPluginDelegate* CreatePluginDelegate(
-      const FilePath& url,
+      const base::FilePath& url,
       const std::string& mime_type) OVERRIDE;
   virtual WebKit::WebPlugin* CreatePluginReplacement(
-      const FilePath& file_path) OVERRIDE;
+      const base::FilePath& file_path) OVERRIDE;
   virtual void CreatedPluginWindow(
       gfx::PluginWindowHandle handle) OVERRIDE;
   virtual void WillDestroyPluginWindow(

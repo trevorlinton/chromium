@@ -4,13 +4,13 @@
 
 #include "chrome/browser/notifications/desktop_notifications_unittest.h"
 
+#include "base/prefs/testing_pref_service.h"
 #include "base/string_util.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/browser/notifications/balloon_notification_ui_manager.h"
 #include "chrome/browser/notifications/fake_balloon_view.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/test/base/testing_pref_service.h"
 #include "content/public/common/show_desktop_notification_params.h"
 
 #if defined(USE_ASH)
@@ -103,7 +103,7 @@ void DesktopNotificationsTest::SetUp() {
   active_desktop_monitor_.reset(new ActiveDesktopMonitor);
 #endif
 
-  chrome::RegisterLocalState(&local_state_);
+  chrome::RegisterLocalState(local_state_.registry());
   profile_.reset(new TestingProfile());
   ui_manager_.reset(new BalloonNotificationUIManager(&local_state_));
   balloon_collection_ = new MockBalloonCollection();

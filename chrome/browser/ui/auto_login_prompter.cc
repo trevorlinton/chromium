@@ -7,10 +7,9 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/string_split.h"
+#include "base/prefs/pref_service.h"
 #include "chrome/browser/api/infobars/infobar_service.h"
 #include "chrome/browser/google/google_url_tracker.h"
-#include "chrome/browser/prefs/pref_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/signin_manager.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
@@ -23,6 +22,7 @@
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "components/auto_login_parser/auto_login_parser.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_observer.h"
@@ -31,7 +31,6 @@
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/web_contents.h"
 #include "googleurl/src/gurl.h"
-#include "net/base/escape.h"
 #include "net/url_request/url_request.h"
 
 using content::BrowserThread;
@@ -87,11 +86,14 @@ void AutoLoginPrompter::ShowInfoBarIfPossible(net::URLRequest* request,
   // See if the response contains the X-Auto-Login header.  If so, this was
   // a request for a login page, and the server is allowing the browser to
   // suggest auto-login, if available.
-  std::string value;
-  request->GetResponseHeaderByName("X-Auto-Login", &value);
   Params params;
-  if (!ParseAutoLoginHeader(value, &params))
+  // Currently we only accept GAIA credentials in Chrome.
+  if (!components::auto_login::ParserHeaderInResponse(
+          request,
+          components::auto_login::ONLY_GOOGLE_COM,
+          &params.header)) {
     return;
+  }
 
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
@@ -99,42 +101,6 @@ void AutoLoginPrompter::ShowInfoBarIfPossible(net::URLRequest* request,
                  params, request->url(), child_id, route_id));
 }
 
-// static
-bool AutoLoginPrompter::ParseAutoLoginHeader(const std::string& input,
-                                             Params* output) {
-  // TODO(pliard): Investigate/fix potential internationalization issue. It
-  // seems that "account" from the x-auto-login header might contain non-ASCII
-  // characters.
-  if (input.empty())
-    return false;
-
-  std::vector<std::pair<std::string, std::string> > pairs;
-  if (!base::SplitStringIntoKeyValuePairs(input, '=', '&', &pairs))
-    return false;
-
-  // Parse the information from the |input| string.
-  Params params;
-  for (size_t i = 0; i < pairs.size(); ++i) {
-    const std::pair<std::string, std::string>& pair = pairs[i];
-    std::string unescaped_value(net::UnescapeURLComponent(
-          pair.second, net::UnescapeRule::URL_SPECIAL_CHARS));
-    if (pair.first == "realm") {
-      // Currently we only accept GAIA credentials.
-      if (unescaped_value != "com.google")
-        return false;
-      params.realm = unescaped_value;
-    } else if (pair.first == "account") {
-      params.account = unescaped_value;
-    } else if (pair.first == "args") {
-      params.args = unescaped_value;
-    }
-  }
-  if (params.realm.empty() || params.args.empty())
-    return false;
-
-  *output = params;
-  return true;
-}
 
 // static
 void AutoLoginPrompter::ShowInfoBarUIThread(Params params,
@@ -161,8 +127,8 @@ void AutoLoginPrompter::ShowInfoBarUIThread(Params params,
 
   // Make sure that |account|, if specified, matches the logged in user.
   // However, |account| is usually empty.
-  if (!params.username.empty() && !params.account.empty() &&
-      params.username != params.account)
+  if (!params.username.empty() && !params.header.account.empty() &&
+      params.username != params.header.account)
     return;
   // We can't add the infobar just yet, since we need to wait for the tab to
   // finish loading.  If we don't, the info bar appears and then disappears
@@ -175,8 +141,8 @@ void AutoLoginPrompter::Observe(int type,
                                 const content::NotificationSource& source,
                                 const content::NotificationDetails& details) {
   if (type == content::NOTIFICATION_LOAD_STOP) {
-  InfoBarService* infobar_service =
-      InfoBarService::FromWebContents(web_contents_);
+    InfoBarService* infobar_service =
+        InfoBarService::FromWebContents(web_contents_);
     // |infobar_service| is NULL for WebContents hosted in WebDialog.
     if (infobar_service)
       AutoLoginInfoBarDelegate::Create(infobar_service, params_);

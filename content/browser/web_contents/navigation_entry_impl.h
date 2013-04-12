@@ -20,6 +20,9 @@ class CONTENT_EXPORT NavigationEntryImpl
  public:
   static NavigationEntryImpl* FromNavigationEntry(NavigationEntry* entry);
 
+  // The value of bindings() before it is set during commit.
+  static int kInvalidBindings;
+
   NavigationEntryImpl();
   NavigationEntryImpl(SiteInstanceImpl* instance,
                       int page_id,
@@ -73,6 +76,13 @@ class CONTENT_EXPORT NavigationEntryImpl
   virtual base::Time GetTimestamp() const OVERRIDE;
   virtual void SetCanLoadLocalResources(bool allow) OVERRIDE;
   virtual bool GetCanLoadLocalResources() const OVERRIDE;
+  virtual void SetFrameToNavigate(const std::string& frame_name) OVERRIDE;
+  virtual const std::string& GetFrameToNavigate() const OVERRIDE;
+  virtual void SetExtraData(const std::string& key,
+                            const string16& data) OVERRIDE;
+  virtual bool GetExtraData(const std::string& key,
+                            string16* data) const OVERRIDE;
+  virtual void ClearExtraData(const std::string& key) OVERRIDE;
 
   void set_unique_id(int unique_id) {
     unique_id_ = unique_id;
@@ -87,6 +97,14 @@ class CONTENT_EXPORT NavigationEntryImpl
   void set_site_instance(SiteInstanceImpl* site_instance);
   SiteInstanceImpl* site_instance() const {
     return site_instance_.get();
+  }
+
+  // Remember the set of bindings granted to this NavigationEntry at the time
+  // of commit, to ensure that we do not grant it additional bindings if we
+  // navigate back to it in the future.  This can only be changed once.
+  void SetBindings(int bindings);
+  int bindings() const {
+    return bindings_;
   }
 
   void set_page_type(PageType page_type) {
@@ -189,6 +207,8 @@ class CONTENT_EXPORT NavigationEntryImpl
   // See the accessors above for descriptions.
   int unique_id_;
   scoped_refptr<SiteInstanceImpl> site_instance_;
+  // TODO(creis): Persist bindings_. http://crbug.com/173672.
+  int bindings_;
   PageType page_type_;
   GURL url_;
   Referrer referrer_;
@@ -264,6 +284,15 @@ class CONTENT_EXPORT NavigationEntryImpl
   // Set when this entry should be able to access local file:// resources. This
   // value is not needed after the entry commits and is not persisted.
   bool can_load_local_resources_;
+
+  // If not empty, the name of the frame to navigate. This field is not
+  // persisted, because it is currently only used in tests.
+  std::string frame_to_navigate_;
+
+  // Used to store extra data to support browser features. This member is not
+  // persisted, unless specific data is taken out/put back in at save/restore
+  // time (see TabNavigation for an example of this).
+  std::map<std::string, string16> extra_data_;
 
   bool is_dev_reload_;
   // Copy and assignment is explicitly allowed for this class.

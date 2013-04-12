@@ -54,12 +54,18 @@ HOME_DIR = os.environ["HOME"]
 X_LOCK_FILE_TEMPLATE = "/tmp/.X%d-lock"
 FIRST_X_DISPLAY_NUMBER = 20
 
-# Minimum amount of time to wait between relaunching processes.
-BACKOFF_TIME = 60
+# Amount of time to wait between relaunching processes.
+SHORT_BACKOFF_TIME = 5
+LONG_BACKOFF_TIME = 60
 
-# Maximum allowed consecutive times that a child process runs for less than
-# BACKOFF_TIME. This script exits if this limit is exceeded.
-MAX_LAUNCH_FAILURES = 10
+# How long a process must run in order not to be counted against the restart
+# thresholds.
+MINIMUM_PROCESS_LIFETIME = 60
+
+# Thresholds for switching from fast- to slow-restart and for giving up
+# trying to restart entirely.
+SHORT_BACKOFF_THRESHOLD = 5
+MAX_LAUNCH_FAILURES = SHORT_BACKOFF_THRESHOLD + 10
 
 # Globals needed by the atexit cleanup() handler.
 g_desktops = []
@@ -73,29 +79,41 @@ class Config:
     self.changed = False
 
   def load(self):
-    try:
-      settings_file = open(self.path, 'r')
-      self.data = json.load(settings_file)
-      self.changed = False
-      settings_file.close()
-    except Exception:
-      return False
-    return True
+    """Loads the config from file.
+
+    Raises:
+      IOError: Error reading data
+      ValueError: Error parsing JSON
+    """
+    settings_file = open(self.path, 'r')
+    self.data = json.load(settings_file)
+    self.changed = False
+    settings_file.close()
 
   def save(self):
+    """Saves the config to file.
+
+    Raises:
+      IOError: Error writing data
+      TypeError: Error serialising JSON
+    """
     if not self.changed:
-      return True
+      return
     old_umask = os.umask(0066)
     try:
       settings_file = open(self.path, 'w')
       settings_file.write(json.dumps(self.data, indent=2))
       settings_file.close()
-    except Exception:
-      return False
+      self.changed = False
     finally:
       os.umask(old_umask)
-    self.changed = False
-    return True
+
+  def save_and_log_errors(self):
+    """Calls self.save(), trapping and logging any errors."""
+    try:
+      self.save()
+    except (IOError, TypeError) as e:
+      logging.error("Failed to save config: " + str(e))
 
   def get(self, key):
     return self.data.get(key)
@@ -191,6 +209,7 @@ class Desktop:
     # Create clean environment for new session, so it is cleanly separated from
     # the user's console X session.
     self.child_env = {}
+
     for key in [
         "HOME",
         "LANG",
@@ -202,6 +221,26 @@ class Desktop:
         LOG_FILE_ENV_VAR]:
       if os.environ.has_key(key):
         self.child_env[key] = os.environ[key]
+
+    # Read from /etc/environment if it exists, as it is a standard place to
+    # store system-wide environment settings. During a normal login, this would
+    # typically be done by the pam_env PAM module, depending on the local PAM
+    # configuration.
+    env_filename = "/etc/environment"
+    try:
+      with open(env_filename, "r") as env_file:
+        for line in env_file:
+          line = line.rstrip("\n")
+          # Split at the first "=", leaving any further instances in the value.
+          key_value_pair = line.split("=", 1)
+          if len(key_value_pair) == 2:
+            key, value = tuple(key_value_pair)
+            # The file stores key=value assignments, but the value may be
+            # quoted, so strip leading & trailing quotes from it.
+            value = value.strip("'\"")
+            self.child_env[key] = value
+    except IOError:
+      logging.info("Failed to read %s, skipping." % env_filename)
 
   def _setup_pulseaudio(self):
     self.pulseaudio_pipe = None
@@ -507,20 +546,18 @@ def choose_x_session():
     "/etc/X11/Xsession" ]
   for session_wrapper in SESSION_WRAPPERS:
     if os.path.exists(session_wrapper):
-      break
-  else:
-    # No session wrapper found.
-    return None
-
-  # On Ubuntu 12.04, the default session relies on 3D-accelerated hardware.
-  # Trying to run this with a virtual X display produces weird results on some
-  # systems (for example, upside-down and corrupt displays).  So if the
-  # ubuntu-2d session is available, choose it explicitly.
-  if os.path.exists("/usr/bin/unity-2d-panel"):
-    return [session_wrapper, "/usr/bin/gnome-session --session=ubuntu-2d"]
-
-  # Use the session wrapper by itself, and let the system choose a session.
-  return session_wrapper
+      if os.path.exists("/usr/bin/unity-2d-panel"):
+        # On Ubuntu 12.04, the default session relies on 3D-accelerated
+        # hardware. Trying to run this with a virtual X display produces
+        # weird results on some systems (for example, upside-down and
+        # corrupt displays).  So if the ubuntu-2d session is available,
+        # choose it explicitly.
+        return [session_wrapper, "/usr/bin/gnome-session --session=ubuntu-2d"]
+      else:
+        # Use the session wrapper by itself, and let the system choose a
+        # session.
+        return session_wrapper
+  return None
 
 
 def locate_executable(exe_name):
@@ -574,10 +611,10 @@ def daemonize(log_filename):
       pass
     else:
       # Child process
-      os._exit(0)
+      os._exit(0)  # pylint: disable=W0212
   else:
     # Parent process
-    os._exit(0)
+    os._exit(0)  # pylint: disable=W0212
 
   logging.info("Daemon process running, logging to '%s'" % log_filename)
 
@@ -625,7 +662,10 @@ class SignalHandler:
   def __call__(self, signum, _stackframe):
     if signum == signal.SIGHUP:
       logging.info("SIGHUP caught, restarting host.")
-      self.host_config.load()
+      try:
+        self.host_config.load()
+      except (IOError, ValueError) as e:
+        logging.error("Failed to load config: " + str(e))
       for desktop in g_desktops:
         if desktop.host_proc:
           desktop.host_proc.send_signal(signal.SIGTERM)
@@ -657,22 +697,24 @@ class RelaunchInhibitor:
     self.label = label
     self.running = False
     self.earliest_relaunch_time = 0
+    self.earliest_successful_termination = 0
     self.failures = 0
 
   def is_inhibited(self):
     return (not self.running) and (time.time() < self.earliest_relaunch_time)
 
-  def record_started(self, timeout):
+  def record_started(self, minimum_lifetime, relaunch_delay):
     """Record that the process was launched, and set the inhibit time to
     |timeout| seconds in the future."""
-    self.earliest_relaunch_time = time.time() + timeout
+    self.earliest_relaunch_time = time.time() + relaunch_delay
+    self.earliest_successful_termination = time.time() + minimum_lifetime
     self.running = True
 
   def record_stopped(self):
     """Record that the process was stopped, and adjust the failure count
     depending on whether the process ran long enough."""
     self.running = False
-    if time.time() < self.earliest_relaunch_time:
+    if time.time() < self.earliest_successful_termination:
       self.failures += 1
     else:
       self.failures = 0
@@ -816,16 +858,17 @@ Web Store: https://chrome.google.com/remotedesktop"""
     return 0
 
   if options.add_user:
-    sudo_command = "gksudo --message" if os.getenv("DISPLAY") else "sudo -p"
-    command = ("sudo -k && %(sudo)s "
-               "\"Please enter your password to enable "
-               "Chrome Remote Desktop: \" "
-               "-- sh -c "
+    if os.getenv("DISPLAY"):
+      sudo_command = "gksudo --description \"Chrome Remote Desktop\""
+    else:
+      sudo_command = "sudo"
+    command = ("sudo -k && exec %(sudo)s -- sh -c "
                "\"groupadd -f %(group)s && gpasswd --add %(user)s %(group)s\"" %
                { 'group': CHROME_REMOTING_GROUP_NAME,
                  'user': getpass.getuser(),
                  'sudo': sudo_command })
-    return os.system(command) >> 8
+    os.execv("/bin/sh", ["/bin/sh", "-c", command])
+    return 1
 
   if options.host_version:
     # TODO(sergeyu): Also check RPM package version once we add RPM package.
@@ -841,7 +884,7 @@ Web Store: https://chrome.google.com/remotedesktop"""
     default_sizes = DEFAULT_SIZES
     if os.environ.has_key(DEFAULT_SIZES_ENV_VAR):
       default_sizes = os.environ[DEFAULT_SIZES_ENV_VAR]
-    options.size = default_sizes.split(",");
+    options.size = default_sizes.split(",")
 
   sizes = []
   for size in options.size:
@@ -867,8 +910,10 @@ Web Store: https://chrome.google.com/remotedesktop"""
 
   # Load the initial host configuration.
   host_config = Config(options.config)
-  if (not host_config.load()):
-    print >> sys.stderr, "Failed to load " + config_filename
+  try:
+    host_config.load()
+  except (IOError, ValueError) as e:
+    print >> sys.stderr, "Failed to load config: " + str(e)
     return 1
 
   # Register handler to re-load the configuration in response to signals.
@@ -927,12 +972,15 @@ Web Store: https://chrome.google.com/remotedesktop"""
   allow_relaunch_self = False
 
   while True:
-    # Exit if a process failed too many times.
+    # Set the backoff interval and exit if a process failed too many times.
+    backoff_time = SHORT_BACKOFF_TIME
     for inhibitor in all_inhibitors:
       if inhibitor.failures >= MAX_LAUNCH_FAILURES:
         logging.error("Too many launch failures of '%s', exiting."
                       % inhibitor.label)
         return 1
+      elif inhibitor.failures >= SHORT_BACKOFF_THRESHOLD:
+        backoff_time = LONG_BACKOFF_TIME
 
     relaunch_times = []
 
@@ -963,7 +1011,8 @@ Web Store: https://chrome.google.com/remotedesktop"""
         else:
           logging.info("Launching X server and X session.")
           desktop.launch_session(args)
-          x_server_inhibitor.record_started(BACKOFF_TIME)
+          x_server_inhibitor.record_started(MINIMUM_PROCESS_LIFETIME,
+                                            backoff_time)
           allow_relaunch_self = True
 
     if desktop.host_proc is None:
@@ -973,7 +1022,8 @@ Web Store: https://chrome.google.com/remotedesktop"""
       else:
         logging.info("Launching host process")
         desktop.launch_host(host_config)
-        host_inhibitor.record_started(BACKOFF_TIME)
+        host_inhibitor.record_started(MINIMUM_PROCESS_LIFETIME,
+                                      backoff_time)
 
     deadline = min(relaunch_times) if relaunch_times else 0
     pid, status = waitpid_handle_exceptions(-1, deadline)
@@ -1008,30 +1058,30 @@ Web Store: https://chrome.google.com/remotedesktop"""
         logging.info("Host configuration is invalid - exiting.")
         host_config.clear_auth()
         host_config.clear_host_info()
-        host_config.save()
+        host_config.save_and_log_errors()
         return 0
       elif os.WEXITSTATUS(status) == 101:
         logging.info("Host ID has been deleted - exiting.")
         host_config.clear_host_info()
-        host_config.save()
+        host_config.save_and_log_errors()
         return 0
       elif os.WEXITSTATUS(status) == 102:
         logging.info("OAuth credentials are invalid - exiting.")
         host_config.clear_auth()
-        host_config.save()
+        host_config.save_and_log_errors()
         return 0
       elif os.WEXITSTATUS(status) == 103:
         logging.info("Host domain is blocked by policy - exiting.")
         host_config.clear_auth()
         host_config.clear_host_info()
-        host_config.save()
+        host_config.save_and_log_errors()
         return 0
       # Nothing to do for Mac-only status 104 (login screen unsupported)
       elif os.WEXITSTATUS(status) == 105:
         logging.info("Username is blocked by policy - exiting.")
         host_config.clear_auth()
         host_config.clear_host_info()
-        host_config.save()
+        host_config.save_and_log_errors()
         return 0
 
 

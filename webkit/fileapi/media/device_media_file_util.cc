@@ -11,8 +11,10 @@
 #include "webkit/fileapi/isolated_context.h"
 #include "webkit/fileapi/media/filtering_file_enumerator.h"
 #include "webkit/fileapi/media/media_path_filter.h"
+#include "webkit/fileapi/media/mtp_device_delegate.h"
 #include "webkit/fileapi/media/mtp_device_map_service.h"
 
+using base::PlatformFile;
 using base::PlatformFileError;
 using base::PlatformFileInfo;
 
@@ -20,7 +22,7 @@ namespace fileapi {
 
 namespace {
 
-const FilePath::CharType kDeviceMediaFileUtilTempDir[] =
+const base::FilePath::CharType kDeviceMediaFileUtilTempDir[] =
     FILE_PATH_LITERAL("DeviceMediaFileSystem");
 
 MTPDeviceDelegate* GetMTPDeviceDelegate(FileSystemOperationContext* context) {
@@ -31,7 +33,7 @@ MTPDeviceDelegate* GetMTPDeviceDelegate(FileSystemOperationContext* context) {
 
 }  // namespace
 
-DeviceMediaFileUtil::DeviceMediaFileUtil(const FilePath& profile_path)
+DeviceMediaFileUtil::DeviceMediaFileUtil(const base::FilePath& profile_path)
     : profile_path_(profile_path) {
 }
 
@@ -68,7 +70,7 @@ PlatformFileError DeviceMediaFileUtil::GetFileInfo(
     FileSystemOperationContext* context,
     const FileSystemURL& url,
     PlatformFileInfo* file_info,
-    FilePath* platform_path) {
+    base::FilePath* platform_path) {
   MTPDeviceDelegate* delegate = GetMTPDeviceDelegate(context);
   if (!delegate)
     return base::PLATFORM_FILE_ERROR_NOT_FOUND;
@@ -102,7 +104,7 @@ DeviceMediaFileUtil::CreateFileEnumerator(
 PlatformFileError DeviceMediaFileUtil::GetLocalFilePath(
     FileSystemOperationContext* context,
     const FileSystemURL& file_system_url,
-    FilePath* local_file_path) {
+    base::FilePath* local_file_path) {
   return base::PLATFORM_FILE_ERROR_SECURITY;
 }
 
@@ -121,24 +123,6 @@ PlatformFileError DeviceMediaFileUtil::Truncate(
   return base::PLATFORM_FILE_ERROR_FAILED;
 }
 
-bool DeviceMediaFileUtil::IsDirectoryEmpty(
-    FileSystemOperationContext* context,
-    const FileSystemURL& url) {
-  MTPDeviceDelegate* delegate = GetMTPDeviceDelegate(context);
-  if (!delegate)
-    return false;
-
-  scoped_ptr<AbstractFileEnumerator> enumerator(
-      CreateFileEnumerator(context, url, false));
-  FilePath path;
-  while (!(path = enumerator->Next()).empty()) {
-    if (enumerator->IsDirectory() ||
-        context->media_path_filter()->Match(path))
-      return false;
-  }
-  return true;
-}
-
 PlatformFileError DeviceMediaFileUtil::CopyOrMoveFile(
     FileSystemOperationContext* context,
     const FileSystemURL& src_url,
@@ -149,7 +133,7 @@ PlatformFileError DeviceMediaFileUtil::CopyOrMoveFile(
 
 PlatformFileError DeviceMediaFileUtil::CopyInForeignFile(
     FileSystemOperationContext* context,
-    const FilePath& src_file_path,
+    const base::FilePath& src_file_path,
     const FileSystemURL& dest_url) {
   return base::PLATFORM_FILE_ERROR_SECURITY;
 }
@@ -160,7 +144,7 @@ PlatformFileError DeviceMediaFileUtil::DeleteFile(
   return base::PLATFORM_FILE_ERROR_SECURITY;
 }
 
-PlatformFileError DeviceMediaFileUtil::DeleteSingleDirectory(
+PlatformFileError DeviceMediaFileUtil::DeleteDirectory(
     FileSystemOperationContext* context,
     const FileSystemURL& url) {
   return base::PLATFORM_FILE_ERROR_SECURITY;
@@ -170,20 +154,20 @@ base::PlatformFileError DeviceMediaFileUtil::CreateSnapshotFile(
     FileSystemOperationContext* context,
     const FileSystemURL& url,
     base::PlatformFileInfo* file_info,
-    FilePath* local_path,
+    base::FilePath* local_path,
     SnapshotFilePolicy* snapshot_policy) {
   DCHECK(file_info);
   DCHECK(local_path);
   DCHECK(snapshot_policy);
   // We return a temporary file as a snapshot.
-  *snapshot_policy = FileSystemFileUtil::kSnapshotFileTemporary;
+  *snapshot_policy = kSnapshotFileTemporary;
 
   MTPDeviceDelegate* delegate = GetMTPDeviceDelegate(context);
   if (!delegate)
     return base::PLATFORM_FILE_ERROR_NOT_FOUND;
 
   // Create a temp file in "profile_path_/kDeviceMediaFileUtilTempDir".
-  FilePath isolated_media_file_system_dir_path =
+  base::FilePath isolated_media_file_system_dir_path =
       profile_path_.Append(kDeviceMediaFileUtilTempDir);
   bool dir_exists = file_util::DirectoryExists(
       isolated_media_file_system_dir_path);

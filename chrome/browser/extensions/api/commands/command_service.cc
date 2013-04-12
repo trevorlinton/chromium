@@ -4,15 +4,19 @@
 
 #include "chrome/browser/extensions/api/commands/command_service.h"
 
+#include "base/lazy_instance.h"
 #include "base/string_util.h"
 #include "base/utf_string_conversions.h"
+#include "chrome/browser/extensions/api/commands/commands.h"
+#include "chrome/browser/extensions/extension_function_registry.h"
 #include "chrome/browser/extensions/extension_keybinding_registry.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_system.h"
+#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_notification_types.h"
-#include "chrome/common/extensions/extension_manifest_constants.h"
+#include "chrome/common/extensions/api/commands/commands_handler.h"
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
@@ -35,13 +39,18 @@ std::string GetPlatformKeybindingKeyForAccelerator(
 namespace extensions {
 
 // static
-void CommandService::RegisterUserPrefs(PrefServiceSyncable* user_prefs) {
-  user_prefs->RegisterDictionaryPref(prefs::kExtensionCommands,
-                                     PrefServiceSyncable::SYNCABLE_PREF);
+void CommandService::RegisterUserPrefs(PrefRegistrySyncable* registry) {
+  registry->RegisterDictionaryPref(prefs::kExtensionCommands,
+                                   PrefRegistrySyncable::SYNCABLE_PREF);
 }
 
 CommandService::CommandService(Profile* profile)
     : profile_(profile) {
+  (new CommandsHandler)->Register();
+
+  ExtensionFunctionRegistry::GetInstance()->
+      RegisterFunction<GetAllCommandsFunction>();
+
   registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_INSTALLED,
       content::Source<Profile>(profile));
   registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNINSTALLED,
@@ -49,6 +58,19 @@ CommandService::CommandService(Profile* profile)
 }
 
 CommandService::~CommandService() {
+}
+
+static base::LazyInstance<ProfileKeyedAPIFactory<CommandService> >
+g_factory = LAZY_INSTANCE_INITIALIZER;
+
+// static
+ProfileKeyedAPIFactory<CommandService>* CommandService::GetFactoryInstance() {
+  return &g_factory.Get();
+}
+
+// static
+CommandService* CommandService::Get(Profile* profile) {
+  return ProfileKeyedAPIFactory<CommandService>::GetForProfile(profile);
 }
 
 bool CommandService::GetBrowserActionCommand(
@@ -87,12 +109,13 @@ bool CommandService::GetNamedCommands(const std::string& extension_id,
   CHECK(extension);
 
   command_map->clear();
-  const extensions::CommandMap& commands = extension->named_commands();
-  if (commands.empty())
+  const extensions::CommandMap* commands =
+      CommandsInfo::GetNamedCommands(extension);
+  if (!commands)
     return false;
 
-  extensions::CommandMap::const_iterator iter = commands.begin();
-  for (; iter != commands.end(); ++iter) {
+  extensions::CommandMap::const_iterator iter = commands->begin();
+  for (; iter != commands->end(); ++iter) {
     ui::Accelerator shortcut_assigned =
         FindShortcutForCommand(extension_id, iter->second.command_name());
 
@@ -203,9 +226,13 @@ ui::Accelerator CommandService::FindShortcutForCommand(
 }
 
 void CommandService::AssignInitialKeybindings(const Extension* extension) {
-  const extensions::CommandMap& commands = extension->named_commands();
-  extensions::CommandMap::const_iterator iter = commands.begin();
-  for (; iter != commands.end(); ++iter) {
+  const extensions::CommandMap* commands =
+      CommandsInfo::GetNamedCommands(extension);
+  if (!commands)
+    return;
+
+  extensions::CommandMap::const_iterator iter = commands->begin();
+  for (; iter != commands->end(); ++iter) {
     AddKeybindingPref(iter->second.accelerator(),
                       extension->id(),
                       iter->second.command_name(),
@@ -213,7 +240,7 @@ void CommandService::AssignInitialKeybindings(const Extension* extension) {
   }
 
   const extensions::Command* browser_action_command =
-      extension->browser_action_command();
+      CommandsInfo::GetBrowserActionCommand(extension);
   if (browser_action_command) {
     AddKeybindingPref(browser_action_command->accelerator(),
                       extension->id(),
@@ -222,7 +249,7 @@ void CommandService::AssignInitialKeybindings(const Extension* extension) {
   }
 
   const extensions::Command* page_action_command =
-      extension->page_action_command();
+      CommandsInfo::GetPageActionCommand(extension);
   if (page_action_command) {
     AddKeybindingPref(page_action_command->accelerator(),
                       extension->id(),
@@ -231,7 +258,7 @@ void CommandService::AssignInitialKeybindings(const Extension* extension) {
   }
 
   const extensions::Command* script_badge_command =
-      extension->script_badge_command();
+      CommandsInfo::GetScriptBadgeCommand(extension);
   if (script_badge_command) {
     AddKeybindingPref(script_badge_command->accelerator(),
                       extension->id(),
@@ -306,13 +333,13 @@ bool CommandService::GetExtensionActionCommand(
   const extensions::Command* requested_command = NULL;
   switch (action_type) {
     case BROWSER_ACTION:
-      requested_command = extension->browser_action_command();
+      requested_command = CommandsInfo::GetBrowserActionCommand(extension);
       break;
     case PAGE_ACTION:
-      requested_command = extension->page_action_command();
+      requested_command = CommandsInfo::GetPageActionCommand(extension);
       break;
     case SCRIPT_BADGE:
-      requested_command = extension->script_badge_command();
+      requested_command = CommandsInfo::GetScriptBadgeCommand(extension);
       break;
   }
   if (!requested_command)

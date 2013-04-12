@@ -12,7 +12,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -30,7 +30,7 @@ namespace {
 class ProcessManagementTest : public ExtensionBrowserTest {
  private:
   // This is needed for testing isolated apps, which are still experimental.
-  virtual void SetUpCommandLine(CommandLine* command_line) {
+  virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE {
     ExtensionBrowserTest::SetUpCommandLine(command_line);
     command_line->AppendSwitch(switches::kEnableExperimentalExtensionApis);
   }
@@ -38,10 +38,18 @@ class ProcessManagementTest : public ExtensionBrowserTest {
 
 }  // namespace
 
+
+// TODO(nasko): crbug.com/173137
+#if defined(OS_WIN)
+#define MAYBE_ProcessOverflow DISABLED_ProcessOverflow
+#else
+#define MAYBE_ProcessOverflow ProcessOverflow
+#endif
+
 // Ensure that an isolated app never shares a process with WebUIs, non-isolated
 // extensions, and normal webpages.  None of these should ever comingle
 // RenderProcessHosts even if we hit the process limit.
-IN_PROC_BROWSER_TEST_F(ProcessManagementTest, ProcessOverflow) {
+IN_PROC_BROWSER_TEST_F(ProcessManagementTest, MAYBE_ProcessOverflow) {
   // Set max renderers to 1 to force running out of processes.
   content::RenderProcessHost::SetMaxRendererProcessCount(1);
 
@@ -108,27 +116,27 @@ IN_PROC_BROWSER_TEST_F(ProcessManagementTest, ProcessOverflow) {
   GURL extension2_url = extension2->url();
 
   // Get tab processes.
-  ASSERT_EQ(9, browser()->tab_count());
+  ASSERT_EQ(9, browser()->tab_strip_model()->count());
   content::RenderProcessHost* isolated1_host =
-      chrome::GetWebContentsAt(browser(), 0)->GetRenderProcessHost();
+      browser()->tab_strip_model()->GetWebContentsAt(0)->GetRenderProcessHost();
   content::RenderProcessHost* ntp1_host =
-      chrome::GetWebContentsAt(browser(), 1)->GetRenderProcessHost();
+      browser()->tab_strip_model()->GetWebContentsAt(1)->GetRenderProcessHost();
   content::RenderProcessHost* hosted1_host =
-      chrome::GetWebContentsAt(browser(), 2)->GetRenderProcessHost();
+      browser()->tab_strip_model()->GetWebContentsAt(2)->GetRenderProcessHost();
   content::RenderProcessHost* web1_host =
-      chrome::GetWebContentsAt(browser(), 3)->GetRenderProcessHost();
+      browser()->tab_strip_model()->GetWebContentsAt(3)->GetRenderProcessHost();
 
   content::RenderProcessHost* isolated2_host =
-      chrome::GetWebContentsAt(browser(), 4)->GetRenderProcessHost();
+      browser()->tab_strip_model()->GetWebContentsAt(4)->GetRenderProcessHost();
   content::RenderProcessHost* ntp2_host =
-      chrome::GetWebContentsAt(browser(), 5)->GetRenderProcessHost();
+      browser()->tab_strip_model()->GetWebContentsAt(5)->GetRenderProcessHost();
   content::RenderProcessHost* hosted2_host =
-      chrome::GetWebContentsAt(browser(), 6)->GetRenderProcessHost();
+      browser()->tab_strip_model()->GetWebContentsAt(6)->GetRenderProcessHost();
   content::RenderProcessHost* web2_host =
-      chrome::GetWebContentsAt(browser(), 7)->GetRenderProcessHost();
+      browser()->tab_strip_model()->GetWebContentsAt(7)->GetRenderProcessHost();
 
   content::RenderProcessHost* second_isolated1_host =
-      chrome::GetWebContentsAt(browser(), 8)->GetRenderProcessHost();
+      browser()->tab_strip_model()->GetWebContentsAt(8)->GetRenderProcessHost();
 
   // Get extension processes.
   ExtensionProcessManager* process_manager =

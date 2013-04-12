@@ -28,15 +28,10 @@
 
 namespace {
 
-const float EPSILON = 1e-3f;
-
-bool IsApproximateMultipleOf(float value, float base) {
-  float remainder = fmod(fabs(value), base);
-  return remainder < EPSILON || base - remainder < EPSILON;
-}
-
 const ui::Layer* GetRoot(const ui::Layer* layer) {
-  return layer->parent() ? GetRoot(layer->parent()) : layer;
+  while (layer->parent())
+    layer = layer->parent();
+  return layer;
 }
 
 }  // namespace
@@ -48,10 +43,10 @@ Layer::Layer()
       compositor_(NULL),
       parent_(NULL),
       visible_(true),
+      is_drawn_(true),
       force_render_surface_(false),
       fills_bounds_opaquely_(true),
       layer_updated_externally_(false),
-      opacity_(1.0f),
       background_blur_radius_(0),
       layer_saturation_(0.0f),
       layer_brightness_(0.0f),
@@ -75,10 +70,10 @@ Layer::Layer(LayerType type)
       compositor_(NULL),
       parent_(NULL),
       visible_(true),
+      is_drawn_(true),
       force_render_surface_(false),
       fills_bounds_opaquely_(true),
       layer_updated_externally_(false),
-      opacity_(1.0f),
       background_blur_radius_(0),
       layer_saturation_(0.0f),
       layer_brightness_(0.0f),
@@ -113,11 +108,16 @@ Layer::~Layer() {
     layer_mask_back_link_->SetMaskLayer(NULL);
   for (size_t i = 0; i < children_.size(); ++i)
     children_[i]->parent_ = NULL;
+  cc_layer_->removeLayerAnimationEventObserver(this);
   cc_layer_->removeFromParent();
 }
 
 Compositor* Layer::GetCompositor() {
   return GetRoot(this)->compositor_;
+}
+
+float Layer::opacity() const {
+  return cc_layer_->opacity();
 }
 
 void Layer::SetCompositor(Compositor* compositor) {
@@ -139,6 +139,7 @@ void Layer::Add(Layer* child) {
   children_.push_back(child);
   cc_layer_->addChild(child->cc_layer_);
   child->OnDeviceScaleFactorChanged(device_scale_factor_);
+  child->UpdateIsDrawn();
 }
 
 void Layer::Remove(Layer* child) {
@@ -227,10 +228,10 @@ void Layer::SetOpacity(float opacity) {
 }
 
 float Layer::GetCombinedOpacity() const {
-  float opacity = opacity_;
+  float opacity = this->opacity();
   Layer* current = this->parent_;
   while (current) {
-    opacity *= current->opacity_;
+    opacity *= current->opacity();
     current = current->parent_;
   }
   return opacity;
@@ -328,7 +329,7 @@ void Layer::SetLayerFilters() {
   // cause further color matrix filters to be applied separately. In this order,
   // they all can be combined in a single pass.
   if (layer_brightness_) {
-    filters.append(WebKit::WebFilterOperation::createBrightnessFilter(
+    filters.append(WebKit::WebFilterOperation::createSaturatingBrightnessFilter(
         layer_brightness_));
   }
 
@@ -357,7 +358,7 @@ float Layer::GetTargetOpacity() const {
   if (animator_.get() && animator_->IsAnimatingProperty(
       LayerAnimationElement::OPACITY))
     return animator_->GetTargetOpacity();
-  return opacity_;
+  return opacity();
 }
 
 void Layer::SetVisible(bool visible) {
@@ -372,10 +373,21 @@ bool Layer::GetTargetVisibility() const {
 }
 
 bool Layer::IsDrawn() const {
-  const Layer* layer = this;
-  while (layer && layer->visible_)
-    layer = layer->parent_;
-  return layer == NULL;
+  return is_drawn_;
+}
+
+void Layer::UpdateIsDrawn() {
+  bool updated_is_drawn = visible_ && (!parent_ || parent_->IsDrawn());
+
+  if (updated_is_drawn == is_drawn_)
+    return;
+
+  is_drawn_ = updated_is_drawn;
+  cc_layer_->setIsDrawable(is_drawn_ && type_ != LAYER_NOT_DRAWN);
+
+  for (size_t i = 0; i < children_.size(); ++i) {
+    children_[i]->UpdateIsDrawn();
+  }
 }
 
 bool Layer::ShouldDraw() const {
@@ -435,7 +447,10 @@ void Layer::SetExternalTexture(Texture* texture) {
       DCHECK(parent_->cc_layer_);
       parent_->cc_layer_->replaceChild(cc_layer_, new_layer);
     }
+    cc_layer_->removeLayerAnimationEventObserver(this);
+    new_layer->setOpacity(cc_layer_->opacity());
     cc_layer_= new_layer;
+    cc_layer_->addLayerAnimationEventObserver(this);
     cc_layer_is_accelerated_ = layer_updated_externally_;
     for (size_t i = 0; i < children_.size(); ++i) {
       DCHECK(children_[i]->cc_layer_);
@@ -443,9 +458,8 @@ void Layer::SetExternalTexture(Texture* texture) {
     }
     cc_layer_->setAnchorPoint(gfx::PointF());
     cc_layer_->setContentsOpaque(fills_bounds_opaquely_);
-    cc_layer_->setOpacity(visible_ ? opacity_ : 0.f);
     cc_layer_->setForceRenderSurface(force_render_surface_);
-    cc_layer_->setIsDrawable(true);
+    cc_layer_->setIsDrawable(IsDrawn());
     RecomputeTransform();
   }
   RecomputeDrawsContentAndUVRect();
@@ -555,6 +569,11 @@ void Layer::SetForceRenderSurface(bool force) {
   cc_layer_->setForceRenderSurface(force_render_surface_);
 }
 
+void Layer::OnAnimationStarted(const cc::AnimationEvent& event) {
+  if (animator_)
+    animator_->OnThreadedAnimationStarted(event);
+}
+
 void Layer::StackRelativeTo(Layer* child, Layer* other, bool above) {
   DCHECK_NE(child, other);
   DCHECK_EQ(this, child->parent());
@@ -581,7 +600,7 @@ void Layer::StackRelativeTo(Layer* child, Layer* other, bool above) {
 bool Layer::ConvertPointForAncestor(const Layer* ancestor,
                                     gfx::Point* point) const {
   gfx::Transform transform;
-  bool result = GetTransformRelativeTo(ancestor, &transform);
+  bool result = GetTargetTransformRelativeTo(ancestor, &transform);
   gfx::Point3F p(*point);
   transform.TransformPoint(p);
   *point = gfx::ToFlooredPoint(p.AsPointF());
@@ -591,22 +610,24 @@ bool Layer::ConvertPointForAncestor(const Layer* ancestor,
 bool Layer::ConvertPointFromAncestor(const Layer* ancestor,
                                      gfx::Point* point) const {
   gfx::Transform transform;
-  bool result = GetTransformRelativeTo(ancestor, &transform);
+  bool result = GetTargetTransformRelativeTo(ancestor, &transform);
   gfx::Point3F p(*point);
   transform.TransformPointReverse(p);
   *point = gfx::ToFlooredPoint(p.AsPointF());
   return result;
 }
 
-bool Layer::GetTransformRelativeTo(const Layer* ancestor,
+bool Layer::GetTargetTransformRelativeTo(const Layer* ancestor,
                                    gfx::Transform* transform) const {
   const Layer* p = this;
   for (; p && p != ancestor; p = p->parent()) {
     gfx::Transform translation;
     translation.Translate(static_cast<float>(p->bounds().x()),
                           static_cast<float>(p->bounds().y()));
-    if (!p->transform().IsIdentity())
-      transform->ConcatTransform(p->transform());
+    // Use target transform so that result will be correct once animation is
+    // finished.
+    if (!p->GetTargetTransform().IsIdentity())
+      transform->ConcatTransform(p->GetTargetTransform());
     transform->ConcatTransform(translation);
   }
   return p == ancestor;
@@ -645,13 +666,8 @@ void Layer::SetTransformImmediately(const gfx::Transform& transform) {
 }
 
 void Layer::SetOpacityImmediately(float opacity) {
-  bool schedule_draw = (opacity != opacity_ && IsDrawn());
-  opacity_ = opacity;
-
-  if (visible_)
-    cc_layer_->setOpacity(opacity);
-  if (schedule_draw)
-    ScheduleDraw();
+  cc_layer_->setOpacity(opacity);
+  ScheduleDraw();
 }
 
 void Layer::SetVisibilityImmediately(bool visible) {
@@ -659,8 +675,7 @@ void Layer::SetVisibilityImmediately(bool visible) {
     return;
 
   visible_ = visible;
-  // TODO(piman): Expose a visibility flag on WebLayer.
-  cc_layer_->setOpacity(visible_ ? opacity_ : 0.f);
+  UpdateIsDrawn();
 }
 
 void Layer::SetBrightnessImmediately(float brightness) {
@@ -744,6 +759,16 @@ SkColor Layer::GetColorForAnimation() const {
       solid_color_layer_->backgroundColor() : SK_ColorBLACK;
 }
 
+void Layer::AddThreadedAnimation(scoped_ptr<cc::Animation> animation) {
+  DCHECK(cc_layer_);
+  cc_layer_->addAnimation(animation.Pass());
+}
+
+void Layer::RemoveThreadedAnimation(int animation_id) {
+  DCHECK(cc_layer_);
+  cc_layer_->removeAnimation(animation_id);
+}
+
 void Layer::CreateWebLayer() {
   if (type_ == LAYER_SOLID_COLOR) {
     solid_color_layer_ = cc::SolidColorLayer::create();
@@ -756,6 +781,7 @@ void Layer::CreateWebLayer() {
   cc_layer_->setAnchorPoint(gfx::PointF());
   cc_layer_->setContentsOpaque(true);
   cc_layer_->setIsDrawable(type_ != LAYER_NOT_DRAWN);
+  cc_layer_->addLayerAnimationEventObserver(this);
 }
 
 void Layer::RecomputeTransform() {
@@ -789,12 +815,11 @@ void Layer::RecomputeDrawsContentAndUVRect() {
 
     gfx::Size size(std::min(bounds().width(), texture_size.width()),
                    std::min(bounds().height(), texture_size.height()));
-    gfx::RectF rect(
-        0,
-        0,
+    gfx::PointF uv_top_left(0.f, 0.f);
+    gfx::PointF uv_bottom_right(
         static_cast<float>(size.width())/texture_size.width(),
         static_cast<float>(size.height())/texture_size.height());
-    texture_layer_->setUVRect(rect);
+    texture_layer_->setUV(uv_top_left, uv_bottom_right);
 
     cc_layer_->setBounds(ConvertSizeToPixel(this, size));
   }

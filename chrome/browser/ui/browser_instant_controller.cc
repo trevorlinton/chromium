@@ -4,11 +4,15 @@
 
 #include "chrome/browser/ui/browser_instant_controller.h"
 
+#include "base/prefs/pref_service.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/prefs/pref_service.h"
+#include "chrome/browser/extensions/extension_web_ui.h"
+#include "chrome/browser/prefs/pref_registry_syncable.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/themes/theme_service_factory.h"
+#include "chrome/browser/ui/bookmarks/bookmark_bar_constants.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/omnibox/location_bar.h"
@@ -19,17 +23,23 @@
 #include "chrome/browser/ui/webui/ntp/app_launcher_handler.h"
 #include "chrome/common/chrome_notification_types.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/url_constants.h"
 #include "content/public/browser/notification_service.h"
+#include "content/public/browser/user_metrics.h"
 #include "grit/theme_resources.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/sys_color_change_listener.h"
 
+using content::UserMetricsAction;
+
 namespace {
+
 const char* GetInstantPrefName(Profile* profile) {
   return chrome::search::IsInstantExtendedAPIEnabled(profile) ?
       prefs::kInstantExtendedEnabled : prefs::kInstantEnabled;
 }
-}
+
+}  // namespace
 
 namespace chrome {
 
@@ -39,14 +49,49 @@ namespace chrome {
 BrowserInstantController::BrowserInstantController(Browser* browser)
     : browser_(browser),
       instant_(ALLOW_THIS_IN_INITIALIZER_LIST(this),
-               chrome::search::IsInstantExtendedAPIEnabled(browser->profile()),
-               browser->profile()->IsOffTheRecord()),
+               chrome::search::IsInstantExtendedAPIEnabled(profile())),
       instant_unload_handler_(browser),
-      initialized_theme_info_(false),
-      theme_area_height_(0) {
-  profile_pref_registrar_.Init(browser_->profile()->GetPrefs());
+      initialized_theme_info_(false) {
+  PrefService* prefs = profile()->GetPrefs();
+
+  // The kInstantExtendedEnabled and kInstantEnabled preferences are
+  // separate, as the way opt-in is done is a bit different, and
+  // because the experiment that controls the behavior of
+  // kInstantExtendedEnabled (value retrieved via
+  // search::GetInstantExtendedDefaultSetting) may take different
+  // settings on different Chrome set-ups for the same user.
+  //
+  // In one mode of the experiment, however, the
+  // kInstantExtendedEnabled preference's default value is set to the
+  // existing value of kInstantEnabled.
+  //
+  // Because this requires reading the value of the kInstantEnabled
+  // value, we reset the default for kInstantExtendedEnabled here,
+  // instead of fully determining the default in RegisterUserPrefs,
+  // below.
+  bool instant_extended_default = true;
+  switch (search::GetInstantExtendedDefaultSetting()) {
+    case search::INSTANT_DEFAULT_ON:
+      instant_extended_default = true;
+      break;
+    case search::INSTANT_USE_EXISTING:
+      instant_extended_default = prefs->GetBoolean(prefs::kInstantEnabled);
+    case search::INSTANT_DEFAULT_OFF:
+      instant_extended_default = false;
+      break;
+  }
+
+  prefs->SetDefaultPrefValue(
+      prefs::kInstantExtendedEnabled,
+      Value::CreateBooleanValue(instant_extended_default));
+
+  profile_pref_registrar_.Init(prefs);
   profile_pref_registrar_.Add(
-      GetInstantPrefName(browser_->profile()),
+      GetInstantPrefName(profile()),
+      base::Bind(&BrowserInstantController::ResetInstant,
+                 base::Unretained(this)));
+  profile_pref_registrar_.Add(
+      prefs::kSearchSuggestEnabled,
       base::Bind(&BrowserInstantController::ResetInstant,
                  base::Unretained(this)));
   ResetInstant();
@@ -56,7 +101,7 @@ BrowserInstantController::BrowserInstantController(Browser* browser)
   // Listen for theme installation.
   registrar_.Add(this, chrome::NOTIFICATION_BROWSER_THEME_CHANGED,
                  content::Source<ThemeService>(
-                     ThemeServiceFactory::GetForProfile(browser_->profile())));
+                     ThemeServiceFactory::GetForProfile(profile())));
 #endif  // defined(ENABLE_THEMES)
 }
 
@@ -69,13 +114,52 @@ bool BrowserInstantController::IsInstantEnabled(Profile* profile) {
          profile->GetPrefs()->GetBoolean(GetInstantPrefName(profile));
 }
 
-void BrowserInstantController::RegisterUserPrefs(PrefServiceSyncable* prefs) {
-  prefs->RegisterBooleanPref(prefs::kInstantConfirmDialogShown, false,
-                             PrefServiceSyncable::SYNCABLE_PREF);
-  prefs->RegisterBooleanPref(prefs::kInstantExtendedEnabled, true,
-                             PrefServiceSyncable::SYNCABLE_PREF);
-  prefs->RegisterBooleanPref(prefs::kInstantEnabled, false,
-                             PrefServiceSyncable::SYNCABLE_PREF);
+void BrowserInstantController::RegisterUserPrefs(
+    PrefRegistrySyncable* registry) {
+  registry->RegisterBooleanPref(prefs::kInstantConfirmDialogShown, false,
+                                PrefRegistrySyncable::SYNCABLE_PREF);
+  registry->RegisterBooleanPref(prefs::kInstantEnabled, false,
+                                PrefRegistrySyncable::SYNCABLE_PREF);
+
+  // Note that the default for this pref gets reset in the
+  // BrowserInstantController constructor.
+  registry->RegisterBooleanPref(prefs::kInstantExtendedEnabled,
+                                false,
+                                PrefRegistrySyncable::SYNCABLE_PREF);
+}
+
+bool BrowserInstantController::MaybeSwapInInstantNTPContents(
+    const GURL& url,
+    content::WebContents* source_contents,
+    content::WebContents** target_contents) {
+  if (url != GURL(chrome::kChromeUINewTabURL))
+    return false;
+
+  GURL extension_url(url);
+  if (ExtensionWebUI::HandleChromeURLOverride(&extension_url, profile())) {
+    // If there is an extension overriding the NTP do not use the Instant NTP.
+    return false;
+  }
+
+  scoped_ptr<content::WebContents> instant_ntp = instant_.ReleaseNTPContents();
+  if (!instant_ntp)
+    return false;
+
+  *target_contents = instant_ntp.get();
+  if (source_contents) {
+    instant_ntp->GetController().CopyStateFromAndPrune(
+        &source_contents->GetController());
+    ReplaceWebContentsAt(
+        browser_->tab_strip_model()->GetIndexOfWebContents(source_contents),
+        instant_ntp.Pass());
+  } else {
+    instant_ntp->GetController().PruneAllButActive();
+    // If |source_contents| is NULL, then the caller is responsible for
+    // inserting instant_ntp into the tabstrip and will take ownership.
+    ignore_result(instant_ntp.release());
+  }
+  content::RecordAction(UserMetricsAction("InstantExtended.ShowNTP"));
+  return true;
 }
 
 bool BrowserInstantController::OpenInstant(WindowOpenDisposition disposition) {
@@ -93,29 +177,36 @@ bool BrowserInstantController::OpenInstant(WindowOpenDisposition disposition) {
       INSTANT_COMMIT_PRESSED_ENTER : INSTANT_COMMIT_PRESSED_ALT_ENTER);
 }
 
-void BrowserInstantController::CommitInstant(content::WebContents* preview,
-                                             bool in_new_tab) {
+Profile* BrowserInstantController::profile() const {
+  return browser_->profile();
+}
+
+void BrowserInstantController::CommitInstant(
+    scoped_ptr<content::WebContents> overlay,
+    bool in_new_tab) {
+  if (profile()->GetExtensionService()->IsInstalledApp(overlay->GetURL())) {
+    AppLauncherHandler::RecordAppLaunchType(
+        extension_misc::APP_LAUNCH_OMNIBOX_INSTANT);
+  }
   if (in_new_tab) {
-    // TabStripModel takes ownership of |preview|.
-    browser_->tab_strip_model()->AddWebContents(preview, -1,
+    // TabStripModel takes ownership of |overlay|.
+    browser_->tab_strip_model()->AddWebContents(overlay.release(), -1,
         instant_.last_transition_type(), TabStripModel::ADD_ACTIVE);
   } else {
-    int index = browser_->tab_strip_model()->active_index();
-    DCHECK_NE(TabStripModel::kNoTab, index);
-    content::WebContents* active_tab =
-        browser_->tab_strip_model()->GetWebContentsAt(index);
-    // TabStripModel takes ownership of |preview|.
-    browser_->tab_strip_model()->ReplaceWebContentsAt(index, preview);
-    // InstantUnloadHandler takes ownership of |active_tab|.
-    instant_unload_handler_.RunUnloadListenersOrDestroy(active_tab, index);
-
-    GURL url = preview->GetURL();
-    DCHECK(browser_->profile()->GetExtensionService());
-    if (browser_->profile()->GetExtensionService()->IsInstalledApp(url)) {
-      AppLauncherHandler::RecordAppLaunchType(
-          extension_misc::APP_LAUNCH_OMNIBOX_INSTANT);
-    }
+    ReplaceWebContentsAt(
+        browser_->tab_strip_model()->active_index(),
+        overlay.Pass());
   }
+}
+
+void BrowserInstantController::ReplaceWebContentsAt(
+    int index,
+    scoped_ptr<content::WebContents> new_contents) {
+  DCHECK_NE(TabStripModel::kNoTab, index);
+  scoped_ptr<content::WebContents> old_contents(browser_->tab_strip_model()->
+      ReplaceWebContentsAt(index, new_contents.release()));
+  instant_unload_handler_.RunUnloadListenersOrDestroy(old_contents.Pass(),
+                                                      index);
 }
 
 void BrowserInstantController::SetInstantSuggestion(
@@ -123,13 +214,19 @@ void BrowserInstantController::SetInstantSuggestion(
   browser_->window()->GetLocationBar()->SetInstantSuggestion(suggestion);
 }
 
+void BrowserInstantController::CommitSuggestedText(
+    bool skip_inline_autocomplete) {
+  browser_->window()->GetLocationBar()->GetLocationEntry()->model()->
+      CommitSuggestedText(skip_inline_autocomplete);
+}
+
 gfx::Rect BrowserInstantController::GetInstantBounds() {
   return browser_->window()->GetInstantBounds();
 }
 
-void BrowserInstantController::InstantPreviewFocused() {
+void BrowserInstantController::InstantOverlayFocused() {
   // NOTE: This is only invoked on aura.
-  browser_->window()->WebContentsFocused(instant_.GetPreviewContents());
+  browser_->window()->WebContentsFocused(instant_.GetOverlayContents());
 }
 
 void BrowserInstantController::FocusOmniboxInvisibly() {
@@ -151,36 +248,36 @@ void BrowserInstantController::TabDeactivated(content::WebContents* contents) {
   instant_.TabDeactivated(contents);
 }
 
-void BrowserInstantController::SetContentHeight(int height) {
-  OnThemeAreaHeightChanged(height);
-}
-
-void BrowserInstantController::UpdateThemeInfoForPreview() {
-  // Update theme background info and theme area height.
-  // Initialize |theme_info| if necessary.
-  // |OnThemeChanged| also updates theme area height if necessary.
-  if (!initialized_theme_info_)
-    OnThemeChanged(ThemeServiceFactory::GetForProfile(browser_->profile()));
+void BrowserInstantController::UpdateThemeInfo(bool parse_theme_info) {
+  // Update theme background info.
+  // Initialize or re-parse |theme_info| if necessary.
+  if (!initialized_theme_info_ || parse_theme_info)
+    OnThemeChanged(ThemeServiceFactory::GetForProfile(profile()));
   else
     OnThemeChanged(NULL);
 }
 
-void BrowserInstantController::OpenURLInCurrentTab(
+void BrowserInstantController::OpenURL(
     const GURL& url,
-    content::PageTransition transition) {
+    content::PageTransition transition,
+    WindowOpenDisposition disposition) {
   browser_->OpenURL(content::OpenURLParams(url,
                                            content::Referrer(),
-                                           CURRENT_TAB,
+                                           disposition,
                                            transition,
                                            false));
 }
 
-void BrowserInstantController::SetMarginSize(int start, int end) {
-  instant_.SetMarginSize(start, end);
+void BrowserInstantController::SetOmniboxBounds(const gfx::Rect& bounds) {
+  instant_.SetOmniboxBounds(bounds);
 }
 
 void BrowserInstantController::ResetInstant() {
-  instant_.SetInstantEnabled(IsInstantEnabled(browser_->profile()));
+  bool instant_enabled = IsInstantEnabled(profile());
+  bool use_local_overlay_only = profile()->IsOffTheRecord() ||
+      (!instant_enabled &&
+       !profile()->GetPrefs()->GetBoolean(prefs::kSearchSuggestEnabled));
+  instant_.SetInstantEnabled(instant_enabled, use_local_overlay_only);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -188,9 +285,9 @@ void BrowserInstantController::ResetInstant() {
 
 void BrowserInstantController::ModeChanged(const search::Mode& old_mode,
                                            const search::Mode& new_mode) {
-  // If mode is now |NTP|, send theme-related information to instant.
+  // If mode is now |NTP|, send theme-related information to Instant.
   if (new_mode.is_ntp())
-    UpdateThemeInfoForPreview();
+    UpdateThemeInfo(false);
 
   instant_.SearchModeChanged(old_mode, new_mode);
 }
@@ -214,7 +311,7 @@ void BrowserInstantController::OnThemeChanged(ThemeService* theme_service) {
 
     // Set theme background color.
     SkColor background_color =
-        theme_service->GetColor(ThemeService::COLOR_NTP_BACKGROUND);
+        theme_service->GetColor(ThemeProperties::COLOR_NTP_BACKGROUND);
     if (gfx::IsInvertedColorScheme())
       background_color = color_utils::InvertColor(background_color);
     theme_info_.color_r = SkColorGetR(background_color);
@@ -228,11 +325,11 @@ void BrowserInstantController::OnThemeChanged(ThemeService* theme_service) {
 
       // Set theme background image horizontal alignment.
       int alignment = 0;
-      theme_service->GetDisplayProperty(ThemeService::NTP_BACKGROUND_ALIGNMENT,
-                                        &alignment);
-      if (alignment & ThemeService::ALIGN_LEFT) {
+      theme_service->GetDisplayProperty(
+          ThemeProperties::NTP_BACKGROUND_ALIGNMENT, &alignment);
+      if (alignment & ThemeProperties::ALIGN_LEFT) {
         theme_info_.image_horizontal_alignment = THEME_BKGRND_IMAGE_ALIGN_LEFT;
-      } else if (alignment & ThemeService::ALIGN_RIGHT) {
+      } else if (alignment & ThemeProperties::ALIGN_RIGHT) {
         theme_info_.image_horizontal_alignment = THEME_BKGRND_IMAGE_ALIGN_RIGHT;
       } else {  // ALIGN_CENTER
         theme_info_.image_horizontal_alignment =
@@ -240,28 +337,35 @@ void BrowserInstantController::OnThemeChanged(ThemeService* theme_service) {
       }
 
       // Set theme background image vertical alignment.
-      if (alignment & ThemeService::ALIGN_TOP)
+      if (alignment & ThemeProperties::ALIGN_TOP) {
         theme_info_.image_vertical_alignment = THEME_BKGRND_IMAGE_ALIGN_TOP;
-      else if (alignment & ThemeService::ALIGN_BOTTOM)
+#if !defined(OS_ANDROID)
+        // A detached bookmark bar will draw the top part of a top-aligned theme
+        // image as its background, so offset the image by the bar height.
+        if (browser_->bookmark_bar_state() == BookmarkBar::DETACHED)
+          theme_info_.image_top_offset = -chrome::kNTPBookmarkBarHeight;
+#endif  // !defined(OS_ANDROID)
+      } else if (alignment & ThemeProperties::ALIGN_BOTTOM) {
         theme_info_.image_vertical_alignment = THEME_BKGRND_IMAGE_ALIGN_BOTTOM;
-      else // ALIGN_CENTER
+      } else {  // ALIGN_CENTER
         theme_info_.image_vertical_alignment = THEME_BKGRND_IMAGE_ALIGN_CENTER;
+      }
 
       // Set theme background image tiling.
       int tiling = 0;
-      theme_service->GetDisplayProperty(ThemeService::NTP_BACKGROUND_TILING,
+      theme_service->GetDisplayProperty(ThemeProperties::NTP_BACKGROUND_TILING,
                                         &tiling);
       switch (tiling) {
-        case ThemeService::NO_REPEAT:
+        case ThemeProperties::NO_REPEAT:
             theme_info_.image_tiling = THEME_BKGRND_IMAGE_NO_REPEAT;
             break;
-        case ThemeService::REPEAT_X:
+        case ThemeProperties::REPEAT_X:
             theme_info_.image_tiling = THEME_BKGRND_IMAGE_REPEAT_X;
             break;
-        case ThemeService::REPEAT_Y:
+        case ThemeProperties::REPEAT_Y:
             theme_info_.image_tiling = THEME_BKGRND_IMAGE_REPEAT_Y;
             break;
-        case ThemeService::REPEAT:
+        case ThemeProperties::REPEAT:
             theme_info_.image_tiling = THEME_BKGRND_IMAGE_REPEAT;
             break;
       }
@@ -278,28 +382,8 @@ void BrowserInstantController::OnThemeChanged(ThemeService* theme_service) {
 
   DCHECK(initialized_theme_info_);
 
-  if (browser_->search_model()->mode().is_ntp()) {
+  if (browser_->search_model()->mode().is_ntp())
     instant_.ThemeChanged(theme_info_);
-
-    // Theme area height is only sent to preview for non-top-aligned images;
-    // new theme may have a different alignment that requires preview to know
-    // theme area height.
-    OnThemeAreaHeightChanged(theme_area_height_);
-  }
-}
-
-void BrowserInstantController::OnThemeAreaHeightChanged(int height) {
-  theme_area_height_ = height;
-
-  // Notify preview only if mode is |NTP| and theme background image is not top-
-  // aligned; top-aligned images don't need theme area height to determine which
-  // part of the image overlay should draw, 'cos the origin is top-left.
-  if (!browser_->search_model()->mode().is_ntp() ||
-      theme_info_.theme_id.empty() ||
-      theme_info_.image_vertical_alignment == THEME_BKGRND_IMAGE_ALIGN_TOP) {
-    return;
-  }
-  instant_.ThemeAreaHeightChanged(theme_area_height_);
 }
 
 }  // namespace chrome

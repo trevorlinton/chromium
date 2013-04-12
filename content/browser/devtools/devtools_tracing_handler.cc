@@ -6,7 +6,9 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/json/json_writer.h"
 #include "base/location.h"
+#include "base/string_split.h"
 #include "base/values.h"
 #include "content/browser/devtools/devtools_http_handler_impl.h"
 #include "content/public/browser/trace_controller.h"
@@ -14,89 +16,95 @@
 
 namespace content {
 
+namespace {
+
+const char kTracingStartCommand[] = "Tracing.start";
+const char kTracingEndCommand[] = "Tracing.end";
+
+const char kTracingCompleteNotification[] = "Tracing.tracingComplete";
+const char kTracingDataCollected[] = "Tracing.dataCollected";
+
+const char kCategoriesParam[] = "categories";
+
+const char kTraceOptionsParam[] = "trace-options";
+const char kRecordUntilFull[]   = "record-until-full";
+
+}  // namespace
+
+const char DevToolsTracingHandler::kDomain[] = "Tracing";
+
 DevToolsTracingHandler::DevToolsTracingHandler()
-    : has_completed_(false),
-      buffer_data_size_(0) {
+    : is_running_(false) {
+  RegisterCommandHandler(kTracingStartCommand,
+                         base::Bind(&DevToolsTracingHandler::OnStart,
+                                    base::Unretained(this)));
+  RegisterCommandHandler(kTracingEndCommand,
+                         base::Bind(&DevToolsTracingHandler::OnEnd,
+                                    base::Unretained(this)));
 }
 
 DevToolsTracingHandler::~DevToolsTracingHandler() {
 }
 
-std::string DevToolsTracingHandler::Domain() {
-  return "Tracing";
-}
-
 void DevToolsTracingHandler::OnEndTracingComplete() {
-  has_completed_ = true;
+  is_running_ = false;
+  SendNotification(kTracingCompleteNotification, NULL);
 }
 
 void DevToolsTracingHandler::OnTraceDataCollected(
     const scoped_refptr<base::RefCountedString>& trace_fragment) {
-  buffer_.push_back(trace_fragment->data());
-  buffer_data_size_ += trace_fragment->data().size();
-}
-
-base::Value* DevToolsTracingHandler::OnProtocolCommand(
-    const std::string& method,
-    const base::DictionaryValue* params,
-    base::Value** error_out) {
-  if (method == "Tracing.start")
-    return Start(params);
-  else if (method == "Tracing.end")
-    return End(params);
-  else if (method == "Tracing.hasCompleted")
-    return HasCompleted(params);
-  else if (method == "Tracing.getTraceAndReset")
-    return GetTraceAndReset(params);
-
-  base::DictionaryValue* error_object = new base::DictionaryValue();
-  error_object->SetInteger("code", -1);
-  error_object->SetString("message", "Invalid method");
-
-  *error_out = error_object;
-
-  return NULL;
-}
-
-base::Value* DevToolsTracingHandler::Start(
-    const base::DictionaryValue* params) {
-  std::string categories;
-  if (params && params->HasKey("categories"))
-    params->GetString("categories", &categories);
-  TraceController::GetInstance()->BeginTracing(this, categories);
-
-  return base::Value::CreateBooleanValue(true);
-}
-
-base::Value* DevToolsTracingHandler::End(
-    const base::DictionaryValue* /* params */) {
-  TraceController::GetInstance()->EndTracingAsync(this);
-
-  return base::Value::CreateBooleanValue(true);
-}
-
-
-base::Value* DevToolsTracingHandler::HasCompleted(
-    const base::DictionaryValue* /* params */) {
-
-  return base::Value::CreateBooleanValue(has_completed_);
-}
-
-base::Value* DevToolsTracingHandler::GetTraceAndReset(
-    const base::DictionaryValue* /* params */) {
-  std::string ret;
-  ret.reserve(buffer_data_size_);
-  for (std::vector<std::string>::const_iterator i = buffer_.begin();
-       i != buffer_.end(); ++i) {
-    if (!ret.empty())
-      ret.append(",");
-    ret.append(*i);
+  if (is_running_) {
+    base::DictionaryValue* params = new base::DictionaryValue();
+    params->SetString("value", trace_fragment->data());
+    SendNotification(kTracingDataCollected, params);
   }
-  buffer_.clear();
-  has_completed_ = false;
-  buffer_data_size_ = 0;
+}
 
-  return base::Value::CreateStringValue(ret);
+// Note, if you add more options here you also need to update:
+// base/debug/trace_event_impl:TraceOptionsFromString
+base::debug::TraceLog::Options DevToolsTracingHandler::TraceOptionsFromString(
+    const std::string& options) {
+  std::vector<std::string> split;
+  std::vector<std::string>::iterator iter;
+  int ret = 0;
+
+  base::SplitString(options, ',', &split);
+  for (iter = split.begin(); iter != split.end(); ++iter) {
+    if (*iter == kRecordUntilFull) {
+      ret |= base::debug::TraceLog::RECORD_UNTIL_FULL;
+    }
+  }
+  if (ret == 0)
+    ret = base::debug::TraceLog::RECORD_UNTIL_FULL;
+
+  return static_cast<base::debug::TraceLog::Options>(ret);
+}
+
+scoped_ptr<DevToolsProtocol::Response>
+DevToolsTracingHandler::OnStart(DevToolsProtocol::Command* command) {
+  std::string categories;
+  base::DictionaryValue* params = command->params();
+  if (params && params->HasKey(kCategoriesParam))
+    params->GetString(kCategoriesParam, &categories);
+
+  base::debug::TraceLog::Options options =
+      base::debug::TraceLog::RECORD_UNTIL_FULL;
+  if (params && params->HasKey(kTraceOptionsParam)) {
+    std::string options_param;
+    params->GetString(kTraceOptionsParam, &options_param);
+    options = TraceOptionsFromString(options_param);
+  }
+
+  TraceController::GetInstance()->BeginTracing(this, categories, options);
+  is_running_ = true;
+  return command->SuccessResponse(NULL);
+}
+
+
+scoped_ptr<DevToolsProtocol::Response>
+DevToolsTracingHandler::OnEnd(DevToolsProtocol::Command* command) {
+  TraceController::GetInstance()->EndTracingAsync(this);
+  return command->SuccessResponse(NULL);
 }
 
 }  // namespace content

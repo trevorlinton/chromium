@@ -5,10 +5,11 @@
   'action_name': 'repack_resources',
   'variables': {
     'pak_inputs': [
+      '<(grit_out_dir)/memory_internals_resources.pak',
       '<(grit_out_dir)/net_internals_resources.pak',
-      '<(grit_out_dir)/shared_resources.pak',
       '<(grit_out_dir)/signin_internals_resources.pak',
       '<(grit_out_dir)/sync_internals_resources.pak',
+      '<(SHARED_INTERMEDIATE_DIR)/ui/ui_resources/webui_resources.pak',
     ],
     'conditions': [
       ['OS != "ios" and OS != "android"', {

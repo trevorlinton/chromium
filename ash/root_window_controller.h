@@ -32,6 +32,7 @@ class RootWindowEventFilter;
 
 namespace ash {
 class Launcher;
+class StackingController;
 class SystemTray;
 class ToplevelWindowEventHandler;
 
@@ -64,7 +65,7 @@ class ASH_EXPORT RootWindowController {
   static RootWindowController* ForLauncher(aura::Window* window);
 
   // Returns a RootWindowController of the window's root window.
-  static RootWindowController* ForWindow(aura::Window* window);
+  static RootWindowController* ForWindow(const aura::Window* window);
 
   // Returns the RootWindowController of the active root window.
   static internal::RootWindowController* ForActiveRootWindow();
@@ -164,6 +165,10 @@ class ASH_EXPORT RootWindowController {
   bool SetShelfAlignment(ShelfAlignment alignment);
   ShelfAlignment GetShelfAlignment();
 
+  // Returns true if the active workspace is in immersive mode. Exposed here
+  // so clients of Ash don't need to know the details of workspace management.
+  bool IsImmersiveMode() const;
+
  private:
   // Creates each of the special window containers that holds windows of various
   // types in the shell UI.
@@ -171,6 +176,8 @@ class ASH_EXPORT RootWindowController {
 
   scoped_ptr<aura::RootWindow> root_window_;
   RootWindowLayoutManager* root_window_layout_;
+
+  scoped_ptr<StackingController> stacking_controller_;
 
   // Widget containing system tray.
   StatusAreaWidget* status_area_widget_;
@@ -196,6 +203,7 @@ class ASH_EXPORT RootWindowController {
   scoped_ptr<ToplevelWindowEventHandler> always_on_top_container_handler_;
   scoped_ptr<ToplevelWindowEventHandler> modal_container_handler_;
   scoped_ptr<ToplevelWindowEventHandler> lock_modal_container_handler_;
+  scoped_ptr<ToplevelWindowEventHandler> panel_container_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(RootWindowController);
 };

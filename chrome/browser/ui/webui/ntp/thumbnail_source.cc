@@ -15,24 +15,28 @@
 #include "grit/theme_resources.h"
 #include "ui/base/resource/resource_bundle.h"
 
+// Set ThumbnailService now as Profile isn't thread safe.
 ThumbnailSource::ThumbnailSource(Profile* profile)
-    : DataSource(chrome::kChromeUIThumbnailHost, MessageLoop::current()),
-      // Set ThumbnailService now as Profile isn't thread safe.
-      thumbnail_service_(ThumbnailServiceFactory::GetForProfile(profile)) {
+    : thumbnail_service_(ThumbnailServiceFactory::GetForProfile(profile)) {
 }
 
 ThumbnailSource::~ThumbnailSource() {
 }
 
-void ThumbnailSource::StartDataRequest(const std::string& path,
-                                       bool is_incognito,
-                                       int request_id) {
+std::string ThumbnailSource::GetSource() {
+  return chrome::kChromeUIThumbnailHost;
+}
+
+void ThumbnailSource::StartDataRequest(
+    const std::string& path,
+    bool is_incognito,
+    const content::URLDataSource::GotDataCallback& callback) {
   scoped_refptr<base::RefCountedMemory> data;
   if (thumbnail_service_->GetPageThumbnail(GURL(path), &data)) {
     // We have the thumbnail.
-    SendResponse(request_id, data.get());
+    callback.Run(data.get());
   } else {
-    SendDefaultThumbnail(request_id);
+    callback.Run(default_thumbnail_);
   }
 }
 
@@ -46,9 +50,5 @@ MessageLoop* ThumbnailSource::MessageLoopForRequestPath(
     const std::string& path) const {
   // TopSites can be accessed from the IO thread.
   return thumbnail_service_.get() ?
-      NULL : DataSource::MessageLoopForRequestPath(path);
-}
-
-void ThumbnailSource::SendDefaultThumbnail(int request_id) {
-  SendResponse(request_id, default_thumbnail_);
+      NULL : content::URLDataSource::MessageLoopForRequestPath(path);
 }

@@ -7,7 +7,6 @@
 
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 
-
 // Private methods for the |BrowserWindowController|. This category should
 // contain the private methods used by different parts of the BWC; private
 // methods used only by single parts should be declared in their own file.
@@ -143,6 +142,20 @@
 // timers/animation.
 - (void)enableBarVisibilityUpdates;
 - (void)disableBarVisibilityUpdates;
+
+// The opacity for the toolbar divider; 0 means that it shouldn't be shown.
+- (CGFloat)toolbarDividerOpacity;
+
+// Returns YES if Instant results are being shown under the omnibox.
+- (BOOL)isShowingInstantResults;
+
+// Updates the content offets of the tab strip controller and the overlayable
+// contents controller. This is used to adjust the overlap between those views
+// and the bookmark bar.
+- (void)updateContentOffsets;
+
+// Ensures the z-order of subviews is correct.
+- (void)updateSubviewZOrder:(BOOL)inPresentationMode;
 
 @end  // @interface BrowserWindowController(Private)
 

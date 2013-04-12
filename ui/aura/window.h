@@ -16,6 +16,7 @@
 #include "base/string16.h"
 #include "ui/aura/aura_export.h"
 #include "ui/aura/client/window_types.h"
+#include "ui/aura/window_observer.h"
 #include "ui/base/events/event_constants.h"
 #include "ui/base/events/event_target.h"
 #include "ui/base/gestures/gesture_types.h"
@@ -49,6 +50,10 @@ class WindowObserver;
 template<typename T>
 struct WindowProperty;
 
+namespace test {
+class WindowTestApi;
+}
+
 // Aura window implementation. Interesting events are sent to the
 // WindowDelegate.
 // TODO(beng): resolve ownership.
@@ -58,21 +63,6 @@ class AURA_EXPORT Window : public ui::LayerDelegate,
                            public ui::GestureConsumer {
  public:
   typedef std::vector<Window*> Windows;
-
-  class AURA_EXPORT TestApi {
-   public:
-    explicit TestApi(Window* window);
-
-    bool OwnsLayer() const;
-    bool ContainsMouse();
-
-   private:
-    TestApi();
-
-    Window* window_;
-
-    DISALLOW_COPY_AND_ASSIGN(TestApi);
-  };
 
   explicit Window(WindowDelegate* delegate);
   virtual ~Window();
@@ -358,6 +348,7 @@ class AURA_EXPORT Window : public ui::LayerDelegate,
 #endif
 
  private:
+  friend class test::WindowTestApi;
   friend class LayoutManager;
 
   // Used when stacking windows.
@@ -419,6 +410,20 @@ class AURA_EXPORT Window : public ui::LayerDelegate,
   // Window has been added or is about to be removed from a RootWindow.
   void NotifyRemovingFromRootWindow();
   void NotifyAddedToRootWindow();
+
+  // Methods implementing hierarchy change notifications. See WindowObserver for
+  // more details.
+  void NotifyWindowHierarchyChange(
+      const WindowObserver::HierarchyChangeParams& params);
+  // Notifies this window and its child hierarchy.
+  void NotifyWindowHierarchyChangeDown(
+      const WindowObserver::HierarchyChangeParams& params);
+  // Notifies this window and its parent hierarchy.
+  void NotifyWindowHierarchyChangeUp(
+      const WindowObserver::HierarchyChangeParams& params);
+  // Notifies this window's observers.
+  void NotifyWindowHierarchyChangeAtReceiver(
+      const WindowObserver::HierarchyChangeParams& params);
 
   // Invoked from the closure returned by PrepareForLayerBoundsChange() after
   // the bounds of the layer has changed. |old_bounds| is the previous bounds of

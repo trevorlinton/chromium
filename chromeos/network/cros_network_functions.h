@@ -62,6 +62,9 @@ class CHROMEOS_EXPORT CrosNetworkWatcher {
 CHROMEOS_EXPORT bool CrosActivateCellularModem(const std::string& service_path,
                                                const std::string& carrier);
 
+// Completes the activation for the cellular modem specified by |service_path|.
+CHROMEOS_EXPORT void CrosCompleteCellularActivation(
+    const std::string& service_path);
 
 // Sets a property of a service to the provided value.
 // Success is indicated by the receipt of a matching PropertyChanged signal.
@@ -253,14 +256,6 @@ CHROMEOS_EXPORT bool CrosListIPConfigsAndBlock(
 CHROMEOS_EXPORT void CrosRequestIPConfigRefresh(
     const std::string& ipconfig_path);
 
-// Reads out the results of the last wifi scan. These results are not
-// pre-cached in the library, so the call may block whilst the results are
-// read over IPC.
-// Returns false if an error occurred in reading the results. Note that
-// a true return code only indicates the result set was successfully read,
-// it does not imply a scan has successfully completed yet.
-CHROMEOS_EXPORT bool CrosGetWifiAccessPoints(WifiAccessPointVector* result);
-
 // Configures the network service specified by |properties|.
 CHROMEOS_EXPORT void CrosConfigureService(
     const base::DictionaryValue& properties);
@@ -269,6 +264,9 @@ CHROMEOS_EXPORT void CrosConfigureService(
 CHROMEOS_EXPORT void CrosSetCarrier(const std::string& device_path,
                                     const std::string& carrier,
                                     const NetworkOperationCallback& callback);
+
+// Resets the device.
+CHROMEOS_EXPORT void CrosReset(const std::string& device_path);
 
 }  // namespace chromeos
 

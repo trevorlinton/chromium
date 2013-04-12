@@ -87,14 +87,14 @@ class CookiesFunction : public AsyncExtensionFunction {
 };
 
 // Implements the cookies.get() extension function.
-class GetCookieFunction : public CookiesFunction {
+class CookiesGetFunction : public CookiesFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("cookies.get")
+  DECLARE_EXTENSION_FUNCTION("cookies.get", COOKIES_GET)
 
-  GetCookieFunction();
+  CookiesGetFunction();
 
  protected:
-  virtual ~GetCookieFunction();
+  virtual ~CookiesGetFunction();
 
   // ExtensionFunction:
   virtual bool RunImpl() OVERRIDE;
@@ -110,14 +110,14 @@ class GetCookieFunction : public CookiesFunction {
 };
 
 // Implements the cookies.getAll() extension function.
-class GetAllCookiesFunction : public CookiesFunction {
+class CookiesGetAllFunction : public CookiesFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("cookies.getAll")
+  DECLARE_EXTENSION_FUNCTION("cookies.getAll", COOKIES_GETALL)
 
-  GetAllCookiesFunction();
+  CookiesGetAllFunction();
 
  protected:
-  virtual ~GetAllCookiesFunction();
+  virtual ~CookiesGetAllFunction();
 
   // ExtensionFunction:
   virtual bool RunImpl() OVERRIDE;
@@ -133,14 +133,14 @@ class GetAllCookiesFunction : public CookiesFunction {
 };
 
 // Implements the cookies.set() extension function.
-class SetCookieFunction : public CookiesFunction {
+class CookiesSetFunction : public CookiesFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("cookies.set")
+  DECLARE_EXTENSION_FUNCTION("cookies.set", COOKIES_SET)
 
-  SetCookieFunction();
+  CookiesSetFunction();
 
  protected:
-  virtual ~SetCookieFunction();
+  virtual ~CookiesSetFunction();
   virtual bool RunImpl() OVERRIDE;
 
  private:
@@ -156,14 +156,14 @@ class SetCookieFunction : public CookiesFunction {
 };
 
 // Implements the cookies.remove() extension function.
-class RemoveCookieFunction : public CookiesFunction {
+class CookiesRemoveFunction : public CookiesFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("cookies.remove")
+  DECLARE_EXTENSION_FUNCTION("cookies.remove", COOKIES_REMOVE)
 
-  RemoveCookieFunction();
+  CookiesRemoveFunction();
 
  protected:
-  virtual ~RemoveCookieFunction();
+  virtual ~CookiesRemoveFunction();
 
   // ExtensionFunction:
   virtual bool RunImpl() OVERRIDE;
@@ -179,15 +179,16 @@ class RemoveCookieFunction : public CookiesFunction {
 };
 
 // Implements the cookies.getAllCookieStores() extension function.
-class GetAllCookieStoresFunction : public CookiesFunction {
+class CookiesGetAllCookieStoresFunction : public CookiesFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("cookies.getAllCookieStores")
+  DECLARE_EXTENSION_FUNCTION("cookies.getAllCookieStores",
+                             COOKIES_GETALLCOOKIESTORES)
 
  protected:
-  virtual ~GetAllCookieStoresFunction() {}
+  virtual ~CookiesGetAllCookieStoresFunction() {}
 
   // ExtensionFunction:
-  // GetAllCookieStoresFunction is sync.
+  // CookiesGetAllCookieStoresFunction is sync.
   virtual void Run() OVERRIDE;
   virtual bool RunImpl() OVERRIDE;
 };
@@ -200,6 +201,9 @@ class CookiesAPI : public ProfileKeyedAPI,
 
   // ProfileKeyedService implementation.
   virtual void Shutdown() OVERRIDE;
+
+  // ProfileKeyedAPI implementation.
+  static ProfileKeyedAPIFactory<CookiesAPI>* GetFactoryInstance();
 
   // EventRouter::Observer implementation.
   virtual void OnListenerAdded(const extensions::EventListenerInfo& details)
@@ -221,10 +225,6 @@ class CookiesAPI : public ProfileKeyedAPI,
 
   DISALLOW_COPY_AND_ASSIGN(CookiesAPI);
 };
-
-template <>
-ProfileKeyedAPIFactory<CookiesAPI>*
-ProfileKeyedAPIFactory<CookiesAPI>::GetInstance();
 
 }  // namespace extensions
 

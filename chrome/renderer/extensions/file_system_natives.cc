@@ -12,8 +12,8 @@
 #include "chrome/renderer/extensions/user_script_slave.h"
 #include "extensions/common/constants.h"
 #include "grit/renderer_resources.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebFileSystem.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebString.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebFileSystem.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebFrame.h"
 #include "webkit/fileapi/file_system_types.h"
 #include "webkit/fileapi/file_system_util.h"
@@ -35,25 +35,56 @@ static v8::Handle<v8::Value> GetIsolatedFileSystem(
   std::string name(fileapi::GetIsolatedFileSystemName(context_url.GetOrigin(),
                                                       file_system_id));
 
-  std::string root(fileapi::GetFileSystemRootURI(
-          context_url.GetOrigin(),
-          fileapi::kFileSystemTypeIsolated).spec());
-  root.append(file_system_id);
-  root.append("/");
-
   // The optional second argument is the subfolder within the isolated file
   // system at which to root the DOMFileSystem we're returning to the caller.
+  std::string optional_root_name;
   if (args.Length() == 2) {
     DCHECK(args[1]->IsString());
-    name = *v8::String::Utf8Value(args[1]);
-    root.append(name);
-    root.append("/");
+    optional_root_name = *v8::String::Utf8Value(args[1]);
   }
+
+  std::string root(fileapi::GetIsolatedFileSystemRootURIString(
+      context_url.GetOrigin(),
+      file_system_id,
+      optional_root_name));
 
   return webframe->createFileSystem(
       WebKit::WebFileSystem::TypeIsolated,
       WebKit::WebString::fromUTF8(name),
       WebKit::WebString::fromUTF8(root));
+}
+
+static v8::Handle<v8::Value> GetFileEntry(const v8::Arguments& args) {
+  DCHECK(args.Length() == 5);
+  DCHECK(args[0]->IsString());
+  std::string type_string = *v8::String::Utf8Value(args[0]->ToString());
+  WebKit::WebFileSystem::Type type;
+  bool is_valid_type = fileapi::GetFileSystemPublicType(type_string, &type);
+  DCHECK(is_valid_type);
+  if (is_valid_type == false) {
+    return v8::Undefined();
+  }
+
+  DCHECK(args[1]->IsString());
+  DCHECK(args[2]->IsString());
+  DCHECK(args[3]->IsString());
+  std::string file_system_name(*v8::String::Utf8Value(args[1]->ToString()));
+  std::string file_system_root_url(*v8::String::Utf8Value(args[2]->ToString()));
+  std::string file_path_string(*v8::String::Utf8Value(args[3]->ToString()));
+  base::FilePath file_path = base::FilePath::FromUTF8Unsafe(file_path_string);
+  DCHECK(fileapi::VirtualPath::IsAbsolute(file_path.value()));
+
+  DCHECK(args[4]->IsBoolean());
+  bool is_directory = args[4]->BooleanValue();
+
+  WebKit::WebFrame* webframe = WebKit::WebFrame::frameForCurrentContext();
+  DCHECK(webframe);
+  return webframe->createFileEntry(
+      type,
+      WebKit::WebString::fromUTF8(file_system_name),
+      WebKit::WebString::fromUTF8(file_system_root_url),
+      WebKit::WebString::fromUTF8(file_path_string),
+      is_directory);
 }
 
 }  // namespace
@@ -62,6 +93,7 @@ namespace extensions {
 
 FileSystemNatives::FileSystemNatives()
     : ChromeV8Extension(NULL) {
+  RouteStaticFunction("GetFileEntry", &GetFileEntry);
   RouteStaticFunction("GetIsolatedFileSystem", &GetIsolatedFileSystem);
 }
 

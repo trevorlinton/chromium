@@ -14,6 +14,7 @@
 #include "content/public/common/password_form.h"
 #include "content/public/renderer/password_form_conversion_utils.h"
 #include "content/public/renderer/render_view.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebVector.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebAutofillClient.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebDocument.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebElement.h"
@@ -22,7 +23,6 @@
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebInputEvent.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebSecurityOrigin.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebView.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebVector.h"
 #include "ui/base/keycodes/keyboard_codes.h"
 
 namespace {
@@ -208,6 +208,7 @@ PasswordAutofillManager::PasswordAutofillManager(
     content::RenderView* render_view)
     : content::RenderViewObserver(render_view),
       disable_popup_(false),
+      web_view_(render_view->GetWebView()),
       ALLOW_THIS_IN_INITIALIZER_LIST(weak_ptr_factory_(this)) {
 }
 
@@ -511,9 +512,15 @@ bool PasswordAutofillManager::ShowSuggestionPopup(
 
     WebKit::WebInputElement selected_element = user_input;
     gfx::Rect bounding_box(selected_element.boundsInViewportSpace());
+
+    float scale = web_view_->pageScaleFactor();
+    gfx::RectF bounding_box_scaled(bounding_box.x() * scale,
+                                   bounding_box.y() * scale,
+                                   bounding_box.width() * scale,
+                                   bounding_box.height() * scale);
     Send(new AutofillHostMsg_ShowPasswordSuggestions(routing_id(),
                                                      field,
-                                                     bounding_box,
+                                                     bounding_box_scaled,
                                                      suggestions));
     return !suggestions.empty();
   }

@@ -4,6 +4,7 @@
 
 #include "caching_bitmap_content_layer_updater.h"
 
+#include "base/logging.h"
 #include "cc/layer_painter.h"
 #include "skia/ext/platform_canvas.h"
 
@@ -33,7 +34,7 @@ void CachingBitmapContentLayerUpdater::prepareToUpdate(
     float contents_width_scale,
     float contents_height_scale,
     gfx::Rect& resulting_opaque_rect,
-    RenderingStats& stats) {
+    RenderingStats* stats) {
   BitmapContentLayerUpdater::prepareToUpdate(
       content_rect,
       tile_size,

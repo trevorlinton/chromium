@@ -151,8 +151,8 @@ class TokenService : public GaiaAuthConsumer,
   // called.
   bool TokensLoadedFromDB() const;
 
-  // Returns true if the token service has all credentials needed to fetch
-  // tokens.
+  // Returns true if the token service has either GAIA credentials or OAuth2
+  // tokens needed to fetch other service tokens.
   virtual bool AreCredentialsValid() const;
 
   // Tokens will be fetched for all services(sync, talk) in the background.
@@ -168,7 +168,6 @@ class TokenService : public GaiaAuthConsumer,
   // use that token to call a Google API.
   virtual bool HasOAuthLoginToken() const;
   virtual const std::string& GetOAuth2LoginRefreshToken() const;
-  const std::string& GetOAuth2LoginAccessToken() const;
 
   // For tests only. Doesn't save to the WebDB.
   void IssueAuthTokenForTest(const std::string& service,
@@ -190,6 +189,9 @@ class TokenService : public GaiaAuthConsumer,
       const WDTypedResult* result) OVERRIDE;
 
  protected:
+  // Saves OAuth2 credentials.
+  void SaveOAuth2Credentials(const ClientOAuthResult& result);
+
   void set_tokens_loaded(bool loaded) {
     tokens_loaded_ = loaded;
   }
@@ -242,7 +244,7 @@ class TokenService : public GaiaAuthConsumer,
   // number of entries in this array must match the number of entries in the
   // kServices array declared in the cc file.  If not, a compile time error
   // will occur.
-  scoped_ptr<GaiaAuthFetcher> fetchers_[4];
+  scoped_ptr<GaiaAuthFetcher> fetchers_[2];
 
   // Map from service to token.
   std::map<std::string, std::string> token_map_;

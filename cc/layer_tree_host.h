@@ -12,6 +12,7 @@
 #include "base/hash_tables.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "base/time.h"
 #include "cc/animation_events.h"
 #include "cc/cc_export.h"
@@ -20,12 +21,13 @@
 #include "cc/layer_tree_settings.h"
 #include "cc/occlusion_tracker.h"
 #include "cc/output_surface.h"
-#include "cc/prioritized_resource_manager.h"
 #include "cc/proxy.h"
 #include "cc/rate_limiter.h"
 #include "cc/rendering_stats.h"
 #include "cc/scoped_ptr_vector.h"
+#include "skia/ext/refptr.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "third_party/skia/include/core/SkPicture.h"
 #include "ui/gfx/rect.h"
 
 #if defined(COMPILER_GCC)
@@ -42,13 +44,16 @@ struct hash<WebKit::WebGraphicsContext3D*> {
 namespace cc {
 
 class AnimationRegistrar;
+class HeadsUpDisplayLayer;
 class Layer;
 class LayerTreeHostImpl;
 class LayerTreeHostImplClient;
 class PrioritizedResourceManager;
-class ResourceUpdateQueue;
-class HeadsUpDisplayLayer;
+class PrioritizedResource;
 class Region;
+class ResourceProvider;
+class ResourceUpdateQueue;
+class TopControlsManager;
 struct ScrollAndScaleSet;
 
 
@@ -57,16 +62,17 @@ struct CC_EXPORT RendererCapabilities {
     RendererCapabilities();
     ~RendererCapabilities();
 
-    GLenum bestTextureFormat;
+    unsigned bestTextureFormat;
     bool usingPartialSwap;
     bool usingAcceleratedPainting;
     bool usingSetVisibility;
     bool usingSwapCompleteCallback;
     bool usingGpuMemoryManager;
-    bool usingDiscardBackbuffer;
     bool usingEglImage;
     bool allowPartialTextureUpdates;
+    bool usingOffscreenContext3d;
     int maxTextureSize;
+    bool avoidPow2Textures;
 };
 
 class CC_EXPORT LayerTreeHost : public RateLimiterClient {
@@ -79,9 +85,8 @@ public:
     // Returns true if any LayerTreeHost is alive.
     static bool anyLayerTreeHostInstanceExists();
 
-    static bool needsFilterContext() { return s_needsFilterContext; }
-    static void setNeedsFilterContext(bool needsFilterContext) { s_needsFilterContext = needsFilterContext; }
-    bool needsSharedContext() const { return needsFilterContext() || settings().acceleratePainting; }
+    void setNeedsFilterContext() { m_needsFilterContext = true; }
+    bool needsOffscreenContext() const { return m_needsFilterContext || settings().acceleratePainting; }
 
     // LayerTreeHost interface to Proxy.
     void willBeginFrame() { m_client->willBeginFrame(); }
@@ -173,11 +178,6 @@ public:
     void startPageScaleAnimation(gfx::Vector2d targetOffset, bool useAnchor, float scale, base::TimeDelta duration);
 
     void applyScrollAndScale(const ScrollAndScaleSet&);
-    // This function converts event coordinates when the deviceViewport is zoomed.
-    // Coordinates are transformed from logical pixels in the zoomed viewport to
-    // logical pixels in the un-zoomed viewport, the latter being the coordinates
-    // required for hit-testing.
-    gfx::PointF adjustEventPointForPinchZoom(const gfx::PointF& zoomedViewportPoint) const;
     void setImplTransform(const gfx::Transform&);
 
     void startRateLimiter(WebKit::WebGraphicsContext3D*);
@@ -192,11 +192,20 @@ public:
     void setDeviceScaleFactor(float);
     float deviceScaleFactor() const { return m_deviceScaleFactor; }
 
+    void enableHidingTopControls(bool enable);
+
     HeadsUpDisplayLayer* hudLayer() const { return m_hudLayer.get(); }
 
     Proxy* proxy() const { return m_proxy.get(); }
 
     AnimationRegistrar* animationRegistrar() const { return m_animationRegistrar.get(); }
+
+    skia::RefPtr<SkPicture> capturePicture();
+
+    bool blocksPendingCommit() const;
+
+    // Obtains a thorough dump of the LayerTreeHost as a value.
+    scoped_ptr<base::Value> asValue() const;
 
 protected:
     LayerTreeHost(LayerTreeHostClient*, const LayerTreeSettings&);
@@ -214,6 +223,7 @@ private:
     bool paintMasksForRenderSurface(Layer*, ResourceUpdateQueue&);
 
     void updateLayers(Layer*, ResourceUpdateQueue&);
+    void updateHudLayer();
     void triggerPrepaint();
 
     void prioritizeTextures(const LayerList&, OverdrawMetrics&); 
@@ -225,10 +235,9 @@ private:
     bool animateLayersRecursive(Layer* current, base::TimeTicks time);
     void setAnimationEventsRecursive(const AnimationEventsVector&, Layer*, base::Time wallClockTime);
 
-    void setNeedsDisplayOnAllLayersRecursive(Layer* layer);
-
     bool m_animating;
     bool m_needsFullTreeSync;
+    bool m_needsFilterContext;
 
     base::CancelableClosure m_prepaintCallback;
 
@@ -247,6 +256,8 @@ private:
 
     scoped_ptr<PrioritizedResourceManager> m_contentsTextureManager;
     scoped_ptr<PrioritizedResource> m_surfaceMemoryPlaceholder;
+
+    base::WeakPtr<TopControlsManager> m_topControlsManagerWeakPtr;
 
     LayerTreeSettings m_settings;
     LayerTreeDebugState m_debugState;
@@ -272,8 +283,6 @@ private:
     size_t m_partialTextureUpdateRequests;
 
     scoped_ptr<AnimationRegistrar> m_animationRegistrar;
-
-    static bool s_needsFilterContext;
 
     DISALLOW_COPY_AND_ASSIGN(LayerTreeHost);
 };

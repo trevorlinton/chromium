@@ -10,6 +10,7 @@
 #include "chrome/browser/bookmarks/bookmark_model.h"
 #include "chrome/browser/extensions/extension_keybinding_registry.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/search/search_model_observer.h"
 #include "ui/base/ui_base_types.h"
 
 class Browser;
@@ -30,7 +31,8 @@ class Extension;
 
 class BrowserWindowCocoa :
     public BrowserWindow,
-    public extensions::ExtensionKeybindingRegistry::Delegate {
+    public extensions::ExtensionKeybindingRegistry::Delegate,
+    public chrome::search::SearchModelObserver {
  public:
   BrowserWindowCocoa(Browser* browser,
                      BrowserWindowController* controller);
@@ -70,6 +72,7 @@ class BrowserWindowCocoa :
   virtual void UpdateFullscreenExitBubbleContent(
       const GURL& url,
       FullscreenExitBubbleType bubble_type) OVERRIDE;
+  virtual bool ShouldHideUIForFullscreen() const OVERRIDE;
   virtual bool IsFullscreen() const OVERRIDE;
   virtual bool IsFullscreenBubbleVisible() const OVERRIDE;
   virtual LocationBar* GetLocationBar() const OVERRIDE;
@@ -91,14 +94,14 @@ class BrowserWindowCocoa :
                                         Profile* profile) OVERRIDE;
   virtual void ToggleBookmarkBar() OVERRIDE;
   virtual void ShowUpdateChromeDialog() OVERRIDE;
-  virtual void ShowTaskManager(chrome::HostDesktopType desktop_type) OVERRIDE;
-  virtual void ShowBackgroundPages(
-      chrome::HostDesktopType desktop_type) OVERRIDE;
+  virtual void ShowTaskManager() OVERRIDE;
+  virtual void ShowBackgroundPages() OVERRIDE;
   virtual void ShowBookmarkBubble(const GURL& url,
                                   bool already_bookmarked) OVERRIDE;
   virtual void ShowChromeToMobileBubble() OVERRIDE;
 #if defined(ENABLE_ONE_CLICK_SIGNIN)
   virtual void ShowOneClickSigninBubble(
+      OneClickSigninBubbleType type,
       const StartSyncCallback& start_sync_callback) OVERRIDE;
 #endif
   virtual bool IsDownloadShelfVisible() const OVERRIDE;
@@ -107,10 +110,6 @@ class BrowserWindowCocoa :
   virtual void UserChangedTheme() OVERRIDE;
   virtual int GetExtraRenderViewHeight() const OVERRIDE;
   virtual void WebContentsFocused(content::WebContents* contents) OVERRIDE;
-  virtual void ShowPageInfo(content::WebContents* web_contents,
-                            const GURL& url,
-                            const content::SSLStatus& ssl,
-                            bool show_history) OVERRIDE;
   virtual void ShowWebsiteSettings(Profile* profile,
                                    content::WebContents* web_contents,
                                    const GURL& url,
@@ -129,13 +128,10 @@ class BrowserWindowCocoa :
   virtual void Copy() OVERRIDE;
   virtual void Paste() OVERRIDE;
   virtual void OpenTabpose() OVERRIDE;
-  virtual void EnterPresentationMode(
-      const GURL& url,
-      FullscreenExitBubbleType bubble_type) OVERRIDE;
-  virtual void ExitPresentationMode() OVERRIDE;
-  virtual bool InPresentationMode() OVERRIDE;
+  virtual void EnterFullscreenWithChrome() OVERRIDE;
+  virtual bool IsFullscreenWithChrome() OVERRIDE;
+  virtual bool IsFullscreenWithoutChrome() OVERRIDE;
   virtual gfx::Rect GetInstantBounds() OVERRIDE;
-  virtual bool IsInstantTabShowing() OVERRIDE;
   virtual WindowOpenDisposition GetDispositionForPopupBounds(
       const gfx::Rect& bounds) OVERRIDE;
   virtual FindBar* CreateFindBar() OVERRIDE;
@@ -151,6 +147,10 @@ class BrowserWindowCocoa :
   // Overridden from ExtensionKeybindingRegistry::Delegate:
   virtual extensions::ActiveTabPermissionGranter*
       GetActiveTabPermissionGranter() OVERRIDE;
+
+  // Overridden from chrome::search::SearchModelObserver:
+  virtual void ModeChanged(const chrome::search::Mode& old_mode,
+                           const chrome::search::Mode& new_mode) OVERRIDE;
 
   // Adds the given FindBar cocoa controller to this browser window.
   void AddFindBar(FindBarCocoaController* find_bar_cocoa_controller);

@@ -4,8 +4,6 @@
 
 #include "cc/keyframed_animation_curve.h"
 
-using WebKit::WebTransformationMatrix;
-
 namespace cc {
 
 namespace {
@@ -15,16 +13,16 @@ void insertKeyframe(scoped_ptr<Keyframe> keyframe, ScopedPtrVector<Keyframe>& ke
 {
     // Usually, the keyframes will be added in order, so this loop would be unnecessary and
     // we should skip it if possible.
-    if (!keyframes.isEmpty() && keyframe->time() < keyframes.last()->time()) {
+    if (!keyframes.empty() && keyframe->time() < keyframes.back()->time()) {
         for (size_t i = 0; i < keyframes.size(); ++i) {
             if (keyframe->time() < keyframes[i]->time()) {
-                keyframes.insert(i, keyframe.Pass());
+                keyframes.insert(keyframes.begin() + i, keyframe.Pass());
                 return;
             }
         }
     }
 
-    keyframes.append(keyframe.Pass());
+    keyframes.push_back(keyframe.Pass());
 }
 
 scoped_ptr<TimingFunction> cloneTimingFunction(const TimingFunction* timingFunction)
@@ -84,12 +82,12 @@ scoped_ptr<FloatKeyframe> FloatKeyframe::clone() const
     return FloatKeyframe::create(time(), value(), func.Pass());
 }
 
-scoped_ptr<TransformKeyframe> TransformKeyframe::create(double time, const WebKit::WebTransformOperations& value, scoped_ptr<TimingFunction> timingFunction)
+scoped_ptr<TransformKeyframe> TransformKeyframe::create(double time, const TransformOperations& value, scoped_ptr<TimingFunction> timingFunction)
 {
     return make_scoped_ptr(new TransformKeyframe(time, value, timingFunction.Pass()));
 }
 
-TransformKeyframe::TransformKeyframe(double time, const WebKit::WebTransformOperations& value, scoped_ptr<TimingFunction> timingFunction)
+TransformKeyframe::TransformKeyframe(double time, const TransformOperations& value, scoped_ptr<TimingFunction> timingFunction)
     : Keyframe(time, timingFunction.Pass())
     , m_value(value)
 {
@@ -99,7 +97,7 @@ TransformKeyframe::~TransformKeyframe()
 {
 }
 
-const WebKit::WebTransformOperations& TransformKeyframe::value() const
+const TransformOperations& TransformKeyframe::value() const
 {
     return m_value;
 }
@@ -132,7 +130,7 @@ void KeyframedFloatAnimationCurve::addKeyframe(scoped_ptr<FloatKeyframe> keyfram
 
 double KeyframedFloatAnimationCurve::duration() const
 {
-    return m_keyframes.last()->time() - m_keyframes.first()->time();
+    return m_keyframes.back()->time() - m_keyframes.front()->time();
 }
 
 scoped_ptr<AnimationCurve> KeyframedFloatAnimationCurve::clone() const
@@ -145,11 +143,11 @@ scoped_ptr<AnimationCurve> KeyframedFloatAnimationCurve::clone() const
 
 float KeyframedFloatAnimationCurve::getValue(double t) const
 {
-    if (t <= m_keyframes.first()->time())
-        return m_keyframes.first()->value();
+    if (t <= m_keyframes.front()->time())
+        return m_keyframes.front()->value();
 
-    if (t >= m_keyframes.last()->time())
-        return m_keyframes.last()->value();
+    if (t >= m_keyframes.back()->time())
+        return m_keyframes.back()->value();
 
     size_t i = 0;
     for (; i < m_keyframes.size() - 1; ++i) {
@@ -185,7 +183,7 @@ void KeyframedTransformAnimationCurve::addKeyframe(scoped_ptr<TransformKeyframe>
 
 double KeyframedTransformAnimationCurve::duration() const
 {
-    return m_keyframes.last()->time() - m_keyframes.first()->time();
+    return m_keyframes.back()->time() - m_keyframes.front()->time();
 }
 
 scoped_ptr<AnimationCurve> KeyframedTransformAnimationCurve::clone() const
@@ -196,13 +194,13 @@ scoped_ptr<AnimationCurve> KeyframedTransformAnimationCurve::clone() const
     return toReturn.PassAs<AnimationCurve>();
 }
 
-WebTransformationMatrix KeyframedTransformAnimationCurve::getValue(double t) const
+gfx::Transform KeyframedTransformAnimationCurve::getValue(double t) const
 {
-    if (t <= m_keyframes.first()->time())
-        return m_keyframes.first()->value().apply();
+    if (t <= m_keyframes.front()->time())
+        return m_keyframes.front()->value().Apply();
 
-    if (t >= m_keyframes.last()->time())
-        return m_keyframes.last()->value().apply();
+    if (t >= m_keyframes.back()->time())
+        return m_keyframes.back()->value().Apply();
 
     size_t i = 0;
     for (; i < m_keyframes.size() - 1; ++i) {
@@ -215,7 +213,7 @@ WebTransformationMatrix KeyframedTransformAnimationCurve::getValue(double t) con
     if (m_keyframes[i]->timingFunction())
         progress = m_keyframes[i]->timingFunction()->getValue(progress);
 
-    return m_keyframes[i+1]->value().blend(m_keyframes[i]->value(), progress);
+    return m_keyframes[i+1]->value().Blend(m_keyframes[i]->value(), progress);
 }
 
 }  // namespace cc

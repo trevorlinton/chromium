@@ -108,6 +108,14 @@ class ASH_EXPORT ShelfLayoutManager :
   // widgets.
   void LayoutShelf();
 
+  // Returns shelf visibility state based on current value of auto hide
+  // behavior setting.
+  ShelfVisibilityState CalculateShelfVisibility();
+
+  // Returns shelf visibility state based on current value of auto hide
+  // behavior setting.
+  ShelfVisibilityState CalculateShelfVisibilityWhileDragging();
+
   // Updates the visibility state.
   void UpdateVisibilityState();
 
@@ -162,7 +170,7 @@ class ASH_EXPORT ShelfLayoutManager :
   // A helper function that provides a shortcut for choosing
   // values specific to a shelf alignment.
   template<typename T>
-  T SelectValueForShelfAlignment(T bottom, T left, T right) const {
+  T SelectValueForShelfAlignment(T bottom, T left, T right, T top) const {
     switch (alignment_) {
       case SHELF_ALIGNMENT_BOTTOM:
         return bottom;
@@ -170,6 +178,8 @@ class ASH_EXPORT ShelfLayoutManager :
         return left;
       case SHELF_ALIGNMENT_RIGHT:
         return right;
+      case SHELF_ALIGNMENT_TOP:
+        return top;
     }
     NOTREACHED();
     return right;

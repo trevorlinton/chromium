@@ -26,6 +26,7 @@
 #include "net/base/host_port_pair.h"
 #include "net/base/io_buffer.h"
 #include "net/base/load_flags.h"
+#include "net/base/load_timing_info.h"
 #include "net/base/net_errors.h"
 #include "net/base/net_util.h"
 #include "net/base/ssl_cert_request_info.h"
@@ -481,6 +482,20 @@ void HttpNetworkTransaction::OnHttpsProxyTunnelResponse(
   OnIOComplete(ERR_HTTPS_PROXY_TUNNEL_RESPONSE);
 }
 
+bool HttpNetworkTransaction::GetLoadTimingInfo(
+    LoadTimingInfo* load_timing_info) const {
+  if (!stream_ || !stream_->GetLoadTimingInfo(load_timing_info))
+    return false;
+
+  load_timing_info->proxy_resolve_start =
+      proxy_info_.proxy_resolve_start_time();
+  load_timing_info->proxy_resolve_end = proxy_info_.proxy_resolve_end_time();
+  load_timing_info->send_start = send_start_time_;
+  load_timing_info->send_end = send_end_time_;
+  load_timing_info->receive_headers_end = receive_headers_end_;
+  return true;
+}
+
 bool HttpNetworkTransaction::is_https_request() const {
   return request_->url.SchemeIs("https");
 }
@@ -788,12 +803,14 @@ int HttpNetworkTransaction::DoBuildRequestComplete(int result) {
 }
 
 int HttpNetworkTransaction::DoSendRequest() {
+  send_start_time_ = base::TimeTicks::Now();
   next_state_ = STATE_SEND_REQUEST_COMPLETE;
 
   return stream_->SendRequest(request_headers_, &response_, io_callback_);
 }
 
 int HttpNetworkTransaction::DoSendRequestComplete(int result) {
+  send_end_time_ = base::TimeTicks::Now();
   if (result < 0)
     return HandleIOError(result);
   next_state_ = STATE_READ_HEADERS;
@@ -816,6 +833,8 @@ int HttpNetworkTransaction::HandleConnectionClosedBeforeEndOfHeaders() {
 }
 
 int HttpNetworkTransaction::DoReadHeadersComplete(int result) {
+  receive_headers_end_ = base::TimeTicks::Now();
+
   // We can get a certificate error or ERR_SSL_CLIENT_AUTH_CERT_NEEDED here
   // due to SSL renegotiation.
   if (IsCertificateError(result)) {
@@ -1155,16 +1174,11 @@ int HttpNetworkTransaction::HandleCertificateRequest(int error) {
   // is likely to accept, based on the criteria supplied in the
   // CertificateRequest message.
   if (client_cert) {
-    const std::vector<scoped_refptr<X509Certificate> >& client_certs =
-        response_.cert_request_info->client_certs;
-    bool cert_still_valid = false;
-    for (size_t i = 0; i < client_certs.size(); ++i) {
-      if (client_cert->Equals(client_certs[i])) {
-        cert_still_valid = true;
-        break;
-      }
-    }
+    const std::vector<std::string>& cert_authorities =
+        response_.cert_request_info->cert_authorities;
 
+    bool cert_still_valid = cert_authorities.empty() ||
+        client_cert->IsIssuedByEncoded(cert_authorities);
     if (!cert_still_valid)
       return error;
   }
@@ -1306,6 +1320,10 @@ void HttpNetworkTransaction::ResetStateForRestart() {
 }
 
 void HttpNetworkTransaction::ResetStateForAuthRestart() {
+  send_start_time_ = base::TimeTicks();
+  send_end_time_ = base::TimeTicks();
+  receive_headers_end_ = base::TimeTicks();
+
   pending_auth_target_ = HttpAuth::AUTH_NONE;
   read_buf_ = NULL;
   read_buf_len_ = 0;

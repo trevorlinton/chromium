@@ -36,7 +36,8 @@ class MockDBusThreadManagerWithoutGMock : public DBusThreadManager {
 
   virtual void AddObserver(DBusThreadManagerObserver* observer) OVERRIDE;
   virtual void RemoveObserver(DBusThreadManagerObserver* observer) OVERRIDE;
-  virtual void InitIBusBus(const std::string& ibus_address) OVERRIDE;
+  virtual void InitIBusBus(const std::string& ibus_address,
+                           const base::Closure& closure) OVERRIDE;
   virtual dbus::Bus* GetSystemBus() OVERRIDE;
   virtual dbus::Bus* GetIBusBus() OVERRIDE;
 
@@ -51,7 +52,6 @@ class MockDBusThreadManagerWithoutGMock : public DBusThreadManager {
   virtual ShillDeviceClient* GetShillDeviceClient() OVERRIDE;
   virtual ShillIPConfigClient* GetShillIPConfigClient() OVERRIDE;
   virtual ShillManagerClient* GetShillManagerClient() OVERRIDE;
-  virtual ShillNetworkClient* GetShillNetworkClient() OVERRIDE;
   virtual ShillProfileClient* GetShillProfileClient() OVERRIDE;
   virtual ShillServiceClient* GetShillServiceClient() OVERRIDE;
   virtual GsmSMSClient* GetGsmSMSClient() OVERRIDE;
@@ -60,10 +60,9 @@ class MockDBusThreadManagerWithoutGMock : public DBusThreadManager {
   virtual ModemMessagingClient* GetModemMessagingClient() OVERRIDE;
   virtual PermissionBrokerClient* GetPermissionBrokerClient() OVERRIDE;
   virtual PowerManagerClient* GetPowerManagerClient() OVERRIDE;
-  virtual RootPowerManagerClient* GetRootPowerManagerClient() OVERRIDE;
+  virtual PowerPolicyController* GetPowerPolicyController() OVERRIDE;
   virtual SessionManagerClient* GetSessionManagerClient() OVERRIDE;
   virtual SMSClient* GetSMSClient() OVERRIDE;
-  virtual SpeechSynthesizerClient* GetSpeechSynthesizerClient() OVERRIDE;
   virtual UpdateEngineClient* GetUpdateEngineClient() OVERRIDE;
   virtual BluetoothOutOfBandClient* GetBluetoothOutOfBandClient() OVERRIDE;
   virtual IBusClient* GetIBusClient() OVERRIDE;
@@ -74,7 +73,7 @@ class MockDBusThreadManagerWithoutGMock : public DBusThreadManager {
       const dbus::ObjectPath& object_path) OVERRIDE;
   virtual void RemoveIBusEngineService(
       const dbus::ObjectPath& object_path) OVERRIDE;
-  virtual ibus::IBusPanelService* GetIBusPanelService() OVERRIDE;
+  virtual IBusPanelService* GetIBusPanelService() OVERRIDE;
 
   MockIBusClient* mock_ibus_client() {
     return mock_ibus_client_.get();

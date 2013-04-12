@@ -9,6 +9,7 @@
 #include "chrome/browser/ui/extensions/native_app_window.h"
 #include "chrome/browser/ui/extensions/shell_window.h"
 #include "chrome/browser/ui/views/unhandled_keyboard_event_handler.h"
+#include "content/public/browser/web_contents_observer.h"
 #include "third_party/skia/include/core/SkRegion.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/rect.h"
@@ -19,6 +20,7 @@ class ExtensionKeybindingRegistryViews;
 class Profile;
 
 namespace content {
+class RenderViewHost;
 class WebContents;
 }
 
@@ -32,7 +34,8 @@ class WebView;
 
 class NativeAppWindowViews : public NativeAppWindow,
                              public views::WidgetDelegateView,
-                             public views::WidgetObserver {
+                             public views::WidgetObserver,
+                             public content::WebContentsObserver {
  public:
   NativeAppWindowViews(ShellWindow* shell_window,
                        const ShellWindow::CreateParams& params);
@@ -76,6 +79,7 @@ class NativeAppWindowViews : public NativeAppWindow,
   virtual bool ShouldShowWindowTitle() const OVERRIDE;
   virtual gfx::ImageSkia GetWindowAppIcon() OVERRIDE;
   virtual gfx::ImageSkia GetWindowIcon() OVERRIDE;
+  virtual bool ShouldShowWindowIcon() const OVERRIDE;
   virtual void SaveWindowPlacement(const gfx::Rect& bounds,
                                    ui::WindowShowState show_state) OVERRIDE;
   virtual void DeleteDelegate() OVERRIDE;
@@ -94,14 +98,20 @@ class NativeAppWindowViews : public NativeAppWindow,
   virtual void OnWidgetActivationChanged(views::Widget* widget,
                                          bool active) OVERRIDE;
 
+  // WebContentsObserver implementation.
+  virtual void RenderViewCreated(
+      content::RenderViewHost* render_view_host) OVERRIDE;
+
   // views::View implementation.
   virtual void Layout() OVERRIDE;
-  virtual void ViewHierarchyChanged(
-      bool is_add, views::View *parent, views::View *child) OVERRIDE;
+  virtual void ViewHierarchyChanged(bool is_add,
+                                    views::View* parent,
+                                    views::View* child) OVERRIDE;
   virtual gfx::Size GetPreferredSize() OVERRIDE;
   virtual gfx::Size GetMinimumSize() OVERRIDE;
   virtual gfx::Size GetMaximumSize() OVERRIDE;
   virtual void OnFocus() OVERRIDE;
+  virtual bool AcceleratorPressed(const ui::Accelerator& accelerator) OVERRIDE;
 
   // NativeAppWindow implementation.
   virtual void SetFullscreen(bool fullscreen) OVERRIDE;
@@ -130,10 +140,12 @@ class NativeAppWindowViews : public NativeAppWindow,
 
   scoped_ptr<SkRegion> draggable_region_;
 
-  bool frameless_;
+  const bool frameless_;
+  const bool transparent_background_;
   gfx::Size minimum_size_;
   gfx::Size maximum_size_;
   gfx::Size preferred_size_;
+  bool resizable_;
 
   // The class that registers for keyboard shortcuts for extension commands.
   scoped_ptr<ExtensionKeybindingRegistryViews> extension_keybinding_registry_;

@@ -21,6 +21,7 @@ class AppSpecifics;
 class AutofillProfileSpecifics;
 class AutofillSpecifics;
 class BookmarkSpecifics;
+class ClientConfigParams;
 class ClientToServerMessage;
 class ClientToServerResponse;
 class DatatypeAssociationStats;
@@ -28,14 +29,15 @@ class DebugEventInfo;
 class DebugInfo;
 class DeviceInfoSpecifics;
 class DeviceInformation;
+class DictionarySpecifics;
 class EncryptedData;
 class EntitySpecifics;
 class EverythingDirective;
 class ExperimentsSpecifics;
 class ExtensionSettingSpecifics;
-class ExtensionSettingSpecifics;
 class ExtensionSpecifics;
-class ExtensionSpecifics;
+class FaviconImageSpecifics;
+class FaviconTrackingSpecifics;
 class GlobalIdDirective;
 class HistoryDeleteDirectiveSpecifics;
 class KeystoreEncryptionFlagsSpecifics;
@@ -43,6 +45,7 @@ class NigoriSpecifics;
 class PasswordSpecifics;
 class PasswordSpecificsData;
 class PreferenceSpecifics;
+class PriorityPreferenceSpecifics;
 class SearchEngineSpecifics;
 class SessionHeader;
 class SessionSpecifics;
@@ -138,14 +141,26 @@ SYNC_EXPORT_PRIVATE base::DictionaryValue* BookmarkSpecificsToValue(
 SYNC_EXPORT_PRIVATE base::DictionaryValue* DeviceInfoSpecificsToValue(
     const sync_pb::DeviceInfoSpecifics& device_info_specifics);
 
+SYNC_EXPORT_PRIVATE base::DictionaryValue* DictionarySpecificsToValue(
+    const sync_pb::DictionarySpecifics& dictionary_specifics);
+
 SYNC_EXPORT_PRIVATE base::DictionaryValue* ExperimentsSpecificsToValue(
     const sync_pb::ExperimentsSpecifics& proto);
+
+SYNC_EXPORT_PRIVATE base::DictionaryValue* PriorityPreferenceSpecificsToValue(
+    const sync_pb::PriorityPreferenceSpecifics& proto);
 
 SYNC_EXPORT_PRIVATE base::DictionaryValue* ExtensionSettingSpecificsToValue(
     const sync_pb::ExtensionSettingSpecifics& extension_setting_specifics);
 
 SYNC_EXPORT_PRIVATE base::DictionaryValue* ExtensionSpecificsToValue(
     const sync_pb::ExtensionSpecifics& extension_specifics);
+
+SYNC_EXPORT_PRIVATE base::DictionaryValue* FaviconImageSpecificsToValue(
+    const sync_pb::FaviconImageSpecifics& favicon_image_specifics);
+
+SYNC_EXPORT_PRIVATE base::DictionaryValue* FaviconTrackingSpecificsToValue(
+    const sync_pb::FaviconTrackingSpecifics& favicon_tracking_specifics);
 
 SYNC_EXPORT base::DictionaryValue* HistoryDeleteDirectiveSpecificsToValue(
     const sync_pb::HistoryDeleteDirectiveSpecifics&
@@ -200,6 +215,9 @@ base::DictionaryValue* DebugInfoToValue(
 
 base::DictionaryValue* SyncCycleCompletedEventInfoToValue(
     const sync_pb::SyncCycleCompletedEventInfo& proto);
+
+base::DictionaryValue* ClientConfigParamsToValue(
+    const sync_pb::ClientConfigParams& proto);
 
 }  // namespace syncer
 

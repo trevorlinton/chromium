@@ -10,8 +10,8 @@
 #include "base/command_line.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list_threadsafe.h"
-#include "base/string_number_conversions.h"
 #include "base/string_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"  // g_browser_process
 #include "chrome/browser/chromeos/cros/cros_library.h"
@@ -132,7 +132,7 @@ class CertLibraryImpl
     net::CertDatabase::GetInstance()->AddObserver(this);
   }
 
-  ~CertLibraryImpl() {
+  virtual ~CertLibraryImpl() {
     DCHECK(request_task_.is_null());
     net::CertDatabase::GetInstance()->RemoveObserver(this);
   }
@@ -197,6 +197,10 @@ class CertLibraryImpl
   }
 
   virtual std::string EncryptToken(const std::string& token) OVERRIDE {
+    // Don't care about token encryption while debugging.
+    if (!base::chromeos::IsRunningOnChromeOS())
+      return token;
+
     if (!LoadSupplementalUserKey()) {
       LOG(WARNING) << "Supplemental user key is not available for encrypt.";
       return std::string();
@@ -224,6 +228,10 @@ class CertLibraryImpl
 
   virtual std::string DecryptToken(
       const std::string& encrypted_token_hex) OVERRIDE {
+    // Don't care about token encryption while debugging.
+    if (!base::chromeos::IsRunningOnChromeOS())
+      return encrypted_token_hex;
+
     if (!LoadSupplementalUserKey()) {
       LOG(WARNING) << "Supplemental user key is not available for decrypt.";
       return std::string();

@@ -51,21 +51,8 @@ FileGrid.prototype.updateListItemsMetadata = function(type, props) {
       continue;
 
     FileGrid.decorateThumbnailBox(box, entry, this.metadataCache_,
-                                  false /* fit, not fill */);
+                                  ThumbnailLoader.FillMode.FIT);
   }
-};
-
-/**
- * Renders a thumbnail for Drag And Drop operations.
- * @param {HTMLDocument} doc Owner document.
- * @param {MetadataCache} metadataCache To retrieve metadata.
- * @param {Entry} entry Entry to render a thumbnail for.
- * @return {HTMLElement} Created element.
- */
-FileGrid.renderDragThumbnail = function(doc, metadataCache, entry) {
-  var item = doc.createElement('div');
-  FileGrid.decorateThumbnail(item, entry, metadataCache, true);
-  return item;
 };
 
 /**
@@ -83,7 +70,8 @@ FileGrid.decorateThumbnail = function(li, entry, metadataCache) {
   li.appendChild(frame);
 
   var box = li.ownerDocument.createElement('div');
-  FileGrid.decorateThumbnailBox(box, entry, metadataCache, false);
+  FileGrid.decorateThumbnailBox(
+      box, entry, metadataCache, ThumbnailLoader.FillMode.AUTO);
   frame.appendChild(box);
 
   var bottom = li.ownerDocument.createElement('div');
@@ -99,15 +87,12 @@ FileGrid.decorateThumbnail = function(li, entry, metadataCache) {
  * @param {HTMLDivElement} box Box to decorate.
  * @param {Entry} entry Entry which thumbnail is generating for.
  * @param {MetadataCache} metadataCache To retrieve metadata.
- * @param {boolean} fill True if fill, false if fit.
- * @param {function(HTMLElement)} opt_imageLoadCallback Callback called when
- *                                the image has been loaded before inserting
- *                                it into the DOM.
+ * @param {ThumbnailLoader.FillMode} fillMode Fill mode.
+ * @param {function(HTMLElement)=} opt_imageLoadCallback Callback called when
+ *     the image has been loaded before inserting it into the DOM.
  */
 FileGrid.decorateThumbnailBox = function(
-    box, entry, metadataCache, fill, opt_imageLoadCallback) {
-  var self = this;
-
+    box, entry, metadataCache, fillMode, opt_imageLoadCallback) {
   box.className = 'img-container';
   if (entry.isDirectory) {
     box.setAttribute('generic-thumbnail', 'folder');
@@ -122,25 +107,26 @@ FileGrid.decorateThumbnailBox = function(
   // is now stale. Request a refresh of the current directory, to get
   // the new thumbnail URLs. Once the directory is refreshed, we'll get
   // notified via onDirectoryChanged event.
-  // TODO:
-  var onImageLoadError = function(imageURL) {
-    metadataCache.refreshFileMetadata(imageURL);
+  var onImageLoadError = function() {
+    metadataCache.refreshFileMetadata(imageUrl);
   };
 
   var metadataTypes = 'thumbnail|filesystem';
 
-  if (FileType.isOnGDrive(imageUrl)) {
-    metadataTypes += '|gdata';
+  if (FileType.isOnDrive(imageUrl)) {
+    metadataTypes += '|drive';
   } else {
-    // TODO(dgozman): If we ask for 'media' for a GDrive file we fall into an
+    // TODO(dgozman): If we ask for 'media' for a Drive file we fall into an
     // infinite loop.
     metadataTypes += '|media';
   }
 
   metadataCache.get(imageUrl, metadataTypes,
       function(metadata) {
-        new ThumbnailLoader(imageUrl, metadata).
-            load(box, fill, opt_imageLoadCallback, onImageLoadError);
+        new ThumbnailLoader(imageUrl,
+                            ThumbnailLoader.LoaderType.IMAGE,
+                            metadata).
+            load(box, fillMode, opt_imageLoadCallback, onImageLoadError);
       });
 };
 
@@ -185,4 +171,3 @@ FileGrid.Item.decorate = function(li, entry, grid) {
   // role (listbox).
   li.setAttribute('role', 'option');
 };
-

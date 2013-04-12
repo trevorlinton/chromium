@@ -9,7 +9,7 @@
 
 #include "base/memory/scoped_ptr.h"
 #include "chrome/browser/favicon/favicon_service.h"
-#include "chrome/common/extensions/extension.h"
+#include "chrome/common/extensions/manifest_url_handler.h"
 #include "content/public/browser/web_ui_controller.h"
 
 namespace content {
@@ -21,7 +21,7 @@ namespace extensions {
 class BookmarkManagerPrivateEventRouter;
 }
 
-class PrefServiceSyncable;
+class PrefRegistrySyncable;
 class Profile;
 
 // This class implements WebUI for extensions and allows extensions to put UI in
@@ -49,15 +49,15 @@ class ExtensionWebUI : public content::WebUIController {
   // Page names are the keys, and chrome-extension: URLs are the values.
   // (e.g. { "newtab": "chrome-extension://<id>/my_new_tab.html" }
   static void RegisterChromeURLOverrides(Profile* profile,
-      const extensions::Extension::URLOverrideMap& overrides);
+      const extensions::URLOverrides::URLOverrideMap& overrides);
   static void UnregisterChromeURLOverrides(Profile* profile,
-      const extensions::Extension::URLOverrideMap& overrides);
+      const extensions::URLOverrides::URLOverrideMap& overrides);
   static void UnregisterChromeURLOverride(const std::string& page,
                                           Profile* profile,
                                           const base::Value* override);
 
   // Called from BrowserPrefs
-  static void RegisterUserPrefs(PrefServiceSyncable* prefs);
+  static void RegisterUserPrefs(PrefRegistrySyncable* registry);
 
   // Get the favicon for the extension by getting an icon from the manifest.
   // Note. |callback| is always run asynchronously.

@@ -88,7 +88,7 @@ bool AppWindowCreateFunction::RunImpl() {
   GURL url = GetExtension()->GetResourceURL(params->url);
   // Allow absolute URLs for component apps, otherwise prepend the extension
   // path.
-  if (GetExtension()->location() == extensions::Extension::COMPONENT) {
+  if (GetExtension()->location() == extensions::Manifest::COMPONENT) {
     GURL absolute = GURL(params->url);
     if (absolute.has_scheme())
       url = absolute;
@@ -190,6 +190,12 @@ bool AppWindowCreateFunction::RunImpl() {
       }
     }
 
+    if (options->transparent_background.get() &&
+        CommandLine::ForCurrentProcess()->HasSwitch(
+            switches::kEnableExperimentalExtensionApis)) {
+      create_params.transparent_background = *options->transparent_background;
+    }
+
     gfx::Size& minimum_size = create_params.minimum_size;
     if (options->min_width.get())
       minimum_size.set_width(*options->min_width);
@@ -203,6 +209,9 @@ bool AppWindowCreateFunction::RunImpl() {
 
     if (options->hidden.get())
       create_params.hidden = *options->hidden.get();
+
+    if (options->resizable.get())
+      create_params.resizable = *options->resizable.get();
   }
 
   create_params.creator_process_id =
@@ -223,7 +232,7 @@ bool AppWindowCreateFunction::RunImpl() {
       base::Value::CreateBooleanValue(inject_html_titlebar));
   result->Set("id", base::Value::CreateStringValue(shell_window->window_key()));
   DictionaryValue* boundsValue = new DictionaryValue();
-  gfx::Rect bounds = shell_window->GetBaseWindow()->GetBounds();
+  gfx::Rect bounds = shell_window->GetClientBounds();
   boundsValue->SetInteger("left", bounds.x());
   boundsValue->SetInteger("top", bounds.y());
   boundsValue->SetInteger("width", bounds.width());

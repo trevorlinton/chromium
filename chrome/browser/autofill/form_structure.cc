@@ -11,17 +11,18 @@
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/sha1.h"
-#include "base/string_number_conversions.h"
 #include "base/string_util.h"
 #include "base/stringprintf.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/time.h"
 #include "base/utf_string_conversions.h"
-#include "chrome/common/chrome_switches.h"
+#include "chrome/browser/autofill/autocheckout_page_meta_data.h"
 #include "chrome/browser/autofill/autofill_metrics.h"
 #include "chrome/browser/autofill/autofill_type.h"
 #include "chrome/browser/autofill/autofill_xml_parser.h"
 #include "chrome/browser/autofill/field_types.h"
 #include "chrome/browser/autofill/form_field.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/form_data.h"
 #include "chrome/common/form_data_predictions.h"
 #include "chrome/common/form_field_data.h"
@@ -40,7 +41,9 @@ const char kAttributeClientVersion[] = "clientversion";
 const char kAttributeDataPresent[] = "datapresent";
 const char kAttributeFormSignature[] = "formsignature";
 const char kAttributeSignature[] = "signature";
-const char kAcceptedFeatures[] = "e"; // e=experiments
+const char kAttributeUrlprefixSignature[] = "urlprefixsignature";
+const char kAcceptedFeaturesExperiment[] = "e"; // e=experiments
+const char kAcceptedFeaturesAutocheckoutExperiment[] = "a,e"; // a=autocheckout
 const char kClientVersion[] = "6.1.1715.1442/en (GGLL)";
 const char kXMLDeclaration[] = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>";
 const char kXMLElementAutofillQuery[] = "autofillquery";
@@ -193,6 +196,9 @@ AutofillFieldType FieldTypeFromAutocompleteType(
   if (autocomplete_type == "cc-csc")
     return CREDIT_CARD_VERIFICATION_CODE;
 
+  if (autocomplete_type == "cc-type")
+    return CREDIT_CARD_TYPE;
+
   if (autocomplete_type == "tel")
     return PHONE_HOME_WHOLE_NUMBER;
 
@@ -222,23 +228,32 @@ AutofillFieldType FieldTypeFromAutocompleteType(
 
 }  // namespace
 
-FormStructure::FormStructure(const FormData& form)
+FormStructure::FormStructure(const FormData& form,
+                             const std::string& autocheckout_url_prefix)
     : form_name_(form.name),
       source_url_(form.origin),
       target_url_(form.action),
       autofill_count_(0),
+      checkable_field_count_(0),
       upload_required_(USE_UPLOAD_RATES),
       server_experiment_id_("no server response"),
-      has_author_specified_types_(false) {
+      has_author_specified_types_(false),
+      autocheckout_url_prefix_(autocheckout_url_prefix) {
   // Copy the form fields.
   std::map<string16, size_t> unique_names;
   for (std::vector<FormFieldData>::const_iterator field =
            form.fields.begin();
        field != form.fields.end(); field++) {
-    // Add all supported form fields (including with empty names) to the
-    // signature.  This is a requirement for Autofill servers.
-    form_signature_field_names_.append("&");
-    form_signature_field_names_.append(UTF16ToUTF8(field->name));
+
+    // Skipping checkable elements when Autocheckout is not enabled, else
+    // these fields will interfere with existing field signatures with Autofill
+    // servers.
+    if (!field->is_checkable || IsAutocheckoutEnabled()) {
+      // Add all supported form fields (including with empty names) to the
+      // signature.  This is a requirement for Autofill servers.
+      form_signature_field_names_.append("&");
+      form_signature_field_names_.append(UTF16ToUTF8(field->name));
+    }
 
     // Generate a unique name for this field by appending a counter to the name.
     // Make sure to prepend the counter with a non-numeric digit so that we are
@@ -250,6 +265,9 @@ FormStructure::FormStructure(const FormData& form)
     string16 unique_name = field->name + ASCIIToUTF16("_") +
         base::IntToString16(unique_names[field->name]);
     fields_.push_back(new AutofillField(*field, unique_name));
+
+    if (field->is_checkable)
+      ++checkable_field_count_;
   }
 
   std::string method = UTF16ToUTF8(form.method);
@@ -363,8 +381,16 @@ bool FormStructure::EncodeQueryRequest(
       (buzz::QName(kXMLElementAutofillQuery)));
   autofill_request_xml.SetAttr(buzz::QName(kAttributeClientVersion),
                                kClientVersion);
-  autofill_request_xml.SetAttr(buzz::QName(kAttributeAcceptedFeatures),
-                               kAcceptedFeatures);
+
+  // autocheckout_url_prefix tells the Autofill server where the forms in the
+  // request came from, and the the Autofill server checks internal status and
+  // decide to enable Autocheckout or not and may return Autocheckout related
+  // data in the response accordingly.
+  // There is no page/frame level object associated with FormStructure that
+  // we could extract URL prefix from. But, all the forms should come from the
+  // same frame, so they should have the same Autocheckout URL prefix. Thus we
+  // use URL prefix from the first form with Autocheckout enabled.
+  std::string autocheckout_url_prefix;
 
   // Some badly formatted web sites repeat forms - detect that and encode only
   // one form as returned data would be the same for all the repeated forms.
@@ -385,12 +411,31 @@ bool FormStructure::EncodeQueryRequest(
                                   encompassing_xml_element.get()))
       continue;  // Malformed form, skip it.
 
+    if ((*it)->IsAutocheckoutEnabled()) {
+      if (autocheckout_url_prefix.empty()) {
+        autocheckout_url_prefix = (*it)->autocheckout_url_prefix_;
+      } else {
+        // Making sure all the forms in the request has the same url_prefix.
+        DCHECK_EQ(autocheckout_url_prefix, (*it)->autocheckout_url_prefix_);
+      }
+    }
+
     autofill_request_xml.AddElement(encompassing_xml_element.release());
     encoded_signatures->push_back(signature);
   }
 
   if (!encoded_signatures->size())
     return false;
+
+  if (autocheckout_url_prefix.empty()) {
+    autofill_request_xml.SetAttr(buzz::QName(kAttributeAcceptedFeatures),
+                                 kAcceptedFeaturesExperiment);
+  } else {
+    autofill_request_xml.SetAttr(buzz::QName(kAttributeAcceptedFeatures),
+                                 kAcceptedFeaturesAutocheckoutExperiment);
+    autofill_request_xml.SetAttr(buzz::QName(kAttributeUrlprefixSignature),
+                                 Hash64Bit(autocheckout_url_prefix));
+  }
 
   // Obtain the XML structure as a string.
   *encoded_xml = kXMLDeclaration;
@@ -400,21 +445,33 @@ bool FormStructure::EncodeQueryRequest(
 }
 
 // static
-void FormStructure::ParseQueryResponse(const std::string& response_xml,
-                                       const std::vector<FormStructure*>& forms,
-                                       const AutofillMetrics& metric_logger) {
+void FormStructure::ParseQueryResponse(
+    const std::string& response_xml,
+    const std::vector<FormStructure*>& forms,
+    autofill::AutocheckoutPageMetaData* page_meta_data,
+    const AutofillMetrics& metric_logger) {
   metric_logger.LogServerQueryMetric(AutofillMetrics::QUERY_RESPONSE_RECEIVED);
 
   // Parse the field types from the server response to the query.
-  std::vector<AutofillFieldType> field_types;
+  std::vector<AutofillServerFieldInfo> field_infos;
   UploadRequired upload_required;
   std::string experiment_id;
-  AutofillQueryXmlParser parse_handler(&field_types, &upload_required,
+  AutofillQueryXmlParser parse_handler(&field_infos, &upload_required,
                                        &experiment_id);
   buzz::XmlParser parser(&parse_handler);
   parser.Parse(response_xml.c_str(), response_xml.length(), true);
   if (!parse_handler.succeeded())
     return;
+
+  page_meta_data->current_page_number = parse_handler.current_page_number();
+  page_meta_data->total_pages = parse_handler.total_pages();
+  if (parse_handler.proceed_element_descriptor()) {
+    page_meta_data->proceed_element_descriptor.reset(
+        new autofill::WebElementDescriptor(
+            *parse_handler.proceed_element_descriptor()));
+  } else {
+    page_meta_data->proceed_element_descriptor.reset();
+  }
 
   metric_logger.LogServerQueryMetric(AutofillMetrics::QUERY_RESPONSE_PARSED);
   metric_logger.LogServerExperimentIdForQuery(experiment_id);
@@ -423,7 +480,8 @@ void FormStructure::ParseQueryResponse(const std::string& response_xml,
   bool query_response_overrode_heuristics = false;
 
   // Copy the field types into the actual form.
-  std::vector<AutofillFieldType>::iterator current_type = field_types.begin();
+  std::vector<AutofillServerFieldInfo>::iterator current_info =
+      field_infos.begin();
   for (std::vector<FormStructure*>::const_iterator iter = forms.begin();
        iter != forms.end(); ++iter) {
     FormStructure* form = *iter;
@@ -431,22 +489,26 @@ void FormStructure::ParseQueryResponse(const std::string& response_xml,
     form->server_experiment_id_ = experiment_id;
 
     for (std::vector<AutofillField*>::iterator field = form->fields_.begin();
-         field != form->fields_.end(); ++field, ++current_type) {
+         field != form->fields_.end(); ++field, ++current_info) {
       // In some cases *successful* response does not return all the fields.
       // Quit the update of the types then.
-      if (current_type == field_types.end())
+      if (current_info == field_infos.end())
         break;
 
       // UNKNOWN_TYPE is reserved for use by the client.
-      DCHECK_NE(*current_type, UNKNOWN_TYPE);
+      DCHECK_NE(current_info->field_type, UNKNOWN_TYPE);
 
       AutofillFieldType heuristic_type = (*field)->type();
       if (heuristic_type != UNKNOWN_TYPE)
         heuristics_detected_fillable_field = true;
 
-      (*field)->set_server_type(*current_type);
+      (*field)->set_server_type(current_info->field_type);
       if (heuristic_type != (*field)->type())
         query_response_overrode_heuristics = true;
+
+      // Copy default value into the field if available.
+      if (!current_info->default_value.empty())
+        (*field)->set_default_value(current_info->default_value);
     }
 
     form->UpdateAutofillCount();
@@ -521,14 +583,16 @@ std::string FormStructure::FormSignature() const {
   return Hash64Bit(form_string);
 }
 
-bool FormStructure::IsAutofillable(bool require_method_post) const {
-  // TODO(ramankk): Remove this check once we have better way of identifying the
-  // cases to trigger experimental form filling.
-  if (CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableExperimentalFormFilling))
-    return true;
+bool FormStructure::IsAutocheckoutEnabled() const {
+  return !autocheckout_url_prefix_.empty();
+}
 
-  if (autofill_count() < kRequiredFillableFields)
+size_t FormStructure::RequiredFillableFields() const {
+  return IsAutocheckoutEnabled() ? 0 : kRequiredFillableFields;
+}
+
+bool FormStructure::IsAutofillable(bool require_method_post) const {
+  if (autofill_count() < RequiredFillableFields())
     return false;
 
   return ShouldBeParsed(require_method_post);
@@ -545,13 +609,10 @@ void FormStructure::UpdateAutofillCount() {
 }
 
 bool FormStructure::ShouldBeParsed(bool require_method_post) const {
-  // TODO(ramankk): Remove this check once we have better way of identifying the
-  // cases to trigger experimental form filling.
-  if (CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableExperimentalFormFilling))
-    return true;
-
-  if (field_count() < kRequiredFillableFields)
+  // Ignore counting checkable elements towards minimum number of elements
+  // required to parse. This avoids trying to crowdsource forms with few text
+  // or select elements.
+  if ((field_count() - checkable_field_count()) < RequiredFillableFields())
     return false;
 
   // Rule out http(s)://*/search?...
@@ -560,14 +621,17 @@ bool FormStructure::ShouldBeParsed(bool require_method_post) const {
   if (target_url_.path() == "/search")
     return false;
 
-  // Make sure there as at least one text field.
-  bool has_text_field = false;
-  for (std::vector<AutofillField*>::const_iterator it = begin();
-       it != end() && !has_text_field; ++it) {
-    has_text_field |= (*it)->form_control_type != "select-one";
+  if (!IsAutocheckoutEnabled()) {
+    // Make sure there is at least one text field when Autocheckout is
+    // not enabled.
+    bool has_text_field = false;
+    for (std::vector<AutofillField*>::const_iterator it = begin();
+         it != end() && !has_text_field; ++it) {
+      has_text_field |= (*it)->form_control_type != "select-one";
+    }
+    if (!has_text_field)
+      return false;
   }
-  if (!has_text_field)
-    return false;
 
   return !require_method_post || (method_ == POST);
 }
@@ -749,7 +813,7 @@ void FormStructure::LogQualityMetrics(
     }
   }
 
-  if (num_detected_field_types < kRequiredFillableFields) {
+  if (num_detected_field_types < RequiredFillableFields()) {
     metric_logger.LogUserHappinessMetric(
         AutofillMetrics::SUBMITTED_NON_FILLABLE_FORM);
   } else {
@@ -811,6 +875,10 @@ AutofillField* FormStructure::field(size_t index) {
 
 size_t FormStructure::field_count() const {
   return fields_.size();
+}
+
+size_t FormStructure::checkable_field_count() const {
+  return checkable_field_count_;
 }
 
 std::string FormStructure::server_experiment_id() const {
@@ -884,6 +952,10 @@ bool FormStructure::EncodeFormRequest(
   for (size_t index = 0; index < field_count(); ++index) {
     const AutofillField* field = fields_[index];
     if (request_type == FormStructure::UPLOAD) {
+      // Don't upload checkable fields.
+      if (field->is_checkable)
+        continue;
+
       FieldTypeSet types = field->possible_types();
       // |types| could be empty in unit-tests only.
       for (FieldTypeSet::iterator field_type = types.begin();
@@ -898,6 +970,11 @@ bool FormStructure::EncodeFormRequest(
         encompassing_xml_element->AddElement(field_element);
       }
     } else {
+      // Skip putting checkable fields in the request if Autocheckout is not
+      // enabled.
+      if (field->is_checkable && !IsAutocheckoutEnabled())
+        continue;
+
       buzz::XmlElement *field_element = new buzz::XmlElement(
           buzz::QName(kXMLElementField));
       field_element->SetAttr(buzz::QName(kAttributeSignature),

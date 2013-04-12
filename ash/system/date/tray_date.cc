@@ -29,7 +29,6 @@
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/size.h"
 #include "ui/views/controls/button/button.h"
-#include "ui/views/controls/button/text_button.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/box_layout.h"
@@ -145,7 +144,8 @@ TrayDate::~TrayDate() {
 views::View* TrayDate::CreateTrayView(user::LoginStatus status) {
   CHECK(time_tray_ == NULL);
   ClockLayout clock_layout =
-      system_tray()->shelf_alignment() == SHELF_ALIGNMENT_BOTTOM ?
+      (system_tray()->shelf_alignment() == SHELF_ALIGNMENT_BOTTOM ||
+       system_tray()->shelf_alignment() == SHELF_ALIGNMENT_TOP) ?
           HORIZONTAL_CLOCK : VERTICAL_CLOCK;
   time_tray_ = new tray::TimeView(clock_layout);
   views::View* view = new TrayItemView(this);
@@ -176,8 +176,9 @@ void TrayDate::UpdateAfterLoginStatusChange(user::LoginStatus status) {
 
 void TrayDate::UpdateAfterShelfAlignmentChange(ShelfAlignment alignment) {
   if (time_tray_) {
-    ClockLayout clock_layout = alignment == SHELF_ALIGNMENT_BOTTOM ?
-        HORIZONTAL_CLOCK : VERTICAL_CLOCK;
+    ClockLayout clock_layout = (alignment == SHELF_ALIGNMENT_BOTTOM ||
+        alignment == SHELF_ALIGNMENT_TOP) ?
+            HORIZONTAL_CLOCK : VERTICAL_CLOCK;
     time_tray_->UpdateClockLayout(clock_layout);
   }
 }

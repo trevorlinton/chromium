@@ -61,6 +61,20 @@ class GuestUser : public User {
   DISALLOW_COPY_AND_ASSIGN(GuestUser);
 };
 
+class LocallyManagedUser : public User {
+ public:
+  explicit LocallyManagedUser(const std::string& username);
+  virtual ~LocallyManagedUser();
+
+  // Overridden from User:
+  virtual UserType GetType() const OVERRIDE;
+  virtual bool can_lock() const OVERRIDE;
+  virtual std::string display_email() const OVERRIDE;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(LocallyManagedUser);
+};
+
 class RetailModeUser : public User {
  public:
   RetailModeUser();
@@ -103,6 +117,10 @@ bool User::HasDefaultImage() const {
   return image_index_ >= 0 && image_index_ < kDefaultImagesCount;
 }
 
+std::string User::display_email() const {
+ return display_email_;
+}
+
 bool User::can_lock() const {
   return false;
 }
@@ -113,6 +131,10 @@ User* User::CreateRegularUser(const std::string& email) {
 
 User* User::CreateGuestUser() {
   return new GuestUser;
+}
+
+User* User::CreateLocallyManagedUser(const std::string& username) {
+  return new LocallyManagedUser(username);
 }
 
 User* User::CreateRetailModeUser() {
@@ -176,6 +198,24 @@ GuestUser::~GuestUser() {}
 
 User::UserType GuestUser::GetType() const {
   return USER_TYPE_GUEST;
+}
+
+LocallyManagedUser::LocallyManagedUser(const std::string& username)
+    : User(username) {
+}
+
+LocallyManagedUser::~LocallyManagedUser() {}
+
+User::UserType LocallyManagedUser::GetType() const {
+  return USER_TYPE_LOCALLY_MANAGED;
+}
+
+bool LocallyManagedUser::can_lock() const {
+  return true;
+}
+
+std::string LocallyManagedUser::display_email() const {
+  return UTF16ToUTF8(display_name());
 }
 
 RetailModeUser::RetailModeUser() : User(kRetailModeUserEMail) {

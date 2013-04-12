@@ -6,13 +6,13 @@
 
 #include "base/logging.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/Platform.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebURL.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebURLError.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebURLLoader.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebURLRequest.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebDocument.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebFrame.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebKit.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebURLError.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebURLLoader.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebURLRequest.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebURL.h"
 
 using base::TimeDelta;
 using WebKit::WebFrame;
@@ -51,6 +51,10 @@ void ResourceFetcher::Cancel() {
 void ResourceFetcher::Start(WebFrame* frame) {
   WebURLRequest request(url_);
   request.setTargetType(target_type_);
+  if (target_type_ == WebURLRequest::TargetIsFavicon) {
+    // Disable cookies to avoid side effects when fetching favicon.
+    request.setAllowCookies(false);
+  }
   request.setFirstPartyForCookies(frame->document().firstPartyForCookies());
   frame->dispatchWillSendRequest(request);
 

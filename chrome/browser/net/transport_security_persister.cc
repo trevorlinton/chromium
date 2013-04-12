@@ -6,8 +6,8 @@
 
 #include "base/base64.h"
 #include "base/bind.h"
-#include "base/file_path.h"
 #include "base/file_util.h"
+#include "base/files/file_path.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/message_loop.h"
@@ -29,16 +29,8 @@ namespace {
 
 ListValue* SPKIHashesToListValue(const HashValueVector& hashes) {
   ListValue* pins = new ListValue;
-
-  for (HashValueVector::const_iterator i = hashes.begin();
-       i != hashes.end(); ++i) {
-    std::string hash_str(reinterpret_cast<const char*>(i->data()), i->size());
-    std::string b64;
-    if (base::Base64Encode(hash_str, &b64))
-      pins->Append(new StringValue(TransportSecurityState::HashValueLabel(*i) +
-                                   b64));
-  }
-
+  for (size_t i = 0; i != hashes.size(); i++)
+    pins->Append(new StringValue(hashes[i].ToString()));
   return pins;
 }
 
@@ -48,7 +40,7 @@ void SPKIHashesFromListValue(const ListValue& pins, HashValueVector* hashes) {
     std::string type_and_base64;
     HashValue fingerprint;
     if (pins.GetString(i, &type_and_base64) &&
-        TransportSecurityState::ParsePin(type_and_base64, &fingerprint)) {
+        fingerprint.FromString(type_and_base64)) {
       hashes->push_back(fingerprint);
     }
   }
@@ -92,7 +84,7 @@ const char kCreated[] = "created";
 class TransportSecurityPersister::Loader {
  public:
   Loader(const base::WeakPtr<TransportSecurityPersister>& persister,
-         const FilePath& path)
+         const base::FilePath& path)
       : persister_(persister),
         path_(path),
         state_valid_(false) {
@@ -117,7 +109,7 @@ class TransportSecurityPersister::Loader {
  private:
   base::WeakPtr<TransportSecurityPersister> persister_;
 
-  FilePath path_;
+  base::FilePath path_;
 
   std::string state_;
   bool state_valid_;
@@ -127,7 +119,7 @@ class TransportSecurityPersister::Loader {
 
 TransportSecurityPersister::TransportSecurityPersister(
     TransportSecurityState* state,
-    const FilePath& profile_path,
+    const base::FilePath& profile_path,
     bool readonly)
     : transport_security_state_(state),
       writer_(profile_path.AppendASCII("TransportSecurity"),
@@ -224,7 +216,7 @@ bool TransportSecurityPersister::LoadEntries(const std::string& serialized,
                                              bool* dirty) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
 
-  transport_security_state_->Clear();
+  transport_security_state_->ClearDynamicData();
   return Deserialize(serialized, false, dirty, transport_security_state_);
 }
 

@@ -15,8 +15,8 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/types.h>
-#include <sys/wait.h>
 #include <sys/uio.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -24,9 +24,10 @@
 #include <string>
 
 #include "base/command_line.h"
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/linux_util.h"
 #include "base/path_service.h"
+#include "base/platform_file.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/posix/global_descriptors.h"
 #include "base/process_util.h"
@@ -40,6 +41,7 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/chrome_version_info_posix.h"
+#include "chrome/common/dump_without_crashing.h"
 #include "chrome/common/env_vars.h"
 #include "chrome/common/logging_chrome.h"
 #include "content/public/common/content_descriptors.h"
@@ -50,6 +52,7 @@
 
 #include "base/android/build_info.h"
 #include "base/android/path_utils.h"
+#include "chrome/common/descriptors_android.h"
 #include "third_party/lss/linux_syscall_support.h"
 #else
 #include "sandbox/linux/seccomp-legacy/linux_syscall_support.h"
@@ -78,13 +81,7 @@ using google_breakpad::MinidumpDescriptor;
 
 namespace {
 
-#if !defined(ADDRESS_SANITIZER)
 const char kUploadURL[] = "https://clients2.google.com/cr/report";
-#else
-// AddressSanitizer should currently upload the crash reports to the staging
-// crash server.
-const char kUploadURL[] = "https://clients2.google.com/cr/staging_report";
-#endif
 
 bool g_is_crash_reporter_enabled = false;
 uint64_t g_process_start_time = 0;
@@ -515,12 +512,12 @@ void AsanLinuxBreakpadCallback(const char* report) {
 void EnableCrashDumping(bool unattended) {
   g_is_crash_reporter_enabled = true;
 
-  FilePath tmp_path("/tmp");
+  base::FilePath tmp_path("/tmp");
   PathService::Get(base::DIR_TEMP, &tmp_path);
 
-  FilePath dumps_path(tmp_path);
+  base::FilePath dumps_path(tmp_path);
   if (PathService::Get(chrome::DIR_CRASH_DUMPS, &dumps_path)) {
-    FilePath logfile =
+    base::FilePath logfile =
         dumps_path.AppendASCII(CrashUploadList::kReporterLogFilename);
     std::string logfile_str = logfile.value();
     const size_t crash_log_path_len = logfile_str.size() + 1;
@@ -978,17 +975,14 @@ void HandleCrashDump(const BreakpadInfo& info) {
 #elif defined(OS_CHROMEOS)
     static const char chrome_product_msg[] = "Chrome_ChromeOS";
 #else  // OS_LINUX
+#if !defined(ADDRESS_SANITIZER)
     static const char chrome_product_msg[] = "Chrome_Linux";
+#else
+    static const char chrome_product_msg[] = "Chrome_Linux_ASan";
+#endif
 #endif
 
-#if defined (OS_ANDROID)
-    base::android::BuildInfo* android_build_info =
-        base::android::BuildInfo::GetInstance();
-    static const char* version_msg =
-        android_build_info->package_version_code();
-#else
     static const char version_msg[] = PRODUCT_VERSION;
-#endif
 
     writer.AddBoundary();
     writer.AddPairString("prod", chrome_product_msg);
@@ -1015,6 +1009,8 @@ void HandleCrashDump(const BreakpadInfo& info) {
     static const char brand[] = "brand";
     static const char exception_info[] = "exception_info";
 
+    base::android::BuildInfo* android_build_info =
+        base::android::BuildInfo::GetInstance();
     writer.AddPairString(
         android_build_id, android_build_info->android_build_id());
     writer.AddBoundary();
@@ -1063,15 +1059,26 @@ void HandleCrashDump(const BreakpadInfo& info) {
 
   // If GPU info is known, send it.
   if (*child_process_logging::g_gpu_vendor_id) {
+#if !defined(OS_ANDROID)
     static const char vendor_msg[] = "gpu-venid";
     static const char device_msg[] = "gpu-devid";
+#endif
+    static const char gl_vendor_msg[] = "gpu-gl-vendor";
+    static const char gl_renderer_msg[] = "gpu-gl-renderer";
     static const char driver_msg[] = "gpu-driver";
     static const char psver_msg[] = "gpu-psver";
     static const char vsver_msg[] = "gpu-vsver";
 
+#if !defined(OS_ANDROID)
     writer.AddPairString(vendor_msg, child_process_logging::g_gpu_vendor_id);
     writer.AddBoundary();
     writer.AddPairString(device_msg, child_process_logging::g_gpu_device_id);
+    writer.AddBoundary();
+#endif
+    writer.AddPairString(gl_vendor_msg, child_process_logging::g_gpu_gl_vendor);
+    writer.AddBoundary();
+    writer.AddPairString(gl_renderer_msg,
+                         child_process_logging::g_gpu_gl_renderer);
     writer.AddBoundary();
     writer.AddPairString(driver_msg, child_process_logging::g_gpu_driver_ver);
     writer.AddBoundary();
@@ -1457,10 +1464,20 @@ void InitCrashReporter() {
 }
 
 #if defined(OS_ANDROID)
-void InitNonBrowserCrashReporterForAndroid(int minidump_fd) {
+void InitNonBrowserCrashReporterForAndroid() {
   const CommandLine* command_line = CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(switches::kEnableCrashReporter))
-    EnableNonBrowserCrashDumping(minidump_fd);
+  if (command_line->HasSwitch(switches::kEnableCrashReporter)) {
+    // On Android we need to provide a FD to the file where the minidump is
+    // generated as the renderer and browser run with different UIDs
+    // (preventing the browser from inspecting the renderer process).
+    int minidump_fd = base::GlobalDescriptors::GetInstance()->
+        MaybeGet(kAndroidMinidumpDescriptor);
+    if (minidump_fd == base::kInvalidPlatformFileValue) {
+      NOTREACHED() << "Could not find minidump FD, crash reporting disabled.";
+    } else {
+      EnableNonBrowserCrashDumping(minidump_fd);
+    }
+  }
 }
 #endif  // OS_ANDROID
 

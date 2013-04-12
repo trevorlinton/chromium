@@ -10,6 +10,7 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/prefs/pref_service.h"
 #include "base/values.h"
 #include "chrome/browser/content_settings/cookie_settings.h"
 #include "chrome/browser/content_settings/host_content_settings_map.h"
@@ -22,7 +23,6 @@
 #include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/plugins/plugin_finder.h"
 #include "chrome/browser/plugins/plugin_installer.h"
-#include "chrome/browser/prefs/pref_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/api/content_settings.h"
@@ -62,7 +62,7 @@ namespace extensions {
 namespace helpers = content_settings_helpers;
 namespace keys = content_settings_api_constants;
 
-bool ClearContentSettingsFunction::RunImpl() {
+bool ContentSettingsContentSettingClearFunction::RunImpl() {
   ContentSettingsType content_type;
   EXTENSION_FUNCTION_VALIDATE(RemoveContentType(args_.get(), &content_type));
 
@@ -96,7 +96,7 @@ bool ClearContentSettingsFunction::RunImpl() {
   return true;
 }
 
-bool GetContentSettingFunction::RunImpl() {
+bool ContentSettingsContentSettingGetFunction::RunImpl() {
   ContentSettingsType content_type;
   EXTENSION_FUNCTION_VALIDATE(RemoveContentType(args_.get(), &content_type));
 
@@ -169,7 +169,7 @@ bool GetContentSettingFunction::RunImpl() {
   return true;
 }
 
-bool SetContentSettingFunction::RunImpl() {
+bool ContentSettingsContentSettingSetFunction::RunImpl() {
   ContentSettingsType content_type;
   EXTENSION_FUNCTION_VALIDATE(RemoveContentType(args_.get(), &content_type));
 
@@ -204,7 +204,7 @@ bool SetContentSettingFunction::RunImpl() {
 
   std::string setting_str;
   EXTENSION_FUNCTION_VALIDATE(
-      params->details.setting.value().GetAsString(&setting_str));
+      params->details.setting->GetAsString(&setting_str));
   ContentSetting setting;
   EXTENSION_FUNCTION_VALIDATE(
       helpers::StringToContentSetting(setting_str, &setting));
@@ -250,7 +250,7 @@ bool SetContentSettingFunction::RunImpl() {
   return true;
 }
 
-bool GetResourceIdentifiersFunction::RunImpl() {
+bool ContentSettingsContentSettingGetResourceIdentifiersFunction::RunImpl() {
   ContentSettingsType content_type;
   EXTENSION_FUNCTION_VALIDATE(RemoveContentType(args_.get(), &content_type));
 
@@ -261,14 +261,16 @@ bool GetResourceIdentifiersFunction::RunImpl() {
 
   if (!g_testing_plugins_) {
     PluginService::GetInstance()->GetPlugins(
-        base::Bind(&GetResourceIdentifiersFunction::OnGotPlugins, this));
+        base::Bind(&ContentSettingsContentSettingGetResourceIdentifiersFunction::
+                   OnGotPlugins,
+                   this));
   } else {
     OnGotPlugins(*g_testing_plugins_);
   }
   return true;
 }
 
-void GetResourceIdentifiersFunction::OnGotPlugins(
+void ContentSettingsContentSettingGetResourceIdentifiersFunction::OnGotPlugins(
     const std::vector<webkit::WebPluginInfo>& plugins) {
   PluginFinder* finder = PluginFinder::GetInstance();
   std::set<std::string> group_identifiers;
@@ -289,12 +291,15 @@ void GetResourceIdentifiersFunction::OnGotPlugins(
   SetResult(list);
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE, base::Bind(
-          &GetResourceIdentifiersFunction::SendResponse, this, true));
+          &ContentSettingsContentSettingGetResourceIdentifiersFunction::
+          SendResponse,
+          this,
+          true));
 }
 
 // static
-void GetResourceIdentifiersFunction::SetPluginsForTesting(
-    const std::vector<webkit::WebPluginInfo>* plugins) {
+void ContentSettingsContentSettingGetResourceIdentifiersFunction::
+    SetPluginsForTesting(const std::vector<webkit::WebPluginInfo>* plugins) {
   g_testing_plugins_ = plugins;
 }
 

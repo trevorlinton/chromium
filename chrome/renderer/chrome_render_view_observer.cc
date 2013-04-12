@@ -31,12 +31,12 @@
 #include "extensions/common/constants.h"
 #include "net/base/data_url.h"
 #include "skia/ext/platform_canvas.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebCString.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebRect.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebSize.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebString.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebURLRequest.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebVector.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebCString.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebRect.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebSize.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebURLRequest.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebVector.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebAccessibilityObject.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebDataSource.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebDocument.h"
@@ -170,13 +170,12 @@ ChromeRenderViewObserver::ChromeRenderViewObserver(
     content::RenderView* render_view,
     ContentSettingsObserver* content_settings,
     ChromeRenderProcessObserver* chrome_render_process_observer,
-    extensions::Dispatcher* extension_dispatcher,
-    TranslateHelper* translate_helper)
+    extensions::Dispatcher* extension_dispatcher)
     : content::RenderViewObserver(render_view),
       chrome_render_process_observer_(chrome_render_process_observer),
       extension_dispatcher_(extension_dispatcher),
       content_settings_(content_settings),
-      translate_helper_(translate_helper),
+      translate_helper_(new TranslateHelper(render_view)),
       phishing_classifier_(NULL),
       last_indexed_page_id_(-1),
       allow_displaying_insecure_content_(false),
@@ -820,7 +819,7 @@ bool ChromeRenderViewObserver::CaptureSnapshot(WebView* view,
   if (!bitmap.copyTo(snapshot, SkBitmap::kARGB_8888_Config))
     return false;
 
-  HISTOGRAM_TIMES("Renderer4.Snapshot",
+  UMA_HISTOGRAM_TIMES("Renderer4.Snapshot",
                   base::TimeTicks::Now() - beginning_time);
   return true;
 }

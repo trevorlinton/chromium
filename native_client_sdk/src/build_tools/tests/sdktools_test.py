@@ -190,6 +190,7 @@ class TestAutoUpdateSdkTools(SdkToolsTestCase):
     """Test that running naclsdk with a new revision will auto-update."""
     new_revision = self.current_revision + 1
     archive = self._BuildUpdaterArchive('new', new_revision)
+    self.sdk_tools_bundle.RemoveAllArchivesForHostOS(archive.host_os)
     self.sdk_tools_bundle.AddArchive(archive)
     self.sdk_tools_bundle.revision = new_revision
     self._WriteManifest()
@@ -206,6 +207,7 @@ class TestAutoUpdateSdkTools(SdkToolsTestCase):
     """
     new_revision = self.current_revision + 1
     archive = self._BuildUpdaterArchive('new', new_revision)
+    self.sdk_tools_bundle.RemoveAllArchivesForHostOS(archive.host_os)
     self.sdk_tools_bundle.AddArchive(archive)
     self.sdk_tools_bundle.revision = new_revision
     self._WriteManifest()
@@ -216,6 +218,15 @@ class TestAutoUpdateSdkTools(SdkToolsTestCase):
     stdout = self._Run(['update', 'sdk_tools'])
     self.assertTrue(stdout.find('Ignoring manual update request.') != -1)
     self.assertFalse(os.path.exists(sdk_tools_update_dir))
+
+  def testHelpCommand(self):
+    """Running naclsdk with -h should work.
+
+    This is a regression test for a bug where the auto-updater would remove the
+    sdk_tools directory when running "naclsdk -h".
+    """
+    self._WriteManifest()
+    self._Run(['-h'])
 
 
 class TestAutoUpdateSdkToolsDifferentFilesystem(TestAutoUpdateSdkTools):

@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "chrome/browser/profiles/profile.h"
@@ -17,9 +17,14 @@
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebCache.h"
 
 class CookieSettings;
+struct ExtensionHostMsg_DOMAction_Params;
 struct ExtensionHostMsg_Request_Params;
 class ExtensionInfoMap;
 class GURL;
+
+namespace nacl {
+struct NaClLaunchParams;
+}
 
 namespace net {
 class HostResolver;
@@ -78,10 +83,7 @@ class ChromeRenderMessageFilter : public content::BrowserMessageFilter {
   virtual ~ChromeRenderMessageFilter();
 
 #if !defined(DISABLE_NACL)
-  void OnLaunchNaCl(const GURL& manifest_url,
-                    int render_view_id,
-                    uint32 permission_bits,
-                    int socket_count,
+  void OnLaunchNaCl(const nacl::NaClLaunchParams& launch_params,
                     IPC::Message* reply_msg);
   void OnGetReadonlyPnaclFd(const std::string& filename,
                             IPC::Message* reply_msg);
@@ -106,15 +108,11 @@ class ChromeRenderMessageFilter : public content::BrowserMessageFilter {
   void OnOpenChannelToNativeApp(int routing_id,
                                 const std::string& source_extension_id,
                                 const std::string& native_app_name,
-                                const std::string& channel_name,
-                                const std::string& connect_message,
                                 int* port_id);
   void OpenChannelToNativeAppOnUIThread(int source_routing_id,
                                         int receiver_port_id,
                                         const std::string& source_extension_id,
-                                        const std::string& native_app_name,
-                                        const std::string& channel_name,
-                                        const std::string& connect_message);
+                                        const std::string& native_app_name);
   void OnOpenChannelToTab(int routing_id, int tab_id,
                           const std::string& extension_id,
                           const std::string& channel_name, int* port_id);
@@ -125,7 +123,7 @@ class ChromeRenderMessageFilter : public content::BrowserMessageFilter {
   void OnGetExtensionMessageBundle(const std::string& extension_id,
                                    IPC::Message* reply_msg);
   void OnGetExtensionMessageBundleOnFileThread(
-      const FilePath& extension_path,
+      const base::FilePath& extension_path,
       const std::string& extension_id,
       const std::string& default_locale,
       IPC::Message* reply_msg);
@@ -149,11 +147,14 @@ class ChromeRenderMessageFilter : public content::BrowserMessageFilter {
   void OnExtensionRequestForIOThread(
       int routing_id,
       const ExtensionHostMsg_Request_Params& params);
-  void OnExtensionShouldUnloadAck(const std::string& extension_id,
-                                  int sequence_id);
-  void OnExtensionUnloadAck(const std::string& extension_id);
+  void OnExtensionShouldSuspendAck(const std::string& extension_id,
+                                   int sequence_id);
+  void OnExtensionSuspendAck(const std::string& extension_id);
   void OnExtensionGenerateUniqueID(int* unique_id);
   void OnExtensionResumeRequests(int route_id);
+  void OnAddDOMActionToExtensionActivityLog(
+      const std::string& extension_id,
+      const ExtensionHostMsg_DOMAction_Params& params);
   void OnAllowDatabase(int render_view_id,
                        const GURL& origin_url,
                        const GURL& top_origin_url,

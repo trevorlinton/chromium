@@ -7,6 +7,7 @@
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/string_util.h"
+#include "base/utf_string_conversions.h"
 
 namespace content {
 namespace {
@@ -45,24 +46,25 @@ void DumpAccessibilityTreeHelper::RecursiveDumpAccessibilityTree(
 }
 
 void DumpAccessibilityTreeHelper::SetFilters(
-    const std::set<string16>& allow_filters,
-    const std::set<string16>& deny_filters) {
-  allow_filters_ = allow_filters;
-  deny_filters_ = deny_filters;
+    const std::vector<Filter>& filters) {
+  filters_ = filters;
 }
 
 bool DumpAccessibilityTreeHelper::MatchesFilters(
     const string16& text, bool default_result) {
-  std::set<string16>::const_iterator iter = allow_filters_.begin();
-  for (iter = allow_filters_.begin(); iter != allow_filters_.end(); ++iter) {
-    if (MatchPattern(text, *iter))
-      return true;
+  std::vector<Filter>::const_iterator iter = filters_.begin();
+  bool allow = default_result;
+  for (iter = filters_.begin(); iter != filters_.end(); ++iter) {
+    if (MatchPattern(text, iter->match_str)) {
+      if (iter->type == Filter::ALLOW_EMPTY)
+        allow = true;
+      else if (iter->type == Filter::ALLOW)
+        allow = (!MatchPattern(text, UTF8ToUTF16("*=''")));
+      else
+        allow = false;
+    }
   }
-  for (iter = deny_filters_.begin(); iter != deny_filters_.end(); ++iter) {
-    if (MatchPattern(text, *iter))
-      return false;
-  }
-  return default_result;
+  return allow;
 }
 
 void DumpAccessibilityTreeHelper::StartLine() {
@@ -71,6 +73,8 @@ void DumpAccessibilityTreeHelper::StartLine() {
 
 void DumpAccessibilityTreeHelper::Add(
     bool include_by_default, const string16& attr) {
+  if (attr.empty())
+    return;
   if (!MatchesFilters(attr, include_by_default))
     return;
   if (!line_.empty())

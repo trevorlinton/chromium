@@ -9,8 +9,6 @@
 #include <string>
 
 #include "base/compiler_specific.h"
-#include "chrome/browser/page_info_model.h"
-#include "chrome/browser/page_info_model_observer.h"
 #include "ui/base/animation/slide_animation.h"
 #include "ui/gfx/image/image.h"
 #include "ui/views/bubble/bubble_delegate.h"
@@ -29,7 +27,8 @@ class ImageView;
 }
 
 // The view in the bubble that pops up from the ScriptBubbleIconView that lists
-// the extensions running content scripts on the current page.
+// the extensions with the activeTab permission running content scripts on the
+// current page.
 class ScriptBubbleView : public views::BubbleDelegateView,
                          public views::LinkListener,
                          public base::SupportsWeakPtr<ScriptBubbleView> {

@@ -47,12 +47,13 @@ class NET_EXPORT_PRIVATE QuicConnectionHelper
   virtual QuicRandom* GetRandomGenerator() OVERRIDE;
   virtual int WritePacketToWire(const QuicEncryptedPacket& packet,
                                 int* error) OVERRIDE;
-  virtual void SetResendAlarm(QuicPacketSequenceNumber sequence_number,
-                              QuicTime::Delta delay) OVERRIDE;
+  virtual void SetRetransmissionAlarm(QuicTime::Delta delay) OVERRIDE;
   virtual void SetSendAlarm(QuicTime::Delta delay) OVERRIDE;
   virtual void SetTimeoutAlarm(QuicTime::Delta delay) OVERRIDE;
   virtual bool IsSendAlarmSet() OVERRIDE;
   virtual void UnregisterSendAlarmIfRegistered() OVERRIDE;
+  virtual void SetAckAlarm(QuicTime::Delta delay) OVERRIDE;
+  virtual void ClearAckAlarm() OVERRIDE;
 
   int Read(IOBuffer* buf, int buf_len, const CompletionCallback& callback);
   // TODO(wtc): these two methods should be able to report a failure.
@@ -64,8 +65,8 @@ class NET_EXPORT_PRIVATE QuicConnectionHelper
 
   // An alarm is scheduled for each data-bearing packet as it is sent out.
   // When the alarm goes off, the connection checks to see if the packet has
-  // been acked, and resends if it has not.
-  void OnResendAlarm(QuicPacketSequenceNumber sequence_number);
+  // been acked, and retransmits if it has not.
+  void OnRetransmissionAlarm();
   // An alarm that is scheduled when the sent scheduler requires a
   // a delay before sending packets and fires when the packet may be sent.
   void OnSendAlarm();
@@ -73,6 +74,8 @@ class NET_EXPORT_PRIVATE QuicConnectionHelper
   void OnTimeoutAlarm();
   // A completion callback invoked when a write completes.
   void OnWriteComplete(int result);
+  // An alarm which fires if we've hit a timeout on sending an ack.
+  void OnAckAlarm();
 
   base::WeakPtrFactory<QuicConnectionHelper> weak_factory_;
   base::TaskRunner* task_runner_;
@@ -82,6 +85,12 @@ class NET_EXPORT_PRIVATE QuicConnectionHelper
   QuicRandom* random_generator_;
   bool send_alarm_registered_;
   bool timeout_alarm_registered_;
+  bool retransmission_alarm_registered_;
+  bool retransmission_alarm_running_;
+  bool ack_alarm_registered_;
+  QuicTime ack_alarm_time_;
+  // Times that packets should be retransmitted.
+  std::map<QuicPacketSequenceNumber, QuicTime> retransmission_times_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicConnectionHelper);
 };

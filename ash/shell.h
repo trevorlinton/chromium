@@ -11,7 +11,6 @@
 #include "ash/ash_export.h"
 #include "ash/shelf_types.h"
 #include "ash/system/user/login_status.h"
-#include "ash/wm/cursor_manager.h"
 #include "ash/wm/system_modal_container_event_filter_delegate.h"
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
@@ -23,6 +22,7 @@
 #include "ui/gfx/insets.h"
 #include "ui/gfx/screen.h"
 #include "ui/gfx/size.h"
+#include "ui/views/corewm/cursor_manager.h"
 
 class CommandLine;
 
@@ -33,7 +33,6 @@ class Window;
 namespace client {
 class ActivationClient;
 class FocusClient;
-class StackingClient;
 class UserActionClient;
 }
 }
@@ -59,14 +58,20 @@ namespace corewm {
 class CompoundEventFilter;
 class InputMethodEventFilter;
 class ShadowController;
+class TooltipController;
 class VisibilityController;
 class WindowModalityController;
 }
 }
 
+namespace message_center {
+class MessageCenter;
+}
+
 namespace ash {
 
 class AcceleratorController;
+class AshNativeCursorManager;
 class CapsLockDelegate;
 class DesktopBackgroundController;
 class DisplayController;
@@ -98,10 +103,12 @@ class ActivationController;
 class AppListController;
 class CaptureController;
 class DisplayChangeObserverX11;
+class DisplayErrorObserver;
 class DisplayManager;
 class DragDropController;
 class EventClientImpl;
 class EventRewriterEventFilter;
+class EventTransformationHandler;
 class FocusCycler;
 class MouseCursorEventFilter;
 class OutputConfiguratorAnimation;
@@ -114,7 +121,6 @@ class SlowAnimationEventFilter;
 class StatusAreaWidget;
 class SystemGestureEventFilter;
 class SystemModalContainerEventFilter;
-class TooltipController;
 class TouchObserverHUD;
 class WorkspaceController;
 }
@@ -281,8 +287,11 @@ class ASH_EXPORT Shell
   views::corewm::CompoundEventFilter* env_filter() {
     return env_filter_.get();
   }
-  internal::TooltipController* tooltip_controller() {
+  views::corewm::TooltipController* tooltip_controller() {
     return tooltip_controller_.get();
+  }
+  internal::TouchObserverHUD* touch_observer_hud() {
+    return touch_observer_hud_.get();
   }
   internal::EventRewriterEventFilter* event_rewriter_filter() {
     return event_rewriter_filter_.get();
@@ -317,7 +326,10 @@ class ASH_EXPORT Shell
   internal::MouseCursorEventFilter* mouse_cursor_filter() {
     return mouse_cursor_filter_.get();
   }
-  CursorManager* cursor_manager() { return &cursor_manager_; }
+  internal::EventTransformationHandler* event_transformation_handler() {
+    return event_transformation_handler_.get();
+  }
+  views::corewm::CursorManager* cursor_manager() { return &cursor_manager_; }
 
   ShellDelegate* delegate() { return delegate_.get(); }
 
@@ -423,13 +435,17 @@ class ASH_EXPORT Shell
   internal::OutputConfiguratorAnimation* output_configurator_animation() {
     return output_configurator_animation_.get();
   }
+  internal::DisplayErrorObserver* display_error_observer() {
+    return display_error_observer_.get();
+  }
 #endif  // defined(OS_CHROMEOS)
 
- aura::client::StackingClient* stacking_client();
+  RootWindowHostFactory* root_window_host_factory() {
+    return root_window_host_factory_.get();
+  }
 
- RootWindowHostFactory* root_window_host_factory() {
-   return root_window_host_factory_.get();
- }
+  // MessageCenter is a global list of currently displayed notifications.
+  message_center::MessageCenter* message_center();
 
  private:
   FRIEND_TEST_ALL_PREFIXES(ExtendedDesktopTest, TestCursor);
@@ -507,7 +523,6 @@ class ASH_EXPORT Shell
 
   scoped_ptr<internal::AppListController> app_list_controller_;
 
-  scoped_ptr<aura::client::StackingClient> stacking_client_;
   scoped_ptr<internal::ActivationController> activation_controller_;
   scoped_ptr<internal::CaptureController> capture_controller_;
   scoped_ptr<internal::DragDropController> drag_drop_controller_;
@@ -516,7 +531,7 @@ class ASH_EXPORT Shell
   scoped_ptr<views::corewm::VisibilityController> visibility_controller_;
   scoped_ptr<views::corewm::WindowModalityController>
       window_modality_controller_;
-  scoped_ptr<internal::TooltipController> tooltip_controller_;
+  scoped_ptr<views::corewm::TooltipController> tooltip_controller_;
   scoped_ptr<DesktopBackgroundController> desktop_background_controller_;
   scoped_ptr<PowerButtonController> power_button_controller_;
   scoped_ptr<SessionStateController> session_state_controller_;
@@ -535,6 +550,8 @@ class ASH_EXPORT Shell
   scoped_ptr<internal::ScreenPositionController> screen_position_controller_;
   scoped_ptr<internal::SystemModalContainerEventFilter> modality_filter_;
   scoped_ptr<internal::EventClientImpl> event_client_;
+  scoped_ptr<internal::EventTransformationHandler>
+      event_transformation_handler_;
   scoped_ptr<RootWindowHostFactory> root_window_host_factory_;
 
   // An event filter that rewrites or drops an event.
@@ -566,12 +583,18 @@ class ASH_EXPORT Shell
   scoped_ptr<chromeos::OutputConfigurator> output_configurator_;
   scoped_ptr<internal::OutputConfiguratorAnimation>
       output_configurator_animation_;
+  scoped_ptr<internal::DisplayErrorObserver> display_error_observer_;
 
   // Receives output change events and udpates the display manager.
   scoped_ptr<internal::DisplayChangeObserverX11> display_change_observer_;
 #endif  // defined(OS_CHROMEOS)
 
-  CursorManager cursor_manager_;
+  scoped_ptr<message_center::MessageCenter> message_center_;
+
+  // |native_cursor_manager_| is owned by |cursor_manager_|, but we keep a
+  // pointer to vend to test code.
+  AshNativeCursorManager* native_cursor_manager_;
+  views::corewm::CursorManager cursor_manager_;
 
   ObserverList<ShellObserver> observers_;
 

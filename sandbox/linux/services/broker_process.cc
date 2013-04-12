@@ -18,7 +18,7 @@
 #include "base/logging.h"
 #include "base/pickle.h"
 #include "base/posix/eintr_wrapper.h"
-#include "base/posix/unix_domain_socket.h"
+#include "base/posix/unix_domain_socket_linux.h"
 
 namespace {
 
@@ -64,6 +64,11 @@ bool IsAllowedOpenFlags(int flags) {
   const int access_mode = flags & O_ACCMODE;
   if (access_mode != O_RDONLY && access_mode != O_WRONLY &&
       access_mode != O_RDWR) {
+    return false;
+  }
+
+  // We only support a 2-parameters open, so we forbid O_CREAT.
+  if (flags & O_CREAT) {
     return false;
   }
 
@@ -288,7 +293,9 @@ bool BrokerProcess::HandleOpenRequest(int reply_ipc,
     // O_CLOEXEC doesn't hurt (even though we won't execve()), and this
     // property won't be passed to the client.
     // We may want to think about O_NONBLOCK as well.
-    int opened_fd = open(file_to_open, flags | O_CLOEXEC);
+    // We're doing a 2-parameter open, so we don't support O_CREAT. It doesn't
+    // hurt to always pass a third argument though.
+    int opened_fd = open(file_to_open, flags | O_CLOEXEC, 0);
     if (opened_fd < 0) {
       write_pickle.WriteInt(-errno);
     } else {

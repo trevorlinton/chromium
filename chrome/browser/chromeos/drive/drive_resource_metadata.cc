@@ -9,7 +9,7 @@
 
 #include "base/message_loop_proxy.h"
 #include "base/sequenced_task_runner.h"
-#include "base/string_number_conversions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/tracked_objects.h"
 #include "chrome/browser/chromeos/drive/drive.pb.h"
 #include "chrome/browser/chromeos/drive/drive_files.h"
@@ -34,7 +34,7 @@ void PostFileMoveCallbackError(const FileMoveCallback& callback,
                                DriveFileError error) {
   base::MessageLoopProxy::current()->PostTask(
       FROM_HERE,
-      base::Bind(callback, error, FilePath()));
+      base::Bind(callback, error, base::FilePath()));
 }
 
 // Posts |error| to |callback| asynchronously. |callback| must not be null.
@@ -44,7 +44,7 @@ void PostGetEntryInfoWithFilePathCallbackError(
   scoped_ptr<DriveEntryProto> proto;
   base::MessageLoopProxy::current()->PostTask(
       FROM_HERE,
-      base::Bind(callback, error, FilePath(), base::Passed(&proto)));
+      base::Bind(callback, error, base::FilePath(), base::Passed(&proto)));
 }
 
 }  // namespace
@@ -65,13 +65,13 @@ EntryInfoPairResult::~EntryInfoPairResult() {
 
 // Params for ResourceMetadataDB::Create.
 struct CreateDBParams {
-  CreateDBParams(const FilePath& db_path,
+  CreateDBParams(const base::FilePath& db_path,
                  base::SequencedTaskRunner* blocking_task_runner)
                  : db_path(db_path),
                    blocking_task_runner(blocking_task_runner) {
   }
 
-  FilePath db_path;
+  base::FilePath db_path;
   scoped_refptr<base::SequencedTaskRunner> blocking_task_runner;
   scoped_ptr<ResourceMetadataDB> db;
   DriveResourceMetadata::SerializedMap serialized_resources;
@@ -80,7 +80,7 @@ struct CreateDBParams {
 // Wrapper for level db. All methods must be called on blocking thread.
 class ResourceMetadataDB {
  public:
-  ResourceMetadataDB(const FilePath& db_path,
+  ResourceMetadataDB(const base::FilePath& db_path,
                           base::SequencedTaskRunner* blocking_task_runner);
 
   // Initializes the database.
@@ -98,10 +98,10 @@ class ResourceMetadataDB {
 
   scoped_refptr<base::SequencedTaskRunner> blocking_task_runner_;
   scoped_ptr<leveldb::DB> level_db_;
-  FilePath db_path_;
+  base::FilePath db_path_;
 };
 
-ResourceMetadataDB::ResourceMetadataDB(const FilePath& db_path,
+ResourceMetadataDB::ResourceMetadataDB(const base::FilePath& db_path,
     base::SequencedTaskRunner* blocking_task_runner)
   : blocking_task_runner_(blocking_task_runner),
     db_path_(db_path) {
@@ -180,15 +180,19 @@ void ResourceMetadataDB::Clear() {
 
 // DriveResourceMetadata class implementation.
 
-DriveResourceMetadata::DriveResourceMetadata()
+DriveResourceMetadata::DriveResourceMetadata(
+    const std::string& root_resource_id)
     : blocking_task_runner_(NULL),
       serialized_size_(0),
       largest_changestamp_(0),
       loaded_(false),
       ALLOW_THIS_IN_INITIALIZER_LIST(weak_ptr_factory_(this)) {
   root_ = CreateDriveDirectory().Pass();
+  root_->set_resource_id(root_resource_id);
   root_->set_title(kDriveRootDirectory);
   root_->SetBaseNameFromTitle();
+
+  AddEntryToResourceMap(root_.get());
 }
 
 DriveResourceMetadata::~DriveResourceMetadata() {
@@ -206,13 +210,6 @@ scoped_ptr<DriveFile> DriveResourceMetadata::CreateDriveFile() {
 
 scoped_ptr<DriveDirectory> DriveResourceMetadata::CreateDriveDirectory() {
   return scoped_ptr<DriveDirectory>(new DriveDirectory(this));
-}
-
-void DriveResourceMetadata::InitializeRootEntry(const std::string& id) {
-  DCHECK(!id.empty());
-  DCHECK(root_->resource_id().empty());
-  root_->set_resource_id(id);
-  AddEntryToResourceMap(root_.get());
 }
 
 void DriveResourceMetadata::ClearRoot() {
@@ -234,8 +231,22 @@ void DriveResourceMetadata::ClearRoot() {
   root_.reset();
 }
 
+void DriveResourceMetadata::GetLargestChangestamp(
+    const GetChangestampCallback& callback) {
+  base::MessageLoopProxy::current()->PostTask(
+      FROM_HERE, base::Bind(callback, largest_changestamp_));
+}
+
+void DriveResourceMetadata::SetLargestChangestamp(
+    int64 value,
+    const FileOperationCallback& callback) {
+  largest_changestamp_ = value;
+  base::MessageLoopProxy::current()->PostTask(
+      FROM_HERE, base::Bind(callback, DRIVE_FILE_OK));
+}
+
 void DriveResourceMetadata::AddEntryToDirectory(
-    const FilePath& directory_path,
+    const base::FilePath& directory_path,
     scoped_ptr<google_apis::ResourceEntry> entry,
     const FileMoveCallback& callback) {
   DCHECK(!directory_path.empty());
@@ -265,8 +276,8 @@ void DriveResourceMetadata::AddEntryToDirectory(
 }
 
 void DriveResourceMetadata::MoveEntryToDirectory(
-    const FilePath& file_path,
-    const FilePath& directory_path,
+    const base::FilePath& file_path,
+    const base::FilePath& directory_path,
     const FileMoveCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(!directory_path.empty());
@@ -280,7 +291,7 @@ void DriveResourceMetadata::MoveEntryToDirectory(
   }
 
   DriveEntry* destination = FindEntryByPathSync(directory_path);
-  FilePath moved_file_path;
+  base::FilePath moved_file_path;
   DriveFileError error = DRIVE_FILE_ERROR_FAILED;
   if (!destination) {
     error = DRIVE_FILE_ERROR_NOT_FOUND;
@@ -300,8 +311,8 @@ void DriveResourceMetadata::MoveEntryToDirectory(
 }
 
 void DriveResourceMetadata::RenameEntry(
-  const FilePath& file_path,
-  const FilePath::StringType& new_name,
+  const base::FilePath& file_path,
+  const base::FilePath::StringType& new_name,
   const FileMoveCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(!file_path.empty());
@@ -378,11 +389,11 @@ void DriveResourceMetadata::RemoveEntryFromResourceMap(
 }
 
 DriveEntry* DriveResourceMetadata::FindEntryByPathSync(
-    const FilePath& file_path) {
+    const base::FilePath& file_path) {
   if (file_path == root_->GetFilePath())
     return root_.get();
 
-  std::vector<FilePath::StringType> components;
+  std::vector<base::FilePath::StringType> components;
   file_path.GetComponents(&components);
   DriveDirectory* current_dir = root_.get();
 
@@ -417,7 +428,7 @@ void DriveResourceMetadata::GetEntryInfoByResourceId(
 
   scoped_ptr<DriveEntryProto> entry_proto;
   DriveFileError error = DRIVE_FILE_ERROR_FAILED;
-  FilePath drive_file_path;
+  base::FilePath drive_file_path;
 
   DriveEntry* entry = GetEntryByResourceId(resource_id);
   if (entry) {
@@ -435,7 +446,7 @@ void DriveResourceMetadata::GetEntryInfoByResourceId(
 }
 
 void DriveResourceMetadata::GetEntryInfoByPath(
-    const FilePath& path,
+    const base::FilePath& path,
     const GetEntryInfoCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(!callback.is_null());
@@ -458,7 +469,7 @@ void DriveResourceMetadata::GetEntryInfoByPath(
 }
 
 void DriveResourceMetadata::ReadDirectoryByPath(
-    const FilePath& path,
+    const base::FilePath& path,
     const ReadDirectoryCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(!callback.is_null());
@@ -482,8 +493,8 @@ void DriveResourceMetadata::ReadDirectoryByPath(
 }
 
 void DriveResourceMetadata::GetEntryInfoPairByPaths(
-    const FilePath& first_path,
-    const FilePath& second_path,
+    const base::FilePath& first_path,
+    const base::FilePath& second_path,
     const GetEntryInfoPairCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(!callback.is_null());
@@ -523,7 +534,7 @@ void DriveResourceMetadata::RefreshEntry(
         FROM_HERE,
         base::Bind(callback,
                    DRIVE_FILE_ERROR_NOT_FOUND,
-                   FilePath(),
+                   base::FilePath(),
                    base::Passed(&result_entry_proto)));
     return;
   }
@@ -640,7 +651,7 @@ void DriveResourceMetadata::GetChildDirectories(
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(!changed_dirs_callback.is_null());
 
-  std::set<FilePath> changed_directories;
+  std::set<base::FilePath> changed_directories;
   DriveEntry* entry = GetEntryByResourceId(resource_id);
   if (entry && entry->AsDriveDirectory())
     entry->AsDriveDirectory()->GetChildDirectoryPaths(&changed_directories);
@@ -656,7 +667,7 @@ void DriveResourceMetadata::RemoveAll(const base::Closure& callback) {
 }
 
 void DriveResourceMetadata::InitFromDB(
-    const FilePath& db_path,
+    const base::FilePath& db_path,
     base::SequencedTaskRunner* blocking_task_runner,
     const FileOperationCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
@@ -849,9 +860,6 @@ bool DriveResourceMetadata::ParseFromString(
   }
 
   root_->FromProto(proto.drive_directory());
-  // Call AddEntryToResourceMap() instead of InitializeRootEntry() as the root
-  // resource ID is already set from proto.
-  AddEntryToResourceMap(root_.get());
 
   loaded_ = true;
   largest_changestamp_ = proto.largest_changestamp();
@@ -888,8 +896,8 @@ scoped_ptr<DriveEntry> DriveResourceMetadata::CreateDriveEntryFromProtoString(
 }
 
 void DriveResourceMetadata::GetEntryInfoPairByPathsAfterGetFirst(
-    const FilePath& first_path,
-    const FilePath& second_path,
+    const base::FilePath& first_path,
+    const base::FilePath& second_path,
     const GetEntryInfoPairCallback& callback,
     DriveFileError error,
     scoped_ptr<DriveEntryProto> entry_proto) {
@@ -918,7 +926,7 @@ void DriveResourceMetadata::GetEntryInfoPairByPathsAfterGetFirst(
 }
 
 void DriveResourceMetadata::GetEntryInfoPairByPathsAfterGetSecond(
-    const FilePath& second_path,
+    const base::FilePath& second_path,
     const GetEntryInfoPairCallback& callback,
     scoped_ptr<EntryInfoPairResult> result,
     DriveFileError error,

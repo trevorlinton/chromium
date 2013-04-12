@@ -8,7 +8,9 @@
       'LIBS' : ['ppapi_cpp', 'ppapi', 'pthread']
     }
   ],
-  'DATA': ['example.js'],
+  'DATA': [
+    'example.js',
+  ],
   'DEST': 'examples',
   'NAME': 'file_histogram',
   'TITLE': 'File Histogram.',
@@ -18,6 +20,6 @@ passing the file contents to NativeClient as a VarArrayBuffer, then drawing a
 histogram representing the contents of the file to a 2D square.
 """,
   'FOCUS': 'VarArrayBuffer, 2D, File input.',
-  'GROUP': 'API' 
+  'GROUP': 'API'
 }
 

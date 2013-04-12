@@ -20,7 +20,6 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
-#include "ui/gfx/font.h"
 #include "ui/gfx/image/canvas_image_source.h"
 #include "ui/gfx/image/image.h"
 #include "ui/views/controls/button/custom_button.h"
@@ -72,10 +71,10 @@ class BadgeImageSource: public gfx::CanvasImageSource {
                    const gfx::Size& icon_size,
                    const gfx::ImageSkia& badge);
 
-  ~BadgeImageSource();
+  virtual ~BadgeImageSource();
 
   // Overridden from CanvasImageSource:
-  void Draw(gfx::Canvas* canvas) OVERRIDE;
+  virtual void Draw(gfx::Canvas* canvas) OVERRIDE;
 
  private:
   gfx::Size ComputeSize(const gfx::ImageSkia& icon,
@@ -238,6 +237,8 @@ ProfileItemView::ProfileItemView(const AvatarMenuModel::Item& item,
     : views::CustomButton(parent),
       item_(item),
       parent_(parent) {
+  set_notify_enter_exit_on_child(true);
+
   image_view_ = new ProfileImageView();
   gfx::ImageSkia profile_icon = *item_.icon.ToImageSkia();
   if (item_.active)
@@ -248,20 +249,18 @@ ProfileItemView::ProfileItemView(const AvatarMenuModel::Item& item,
 
   // Add a label to show the profile name.
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
-  const gfx::Font base_font = rb.GetFont(ui::ResourceBundle::BaseFont);
-  const int style = item_.active ? gfx::Font::BOLD : 0;
-  const int kNameFontDelta = 1;
   name_label_ = new views::Label(item_.name,
-                                 base_font.DeriveFont(kNameFontDelta, style));
+                                 rb.GetFont(item_.active ?
+                                            ui::ResourceBundle::BoldFont :
+                                            ui::ResourceBundle::BaseFont));
   name_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   AddChildView(name_label_);
 
   // Add a label to show the sync state.
-  const int kStateFontDelta = -1;
   sync_state_label_ = new views::Label(item_.sync_state);
   if (item_.signed_in)
     sync_state_label_->SetElideBehavior(views::Label::ELIDE_AS_EMAIL);
-  sync_state_label_->SetFont(base_font.DeriveFont(kStateFontDelta));
+  sync_state_label_->SetFont(rb.GetFont(ui::ResourceBundle::SmallFont));
   sync_state_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   sync_state_label_->SetEnabled(false);
   AddChildView(sync_state_label_);
@@ -522,7 +521,7 @@ void AvatarMenuBubbleView::ButtonPressed(views::Button* sender,
       // Clicking on the active profile shouldn't do anything.
       if (!item_view->item().active) {
         avatar_menu_model_->SwitchToProfile(
-            i, chrome::DispositionFromEventFlags(event.flags()) == NEW_WINDOW);
+            i, ui::DispositionFromEventFlags(event.flags()) == NEW_WINDOW);
       }
       break;
     }

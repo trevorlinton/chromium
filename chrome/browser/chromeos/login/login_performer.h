@@ -98,6 +98,15 @@ class LoginPerformer : public LoginStatusConsumer,
                     const std::string& password,
                     AuthorizationMode auth_mode);
 
+  // Performs locally managed user creation and login.
+  void CreateLocallyManagedUser(const string16& display_name,
+                                const std::string& password);
+
+  // Performs locally managed user login with a given |username| and |password|.
+  // Managed user creation should be done with CreateLocallyManagedUser().
+  void LoginAsLocallyManagedUser(const std::string& username,
+                                 const std::string& password);
+
   // Performs retail mode login.
   void LoginRetailMode();
 
@@ -148,10 +157,6 @@ class LoginPerformer : public LoginStatusConsumer,
   virtual void Observe(int type,
                        const content::NotificationSource& source,
                        const content::NotificationDetails& details) OVERRIDE;
-
-  // Callback for asynchronous profile creation.
-  void OnProfileCreated(Profile* profile,
-                        Profile::CreateStatus status);
 
   // Requests screen lock and subscribes to screen lock notifications.
   void RequestScreenLock();
@@ -219,9 +224,6 @@ class LoginPerformer : public LoginStatusConsumer,
 
   // Authorization mode type.
   AuthorizationMode auth_mode_;
-
-  // True if we use OAuth during authorization process.
-  bool using_oauth_;
 
   base::WeakPtrFactory<LoginPerformer> weak_factory_;
 

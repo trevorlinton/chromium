@@ -473,7 +473,8 @@ void NativeWidgetWin::SetInactiveRenderingDisabled(bool value) {
 }
 
 Widget::MoveLoopResult NativeWidgetWin::RunMoveLoop(
-    const gfx::Vector2d& drag_offset) {
+    const gfx::Vector2d& drag_offset,
+    Widget::MoveLoopSource source) {
   return message_handler_->RunMoveLoop(drag_offset) ?
       Widget::MOVE_LOOP_SUCCESSFUL : Widget::MOVE_LOOP_CANCELED;
 }
@@ -655,6 +656,9 @@ bool NativeWidgetWin::HandleAppCommand(short command) {
       GetWidget()->widget_delegate()->ExecuteAppCommand(command);
 }
 
+void NativeWidgetWin::HandleCancelMode() {
+}
+
 void NativeWidgetWin::HandleCaptureLost() {
   delegate_->OnMouseCaptureLost();
 }
@@ -779,6 +783,11 @@ bool NativeWidgetWin::HandleUntranslatedKeyEvent(const ui::KeyEvent& event) {
   if (input_method)
     input_method->DispatchKeyEvent(event);
   return !!input_method;
+}
+
+bool NativeWidgetWin::HandleTouchEvent(const ui::TouchEvent& event) {
+  NOTREACHED() << "Touch events are not supported";
+  return false;
 }
 
 bool NativeWidgetWin::HandleIMEMessage(UINT message,

@@ -4,11 +4,11 @@
 
 #include "chrome/browser/ui/views/frame/browser_view_layout.h"
 
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/find_bar/find_bar.h"
 #include "chrome/browser/ui/find_bar/find_bar_controller.h"
 #include "chrome/browser/ui/search/search_model.h"
-#include "chrome/browser/ui/search/search_ui.h"
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/bookmarks/bookmark_bar_view.h"
 #include "chrome/browser/ui/views/download/download_shelf_view.h"
@@ -260,6 +260,24 @@ void BrowserViewLayout::ViewRemoved(views::View* host, views::View* view) {
 }
 
 void BrowserViewLayout::Layout(views::View* host) {
+  // Showing instant extended suggestions causes us to temporarily hide any
+  // visible bookmark bar and infobars.  In turn, this hiding would normally
+  // cause the content below the suggestions to shift upwards, which looks
+  // surprising (since from the user's perspective, we're "covering" rather than
+  // "removing" the bookmark bar/infobars).  To prevent this, we save off the
+  // content origin here, then once we finish laying things out, force the
+  // contents to continue to display from that origin.
+  const chrome::search::Mode& mode = browser()->search_model()->mode();
+  views::WebView* contents = browser_view_->contents_container_;
+  int overlay_height = contents_container_->overlay_height();
+  gfx::Point old_contents_origin;
+  if (overlay_height > 0 && mode.is_search_suggestions() &&
+      mode.is_origin_default()) {
+    old_contents_origin = contents->bounds().origin();
+    views::View::ConvertPointToTarget(contents->parent(), browser_view_,
+                                      &old_contents_origin);
+  }
+
   vertical_layout_rect_ = browser_view_->GetLocalBounds();
   int top = LayoutTabStripRegion();
   if (browser_view_->IsTabStripVisible()) {
@@ -283,6 +301,23 @@ void BrowserViewLayout::Layout(views::View* host) {
   top -= active_top_margin;
   contents_container_->SetActiveTopMargin(active_top_margin);
   LayoutTabContents(top, bottom);
+
+  // Now set the contents to display at their previous origin if we just hid the
+  // bookmark and/or infobars.
+  if (active_top_margin == 0 && !old_contents_origin.IsOrigin()) {
+    gfx::Point new_contents_origin(contents->bounds().origin());
+    views::View::ConvertPointToTarget(contents->parent(), browser_view_,
+                                      &new_contents_origin);
+    active_top_margin = old_contents_origin.y() - new_contents_origin.y();
+    // Special case: While normally the suggestions appear to "cover" any
+    // bookmark/infobars, if the suggestions are very short, they might not
+    // fully cover that gap, and leaving the contents at their original height
+    // would leave an odd-looking blank space.  In this case, we allow the
+    // contents to go ahead and shift upward.
+    if (active_top_margin > 0 && active_top_margin < overlay_height)
+      contents_container_->SetActiveTopMargin(active_top_margin);
+  }
+
   // This must be done _after_ we lay out the WebContents since this
   // code calls back into us to find the bounding box the find bar
   // must be laid out within, and that code depends on the
@@ -290,16 +325,6 @@ void BrowserViewLayout::Layout(views::View* host) {
   if (browser()->HasFindBarController()) {
     browser()->GetFindBarController()->find_bar()->MoveWindowIfNecessary(
         gfx::Rect(), true);
-  }
-
-  if (active_bookmark_bar_ && active_bookmark_bar_->IsDetached() &&
-      browser()->search_model()->mode().is_ntp()) {
-    LayoutBookmarkBarAtBottom();
-  } else {
-#if !defined(USE_AURA)
-    contents_container_->SetExtraContentHeight(0);
-    contents_split_->SetLeadingBottomOffset(0);
-#endif
   }
 }
 
@@ -333,7 +358,7 @@ int BrowserViewLayout::LayoutTabStripRegion() {
       browser_view_->frame()->GetBoundsForTabStrip(tabstrip));
   gfx::Point tabstrip_origin(tabstrip_bounds.origin());
   views::View::ConvertPointToTarget(browser_view_->parent(), browser_view_,
-                                  &tabstrip_origin);
+                                    &tabstrip_origin);
   tabstrip_bounds.set_origin(tabstrip_origin);
 
   tabstrip->SetVisible(true);
@@ -393,26 +418,20 @@ int BrowserViewLayout::LayoutBookmarkAndInfoBars(int top) {
       top + browser_view_->y() - kConstrainedWindowOverlap;
   find_bar_y_ = top + browser_view_->y() - 1;
   if (active_bookmark_bar_) {
-    // If the bookmark bar is showing in detached style:
-    // - for non-NTP mode, show any Info bar _above_ the bookmark bar, since the
-    //   bookmark bar is styled to look like it's part of the page.
-    // - otherwise, show the bookmark bar at the bottom of content view, so just
-    //   lay out infobar here; bottom bookmark bar is laid out in
-    //   |LayoutBookmarkBarAtBottom|.
-    if (active_bookmark_bar_->IsDetached()) {
-      int infobar_top = LayoutInfoBar(top);
-      return browser()->search_model()->mode().is_ntp() ?
-          infobar_top : LayoutBookmarkBarAtTop(infobar_top);
-    }
+    // If we're showing the Bookmark bar in detached style, then we
+    // need to show any Info bar _above_ the Bookmark bar, since the
+    // Bookmark bar is styled to look like it's part of the page.
+    if (active_bookmark_bar_->IsDetached())
+      return LayoutBookmarkBar(LayoutInfoBar(top));
     // Otherwise, Bookmark bar first, Info bar second.
     top = std::max(browser_view_->toolbar_->bounds().bottom(),
-                   LayoutBookmarkBarAtTop(top));
+                   LayoutBookmarkBar(top));
   }
   find_bar_y_ = top + browser_view_->y() - 1;
   return LayoutInfoBar(top);
 }
 
-int BrowserViewLayout::LayoutBookmarkBarAtTop(int top) {
+int BrowserViewLayout::LayoutBookmarkBar(int top) {
   DCHECK(active_bookmark_bar_);
   int y = top;
   if (!browser_view_->IsBookmarkBarVisible()) {
@@ -430,55 +449,6 @@ int BrowserViewLayout::LayoutBookmarkBarAtTop(int top) {
                                   vertical_layout_rect_.width(),
                                   bookmark_bar_height);
   return y + bookmark_bar_height;
-}
-
-void BrowserViewLayout::LayoutBookmarkBarAtBottom() {
-  DCHECK(active_bookmark_bar_);
-  // Layout bookmark bar at bottom of content view in the y-direction.
-  // Bookmark bar is child of |BrowserView| while content view is child of
-  // ContentsContainer, so convert its bottom coordinate relative to
-  // |BrowserView|.
-  gfx::Point content_bottom(
-      0, browser_view_->contents_container_->bounds().bottom());
-  views::View::ConvertPointToTarget(
-      browser_view_->contents_container_->parent(), browser_view_,
-      &content_bottom);
-  // Only show bookmark bar if height of content view is >=
-  // chrome::search::kMinContentHeightForBottomBookmarkBar.
-  if (browser_view_->contents_container_->height() <
-      chrome::search::kMinContentHeightForBottomBookmarkBar ||
-      !browser_view_->IsBookmarkBarVisible()) {
-    active_bookmark_bar_->SetVisible(false);
-    active_bookmark_bar_->SetBounds(0, content_bottom.y(),
-                                    browser_view_->width(), 0);
-#if !defined(USE_AURA)
-    // When the bookmark bar is hidden, there is no need for a clip offset.
-    contents_container_->SetExtraContentHeight(0);
-    contents_split_->SetLeadingBottomOffset(0);
-#endif  // !USE_AURA
-    return;
-  }
-
-  // BookmarkBarView uses infobar visibility to determine toolbar overlap, which
-  // is 0 if bookmark bar is detached and infobar is visible.  Since the
-  // bookmark bar on the NTP is detached at bottom of content view, toolbar
-  // overlap is irrelevant.  So set infobar visible to force no toolbar overlap.
-  active_bookmark_bar_->set_infobar_visible(true);
-  active_bookmark_bar_->SetVisible(true);
-
-  int height = active_bookmark_bar_->GetPreferredSize().height();
-  active_bookmark_bar_->SetBounds(0, content_bottom.y() - height,
-                                  vertical_layout_rect_.width(), height);
-#if !defined(USE_AURA)
-  // Without Aura, the bookmark bar can't be layered on top of the
-  // contents_container_. Setting a bottom clip offset on the
-  // contents_container_ allows it to tell its child view that it's bigger,
-  // and clip it so that a theme background aligned to the bottom
-  // or vertically centered is properly aligned whith the bookmark bar view
-  // drawing of the bottom of the bitmap.
-  contents_container_->SetExtraContentHeight(height);
-  contents_split_->SetLeadingBottomOffset(height);
-#endif  // !USE_AURA
 }
 
 int BrowserViewLayout::LayoutInfoBar(int top) {
@@ -502,9 +472,32 @@ void BrowserViewLayout::LayoutTabContents(int top, int bottom) {
   // The views hierarcy (see browser_view.h for more details):
   // contents_split_ -> [contents_container_ | devtools]
 
+  gfx::Rect contents_bounds;
+  gfx::Rect devtools_bounds;
+
   gfx::Rect contents_split_bounds(vertical_layout_rect_.x(), top,
                                   vertical_layout_rect_.width(),
                                   std::max(0, bottom - top));
+  gfx::Point contents_split_offset(
+      contents_split_bounds.x() - contents_split_->bounds().x(),
+      contents_split_bounds.y() - contents_split_->bounds().y());
+
+  // Layout resize corner and calculate reserved contents rects here as all
+  // contents view bounds are already determined, but not yet set at this point,
+  // so contents will be laid out once at most.
+  gfx::Rect browser_reserved_rect;
+  if (!browser_view_->frame_->IsMaximized() &&
+      !browser_view_->frame_->IsFullscreen()) {
+    gfx::Size resize_corner_size = browser_view_->GetResizeCornerSize();
+    if (!resize_corner_size.IsEmpty()) {
+      gfx::Rect bounds = browser_view_->GetContentsBounds();
+      gfx::Point resize_corner_origin(
+          bounds.right() - resize_corner_size.width(),
+          bounds.bottom() - resize_corner_size.height());
+      browser_reserved_rect =
+          gfx::Rect(resize_corner_origin, resize_corner_size);
+    }
+  }
 
   // Now it's safe to actually resize all contents views in the hierarchy.
   contents_split_->SetBoundsRect(contents_split_bounds);
@@ -512,11 +505,7 @@ void BrowserViewLayout::LayoutTabContents(int top, int bottom) {
 
 int BrowserViewLayout::GetTopMarginForActiveContent() {
   if (!active_bookmark_bar_ || !browser_view_->IsBookmarkBarVisible() ||
-      !active_bookmark_bar_->IsDetached() ||
-      // For |NTP| mode, detached bookmark bar does NOT overlap with top of
-      // content view; instead, it "overlaps" with bottom of content view, which
-      // is handled in |LayoutBookmarkBarAtBottom|.
-      browser()->search_model()->mode().is_ntp()) {
+      !active_bookmark_bar_->IsDetached()) {
     return 0;
   }
 

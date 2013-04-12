@@ -11,12 +11,15 @@
 #include "sql/meta_table.h"
 
 class AutofillTable;
-class FilePath;
 class KeywordTable;
 class LoginsTable;
 class TokenServiceTable;
 class WebAppsTable;
 class WebIntentsTable;
+
+namespace base {
+class FilePath;
+}
 
 namespace content {
 class NotificationService;
@@ -33,7 +36,9 @@ class WebDatabase {
 
   // Initialize the database given a name. The name defines where the SQLite
   // file is. If this returns an error code, no other method should be called.
-  sql::InitStatus Init(const FilePath& db_name);
+  // Requires the |app_locale| to be passed as a parameter as the locale can
+  // only safely be queried on the UI thread.
+  sql::InitStatus Init(const base::FilePath& db_name, const std::string& app_locale);
 
   // Transactions management
   void BeginTransaction();
@@ -44,15 +49,15 @@ class WebDatabase {
   virtual LoginsTable* GetLoginsTable();
   virtual TokenServiceTable* GetTokenServiceTable();
   virtual WebAppsTable* GetWebAppsTable();
-  virtual WebIntentsTable* GetWebIntentsTable();
 
   // Exposed for testing only.
   sql::Connection* GetSQLConnection();
 
  private:
   // Used by |Init()| to migration database schema from older versions to
-  // current version.
-  sql::InitStatus MigrateOldVersionsAsNeeded();
+  // current version.  Requires the |app_locale| to be passed as a parameter as
+  // the locale can only safely be queried on the UI thread.
+  sql::InitStatus MigrateOldVersionsAsNeeded(const std::string& app_locale);
 
   sql::Connection db_;
   sql::MetaTable meta_table_;
@@ -62,6 +67,7 @@ class WebDatabase {
   scoped_ptr<LoginsTable> logins_table_;
   scoped_ptr<TokenServiceTable> token_service_table_;
   scoped_ptr<WebAppsTable> web_apps_table_;
+  // TODO(thakis): Add a migration to delete this table, then remove this.
   scoped_ptr<WebIntentsTable> web_intents_table_;
 
   scoped_ptr<content::NotificationService> notification_service_;

@@ -169,6 +169,8 @@ TEST_F(ProxyServiceTest, Direct) {
   EXPECT_TRUE(resolver->pending_requests().empty());
 
   EXPECT_TRUE(info.is_direct());
+  EXPECT_TRUE(info.proxy_resolve_start_time().is_null());
+  EXPECT_TRUE(info.proxy_resolve_end_time().is_null());
 
   // Check the NetLog was filled correctly.
   CapturingNetLog::CapturedEntryList entries;
@@ -196,11 +198,14 @@ TEST_F(ProxyServiceTest, PAC) {
 
   ProxyInfo info;
   TestCompletionCallback callback;
+  ProxyService::PacRequest* request;
   CapturingBoundNetLog log;
 
   int rv = service.ResolveProxy(
-      url, &info, callback.callback(), NULL, log.bound());
+      url, &info, callback.callback(), &request, log.bound());
   EXPECT_EQ(ERR_IO_PENDING, rv);
+
+  EXPECT_EQ(LOAD_STATE_RESOLVING_PROXY_FOR_URL, service.GetLoadState(request));
 
   EXPECT_EQ(GURL("http://foopy/proxy.pac"),
             resolver->pending_set_pac_script_request()->script_data()->url());
@@ -217,6 +222,10 @@ TEST_F(ProxyServiceTest, PAC) {
   EXPECT_FALSE(info.is_direct());
   EXPECT_EQ("foopy:80", info.proxy_server().ToURI());
   EXPECT_TRUE(info.did_use_pac_script());
+
+  EXPECT_FALSE(info.proxy_resolve_start_time().is_null());
+  EXPECT_FALSE(info.proxy_resolve_end_time().is_null());
+  EXPECT_LE(info.proxy_resolve_start_time(), info.proxy_resolve_end_time());
 
   // Check the NetLog was filled correctly.
   CapturingNetLog::CapturedEntryList entries;
@@ -295,6 +304,10 @@ TEST_F(ProxyServiceTest, PAC_FailoverWithoutDirect) {
   EXPECT_EQ("foopy:8080", info.proxy_server().ToURI());
   EXPECT_TRUE(info.did_use_pac_script());
 
+  EXPECT_FALSE(info.proxy_resolve_start_time().is_null());
+  EXPECT_FALSE(info.proxy_resolve_end_time().is_null());
+  EXPECT_LE(info.proxy_resolve_start_time(), info.proxy_resolve_end_time());
+
   // Now, imagine that connecting to foopy:8080 fails: there is nothing
   // left to fallback to, since our proxy list was NOT terminated by
   // DIRECT.
@@ -340,6 +353,10 @@ TEST_F(ProxyServiceTest, PAC_RuntimeError) {
   EXPECT_TRUE(info.is_direct());
   EXPECT_TRUE(info.did_use_pac_script());
   EXPECT_EQ(1, info.config_id());
+
+  EXPECT_FALSE(info.proxy_resolve_start_time().is_null());
+  EXPECT_FALSE(info.proxy_resolve_end_time().is_null());
+  EXPECT_LE(info.proxy_resolve_start_time(), info.proxy_resolve_end_time());
 }
 
 // The proxy list could potentially contain the DIRECT fallback choice
@@ -448,6 +465,10 @@ TEST_F(ProxyServiceTest, PAC_ConfigSourcePropagates) {
   EXPECT_EQ(OK, callback.WaitForResult());
   EXPECT_EQ(PROXY_CONFIG_SOURCE_TEST, info.config_source());
   EXPECT_TRUE(info.did_use_pac_script());
+
+  EXPECT_FALSE(info.proxy_resolve_start_time().is_null());
+  EXPECT_FALSE(info.proxy_resolve_end_time().is_null());
+  EXPECT_LE(info.proxy_resolve_start_time(), info.proxy_resolve_end_time());
 }
 
 TEST_F(ProxyServiceTest, ProxyResolverFails) {
@@ -484,6 +505,11 @@ TEST_F(ProxyServiceTest, ProxyResolverFails) {
   // falls-back to DIRECT.
   EXPECT_EQ(OK, callback1.WaitForResult());
   EXPECT_TRUE(info.is_direct());
+
+  // Failed PAC executions still have proxy resolution times.
+  EXPECT_FALSE(info.proxy_resolve_start_time().is_null());
+  EXPECT_FALSE(info.proxy_resolve_end_time().is_null());
+  EXPECT_LE(info.proxy_resolve_start_time(), info.proxy_resolve_end_time());
 
   // The second resolve request will try to run through the proxy resolver,
   // regardless of whether the first request failed in it.
@@ -692,11 +718,21 @@ TEST_F(ProxyServiceTest, ProxyFallback) {
   EXPECT_FALSE(info.is_direct());
   EXPECT_EQ("foopy1:8080", info.proxy_server().ToURI());
 
+  EXPECT_FALSE(info.proxy_resolve_start_time().is_null());
+  EXPECT_FALSE(info.proxy_resolve_end_time().is_null());
+  EXPECT_LE(info.proxy_resolve_start_time(), info.proxy_resolve_end_time());
+  base::TimeTicks proxy_resolve_start_time = info.proxy_resolve_start_time();
+  base::TimeTicks proxy_resolve_end_time = info.proxy_resolve_end_time();
+
   // Fake an error on the proxy.
   TestCompletionCallback callback2;
   rv = service.ReconsiderProxyAfterError(url, &info, callback2.callback(), NULL,
                                          BoundNetLog());
   EXPECT_EQ(OK, rv);
+
+  // Proxy times should not have been modified by fallback.
+  EXPECT_EQ(proxy_resolve_start_time, info.proxy_resolve_start_time());
+  EXPECT_EQ(proxy_resolve_end_time, info.proxy_resolve_end_time());
 
   // The second proxy should be specified.
   EXPECT_EQ("foopy2:9090", info.proxy_server().ToURI());
@@ -721,6 +757,14 @@ TEST_F(ProxyServiceTest, ProxyFallback) {
   EXPECT_EQ(OK, callback3.WaitForResult());
   EXPECT_FALSE(info.is_direct());
   EXPECT_EQ("foopy3:7070", info.proxy_server().ToURI());
+
+  // Proxy times should have been updated, so get them again.
+  EXPECT_LE(proxy_resolve_end_time, info.proxy_resolve_start_time());
+  EXPECT_FALSE(info.proxy_resolve_start_time().is_null());
+  EXPECT_FALSE(info.proxy_resolve_end_time().is_null());
+  EXPECT_LE(info.proxy_resolve_start_time(), info.proxy_resolve_end_time());
+  proxy_resolve_start_time = info.proxy_resolve_start_time();
+  proxy_resolve_end_time = info.proxy_resolve_end_time();
 
   // We fake another error. It should now try the third one.
   TestCompletionCallback callback4;
@@ -747,6 +791,10 @@ TEST_F(ProxyServiceTest, ProxyFallback) {
   EXPECT_FALSE(info.is_direct());
   EXPECT_TRUE(info.is_empty());
 
+  // Proxy times should not have been modified by fallback.
+  EXPECT_EQ(proxy_resolve_start_time, info.proxy_resolve_start_time());
+  EXPECT_EQ(proxy_resolve_end_time, info.proxy_resolve_end_time());
+
   // Look up proxies again
   TestCompletionCallback callback7;
   rv = service.ResolveProxy(url, &info, callback7.callback(), NULL,
@@ -767,6 +815,9 @@ TEST_F(ProxyServiceTest, ProxyFallback) {
   EXPECT_FALSE(info.is_direct());
   EXPECT_EQ("foopy3:7070", info.proxy_server().ToURI());
 
+  EXPECT_LE(proxy_resolve_end_time, info.proxy_resolve_start_time());
+  EXPECT_FALSE(info.proxy_resolve_start_time().is_null());
+  EXPECT_FALSE(info.proxy_resolve_end_time().is_null());
   // TODO(nsylvain): Test that the proxy can be retried after the delay.
 }
 
@@ -823,6 +874,10 @@ TEST_F(ProxyServiceTest, ProxyFallbackToDirect) {
 
   // Finally, we get back DIRECT.
   EXPECT_TRUE(info.is_direct());
+
+  EXPECT_FALSE(info.proxy_resolve_start_time().is_null());
+  EXPECT_FALSE(info.proxy_resolve_end_time().is_null());
+  EXPECT_LE(info.proxy_resolve_start_time(), info.proxy_resolve_end_time());
 
   // Now we tell the proxy service that even DIRECT failed.
   TestCompletionCallback callback4;
@@ -924,6 +979,10 @@ TEST_F(ProxyServiceTest, ProxyFallback_NewSettings) {
 
   EXPECT_EQ(OK, callback4.WaitForResult());
   EXPECT_EQ("foopy1:8080", info.proxy_server().ToURI());
+
+  EXPECT_FALSE(info.proxy_resolve_start_time().is_null());
+  EXPECT_FALSE(info.proxy_resolve_end_time().is_null());
+  EXPECT_LE(info.proxy_resolve_start_time(), info.proxy_resolve_end_time());
 }
 
 TEST_F(ProxyServiceTest, ProxyFallback_BadConfig) {
@@ -1010,6 +1069,10 @@ TEST_F(ProxyServiceTest, ProxyFallback_BadConfig) {
   EXPECT_EQ(OK, callback4.WaitForResult());
   EXPECT_FALSE(info3.is_direct());
   EXPECT_EQ("foopy1:8080", info3.proxy_server().ToURI());
+
+  EXPECT_FALSE(info.proxy_resolve_start_time().is_null());
+  EXPECT_FALSE(info.proxy_resolve_end_time().is_null());
+  EXPECT_LE(info.proxy_resolve_start_time(), info.proxy_resolve_end_time());
 }
 
 TEST_F(ProxyServiceTest, ProxyFallback_BadConfigMandatory) {
@@ -1388,8 +1451,9 @@ TEST_F(ProxyServiceTest, InitialPACScriptDownload) {
 
   ProxyInfo info1;
   TestCompletionCallback callback1;
+  ProxyService::PacRequest* request1;
   int rv = service.ResolveProxy(GURL("http://request1"), &info1,
-                                callback1.callback(), NULL, BoundNetLog());
+                                callback1.callback(), &request1, BoundNetLog());
   EXPECT_EQ(ERR_IO_PENDING, rv);
 
   // The first request should have triggered download of PAC script.
@@ -1398,18 +1462,27 @@ TEST_F(ProxyServiceTest, InitialPACScriptDownload) {
 
   ProxyInfo info2;
   TestCompletionCallback callback2;
+  ProxyService::PacRequest* request2;
   rv = service.ResolveProxy(GURL("http://request2"), &info2,
-                            callback2.callback(), NULL, BoundNetLog());
+                            callback2.callback(), &request2, BoundNetLog());
   EXPECT_EQ(ERR_IO_PENDING, rv);
 
   ProxyInfo info3;
   TestCompletionCallback callback3;
+  ProxyService::PacRequest* request3;
   rv = service.ResolveProxy(GURL("http://request3"), &info3,
-                            callback3.callback(), NULL, BoundNetLog());
+                            callback3.callback(), &request3, BoundNetLog());
   EXPECT_EQ(ERR_IO_PENDING, rv);
 
   // Nothing has been sent to the resolver yet.
   EXPECT_TRUE(resolver->pending_requests().empty());
+
+  EXPECT_EQ(LOAD_STATE_DOWNLOADING_PROXY_SCRIPT,
+            service.GetLoadState(request1));
+  EXPECT_EQ(LOAD_STATE_DOWNLOADING_PROXY_SCRIPT,
+            service.GetLoadState(request2));
+  EXPECT_EQ(LOAD_STATE_DOWNLOADING_PROXY_SCRIPT,
+            service.GetLoadState(request3));
 
   // At this point the ProxyService should be waiting for the
   // ProxyScriptFetcher to invoke its completion callback, notifying it of
@@ -1427,6 +1500,10 @@ TEST_F(ProxyServiceTest, InitialPACScriptDownload) {
   EXPECT_EQ(GURL("http://request2"), resolver->pending_requests()[1]->url());
   EXPECT_EQ(GURL("http://request3"), resolver->pending_requests()[2]->url());
 
+  EXPECT_EQ(LOAD_STATE_RESOLVING_PROXY_FOR_URL, service.GetLoadState(request1));
+  EXPECT_EQ(LOAD_STATE_RESOLVING_PROXY_FOR_URL, service.GetLoadState(request2));
+  EXPECT_EQ(LOAD_STATE_RESOLVING_PROXY_FOR_URL, service.GetLoadState(request3));
+
   // Complete all the requests (in some order).
   // Note that as we complete requests, they shift up in |pending_requests()|.
 
@@ -1442,12 +1519,21 @@ TEST_F(ProxyServiceTest, InitialPACScriptDownload) {
   // Complete and verify that requests ran as expected.
   EXPECT_EQ(OK, callback1.WaitForResult());
   EXPECT_EQ("request1:80", info1.proxy_server().ToURI());
+  EXPECT_FALSE(info1.proxy_resolve_start_time().is_null());
+  EXPECT_FALSE(info1.proxy_resolve_end_time().is_null());
+  EXPECT_LE(info1.proxy_resolve_start_time(), info1.proxy_resolve_end_time());
 
   EXPECT_EQ(OK, callback2.WaitForResult());
   EXPECT_EQ("request2:80", info2.proxy_server().ToURI());
+  EXPECT_FALSE(info2.proxy_resolve_start_time().is_null());
+  EXPECT_FALSE(info2.proxy_resolve_end_time().is_null());
+  EXPECT_LE(info2.proxy_resolve_start_time(), info2.proxy_resolve_end_time());
 
   EXPECT_EQ(OK, callback3.WaitForResult());
   EXPECT_EQ("request3:80", info3.proxy_server().ToURI());
+  EXPECT_FALSE(info3.proxy_resolve_start_time().is_null());
+  EXPECT_FALSE(info3.proxy_resolve_end_time().is_null());
+  EXPECT_LE(info3.proxy_resolve_start_time(), info3.proxy_resolve_end_time());
 }
 
 // Test changing the ProxyScriptFetcher while PAC download is in progress.
@@ -1664,9 +1750,15 @@ TEST_F(ProxyServiceTest, FallbackFromAutodetectToCustomPac) {
   // Verify that requests ran as expected.
   EXPECT_EQ(OK, callback1.WaitForResult());
   EXPECT_EQ("request1:80", info1.proxy_server().ToURI());
+  EXPECT_FALSE(info1.proxy_resolve_start_time().is_null());
+  EXPECT_FALSE(info1.proxy_resolve_end_time().is_null());
+  EXPECT_LE(info1.proxy_resolve_start_time(), info1.proxy_resolve_end_time());
 
   EXPECT_EQ(OK, callback2.WaitForResult());
   EXPECT_EQ("request2:80", info2.proxy_server().ToURI());
+  EXPECT_FALSE(info2.proxy_resolve_start_time().is_null());
+  EXPECT_FALSE(info2.proxy_resolve_end_time().is_null());
+  EXPECT_LE(info2.proxy_resolve_start_time(), info2.proxy_resolve_end_time());
 }
 
 // This is the same test as FallbackFromAutodetectToCustomPac, except

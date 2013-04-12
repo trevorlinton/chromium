@@ -37,13 +37,18 @@ def AddInstallAPKOption(option_parser):
   option_parser.add_option('--apk_package',
                            help=('The package name used by the apk containing '
                                  'the application.'))
+  option_parser.add_option('--keep_data',
+                           action='store_true',
+                           default=False,
+                           help=('Keep the package data when installing '
+                                 'the application.'))
 
 
 def ValidateInstallAPKOption(option_parser, options):
   if not options.apk:
     option_parser.error('--apk is mandatory.')
   if not os.path.exists(options.apk):
-    options.apk = os.path.join(os.environ['CHROME_SRC'],
+    options.apk = os.path.join(constants.CHROME_DIR,
                                'out', options.build_type,
                                'apks', options.apk)
 
@@ -99,10 +104,6 @@ def AddGTestOptions(option_parser):
   #TODO(craigdh): Replace _ with - in arguments for consistency.
   option_parser.add_option('-a', '--test_arguments', dest='test_arguments',
                            help='Additional arguments to pass to the test.')
-  option_parser.add_option('-L', dest='log_dump',
-                           help='File name of log dump, which will be put in '
-                           'subfolder debug_info_dumps under the same '
-                           'directory in where the test_suite exists.')
   option_parser.add_option('-e', '--emulator', dest='use_emulator',
                            action='store_true',
                            help='Run tests in a new instance of emulator.')
@@ -115,14 +116,6 @@ def AddGTestOptions(option_parser):
                            help='Use Xvfb around tests (ignored if not Linux).')
   option_parser.add_option('--webkit', action='store_true',
                            help='Run the tests from a WebKit checkout.')
-  option_parser.add_option('--fast', '--fast_and_loose', dest='fast_and_loose',
-                           action='store_true',
-                           help='Go faster (but be less stable), '
-                           'for quick testing.  Example: when tracking down '
-                           'tests that hang to add to the disabled list, '
-                           'there is no need to redeploy the test binary '
-                           'or data to the device again.  '
-                           'Don\'t use on bots by default!')
   option_parser.add_option('--repeat', dest='repeat', type='int',
                            default=2,
                            help='Repeat count on test timeout.')

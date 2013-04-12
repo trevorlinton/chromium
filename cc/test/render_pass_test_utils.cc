@@ -15,14 +15,14 @@
 
 namespace cc {
 
-TestRenderPass* addRenderPass(ScopedPtrVector<RenderPass>& passList,
+TestRenderPass* addRenderPass(RenderPassList& passList,
                               RenderPass::Id id,
                               const gfx::Rect& outputRect,
                               const gfx::Transform& rootTransform) {
   scoped_ptr<TestRenderPass> pass(TestRenderPass::Create());
   pass->SetNew(id, outputRect, outputRect, rootTransform);
   TestRenderPass* saved = pass.get();
-  passList.append(pass.PassAs<RenderPass>());
+  passList.push_back(pass.PassAs<RenderPass>());
   return saved;
 }
 
@@ -33,7 +33,22 @@ SolidColorDrawQuad* addQuad(TestRenderPass* pass,
   AppendQuadsData data(pass->id);
   SharedQuadState* sharedState =
       quadSink.useSharedQuadState(SharedQuadState::Create());
-  sharedState->SetAll(gfx::Transform(), rect, rect, rect, false, 1);
+  sharedState->SetAll(gfx::Transform(), rect.size(), rect, rect, false, 1);
+  scoped_ptr<SolidColorDrawQuad> quad = SolidColorDrawQuad::Create();
+  quad->SetNew(sharedState, rect, color);
+  SolidColorDrawQuad* quadPtr = quad.get();
+  quadSink.append(quad.PassAs<DrawQuad>(), data);
+  return quadPtr;
+}
+
+SolidColorDrawQuad* addClippedQuad(TestRenderPass* pass,
+                                   const gfx::Rect& rect,
+                                   SkColor color) {
+  MockQuadCuller quadSink(pass->quad_list, pass->shared_quad_state_list);
+  AppendQuadsData data(pass->id);
+  SharedQuadState* sharedState =
+      quadSink.useSharedQuadState(SharedQuadState::Create());
+  sharedState->SetAll(gfx::Transform(), rect.size(), rect, rect, true, 1);
   scoped_ptr<SolidColorDrawQuad> quad = SolidColorDrawQuad::Create();
   quad->SetNew(sharedState, rect, color);
   SolidColorDrawQuad* quadPtr = quad.get();
@@ -48,8 +63,7 @@ void addRenderPassQuad(TestRenderPass* toPass,
   gfx::Rect outputRect = contributingPass->output_rect;
   SharedQuadState* sharedState =
       quadSink.useSharedQuadState(SharedQuadState::Create());
-  sharedState->SetAll(gfx::Transform(), outputRect, outputRect, outputRect,
-                      false, 1);
+  sharedState->SetAll(gfx::Transform(), outputRect.size(), outputRect, outputRect, false, 1);
   scoped_ptr<RenderPassDrawQuad> quad = RenderPassDrawQuad::Create();
   quad->SetNew(sharedState, outputRect, contributingPass->id, false, 0,
                outputRect, gfx::RectF(), WebKit::WebFilterOperations(),

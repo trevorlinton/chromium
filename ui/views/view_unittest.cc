@@ -24,6 +24,7 @@
 #include "ui/views/background.h"
 #include "ui/views/controls/button/button_dropdown.h"
 #include "ui/views/controls/button/checkbox.h"
+#include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/native/native_view_host.h"
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/controls/textfield/textfield.h"
@@ -935,10 +936,10 @@ class HitTestView : public View {
 
  protected:
   // Overridden from View:
-  virtual bool HasHitTestMask() const {
+  virtual bool HasHitTestMask() const OVERRIDE {
     return has_hittest_mask_;
   }
-  virtual void GetHitTestMask(gfx::Path* mask) const {
+  virtual void GetHitTestMask(gfx::Path* mask) const OVERRIDE {
     DCHECK(has_hittest_mask_);
     DCHECK(mask);
 
@@ -1558,7 +1559,6 @@ TEST_F(ViewTest, DISABLED_RerouteMouseWheelTest) {
 class MockMenuModel : public ui::MenuModel {
  public:
   MOCK_CONST_METHOD0(HasIcons, bool());
-  MOCK_CONST_METHOD1(GetFirstItemIndex, int(gfx::NativeMenu native_menu));
   MOCK_CONST_METHOD0(GetItemCount, int());
   MOCK_CONST_METHOD1(GetTypeAt, ItemType(int index));
   MOCK_CONST_METHOD1(GetSeparatorTypeAt, ui::MenuSeparatorType(int index));
@@ -1619,8 +1619,8 @@ class TestDialog : public DialogDelegate, public ButtonListener {
   virtual View* GetContentsView() OVERRIDE {
     if (!contents_) {
       contents_ = new View;
-      button1_ = new NativeTextButton(this, ASCIIToUTF16("Button1"));
-      button2_ = new NativeTextButton(this, ASCIIToUTF16("Button2"));
+      button1_ = new LabelButton(this, ASCIIToUTF16("Button1"));
+      button2_ = new LabelButton(this, ASCIIToUTF16("Button2"));
       checkbox_ = new Checkbox(ASCIIToUTF16("My checkbox"));
       button_drop_ = new ButtonDropDown(this, mock_menu_model_);
       contents_->AddChildView(button1_);
@@ -1665,15 +1665,14 @@ class TestDialog : public DialogDelegate, public ButtonListener {
   void ExpectShowDropMenu() {
     if (mock_menu_model_) {
       EXPECT_CALL(*mock_menu_model_, HasIcons());
-      EXPECT_CALL(*mock_menu_model_, GetFirstItemIndex(_));
       EXPECT_CALL(*mock_menu_model_, GetItemCount());
       EXPECT_CALL(*mock_menu_model_, MenuClosed());
     }
   }
 
   View* contents_;
-  NativeTextButton* button1_;
-  NativeTextButton* button2_;
+  LabelButton* button1_;
+  LabelButton* button2_;
   Checkbox* checkbox_;
   ButtonDropDown* button_drop_;
   Button* last_pressed_button_;
@@ -1760,8 +1759,8 @@ class DefaultButtonTest : public ViewTest {
   FocusManager* focus_manager_;
   TestDialog* test_dialog_;
   DialogClientView* client_view_;
-  TextButton* ok_button_;
-  TextButton* cancel_button_;
+  LabelButton* ok_button_;
+  LabelButton* cancel_button_;
 };
 
 TEST_F(DefaultButtonTest, DialogDefaultButtonTest) {
@@ -1898,9 +1897,10 @@ class TestNativeViewHierarchy : public View {
   TestNativeViewHierarchy() {
   }
 
-  virtual void NativeViewHierarchyChanged(bool attached,
-                                          gfx::NativeView native_view,
-                                          internal::RootView* root_view) {
+  virtual void NativeViewHierarchyChanged(
+      bool attached,
+      gfx::NativeView native_view,
+      internal::RootView* root_view) OVERRIDE {
     NotificationInfo info;
     info.attached = attached;
     info.native_view = native_view;
@@ -1922,7 +1922,8 @@ class TestChangeNativeViewHierarchy {
     view_test_ = view_test;
     native_host_ = new NativeViewHost();
     host_ = new Widget;
-    Widget::InitParams params(Widget::InitParams::TYPE_POPUP);
+    Widget::InitParams params =
+        view_test->CreateParams(Widget::InitParams::TYPE_POPUP);
     params.bounds = gfx::Rect(0, 0, 500, 300);
     host_->Init(params);
     host_->GetRootView()->AddChildView(native_host_);
@@ -2034,7 +2035,7 @@ class TransformPaintView : public TestView {
   gfx::Rect scheduled_paint_rect() const { return scheduled_paint_rect_; }
 
   // Overridden from View:
-  virtual void SchedulePaintInRect(const gfx::Rect& rect) {
+  virtual void SchedulePaintInRect(const gfx::Rect& rect) OVERRIDE {
     gfx::Rect xrect = ConvertRectToParent(rect);
     scheduled_paint_rect_.Union(xrect);
   }
@@ -2272,10 +2273,10 @@ class VisibleBoundsView : public View {
 
  private:
   // Overridden from View:
-  virtual bool NeedsNotificationWhenVisibleBoundsChange() const {
+  virtual bool NeedsNotificationWhenVisibleBoundsChange() const OVERRIDE {
      return true;
   }
-  virtual void OnVisibleBoundsChanged() {
+  virtual void OnVisibleBoundsChanged() OVERRIDE {
     received_notification_ = true;
   }
 
@@ -2897,7 +2898,7 @@ class TestLayerAnimator : public ui::LayerAnimator {
   virtual void SetBounds(const gfx::Rect& bounds) OVERRIDE;
 
  protected:
-  ~TestLayerAnimator() { }
+  virtual ~TestLayerAnimator() { }
 
  private:
   gfx::Rect last_bounds_;

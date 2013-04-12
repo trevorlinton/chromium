@@ -4,23 +4,23 @@
 
 #import "chrome/browser/ui/cocoa/extensions/extension_action_context_menu.h"
 
-#include "base/file_path.h"
 #include "base/file_util.h"
+#include "base/files/file_path.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/path_service.h"
+#include "base/prefs/pref_service.h"
 #include "chrome/browser/extensions/browser_action_test_util.h"
 #include "chrome/browser/extensions/extension_action.h"
 #include "chrome/browser/extensions/extension_action_manager.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
-#include "chrome/browser/prefs/pref_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/cocoa/browser_window_cocoa.h"
 #include "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/location_bar/location_bar_view_mac.h"
 #include "chrome/browser/ui/cocoa/toolbar/toolbar_controller.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/pref_names.h"
@@ -45,7 +45,8 @@ public:
     action_ = action_manager->GetPageAction(*extension_);
     EXPECT_TRUE(action_);
 
-    content::WebContents* contents = chrome::GetActiveWebContents(browser());
+    content::WebContents* contents =
+        browser()->tab_strip_model()->GetActiveWebContents();
     action_->SetAppearance(ExtensionTabUtil::GetTabId(contents),
                            ExtensionAction::ACTIVE);
 
@@ -99,18 +100,28 @@ IN_PROC_BROWSER_TEST_F(ExtensionActionContextMenuTest, BrowserAction) {
   action_ = action_manager->GetBrowserAction(*extension_);
   EXPECT_TRUE(action_);
 
-  scoped_ptr<Browser> empty_browser(
-       new Browser(Browser::CreateParams(browser()->profile())));
+  Browser* empty_browser(
+       new Browser(Browser::CreateParams(browser()->profile(),
+                                         browser()->host_desktop_type())));
 
   scoped_nsobject<ExtensionActionContextMenu> menu;
   menu.reset([[ExtensionActionContextMenu alloc]
       initWithExtension:extension_
-                browser:empty_browser.get()
+                browser:empty_browser
         extensionAction:action_]);
 
   NSMenuItem* inspectItem = [menu itemWithTag:
         extension_action_context_menu::kExtensionContextInspect];
   EXPECT_TRUE(inspectItem);
+
+  // Close the empty browser. Can't just free it directly because there are
+  // dangling references in the various native controllers that must be
+  // cleaned up first.
+  NSWindow* window = empty_browser->window()->GetNativeWindow();
+  BrowserWindowController* wc =
+    [BrowserWindowController browserWindowControllerForWindow:window];
+  ASSERT_TRUE(wc != NULL);
+  [wc destroyBrowser];
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionActionContextMenuTest, RunInspectPopup) {

@@ -8,6 +8,7 @@
 #include "base/memory/scoped_ptr.h"
 #include "content/common/webkitplatformsupport_impl.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebMimeRegistry.h"
+#include "third_party/WebKit/Source/WebKit/chromium/public/WebIDBFactory.h"
 
 namespace WebKit {
 class WebFileUtilities;
@@ -48,7 +49,7 @@ class WorkerWebKitPlatformSupportImpl : public WebKitPlatformSupportImpl,
       const WebKit::WebString& new_value, const WebKit::WebString& origin,
       const WebKit::WebURL& url, bool is_local_storage);
 
-  virtual WebKit::WebKitPlatformSupport::FileHandle databaseOpenFile(
+  virtual WebKit::Platform::FileHandle databaseOpenFile(
       const WebKit::WebString& vfs_file_name, int desired_flags);
   virtual int databaseDeleteFile(const WebKit::WebString& vfs_file_name,
                                  bool sync_dir);
@@ -61,7 +62,7 @@ class WorkerWebKitPlatformSupportImpl : public WebKitPlatformSupportImpl,
 
   virtual WebKit::WebBlobRegistry* blobRegistry();
 
-  virtual WebKit::WebIDBFactory* idbFactory() OVERRIDE;
+  virtual WebKit::WebIDBFactory* idbFactory();
 
   // WebMimeRegistry methods:
   virtual WebKit::WebMimeRegistry::SupportsType supportsMIMEType(

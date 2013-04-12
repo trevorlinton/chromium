@@ -9,14 +9,16 @@
 #include "base/basictypes.h"
 #include "base/process.h"
 #include "base/shared_memory.h"
+#include "base/values.h"
+#include "content/common/browser_plugin_message_enums.h"
 #include "content/common/content_export.h"
 #include "content/common/content_param_traits.h"
 #include "content/public/common/common_param_traits.h"
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_message_macros.h"
 #include "ipc/ipc_message_utils.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/WebDragStatus.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebDragOperation.h"
+#include "third_party/WebKit/Source/WebKit/chromium/public/WebDragStatus.h"
 #include "ui/gfx/point.h"
 #include "ui/gfx/rect.h"
 #include "ui/gfx/size.h"
@@ -28,6 +30,8 @@
 
 #define IPC_MESSAGE_START BrowserPluginMsgStart
 
+
+IPC_ENUM_TRAITS(BrowserPluginPermissionType)
 IPC_ENUM_TRAITS(WebKit::WebDragStatus)
 
 IPC_STRUCT_BEGIN(BrowserPluginHostMsg_AutoSize_Params)
@@ -48,6 +52,8 @@ IPC_STRUCT_BEGIN(BrowserPluginHostMsg_ResizeGuest_Params)
   IPC_STRUCT_MEMBER(gfx::Size, view_size)
   // Indicates the scale factor of the embedder WebView.
   IPC_STRUCT_MEMBER(float, scale_factor)
+  // Indicates a request for a full repaint of the page.
+  IPC_STRUCT_MEMBER(bool, repaint)
 IPC_STRUCT_END()
 
 IPC_STRUCT_BEGIN(BrowserPluginHostMsg_CreateGuest_Params)
@@ -55,6 +61,8 @@ IPC_STRUCT_BEGIN(BrowserPluginHostMsg_CreateGuest_Params)
   IPC_STRUCT_MEMBER(bool, persist_storage)
   IPC_STRUCT_MEMBER(bool, focused)
   IPC_STRUCT_MEMBER(bool, visible)
+  IPC_STRUCT_MEMBER(std::string, name)
+  IPC_STRUCT_MEMBER(std::string, src)
   IPC_STRUCT_MEMBER(BrowserPluginHostMsg_AutoSize_Params, auto_size_params)
   IPC_STRUCT_MEMBER(BrowserPluginHostMsg_ResizeGuest_Params,
                     resize_guest_params)
@@ -65,8 +73,10 @@ IPC_STRUCT_BEGIN(BrowserPluginMsg_LoadCommit_Params)
   IPC_STRUCT_MEMBER(GURL, url)
   // Indicates whether the navigation was on the top-level frame.
   IPC_STRUCT_MEMBER(bool, is_top_level)
-  // Chrome's process ID for the guest.
+  // The browser's process ID for the guest.
   IPC_STRUCT_MEMBER(int, process_id)
+  // The browser's routing ID for the guest's RenderView.
+  IPC_STRUCT_MEMBER(int, route_id)
   // The index of the current navigation entry after this navigation was
   // committed.
   IPC_STRUCT_MEMBER(int, current_entry_index)
@@ -109,12 +119,22 @@ IPC_STRUCT_BEGIN(BrowserPluginMsg_UpdateRect_Params)
 
   // Is this UpdateRect an ACK to a resize request?
   IPC_STRUCT_MEMBER(bool, is_resize_ack)
+
+  // Used in HW accelerated case to switch between sending an UpdateRect_ACK
+  // with the new size or just resizing.
+  IPC_STRUCT_MEMBER(bool, needs_ack)
 IPC_STRUCT_END()
 
 // Browser plugin messages
 
 // -----------------------------------------------------------------------------
 // These messages are from the embedder to the browser process.
+
+// This message is sent to the browser process to request an instance ID.
+// |request_id| is used by BrowserPluginEmbedder to route the response back
+// to its origin.
+IPC_MESSAGE_ROUTED1(BrowserPluginHostMsg_AllocateInstanceID,
+                    int /* request_id */)
 
 // This message is sent to the browser process to enable or disable autosize
 // mode.
@@ -183,7 +203,8 @@ IPC_MESSAGE_ROUTED2(BrowserPluginHostMsg_NavigateGuest,
 // Acknowledge that we presented a HW buffer and provide a sync point
 // to specify the location in the command stream when the compositor
 // is no longer using it.
-IPC_MESSAGE_ROUTED4(BrowserPluginHostMsg_BuffersSwappedACK,
+IPC_MESSAGE_ROUTED5(BrowserPluginHostMsg_BuffersSwappedACK,
+                    int /* instance_id */,
                     int /* route_id */,
                     int /* gpu_host_id */,
                     std::string /* mailbox_name */,
@@ -214,6 +235,31 @@ IPC_MESSAGE_ROUTED3(BrowserPluginHostMsg_PluginAtPositionResponse,
                     int /* request_id */,
                     gfx::Point /* position */)
 
+// Sets the name of the guest window to the provided |name|.
+IPC_MESSAGE_ROUTED2(BrowserPluginHostMsg_SetName,
+                    int /* instance_id */,
+                    std::string /* name */)
+
+// Tells the guest that its request for an API permission has been allowed or
+// denied.
+// Note that |allow| = true does not readily mean that the guest will be granted
+// permission, since a security check in the embedder might follow. For example
+// for media access permission, the guest will be granted permission only if its
+// embedder also has access.
+IPC_MESSAGE_ROUTED4(BrowserPluginHostMsg_RespondPermission,
+                    int /* instance_id */,
+                    BrowserPluginPermissionType /* permission_type */,
+                    int /* request_id */,
+                    bool /* allow */)
+
+// Sends a PointerLock Lock ACK to the BrowserPluginGuest.
+IPC_MESSAGE_ROUTED2(BrowserPluginHostMsg_LockMouse_ACK,
+                    int /* instance_id */,
+                    bool /* succeeded */)
+
+// Sends a PointerLock Unlock ACK to the BrowserPluginGuest.
+IPC_MESSAGE_ROUTED1(BrowserPluginHostMsg_UnlockMouse_ACK, int /* instance_id */)
+
 // -----------------------------------------------------------------------------
 // These messages are from the guest renderer to the browser process
 
@@ -227,89 +273,96 @@ IPC_MESSAGE_ROUTED2(BrowserPluginHostMsg_ResizeGuest,
 // -----------------------------------------------------------------------------
 // These messages are from the browser process to the embedder.
 
+// This message is sent from the browser process to the embedder render process
+// in response to a request to allocate an instance ID. The |request_id| is used
+// to route the response to the requestor.
+IPC_MESSAGE_ROUTED2(BrowserPluginMsg_AllocateInstanceID_ACK,
+                    int /* request_id */,
+                    int /* instance_id */)
+
 // Once the swapped out guest RenderView has been created in the embedder render
 // process, the browser process informs the embedder of its routing ID.
-IPC_MESSAGE_ROUTED2(BrowserPluginMsg_GuestContentWindowReady,
-                    int /* instance_id */,
-                    int /* source_routing_id */)
+IPC_MESSAGE_CONTROL2(BrowserPluginMsg_GuestContentWindowReady,
+                     int /* instance_id */,
+                     int /* source_routing_id */)
 
 // When the guest begins to load a page, the browser process informs the
 // embedder through the BrowserPluginMsg_LoadStart message.
-IPC_MESSAGE_ROUTED3(BrowserPluginMsg_LoadStart,
-                    int /* instance_id */,
-                    GURL /* url */,
-                    bool /* is_top_level */)
+IPC_MESSAGE_CONTROL3(BrowserPluginMsg_LoadStart,
+                     int /* instance_id */,
+                     GURL /* url */,
+                     bool /* is_top_level */)
 
 // If the guest fails to commit a page load then it will inform the
 // embedder through the BrowserPluginMsg_LoadAbort. A description
 // of the error will be stored in |type|.  The list of known error
 // types can be found in net/base/net_error_list.h.
-IPC_MESSAGE_ROUTED4(BrowserPluginMsg_LoadAbort,
-                    int /* instance_id */,
-                    GURL /* url */,
-                    bool /* is_top_level */,
-                    std::string /* type */)
+IPC_MESSAGE_CONTROL4(BrowserPluginMsg_LoadAbort,
+                     int /* instance_id */,
+                     GURL /* url */,
+                     bool /* is_top_level */,
+                     std::string /* type */)
 
 // When the guest redirects a navigation, the browser process informs the
 // embedder through the BrowserPluginMsg_LoadRedirect message.
-IPC_MESSAGE_ROUTED4(BrowserPluginMsg_LoadRedirect,
-                    int /* instance_id */,
-                    GURL /* old_url */,
-                    GURL /* new_url */,
-                    bool /* is_top_level */)
+IPC_MESSAGE_CONTROL4(BrowserPluginMsg_LoadRedirect,
+                     int /* instance_id */,
+                     GURL /* old_url */,
+                     GURL /* new_url */,
+                     bool /* is_top_level */)
 
 // When the guest commits a navigation, the browser process informs
-// the embedder through the BrowserPluginMsg_DidCommit message.
-IPC_MESSAGE_ROUTED2(BrowserPluginMsg_LoadCommit,
-                    int /* instance_id */,
-                    BrowserPluginMsg_LoadCommit_Params)
+// the embedder through the BrowserPluginMsg_LoadCommit message.
+IPC_MESSAGE_CONTROL2(BrowserPluginMsg_LoadCommit,
+                     int /* instance_id */,
+                     BrowserPluginMsg_LoadCommit_Params)
 
 // When the guest page has completed loading (including subframes), the browser
 // process informs the embedder through the BrowserPluginMsg_LoadStop message.
-IPC_MESSAGE_ROUTED1(BrowserPluginMsg_LoadStop,
-                    int /* instance_id */)
+IPC_MESSAGE_CONTROL1(BrowserPluginMsg_LoadStop,
+                     int /* instance_id */)
 
 // When the guest crashes, the browser process informs the embedder through this
 // message.
-IPC_MESSAGE_ROUTED3(BrowserPluginMsg_GuestGone,
-                    int /* instance_id */,
-                    int /* process_id */,
-                    int /* This is really base::TerminationStatus */)
+IPC_MESSAGE_CONTROL3(BrowserPluginMsg_GuestGone,
+                     int /* instance_id */,
+                     int /* process_id */,
+                     int /* This is really base::TerminationStatus */)
 
 // When the guest is unresponsive, the browser process informs the embedder
 // through this message.
-IPC_MESSAGE_ROUTED2(BrowserPluginMsg_GuestUnresponsive,
-                    int /* instance_id */,
-                    int /* process_id */)
+IPC_MESSAGE_CONTROL2(BrowserPluginMsg_GuestUnresponsive,
+                     int /* instance_id */,
+                     int /* process_id */)
 
 // When the guest begins responding again, the browser process informs the
 // embedder through this message.
-IPC_MESSAGE_ROUTED2(BrowserPluginMsg_GuestResponsive,
-                    int /* instance_id */,
-                    int /* process_id */)
+IPC_MESSAGE_CONTROL2(BrowserPluginMsg_GuestResponsive,
+                     int /* instance_id */,
+                     int /* process_id */)
 
 // When the user tabs to the end of the tab stops of a guest, the browser
 // process informs the embedder to tab out of the browser plugin.
-IPC_MESSAGE_ROUTED2(BrowserPluginMsg_AdvanceFocus,
-                    int /* instance_id */,
-                    bool /* reverse */)
+IPC_MESSAGE_CONTROL2(BrowserPluginMsg_AdvanceFocus,
+                     int /* instance_id */,
+                     bool /* reverse */)
 
 // When the guest starts/stops listening to touch events, it needs to notify the
 // plugin in the embedder about it.
-IPC_MESSAGE_ROUTED2(BrowserPluginMsg_ShouldAcceptTouchEvents,
-                    int /* instance_id */,
-                    bool /* accept */)
+IPC_MESSAGE_CONTROL2(BrowserPluginMsg_ShouldAcceptTouchEvents,
+                     int /* instance_id */,
+                     bool /* accept */)
 
 // Inform the embedder of the cursor the guest wishes to display.
-IPC_MESSAGE_ROUTED2(BrowserPluginMsg_SetCursor,
-                    int /* instance_id */,
-                    WebCursor /* cursor */)
+IPC_MESSAGE_CONTROL2(BrowserPluginMsg_SetCursor,
+                     int /* instance_id */,
+                     WebCursor /* cursor */)
 
 // The guest has damage it wants to convey to the embedder so that it can
 // update its backing store.
-IPC_MESSAGE_ROUTED2(BrowserPluginMsg_UpdateRect,
-                    int /* instance_id */,
-                    BrowserPluginMsg_UpdateRect_Params)
+IPC_MESSAGE_CONTROL2(BrowserPluginMsg_UpdateRect,
+                     int /* instance_id */,
+                     BrowserPluginMsg_UpdateRect_Params)
 
 // Requests the renderer to find out if a browser plugin is at position
 // (|x|, |y|) within the embedder.
@@ -319,13 +372,37 @@ IPC_MESSAGE_ROUTED2(BrowserPluginMsg_PluginAtPositionRequest,
                     int /* request_id */,
                     gfx::Point /* position */)
 
+// Informs BrowserPlugin of a new name set for the top-level guest frame.
+IPC_MESSAGE_CONTROL2(BrowserPluginMsg_UpdatedName,
+                     int /* instance_id */,
+                     std::string /* name */)
+
 // Guest renders into an FBO with textures provided by the embedder.
 // When HW accelerated buffers are swapped in the guest, the message
 // is forwarded to the embedder to notify it of a new texture
 // available for compositing.
-IPC_MESSAGE_ROUTED5(BrowserPluginMsg_BuffersSwapped,
+IPC_MESSAGE_CONTROL5(BrowserPluginMsg_BuffersSwapped,
+                     int /* instance_id */,
+                     gfx::Size /* size */,
+                     std::string /* mailbox_name */,
+                     int /* route_id */,
+                     int /* gpu_host_id */)
+
+// When the guest requests permission, the browser process forwards this
+// request to the embeddder through this message.
+IPC_MESSAGE_CONTROL4(BrowserPluginMsg_RequestPermission,
+                     int /* instance_id */,
+                     BrowserPluginPermissionType /* permission_type */,
+                     int /* request_id */,
+                     DictionaryValue /* request_info */)
+
+// Forwards a PointerLock Lock request to the BrowserPlugin.
+IPC_MESSAGE_ROUTED4(BrowserPluginMsg_LockMouse,
                     int /* instance_id */,
-                    gfx::Size /* size */,
-                    std::string /* mailbox_name */,
-                    int /* route_id */,
-                    int /* gpu_host_id */)
+                    bool /* user_gesture */,
+                    bool /* last_unlocked_by_target */,
+                    bool /* privileged */)
+
+// Forwards a PointerLock Unlock request to the BrowserPlugin.
+IPC_MESSAGE_ROUTED1(BrowserPluginMsg_UnlockMouse, int /* instance_id */)
+

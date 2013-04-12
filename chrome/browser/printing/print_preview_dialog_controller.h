@@ -52,15 +52,11 @@ class PrintPreviewDialogController
   content::WebContents* GetOrCreatePreviewDialog(
       content::WebContents* initiator_tab);
 
-  // DEPRECATED. Use GetOrCreatePreviewDialog() instead.
-  // TODO(thestig) Remove.
-  content::WebContents* GetOrCreatePreviewTab(
-      content::WebContents* initiator_tab);
-
-  // Returns preview tab for |tab|.
-  // Returns |tab| if |tab| is a preview tab.
-  // Returns NULL if no preview tab exists for |tab|.
-  content::WebContents* GetPrintPreviewForTab(content::WebContents* tab) const;
+  // Returns the preview dialog for |contents|.
+  // Returns |contents| if |contents| is a preview dialog.
+  // Returns NULL if no preview dialog exists for |contents|.
+  content::WebContents* GetPrintPreviewForContents(
+      content::WebContents* contents) const;
 
   // Returns initiator tab for |preview_tab|.
   // Returns NULL if no initiator tab exists for |preview_tab|.
@@ -74,17 +70,15 @@ class PrintPreviewDialogController
   // Returns true if |contents| is a print preview dialog.
   static bool IsPrintPreviewDialog(content::WebContents* contents);
 
-  // DEPRECATED. Use IsPrintPreviewDialog() instead.
-  // TODO(thestig) Remove.
-  static bool IsPrintPreviewTab(content::WebContents* tab);
-
   // Returns true if |url| is a print preview url.
   static bool IsPrintPreviewURL(const GURL& url);
 
   // Erase the initiator tab info associated with |preview_tab|.
   void EraseInitiatorTabInfo(content::WebContents* preview_tab);
 
-  bool is_creating_print_preview_tab() const;
+  bool is_creating_print_preview_dialog() const {
+    return is_creating_print_preview_dialog_;
+  }
 
  private:
   friend class base::RefCounted<PrintPreviewDialogController>;
@@ -114,9 +108,9 @@ class PrintPreviewDialogController
   content::WebContents* CreatePrintPreviewTab(
       content::WebContents* initiator_tab);
 
-  // Helper function to store the initiator tab(title and url) information
-  // in PrintPreviewUI.
-  void SetInitiatorTabURLAndTitle(content::WebContents* preview_tab);
+  // Helper function to store the title of the initiator tab associated with
+  // |preview_dialog| in |preview_dialog|'s PrintPreviewUI.
+  void SaveInitiatorTabTitle(content::WebContents* preview_dialog);
 
   // Adds/Removes observers for notifications from |tab|.
   void AddObservers(content::WebContents* tab);
@@ -137,8 +131,8 @@ class PrintPreviewDialogController
   bool waiting_for_new_preview_page_;
 
   // Whether the PrintPreviewDialogController is in the middle of creating a
-  // print preview tab.
-  bool is_creating_print_preview_tab_;
+  // print preview dialog.
+  bool is_creating_print_preview_dialog_;
 
   DISALLOW_COPY_AND_ASSIGN(PrintPreviewDialogController);
 };

@@ -10,6 +10,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/extensions/api/identity/web_auth_flow.h"
+#include "chrome/browser/extensions/api/profile_keyed_api_factory.h"
 #include "chrome/browser/extensions/app_notify_channel_setup.h"
 #include "chrome/browser/extensions/extension_function.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
@@ -19,6 +20,7 @@
 class GetAuthTokenFunctionTest;
 class MockGetAuthTokenFunction;
 class GoogleServiceAuthError;
+class Profile;
 
 namespace extensions {
 
@@ -30,14 +32,15 @@ extern const char kNoGrant[];
 extern const char kUserRejected[];
 extern const char kUserNotSignedIn[];
 extern const char kInvalidRedirect[];
-}
+}  // namespace identity_constants
 
 class IdentityGetAuthTokenFunction : public AsyncExtensionFunction,
                                      public OAuth2MintTokenFlow::Delegate,
                                      public ExtensionInstallPrompt::Delegate,
                                      public LoginUIService::Observer {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("experimental.identity.getAuthToken");
+  DECLARE_EXTENSION_FUNCTION("experimental.identity.getAuthToken",
+                             EXPERIMENTAL_IDENTITY_GETAUTHTOKEN)
 
   IdentityGetAuthTokenFunction();
 
@@ -45,8 +48,8 @@ class IdentityGetAuthTokenFunction : public AsyncExtensionFunction,
   virtual ~IdentityGetAuthTokenFunction();
 
  private:
-  friend class ::GetAuthTokenFunctionTest;
-  friend class ::MockGetAuthTokenFunction;
+  friend class GetAuthTokenFunctionTest;
+  friend class MockGetAuthTokenFunction;
 
   // ExtensionFunction:
   virtual bool RunImpl() OVERRIDE;
@@ -95,7 +98,8 @@ class IdentityGetAuthTokenFunction : public AsyncExtensionFunction,
 class IdentityLaunchWebAuthFlowFunction : public AsyncExtensionFunction,
                                           public WebAuthFlow::Delegate {
  public:
-  DECLARE_EXTENSION_FUNCTION_NAME("experimental.identity.launchWebAuthFlow");
+  DECLARE_EXTENSION_FUNCTION("experimental.identity.launchWebAuthFlow",
+                             EXPERIMENTAL_IDENTITY_LAUNCHWEBAUTHFLOW)
 
   IdentityLaunchWebAuthFlowFunction();
 
@@ -108,6 +112,24 @@ class IdentityLaunchWebAuthFlowFunction : public AsyncExtensionFunction,
   virtual void OnAuthFlowFailure() OVERRIDE;
 
   scoped_ptr<WebAuthFlow> auth_flow_;
+};
+
+class IdentityAPI : public ProfileKeyedAPI {
+ public:
+  explicit IdentityAPI(Profile* profile);
+  virtual ~IdentityAPI();
+
+  // ProfileKeyedAPI implementation.
+  static ProfileKeyedAPIFactory<IdentityAPI>* GetFactoryInstance();
+
+ private:
+  friend class ProfileKeyedAPIFactory<IdentityAPI>;
+
+  // ProfileKeyedAPI implementation.
+  static const char* service_name() {
+    return "IdentityAPI";
+  }
+  static const bool kServiceIsNULLWhileTesting = true;
 };
 
 }  // namespace extensions

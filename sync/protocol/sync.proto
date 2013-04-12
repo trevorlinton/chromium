@@ -22,21 +22,26 @@ import "bookmark_specifics.proto";
 import "client_commands.proto";
 import "client_debug_info.proto";
 import "device_info_specifics.proto";
+import "dictionary_specifics.proto";
 import "encryption.proto";
 import "experiments_specifics.proto";
 import "extension_setting_specifics.proto";
 import "extension_specifics.proto";
+import "favicon_image_specifics.proto";
+import "favicon_tracking_specifics.proto";
 import "get_updates_caller_info.proto";
 import "history_delete_directive_specifics.proto";
 import "nigori_specifics.proto";
 import "password_specifics.proto";
 import "preference_specifics.proto";
+import "priority_preference_specifics.proto";
 import "search_engine_specifics.proto";
 import "session_specifics.proto";
 import "sync_enums.proto";
 import "synced_notification_specifics.proto";
 import "theme_specifics.proto";
 import "typed_url_specifics.proto";
+import "unique_position.proto";
 
 // Used for inspecting how long we spent performing operations in different
 // backends. All times must be in millis.
@@ -105,6 +110,10 @@ message EntitySpecifics {
   optional SyncedNotificationSpecifics synced_notification = 153108;
   optional DeviceInfoSpecifics device_info = 154522;
   optional ExperimentsSpecifics experiments = 161496;
+  optional PriorityPreferenceSpecifics priority_preference = 163425;
+  optional DictionarySpecifics dictionary = 170540;
+  optional FaviconTrackingSpecifics favicon_tracking = 181534;
+  optional FaviconImageSpecifics favicon_image = 182019;
 }
 
 message SyncEntity {
@@ -330,14 +339,6 @@ message SyncEntity {
 
   // This is the fourth attempt at positioning.
   //
-  // Unique positions are unique per-item, since they are guaranteed to end with
-  // a fixed-length suffix that is unique per-item.  The position string may not
-  // end with a '\0' byte.
-  //
-  // Prior to the suffix is a series of arbitrary bytes of arbitrary length.
-  // Items under the same parent are positioned relative to each other by a
-  // lexicographic comparison of their UniquePosition values.
-  //
   // This field is present in both GetUpdatesResponse and CommitMessage, if the
   // item's type requires it and the client that wrote the item supports it (M26
   // or higher).  Clients must also be prepared to handle updates from clients
@@ -347,7 +348,10 @@ message SyncEntity {
   // This field will not be set for items whose type ignores positioning.
   // Clients should not attempt to read this field on the receipt of an item of
   // a type that ignores positioning.
-  optional bytes unique_position = 25;
+  //
+  // Refer to its definition in unique_position.proto for more information about
+  // its internal representation.
+  optional UniquePosition unique_position = 25;
 };
 
 // This message contains diagnostic information used to correlate
@@ -364,6 +368,17 @@ message ChromiumExtensionsActivity {
   optional uint32 bookmark_writes_since_last_commit = 2;
 };
 
+// Client specific configuration information.
+message ClientConfigParams {
+  // The set of data types this client has enabled. Note that this does not
+  // include proxy types, as they do not have protocol field numbers and are
+  // placeholder types that implicitly enable protocol types.
+ repeated int32 enabled_type_ids = 1;
+
+ // Whether the PROXY_TABS proxy datatype is enabled on this client.
+ optional bool tabs_datatype_enabled = 2;
+};
+
 message CommitMessage {
   repeated SyncEntity entries = 1;
 
@@ -372,6 +387,13 @@ message CommitMessage {
   optional string cache_guid = 2;
 
   repeated ChromiumExtensionsActivity extensions_activity = 3;
+
+  // The configuration of this client at commit time. Used by the server to
+  // make commit-time decisions about how to process datatypes that might
+  // involve server-side interaction, and e.g require explicit user intent for
+  // syncing a particular data type regardless of whether a commit for that
+  // datatype is currently being sent up.
+  optional ClientConfigParams config_params = 4;
 };
 
 message DataTypeProgressMarker {
@@ -552,6 +574,11 @@ message ClientToServerMessage {
   // The client should set this on every message sent to the server, though its
   // member fields may often be unset.
   optional ClientStatus client_status = 13;
+
+  // The ID that our invalidation client used to identify itself to the server.
+  // Sending the ID here allows the server to not send notifications of our own
+  // changes to our invalidator.
+  optional string invalidator_client_id = 14;
 };
 
 message CommitResponse {

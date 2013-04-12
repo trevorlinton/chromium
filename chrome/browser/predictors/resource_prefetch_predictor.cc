@@ -11,12 +11,13 @@
 #include "base/command_line.h"
 #include "base/metrics/histogram.h"
 #include "base/stl_util.h"
-#include "base/string_number_conversions.h"
 #include "base/stringprintf.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/time.h"
-#include "chrome/browser/history/history.h"
 #include "chrome/browser/history/history_database.h"
+#include "chrome/browser/history/history_db_task.h"
 #include "chrome/browser/history/history_notifications.h"
+#include "chrome/browser/history/history_service.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/predictors/predictor_database.h"
 #include "chrome/browser/predictors/predictor_database_factory.h"
@@ -98,7 +99,7 @@ namespace predictors {
 // History lookup task.
 
 // Used to fetch the visit count for a URL from the History database.
-class GetUrlVisitCountTask : public HistoryDBTask {
+class GetUrlVisitCountTask : public history::HistoryDBTask {
  public:
   typedef ResourcePrefetchPredictor::URLRequestSummary URLRequestSummary;
   typedef base::Callback<void(
@@ -1118,7 +1119,7 @@ void ResourcePrefetchPredictor::ReportAccuracyStats(
   { \
     std::string name = "ResourcePrefetchPredictor." + histogram_type + suffix; \
     std::string g_name = "ResourcePrefetchPredictor." + std::string(suffix); \
-    base::Histogram* histogram = base::LinearHistogram::FactoryGet( \
+    base::HistogramBase* histogram = base::LinearHistogram::FactoryGet( \
         name, 1, 101, 102, base::Histogram::kUmaTargetedHistogramFlag); \
     histogram->Add(value); \
     UMA_HISTOGRAM_PERCENTAGE(g_name, value); \
@@ -1202,7 +1203,7 @@ void ResourcePrefetchPredictor::ReportPredictedAccuracyStatsHelper(
 #define RPP_PREDICTED_HISTOGRAM_COUNTS(name, value) \
   { \
     std::string full_name = prefix + name + suffix; \
-    base::Histogram* histogram = base::Histogram::FactoryGet( \
+    base::HistogramBase* histogram = base::Histogram::FactoryGet( \
         full_name, 1, 1000000, 50, \
         base::Histogram::kUmaTargetedHistogramFlag); \
     histogram->Add(value); \
@@ -1211,7 +1212,7 @@ void ResourcePrefetchPredictor::ReportPredictedAccuracyStatsHelper(
 #define RPP_PREDICTED_HISTOGRAM_PERCENTAGE(name, value) \
   { \
     std::string full_name = prefix + name + suffix; \
-    base::Histogram* histogram = base::LinearHistogram::FactoryGet( \
+    base::HistogramBase* histogram = base::LinearHistogram::FactoryGet( \
         full_name, 1, 101, 102, base::Histogram::kUmaTargetedHistogramFlag); \
     histogram->Add(value); \
   }

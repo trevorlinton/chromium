@@ -1,7 +1,5 @@
-H B Nm: The class name org.chromium.content.browser.test.util.TouchUtils shadows the simple name of the superclass android.test.TouchUtils  At TouchUtils.java
 H C EC: Using pointer equality to compare a JavaBridgeCoercionTest$CustomType with a JavaBridgeCoercionTest$CustomType2 in org.chromium.content.browser.JavaBridgeCoercionTest.testPassJavaObject()  At JavaBridgeCoercionTest.java
 H D RCN: Redundant nullcheck of org.chromium.content.browser.SandboxedProcessConnection.mConnectionParams, which is known to be non-null in org.chromium.content.browser.SandboxedProcessConnection.doConnectionSetup()  Redundant null check at SandboxedProcessConnection.java
-M D ST: Write to static field org.chromium.content.app.SandboxedProcessService.sContext from instance method org.chromium.content.app.SandboxedProcessService.onCreate()  At SandboxedProcessService.java
 H D ST: Write to static field org.chromium.net.test.util.TestWebServer.sInstance from instance method org.chromium.net.test.util.TestWebServer.shutdown()  At TestWebServer.java
 H V MS: org.chromium.android_webview.test.AndroidWebViewTestBase.WAIT_TIMEOUT_SECONDS isn't final but should be  At AndroidWebViewTestBase.java
 H V MS: org.chromium.android_webview.test.LoadDataWithBaseUrlTest.WAIT_TIMEOUT_SECONDS isn't final but should be  At LoadDataWithBaseUrlTest.java
@@ -31,11 +29,7 @@ M C CSM: Shouldn't use synchronized method, please narrow down the synchronizati
 M C CSM: Shouldn't use synchronized method, please narrow down the synchronization scope.  At TraceEvent.java
 M C CST: Shouldn't use synchronized(this), please narrow down the synchronization scope.  At HttpAuthDatabase.java
 M C CST: Shouldn't use synchronized(this), please narrow down the synchronization scope.  At SimpleSynchronizedThis.java
-M C IJU: TestCase org.chromium.android_webview.test.AndroidWebViewTestBase defines setUp that doesn't call super.setUp()  At AndroidWebViewTestBase.java
-M C IJU: TestCase org.chromium.android_webview.test.ArchiveTest defines setUp that doesn't call super.setUp()  At ArchiveTest.java
-M C IJU: TestCase org.chromium.android_webview.test.HttpAuthDatabaseTest defines setUp that doesn't call super.setUp()  At HttpAuthDatabaseTest.java
-M C IJU: TestCase org.chromium.android_webview.test.HttpAuthDatabaseTest defines tearDown that doesn't call super.tearDown()  At HttpAuthDatabaseTest.java
-M C IJU: TestCase org.chromium.chrome.testshell.ProviderBookmarkNodeTest defines setUp that doesn't call super.setUp()  At ProviderBookmarkNodeTest.java
+M C RCN: Nullcheck of GestureDetector.mVelocityTracker at line 630 of value previously dereferenced in org.chromium.content.browser.third_party.GestureDetector.onTouchEvent(MotionEvent)  At GestureDetector.java
 M C UMAC: Uncallable method org.chromium.content.browser.JavaBridgeBasicsTest$10.method() defined in anonymous class  At JavaBridgeBasicsTest.java
 M C UMAC: Uncallable method org.chromium.content.browser.JavaBridgeBasicsTest$11.method() defined in anonymous class  At JavaBridgeBasicsTest.java
 M C UMAC: Uncallable method org.chromium.content.browser.JavaBridgeBasicsTest$11.method(int) defined in anonymous class  At JavaBridgeBasicsTest.java
@@ -65,7 +59,6 @@ M C UMAC: Uncallable method org.chromium.content.browser.JavaBridgeBasicsTest$7.
 M C UMAC: Uncallable method org.chromium.content.browser.JavaBridgeBasicsTest$8.method2() defined in anonymous class  At JavaBridgeBasicsTest.java
 M C UMAC: Uncallable method org.chromium.content.browser.JavaBridgeBasicsTest$9.method() defined in anonymous class  At JavaBridgeBasicsTest.java
 M C USELESS_STRING: Invocation of toString on certChain in org.chromium.net.X509Util.verifyServerCertificates(byte[][], String)  At X509Util.java
-M D DLS: Dead store to context in org.chromium.android_webview.test.AndroidWebViewTestBase.createAwTestContainerViewOnMainSync(boolean, AwContentsClient)  At AndroidWebViewTestBase.java
 M D DLS: Dead store to eventTime in org.chromium.content.browser.LongPressDetectorTest$1.run()  At LongPressDetectorTest.java
 M D DLS: Dead store to prevEditableLength in org.chromium.content.browser.ImeAdapter$AdapterInputConnection.setEditableText(String, int, int, int, int)  At ImeAdapter.java
 M D DLS: Dead store to testUrl in org.chromium.android_webview.test.ClientOnPageFinishedTest.testOnPageFinishedNotCalledForValidSubresources()  At ClientOnPageFinishedTest.java
@@ -78,7 +71,9 @@ M D SF: Switch statement found in org.chromium.chrome.browser.ChromeBrowserProvi
 M D SF: Switch statement found in org.chromium.chrome.browser.database.SQLiteCursor.fillWindow(int, CursorWindow) where default case is missing  At SQLiteCursor.java
 M D SF: Switch statement found in org.chromium.content.browser.ContentSettings$EventHandler$1.handleMessage(Message) where default case is missing  At ContentSettings.java
 M D SF: Switch statement found in org.chromium.content.browser.HandleView.onTouchEvent(MotionEvent) where default case is missing  At HandleView.java
-M D SF: Switch statement found in org.chromium.content.browser.ImeAdapter$AdapterInputConnection.performEditorAction(int) where default case is missing  At ImeAdapter.java
+M D SF: Switch statement found in org.chromium.content.browser.third_party.GestureDetector.onTouchEvent(MotionEvent) where default case is missing  At GestureDetector.java
+M D ST: Write to static field org.chromium.content.app.SandboxedProcessService.sContext from instance method org.chromium.content.app.SandboxedProcessService.onCreate()  At SandboxedProcessService.java
+M D ST: Write to static field org.chromium.content.browser.ContentSettings.sAppCachePathIsSet from instance method org.chromium.content.browser.ContentSettings.setAppCachePath(String)  At ContentSettings.java
 M D ST: Write to static field org.chromium.net.test.util.TestWebServer.sInstance from instance method new org.chromium.net.test.util.TestWebServer(boolean)  At TestWebServer.java
 M D UrF: Unread public/protected field: org.chromium.content.browser.JavaBridgeBasicsTest$21.field  At JavaBridgeBasicsTest.java
 M D UrF: Unread public/protected field: org.chromium.content.browser.JavaBridgeFieldsTest$TestObject.booleanField  At JavaBridgeFieldsTest.java
@@ -98,8 +93,6 @@ M M IS: Inconsistent synchronization of org.chromium.content.browser.SandboxedPr
 M M IS: Inconsistent synchronization of org.chromium.content.browser.SandboxedProcessConnection.mServiceConnectComplete; locked 60% of time  Unsynchronized access at SandboxedProcessConnection.java
 M M LI: Incorrect lazy initialization and update of static field org.chromium.base.SystemMonitor.sInstance in org.chromium.base.SystemMonitor.create(Context)  At SystemMonitor.java
 M M LI: Incorrect lazy initialization and update of static field org.chromium.content.browser.ContentVideoView.sContentVideoView in org.chromium.content.browser.ContentVideoView.createContentVideoView(int)  At ContentVideoView.java
-M M LI: Incorrect lazy initialization and update of static field org.chromium.net.test.util.TestWebServer.sReasons in org.chromium.net.test.util.TestWebServer.createResponse(int)  At TestWebServer.java
-M M LI: Incorrect lazy initialization of static field org.chromium.net.NetworkChangeNotifier.sInstance in org.chromium.net.NetworkChangeNotifier.init(Context)  At NetworkChangeNotifier.java
 M M UG: org.chromium.content.browser.JavaBridgeReturnValuesTest$TestObject.getBooleanValue() is unsynchronized, org.chromium.content.browser.JavaBridgeReturnValuesTest$TestObject.setBooleanValue(boolean) is synchronized  At JavaBridgeReturnValuesTest.java
 M M UG: org.chromium.content.browser.JavaBridgeReturnValuesTest$TestObject.getStringValue() is unsynchronized, org.chromium.content.browser.JavaBridgeReturnValuesTest$TestObject.setStringValue(String) is synchronized  At JavaBridgeReturnValuesTest.java
 M P SIC: Should org.chromium.android_webview.test.TestAwContentsClient$AddMessageToConsoleHelper be a _static_ inner class?  At TestAwContentsClient.java
@@ -111,15 +104,6 @@ M P SIC: Should org.chromium.content.browser.JavaBridgeReturnValuesTest$CustomTy
 M P SIC: Should org.chromium.content.browser.PopupZoomerTest$CustomCanvasPopupZoomer be a _static_ inner class?  At PopupZoomerTest.java
 M P SS: Unread field: org.chromium.android_webview.test.util.ImagePageGenerator.IMAGE_PREFIX; should this field be static?  At ImagePageGenerator.java
 M P SS: Unread field: org.chromium.android_webview.test.util.ImagePageGenerator.IMAGE_SUFFIX; should this field be static?  At ImagePageGenerator.java
-M P SS: Unread field: org.chromium.native_test.ChromeNativeTestActivity.EXTRA_RUN_IN_SUB_THREAD; should this field be static?  At ChromeNativeTestActivity.java
-M P SS: Unread field: org.chromium.native_test.ChromeNativeTestActivity.TAG; should this field be static?  At ChromeNativeTestActivity.java
-M P UrF: Unread field: org.chromium.content.browser.ContentViewGestureHandlerTest$MockListener.mLastFling2  At ContentViewGestureHandlerTest.java
-M P UrF: Unread field: org.chromium.content.browser.ContentViewGestureHandlerTest$MockListener.mLastScroll1  At ContentViewGestureHandlerTest.java
-M P UrF: Unread field: org.chromium.content.browser.ContentViewGestureHandlerTest$MockListener.mLastScroll2  At ContentViewGestureHandlerTest.java
-M P UrF: Unread field: org.chromium.content.browser.ContentViewGestureHandlerTest$MockListener.mLastScrollDistanceX  At ContentViewGestureHandlerTest.java
-M P UrF: Unread field: org.chromium.content.browser.ContentViewGestureHandlerTest$MockListener.mLastScrollDistanceY  At ContentViewGestureHandlerTest.java
-M P UrF: Unread field: org.chromium.content.browser.HandleView.mHeight  At HandleView.java
-M P UuF: Unused field: org.chromium.content.browser.HandleView.mLongPressCallback  In HandleView.java
 M P UuF: Unused field: org.chromium.content.browser.JavaBridgeBasicsTest$19.privateField  In JavaBridgeBasicsTest.java
 M P UuF: Unused field: org.chromium.content.browser.JavaBridgeBasicsTest$23.field  In JavaBridgeBasicsTest.java
 M V EI2: new org.chromium.chrome.browser.FindMatchRectsDetails(int, RectF[], RectF) may expose internal representation by storing an externally mutable object into FindMatchRectsDetails.rects  At FindMatchRectsDetails.java
@@ -136,6 +120,3 @@ M V MS: org.chromium.content.browser.LoadUrlParams.LOAD_TYPE_DATA isn't final an
 M V MS: org.chromium.content.browser.LoadUrlParams.LOAD_TYPE_DEFAULT should be package protected  In LoadUrlParams.java
 M V MS: org.chromium.content.browser.LoadUrlParams.UA_OVERRIDE_INHERIT should be package protected  In LoadUrlParams.java
 M V MS: org.chromium.content.browser.LoadUrlParams.UA_OVERRIDE_TRUE should be package protected  In LoadUrlParams.java
-M C RCN: Nullcheck of GestureDetector.mVelocityTracker at line 630 of value previously dereferenced in org.chromium.content.browser.third_party.GestureDetector.onTouchEvent(MotionEvent)  At GestureDetector.java
-M D SF: Switch statement found in org.chromium.content.browser.third_party.GestureDetector.onTouchEvent(MotionEvent) where default case is missing  At GestureDetector.java
-M D ST: Write to static field org.chromium.content.browser.ContentSettings.sAppCachePathIsSet from instance method org.chromium.content.browser.ContentSettings.setAppCachePath(String)  At ContentSettings.java

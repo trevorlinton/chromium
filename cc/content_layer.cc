@@ -5,7 +5,6 @@
 #include "cc/content_layer.h"
 
 #include "base/auto_reset.h"
-#include "base/debug/trace_event.h"
 #include "base/metrics/histogram.h"
 #include "base/time.h"
 #include "cc/bitmap_content_layer_updater.h"
@@ -32,11 +31,12 @@ void ContentLayerPainter::paint(SkCanvas* canvas, gfx::Rect contentRect, gfx::Re
     m_client->paintContents(canvas, contentRect, opaque);
     base::TimeTicks paintEnd = base::TimeTicks::HighResNow();
     double pixelsPerSec = (contentRect.width() * contentRect.height()) / (paintEnd - paintStart).InSecondsF();
-    HISTOGRAM_CUSTOM_COUNTS("Renderer4.AccelContentPaintDurationMS", (paintEnd - paintStart).InMilliseconds(), 0, 120, 30);
-    HISTOGRAM_CUSTOM_COUNTS("Renderer4.AccelContentPaintMegapixPerSecond", pixelsPerSec / 1000000, 10, 210, 30);
+    UMA_HISTOGRAM_CUSTOM_COUNTS("Renderer4.AccelContentPaintDurationMS",
+                                (paintEnd - paintStart).InMilliseconds(),
+                                0, 120, 30);
+    UMA_HISTOGRAM_CUSTOM_COUNTS("Renderer4.AccelContentPaintMegapixPerSecond",
+                                pixelsPerSec / 1000000, 10, 210, 30);
 }
-
-const int ContentLayer::kLCDTextMaxChangeCount = 1;
 
 scoped_refptr<ContentLayer> ContentLayer::create(ContentLayerClient* client)
 {
@@ -46,8 +46,6 @@ scoped_refptr<ContentLayer> ContentLayer::create(ContentLayerClient* client)
 ContentLayer::ContentLayer(ContentLayerClient* client)
     : TiledLayer()
     , m_client(client)
-    , m_useLCDText(false)
-    , m_lcdTextChangeCount(0)
 {
 }
 
@@ -68,13 +66,12 @@ void ContentLayer::setTexturePriorities(const PriorityCalculator& priorityCalc)
     TiledLayer::setTexturePriorities(priorityCalc);
 }
 
-void ContentLayer::update(ResourceUpdateQueue& queue, const OcclusionTracker* occlusion, RenderingStats& stats)
+void ContentLayer::update(ResourceUpdateQueue& queue, const OcclusionTracker* occlusion, RenderingStats* stats)
 {
     {
         base::AutoReset<bool> ignoreSetNeedsCommit(&m_ignoreSetNeedsCommit, true);
 
         createUpdaterIfNeeded();
-        updateUseLCDText();
     }
 
     TiledLayer::update(queue, occlusion, stats);
@@ -104,7 +101,7 @@ void ContentLayer::createUpdaterIfNeeded()
         m_updater = BitmapContentLayerUpdater::create(painter.Pass());
     m_updater->setOpaque(contentsOpaque());
 
-    GLenum textureFormat = layerTreeHost()->rendererCapabilities().bestTextureFormat;
+    unsigned textureFormat = layerTreeHost()->rendererCapabilities().bestTextureFormat;
     setTextureFormat(textureFormat);
 }
 
@@ -113,40 +110,6 @@ void ContentLayer::setContentsOpaque(bool opaque)
     Layer::setContentsOpaque(opaque);
     if (m_updater)
         m_updater->setOpaque(opaque);
-}
-
-void ContentLayer::updateUseLCDText()
-{
-    if (m_useLCDText == drawProperties().can_use_lcd_text)
-        return;
-
-    if (!useLCDTextWillChange())
-        return;
-
-    m_useLCDText = drawProperties().can_use_lcd_text;
-    useLCDTextDidChange();
-}
-
-bool ContentLayer::useLCDTextWillChange() const
-{
-    // Always allow disabling LCD text.
-    if (m_useLCDText)
-        return true;
- 
-    return m_lcdTextChangeCount < kLCDTextMaxChangeCount;
-}
-
-void ContentLayer::useLCDTextDidChange()
-{
-    if (m_lcdTextChangeCount > 0) {
-        // Do not record the first time LCD text is enabled because
-        // it does not really cause any invalidation.
-        TRACE_EVENT_INSTANT0("cc", "ContentLayer::canUseLCDTextDidChange");
-    }
-    ++m_lcdTextChangeCount;
- 
-    // Need to repaint the layer with different text AA setting.
-    setNeedsDisplay();
 }
 
 }  // namespace cc

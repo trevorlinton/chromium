@@ -16,6 +16,12 @@ class TableView;
 // Views used to render the header for the table.
 class VIEWS_EXPORT TableHeader : public views::View {
  public:
+  // Amount the text is padded on the left/right side.
+  static const int kHorizontalPadding;
+
+  // Amount of space reserved for the indicator and padding.
+  static const int kSortIndicatorWidth;
+
   explicit TableHeader(TableView* table);
   virtual ~TableHeader();
 
@@ -45,9 +51,6 @@ class VIEWS_EXPORT TableHeader : public views::View {
     // Width of the column when the drag started.
     int initial_width;
   };
-
-  // Returns the column closest to the specified x-coordinate.
-  int GetClosestColumn(int x) const;
 
   // Returns the column to resize given the specified x-coordinate, or -1 if |x|
   // is not in the resize range of any columns.

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <title i18n-content="optionsPageTitle"></title>
 <link rel="stylesheet" href="chrome://resources/css/bubble.css">
+<link rel="stylesheet" href="chrome://resources/css/bubble_button.css">
 <link rel="stylesheet" href="chrome://resources/css/chrome_shared.css">
 <link rel="stylesheet" href="chrome://resources/css/list.css">
 <link rel="stylesheet" href="chrome://resources/css/overlay.css">
@@ -20,6 +21,7 @@
 <link rel="stylesheet" href="content_settings.css">
 <link rel="stylesheet" href="cookies_view.css">
 <link rel="stylesheet" href="do_not_track_confirm_overlay.css">
+<link rel="stylesheet" href="managed_user_set_passphrase.css">
 <link rel="stylesheet" href="managed_user_settings.css">
 <link rel="stylesheet" href="font_settings.css">
 <link rel="stylesheet" href="handler_options.css">
@@ -44,7 +46,9 @@
   <link rel="stylesheet" href="chromeos/bluetooth.css">
   <link rel="stylesheet" href="chromeos/change_picture_options.css">
   <link rel="stylesheet" href="chromeos/display_options.css">
+  <link rel="stylesheet" href="chromeos/display_overscan.css">
   <link rel="stylesheet" href="chromeos/internet_detail.css">
+  <link rel="stylesheet" href="chromeos/kiosk_apps.css">
   <link rel="stylesheet" href="chromeos/pointer_overlay.css">
   <link rel="stylesheet" href="factory_reset_overlay.css">
 </if>
@@ -63,6 +67,7 @@
 <script src="chrome://resources/js/cr/ui/touch_handler.js"></script>
 <script src="chrome://resources/js/cr/ui/array_data_model.js"></script>
 <script src="chrome://resources/js/cr/ui/bubble.js"></script>
+<script src="chrome://resources/js/cr/ui/bubble_button.js"></script>
 <script src="chrome://resources/js/cr/ui/focus_manager.js"></script>
 <script src="chrome://resources/js/cr/ui/list_selection_model.js"></script>
 <script src="chrome://resources/js/cr/ui/list_selection_controller.js"></script>
@@ -112,6 +117,7 @@
     <include src="chromeos/change_picture_options.html">
     <include src="chromeos/display_options.html">
     <include src="chromeos/keyboard_overlay.html">
+    <include src="chromeos/kiosk_apps.html">
     <include src="chromeos/pointer_overlay.html">
     <include src="factory_reset_overlay.html">
   </if>
@@ -127,11 +133,13 @@
   <include src="cookies_view.html">
   <include src="handler_options.html">
   <include src="language_add_language_overlay.html">
+  <include src="managed_user_set_passphrase.html">
   <if expr="not is_macosx">
     <include src="language_dictionary_overlay.html">
   </if>
   <include src="media_galleries_manager_overlay.html">
   <if expr="pp_ifdef('chromeos')">
+    <include src="chromeos/display_overscan.html">
     <include src="chromeos/internet_detail.html">
     <include src="chromeos/preferred_networks.html">
     <include src="chromeos/language_chewing_options.html">

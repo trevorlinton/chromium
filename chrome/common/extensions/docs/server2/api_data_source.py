@@ -14,9 +14,10 @@ import third_party.json_schema_compiler.idl_schema as idl_schema
 import third_party.json_schema_compiler.idl_parser as idl_parser
 
 # Increment this version when there are changes to the data stored in any of
-# the caches used by APIDataSource. This allows the cache to be invalidated
-# without having to flush memcache on the production server.
-_VERSION = 8
+# the caches used by APIDataSource. This would include changes to model.py in
+# JSON schema compiler! This allows the cache to be invalidated without having
+# to flush memcache on the production server.
+_VERSION = 15
 
 def _RemoveNoDocs(item):
   if json_parse.IsDict(item):
@@ -64,25 +65,28 @@ class _JSCModel(object):
   def _FormatDescription(self, description):
     if self._disable_refs:
       return description
-    return self._ref_resolver.ResolveAllLinks(description, self._namespace.name)
+    return self._ref_resolver.ResolveAllLinks(description,
+                                              namespace=self._namespace.name)
 
   def _GetLink(self, link):
     if self._disable_refs:
       type_name = link.split('.', 1)[-1]
       return { 'href': '#type-%s' % type_name, 'text': link, 'name': link }
-    return self._ref_resolver.SafeGetLink(link, self._namespace.name)
+    return self._ref_resolver.SafeGetLink(link, namespace=self._namespace.name)
 
   def ToDict(self):
     if self._namespace is None:
       return {}
     return {
       'name': self._namespace.name,
-      'types':  [self._GenerateType(t) for t in self._namespace.types.values()
-                 if t.type_ != model.PropertyType.ADDITIONAL_PROPERTIES],
+      'types': self._GenerateTypes(self._namespace.types.values()),
       'functions': self._GenerateFunctions(self._namespace.functions),
       'events': self._GenerateEvents(self._namespace.events),
       'properties': self._GenerateProperties(self._namespace.properties)
     }
+
+  def _GenerateTypes(self, types):
+    return [self._GenerateType(t) for t in types]
 
   def _GenerateType(self, type_):
     type_dict = {
@@ -111,12 +115,14 @@ class _JSCModel(object):
     if (function.parent is not None and
         not isinstance(function.parent, model.Namespace)):
       function_dict['parent_name'] = function.parent.simple_name
-    else:
-      function_dict['parent_name'] = None
     if function.returns:
-      function_dict['returns'] = self._GenerateProperty(function.returns)
+      function_dict['returns'] = self._GenerateType(function.returns)
     for param in function.params:
       function_dict['parameters'].append(self._GenerateProperty(param))
+    if function.callback is not None:
+      # Show the callback as an extra parameter.
+      function_dict['parameters'].append(
+          self._GenerateCallbackProperty(function.callback))
     if len(function_dict['parameters']) > 0:
       function_dict['parameters'][-1]['last'] = True
     return function_dict
@@ -140,8 +146,10 @@ class _JSCModel(object):
     if (event.parent is not None and
         not isinstance(event.parent, model.Namespace)):
       event_dict['parent_name'] = event.parent.simple_name
-    else:
-      event_dict['parent_name'] = None
+    if event.callback is not None:
+      # Show the callback as an extra parameter.
+      event_dict['parameters'].append(
+          self._GenerateCallbackProperty(event.callback))
     if len(event_dict['parameters']) > 0:
       event_dict['parameters'][-1]['last'] = True
     return event_dict
@@ -151,7 +159,6 @@ class _JSCModel(object):
       return None
     callback_dict = {
       'name': callback.simple_name,
-      'description': self._FormatDescription(callback.description),
       'simple_type': {'simple_type': 'function'},
       'optional': callback.optional,
       'parameters': []
@@ -163,60 +170,89 @@ class _JSCModel(object):
     return callback_dict
 
   def _GenerateProperties(self, properties):
-    return [self._GenerateProperty(v) for v in properties.values()
-            if v.type_ != model.PropertyType.ADDITIONAL_PROPERTIES]
+    return [self._GenerateProperty(v) for v in properties.values()]
 
   def _GenerateProperty(self, property_):
+    if not hasattr(property_, 'type_'):
+      for d in dir(property_):
+        if not d.startswith('_'):
+          print ('%s -> %s' % (d, getattr(property_, d)))
+    type_ = property_.type_
+
+    # Make sure we generate property info for arrays, too.
+    # TODO(kalman): what about choices?
+    if type_.property_type == model.PropertyType.ARRAY:
+      properties = type_.item_type.properties
+    else:
+      properties = type_.properties
+
     property_dict = {
       'name': property_.simple_name,
       'optional': property_.optional,
       'description': self._FormatDescription(property_.description),
-      'properties': self._GenerateProperties(property_.properties),
-      'functions': self._GenerateFunctions(property_.functions),
+      'properties': self._GenerateProperties(type_.properties),
+      'functions': self._GenerateFunctions(type_.functions),
       'parameters': [],
       'returns': None,
       'id': _CreateId(property_, 'property')
     }
-    for param in property_.params:
-      property_dict['parameters'].append(self._GenerateProperty(param))
-    if property_.returns:
-      property_dict['returns'] = self._GenerateProperty(property_.returns)
+
+    if type_.property_type == model.PropertyType.FUNCTION:
+      function = type_.function
+      for param in function.params:
+        property_dict['parameters'].append(self._GenerateProperty(param))
+      if function.returns:
+        property_dict['returns'] = self._GenerateType(function.returns)
+
     if (property_.parent is not None and
         not isinstance(property_.parent, model.Namespace)):
       property_dict['parent_name'] = property_.parent.simple_name
-    else:
-      property_dict['parent_name'] = None
-    if property_.has_value:
-      if isinstance(property_.value, int):
-        property_dict['value'] = _FormatValue(property_.value)
+
+    value = property_.value
+    if value is not None:
+      if isinstance(value, int):
+        property_dict['value'] = _FormatValue(value)
       else:
-        property_dict['value'] = property_.value
+        property_dict['value'] = value
     else:
-      self._RenderTypeInformation(property_, property_dict)
+      self._RenderTypeInformation(type_, property_dict)
+
     return property_dict
 
-  def _RenderTypeInformation(self, property_, dst_dict):
-    if property_.type_ == model.PropertyType.CHOICES:
-      dst_dict['choices'] = [self._GenerateProperty(c)
-                             for c in property_.choices.values()]
+  def _GenerateCallbackProperty(self, callback):
+    property_dict = {
+      'name': callback.simple_name,
+      'description': self._FormatDescription(callback.description),
+      'optional': callback.optional,
+      'id': _CreateId(callback, 'property'),
+      'simple_type': 'function',
+    }
+    if (callback.parent is not None and
+        not isinstance(callback.parent, model.Namespace)):
+      property_dict['parent_name'] = callback.parent.simple_name
+    return property_dict
+
+  def _RenderTypeInformation(self, type_, dst_dict):
+    if type_.property_type == model.PropertyType.CHOICES:
+      dst_dict['choices'] = self._GenerateTypes(type_.choices)
       # We keep track of which is last for knowing when to add "or" between
       # choices in templates.
       if len(dst_dict['choices']) > 0:
         dst_dict['choices'][-1]['last'] = True
-    elif property_.type_ == model.PropertyType.REF:
-      dst_dict['link'] = self._GetLink(property_.ref_type)
-    elif property_.type_ == model.PropertyType.ARRAY:
-      dst_dict['array'] = self._GenerateProperty(property_.item_type)
-    elif property_.type_ == model.PropertyType.ENUM:
+    elif type_.property_type == model.PropertyType.REF:
+      dst_dict['link'] = self._GetLink(type_.ref_type)
+    elif type_.property_type == model.PropertyType.ARRAY:
+      dst_dict['array'] = self._GenerateType(type_.item_type)
+    elif type_.property_type == model.PropertyType.ENUM:
       dst_dict['enum_values'] = []
-      for enum_value in property_.enum_values:
+      for enum_value in type_.enum_values:
         dst_dict['enum_values'].append({'name': enum_value})
       if len(dst_dict['enum_values']) > 0:
         dst_dict['enum_values'][-1]['last'] = True
-    elif property_.instance_of is not None:
-      dst_dict['simple_type'] = property_.instance_of.lower()
+    elif type_.instance_of is not None:
+      dst_dict['simple_type'] = type_.instance_of.lower()
     else:
-      dst_dict['simple_type'] = property_.type_.name.lower()
+      dst_dict['simple_type'] = type_.property_type.name.lower()
 
 class _LazySamplesGetter(object):
   """This class is needed so that an extensions API page does not have to fetch
@@ -241,11 +277,11 @@ class APIDataSource(object):
                                                      compiled_fs.PERMS,
                                                      version=_VERSION)
       self._json_cache = cache_factory.Create(
-          lambda api: self._LoadJsonAPI(api, False),
+          lambda api_name, api: self._LoadJsonAPI(api, False),
           compiled_fs.JSON,
           version=_VERSION)
       self._idl_cache = cache_factory.Create(
-          lambda api: self._LoadIdlAPI(api, False),
+          lambda api_name, api: self._LoadIdlAPI(api, False),
           compiled_fs.IDL,
           version=_VERSION)
 
@@ -253,11 +289,11 @@ class APIDataSource(object):
       # $refs in an API. This is needed to prevent infinite recursion in
       # ReferenceResolver.
       self._json_cache_no_refs = cache_factory.Create(
-          lambda api: self._LoadJsonAPI(api, True),
+          lambda api_name, api: self._LoadJsonAPI(api, True),
           compiled_fs.JSON_NO_REFS,
           version=_VERSION)
       self._idl_cache_no_refs = cache_factory.Create(
-          lambda api: self._LoadIdlAPI(api, True),
+          lambda api_name, api: self._LoadIdlAPI(api, True),
           compiled_fs.IDL_NO_REFS,
           version=_VERSION)
       self._idl_names_cache = cache_factory.Create(self._GetIDLNames,
@@ -306,7 +342,7 @@ class APIDataSource(object):
                            samples,
                            disable_refs)
 
-    def _LoadPermissions(self, json_str):
+    def _LoadPermissions(self, file_name, json_str):
       return json_parse.Parse(json_str)
 
     def _LoadJsonAPI(self, api, disable_refs):
@@ -322,13 +358,13 @@ class APIDataSource(object):
           self._ref_resolver_factory.Create() if not disable_refs else None,
           disable_refs).ToDict()
 
-    def _GetIDLNames(self, apis):
+    def _GetIDLNames(self, base_dir, apis):
       return [
         model.UnixName(os.path.splitext(api[len('%s/' % self._base_path):])[0])
         for api in apis if api.endswith('.idl')
       ]
 
-    def _GetAllNames(self, apis):
+    def _GetAllNames(self, base_dir, apis):
       return [
         model.UnixName(os.path.splitext(api[len('%s/' % self._base_path):])[0])
         for api in apis

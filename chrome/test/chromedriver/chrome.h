@@ -5,27 +5,32 @@
 #ifndef CHROME_TEST_CHROMEDRIVER_CHROME_H_
 #define CHROME_TEST_CHROMEDRIVER_CHROME_H_
 
+#include <list>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
-
-namespace base {
-class ListValue;
-class Value;
-}
-
 class Status;
+class WebView;
 
 class Chrome {
  public:
   virtual ~Chrome() {}
 
-  virtual Status Load(const std::string& url) = 0;
-  virtual Status EvaluateScript(const std::string& expression,
-                                scoped_ptr<base::Value>* result) = 0;
-  virtual Status CallFunction(const std::string& function,
-                              const base::ListValue& args,
-                              scoped_ptr<base::Value>* result) = 0;
+  virtual std::string GetVersion() = 0;
+
+  // Return a list of opened WebViews.
+  virtual Status GetWebViews(std::list<WebView*>* web_views) = 0;
+
+  // Returns whether a JavaScript dialog is open.
+  virtual Status IsJavaScriptDialogOpen(bool* is_open) = 0;
+
+  // Returns the message of the open JavaScript dialog.
+  virtual Status GetJavaScriptDialogMessage(std::string* message) = 0;
+
+  // Handles an open JavaScript dialog.
+  virtual Status HandleJavaScriptDialog(bool accept,
+                                        const std::string& prompt_text) = 0;
+
+  // Quits Chrome.
   virtual Status Quit() = 0;
 };
 

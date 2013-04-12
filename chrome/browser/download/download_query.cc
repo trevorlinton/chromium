@@ -10,15 +10,15 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/i18n/case_conversion.h"
 #include "base/i18n/string_search.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/stl_util.h"
 #include "base/string16.h"
-#include "base/string_split.h"
 #include "base/stringprintf.h"
+#include "base/strings/string_split.h"
 #include "base/time.h"
 #include "base/utf_string_conversions.h"
 #include "base/values.h"
@@ -106,7 +106,12 @@ static std::string GetEndTime(const DownloadItem& item) {
 }
 
 static bool GetDangerAccepted(const DownloadItem& item) {
-  return (item.GetSafetyState() == DownloadItem::DANGEROUS_BUT_VALIDATED);
+  return (item.GetDangerType() ==
+          content::DOWNLOAD_DANGER_TYPE_USER_VALIDATED);
+}
+
+static bool GetExists(const DownloadItem& item) {
+  return !item.GetFileExternallyRemoved();
 }
 
 static string16 GetFilename(const DownloadItem& item) {
@@ -255,6 +260,8 @@ bool DownloadQuery::AddFilter(DownloadQuery::FilterType type,
       return AddFilter(BuildFilter<int>(value, EQ, &GetReceivedBytes));
     case FILTER_DANGER_ACCEPTED:
       return AddFilter(BuildFilter<bool>(value, EQ, &GetDangerAccepted));
+    case FILTER_EXISTS:
+      return AddFilter(BuildFilter<bool>(value, EQ, &GetExists));
     case FILTER_FILENAME:
       return AddFilter(BuildFilter<string16>(value, EQ, &GetFilename));
     case FILTER_FILENAME_REGEX:
@@ -387,6 +394,9 @@ void DownloadQuery::AddSorter(DownloadQuery::SortType type,
       break;
     case SORT_DANGER_ACCEPTED:
       sorters_.push_back(Sorter::Build<bool>(direction, &GetDangerAccepted));
+      break;
+    case SORT_EXISTS:
+      sorters_.push_back(Sorter::Build<bool>(direction, &GetExists));
       break;
     case SORT_STATE:
       sorters_.push_back(Sorter::Build<DownloadItem::DownloadState>(

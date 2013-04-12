@@ -5,21 +5,21 @@
 #ifndef WEBKIT_PLUGINS_NPAPI_WEBPLUGIN_IMPL_H_
 #define WEBKIT_PLUGINS_NPAPI_WEBPLUGIN_IMPL_H_
 
-#include <string>
 #include <map>
+#include <string>
 #include <vector>
 
 #include "base/basictypes.h"
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "googleurl/src/gurl.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebRect.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebURLLoaderClient.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebURLRequest.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebVector.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebPlugin.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebRect.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebString.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebURLLoaderClient.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebURLRequest.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebVector.h"
 #include "ui/gfx/native_widget_types.h"
 #include "webkit/plugins/npapi/webplugin.h"
 #include "webkit/plugins/webkit_plugins_export.h"
@@ -58,7 +58,7 @@ class WEBKIT_PLUGINS_EXPORT WebPluginImpl :
   WebPluginImpl(
       WebKit::WebFrame* frame,
       const WebKit::WebPluginParams& params,
-      const FilePath& file_path,
+      const base::FilePath& file_path,
       const base::WeakPtr<WebPluginPageDelegate>& page_delegate);
   virtual ~WebPluginImpl();
 
@@ -315,7 +315,7 @@ class WEBKIT_PLUGINS_EXPORT WebPluginImpl :
   WebPluginGeometry geometry_;
 
   // The location of the plugin on disk.
-  FilePath file_path_;
+  base::FilePath file_path_;
 
   // The mime type of the plugin.
   std::string mime_type_;

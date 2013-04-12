@@ -72,6 +72,13 @@ html[dir=rtl] #account-picture-wrapper {
   min-height: 0;
 }
 
+#profiles-list .profile-name {
+  -webkit-box-flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 #profiles-list > * {
   height: 40px;
 }
@@ -286,7 +293,7 @@ list:not([disabled]) > .network-group[selected] {
 
 .network-selector {
   background: right center no-repeat;
-  background-image: url('../shared/images/select.png');
+  background-image: url('../../../../ui/webui/resources/images/select.png');
   padding-right: 20px;
 }
 

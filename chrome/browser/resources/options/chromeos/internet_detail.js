@@ -34,6 +34,19 @@ cr.define('options.internet', function() {
     }
   }
 
+  /*
+   * Helper function to update the properties of the data object from the
+   * properties in the update object.
+   * @param {object} data object to update.
+   * @param {object} object containing the updated properties.
+   */
+  function updateDataObject(data, update) {
+    for (prop in update) {
+      if (prop in data)
+        data[prop] = update[prop];
+    }
+  }
+
   /**
    * Monitor pref change of given element.
    * @param {Element} el Target element.
@@ -125,7 +138,8 @@ cr.define('options.internet', function() {
       });
 
       $('view-account-details').addEventListener('click', function(event) {
-        chrome.send('showMorePlanInfo');
+        var data = $('connection-state').data;
+        chrome.send('showMorePlanInfo', [data.servicePath]);
         OptionsPage.closeOverlay();
       });
 
@@ -492,7 +506,6 @@ cr.define('options.internet', function() {
     chrome.send('setCarrier', [data.servicePath, carrier]);
   };
 
-
   /**
    * Performs minimal initialization of the InternetDetails dialog in
    * preparation for showing proxy-setttings.
@@ -527,7 +540,7 @@ cr.define('options.internet', function() {
           proxyPort = null;
 
       if (type == 'cros.session.proxy.singlehttp') {
-        proxyHost = 'proxy-host-signal-name';
+        proxyHost = 'proxy-host-single-name';
         proxyPort = 'proxy-host-single-port';
       }else if (type == 'cros.session.proxy.httpurl') {
         proxyHost = 'proxy-host-name';
@@ -555,7 +568,7 @@ cr.define('options.internet', function() {
       }
   };
 
-  DetailsInternetPage.updateCarrier = function(carrier) {
+  DetailsInternetPage.updateCarrier = function() {
     DetailsInternetPage.showCarrierChangeSpinner(false);
   };
 
@@ -605,8 +618,8 @@ cr.define('options.internet', function() {
                    $('auto-connect-network-wifi').checked ? 'true' : 'false']);
     } else if (data.type == Constants.TYPE_WIMAX) {
       chrome.send('setAutoConnect',
-          [servicePath,
-           $('auto-connect-network-wimax').checked ? 'true' : 'false']);
+                  [servicePath,
+                   $('auto-connect-network-wimax').checked ? 'true' : 'false']);
     } else if (data.type == Constants.TYPE_CELLULAR) {
       chrome.send('setAutoConnect',
                   [servicePath,
@@ -616,6 +629,9 @@ cr.define('options.internet', function() {
       chrome.send('setServerHostname',
                   [servicePath,
                    $('inet-server-hostname').value]);
+      chrome.send('setAutoConnect',
+                  [servicePath,
+                   $('auto-connect-network-vpn').checked ? 'true' : 'false']);
     }
 
     var nameServerTypes = ['automatic', 'google', 'user'];
@@ -682,6 +698,47 @@ cr.define('options.internet', function() {
     }
   };
 
+  DetailsInternetPage.updateConnectionData = function(update) {
+    var detailsPage = DetailsInternetPage.getInstance();
+    if (!detailsPage.visible)
+      return;
+
+    var data = $('connection-state').data;
+    if (!data)
+      return;
+
+    // Update our cached data object.
+    updateDataObject(data, update);
+
+    detailsPage.deviceConnected = data.deviceConnected;
+    detailsPage.connecting = data.connecting;
+    detailsPage.connected = data.connected;
+    $('connection-state').textContent = data.connectionState;
+
+    $('details-internet-login').hidden = data.connected;
+    $('details-internet-login').disabled = data.disableConnectButton;
+
+    if (data.type == Constants.TYPE_WIFI) {
+      $('wifi-connection-state').textContent = data.connectionState;
+    } else if (data.type == Constants.TYPE_WIMAX) {
+      $('wimax-connection-state').textContent = data.connectionState;
+    } else if (data.type == Constants.TYPE_CELLULAR) {
+      $('activation-state').textContent = data.activationState;
+
+      $('buyplan-details').hidden = !data.showBuyButton;
+      $('view-account-details').hidden = !data.showViewAccountButton;
+
+      $('activate-details').hidden = !data.showActivateButton;
+      if (data.showActivateButton)
+        $('details-internet-login').hidden = true;
+    }
+
+    if (data.type != Constants.TYPE_ETHERNET)
+      $('details-internet-disconnect').hidden = !data.connected;
+
+    $('connection-state').data = data;
+  }
+
   DetailsInternetPage.showDetailedInfo = function(data) {
     var detailsPage = DetailsInternetPage.getInstance();
 
@@ -728,6 +785,7 @@ cr.define('options.internet', function() {
     $('activate-details').hidden = true;
     $('view-account-details').hidden = true;
     $('details-internet-login').hidden = data.connected;
+    $('details-internet-login').disabled = data.disableConnectButton;
     if (data.type == Constants.TYPE_ETHERNET)
       $('details-internet-disconnect').hidden = true;
     else
@@ -1012,6 +1070,8 @@ cr.define('options.internet', function() {
         OptionsPage.hideBubble();
         inetServerHostname.value = data.serverHostname.recommendedValue;
       };
+      $('auto-connect-network-vpn').checked = data.autoConnect.value;
+      $('auto-connect-network-vpn').disabled = false;
     } else {
       OptionsPage.showTab($('internet-nav-tab'));
       detailsPage.ethernet = true;

@@ -24,7 +24,6 @@
       'NO_MAIN_THREAD_WRAPPING',
       'NO_SOUND_SYSTEM',
       'SRTP_RELATIVE_PATH',
-      '_USE_32BIT_TIME_T',
       # TODO(ronghuawu): Remove this once libjingle is updated to use the new
       # webrtc.
       'USE_WEBRTC_DEV_BRANCH',
@@ -88,6 +87,8 @@
           'defines': [
               '_CRT_SECURE_NO_WARNINGS',  # Suppres warnings about _vsnprinf
           ],
+          # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+          'msvs_disabled_warnings': [ 4267 ],
         }],
         ['OS=="linux"', {
           'defines': [
@@ -148,17 +149,19 @@
         ],
       }, {
         'defines': [
+          'SSL_USE_NSS',
+          'HAVE_NSS_SSL_H',
           'SSL_USE_NSS_RNG',
         ],
         'conditions': [
-          ['os_posix == 1 and OS != "mac" and OS != "ios" and '
-           'OS != "android"', {
+          ['os_posix == 1 and OS != "mac" and OS != "ios" and OS != "android"', {
             'dependencies': [
               '<(DEPTH)/build/linux/system.gyp:ssl',
             ],
           }],
           ['OS == "mac" or OS == "ios" or OS == "win"', {
             'dependencies': [
+              '<(DEPTH)/net/third_party/nss/ssl.gyp:libssl',
               '<(DEPTH)/third_party/nss/nss.gyp:nspr',
               '<(DEPTH)/third_party/nss/nss.gyp:nss',
             ],
@@ -169,6 +172,24 @@
         'include_dirs': [
           '../third_party/platformsdk_win7/files/Include',
         ],
+        'conditions' : [
+          ['target_arch == "ia32"', {
+            'defines': [
+              '_USE_32BIT_TIME_T',
+            ],
+          }],
+        ],
+      }],
+      ['clang == 1', {
+        'xcode_settings': {
+          'WARNING_CFLAGS!': [
+            # Don't warn about string->bool used in asserts.
+            '-Wstring-conversion',
+          ],
+        },
+        'cflags!': [
+          '-Wstring-conversion',
+        ],
       }],
       ['OS=="linux"', {
         'defines': [
@@ -178,6 +199,11 @@
       ['OS=="mac"', {
         'defines': [
           'OSX',
+        ],
+      }],
+      ['OS=="ios"', {
+        'defines': [
+          'IOS',
         ],
       }],
       ['os_posix == 1', {
@@ -326,6 +352,8 @@
         '<(libjingle_source)/talk/base/socketstream.h',
         '<(libjingle_source)/talk/base/ssladapter.cc',
         '<(libjingle_source)/talk/base/ssladapter.h',
+        '<(libjingle_source)/talk/base/sslidentity.cc',
+        '<(libjingle_source)/talk/base/sslidentity.h',
         '<(libjingle_source)/talk/base/sslsocketfactory.cc',
         '<(libjingle_source)/talk/base/sslsocketfactory.h',
         '<(libjingle_source)/talk/base/sslstreamadapter.cc',
@@ -419,7 +447,7 @@
             '<(libjingle_source)/talk/base/winping.h',
           ],
           # Suppress warnings about WIN32_LEAN_AND_MEAN.
-          'msvs_disabled_warnings': [ 4005 ],
+          'msvs_disabled_warnings': [ 4005, 4267 ],
         }],
         ['os_posix == 1', {
           'sources': [
@@ -435,7 +463,7 @@
             '<(libjingle_source)/talk/base/linux.h',
           ],
         }],
-        ['OS=="mac"', {
+        ['OS=="mac" or OS=="ios"', {
           'sources': [
             '<(libjingle_source)/talk/base/macconversion.cc',
             '<(libjingle_source)/talk/base/macconversion.h',
@@ -448,6 +476,10 @@
           ],
         }],
         ['OS=="android"', {
+          'sources': [
+            '<(libjingle_source)/talk/base/ifaddrs-android.cc',
+            '<(libjingle_source)/talk/base/ifaddrs-android.h',
+          ],
           'sources!': [
             # These depend on jsoncpp which we don't load because we probably
             # don't actually need this code at all.
@@ -569,6 +601,8 @@
       'dependencies': [
         'libjingle',
       ],
+      # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+      'msvs_disabled_warnings': [ 4309, ],
     }, # target peerconnection_server
   ],
   'conditions': [
@@ -582,11 +616,15 @@
             '<(libjingle_source)/talk/app/webrtc/audiotrack.h',
             '<(libjingle_source)/talk/app/webrtc/datachannel.cc',
             '<(libjingle_source)/talk/app/webrtc/datachannel.h',
+            '<(libjingle_source)/talk/app/webrtc/dtmfsender.cc',
+            '<(libjingle_source)/talk/app/webrtc/dtmfsender.h',
             '<(libjingle_source)/talk/app/webrtc/jsep.h',
             '<(libjingle_source)/talk/app/webrtc/jsepicecandidate.cc',
             '<(libjingle_source)/talk/app/webrtc/jsepicecandidate.h',
             '<(libjingle_source)/talk/app/webrtc/jsepsessiondescription.cc',
             '<(libjingle_source)/talk/app/webrtc/jsepsessiondescription.h',
+            '<(libjingle_source)/talk/app/webrtc/localaudiosource.cc',
+            '<(libjingle_source)/talk/app/webrtc/localaudiosource.h',
             '<(libjingle_source)/talk/app/webrtc/localvideosource.cc',
             '<(libjingle_source)/talk/app/webrtc/localvideosource.h',
             '<(libjingle_source)/talk/app/webrtc/mediastream.cc',
@@ -595,7 +633,6 @@
             '<(libjingle_source)/talk/app/webrtc/mediastreamhandler.h',
             '<(libjingle_source)/talk/app/webrtc/mediastreaminterface.h',
             '<(libjingle_source)/talk/app/webrtc/mediastreamprovider.h',
-            '<(libjingle_source)/talk/app/webrtc/mediastreamproxy.cc',
             '<(libjingle_source)/talk/app/webrtc/mediastreamproxy.h',
             '<(libjingle_source)/talk/app/webrtc/mediastreamsignaling.cc',
             '<(libjingle_source)/talk/app/webrtc/mediastreamsignaling.h',
@@ -608,8 +645,6 @@
             '<(libjingle_source)/talk/app/webrtc/peerconnectionfactory.cc',
             '<(libjingle_source)/talk/app/webrtc/peerconnectionfactory.h',
             '<(libjingle_source)/talk/app/webrtc/peerconnectioninterface.h',
-            '<(libjingle_source)/talk/app/webrtc/peerconnectionproxy.cc',
-            '<(libjingle_source)/talk/app/webrtc/peerconnectionproxy.h',
             '<(libjingle_source)/talk/app/webrtc/portallocatorfactory.cc',
             '<(libjingle_source)/talk/app/webrtc/portallocatorfactory.h',
             '<(libjingle_source)/talk/app/webrtc/statscollector.h',

@@ -2,19 +2,19 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-from telemetry import multi_page_benchmark
-from telemetry import util
+from telemetry.core import util
+from telemetry.page import page_benchmark
 
-class Dromaeo(multi_page_benchmark.MultiPageBenchmark):
+class Dromaeo(page_benchmark.PageBenchmark):
   def MeasurePage(self, page, tab, results):
     js_is_done = 'window.document.cookie.indexOf("__done=1") >= 0'
     def _IsDone():
-      return bool(tab.runtime.Evaluate(js_is_done))
+      return bool(tab.EvaluateJavaScript(js_is_done))
     util.WaitFor(_IsDone, 600, poll_interval=5)
 
     js_get_results = 'JSON.stringify(window.automation.GetResults())'
     print js_get_results
-    score = eval(tab.runtime.Evaluate(js_get_results))
+    score = eval(tab.EvaluateJavaScript(js_get_results))
 
     def Escape(k):
       chars = [' ', '-', '/', '(', ')', '*']

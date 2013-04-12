@@ -8,7 +8,7 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/ui/ash/ash_init.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_list_impl.h"
+#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -22,16 +22,16 @@
 namespace {
 
 void CloseOpenAshBrowsers() {
-  chrome::BrowserListImpl* browser_list =
-      chrome::BrowserListImpl::GetInstance(chrome::HOST_DESKTOP_TYPE_ASH);
+  BrowserList* browser_list =
+      BrowserList::GetInstance(chrome::HOST_DESKTOP_TYPE_ASH);
   if (browser_list) {
-    for (chrome::BrowserListImpl::const_iterator i = browser_list->begin();
-            i != browser_list->end(); ++i) {
+    for (BrowserList::const_iterator i = browser_list->begin();
+         i != browser_list->end(); ++i) {
       Browser* browser = *i;
       browser->window()->Close();
       // If the attempt to Close the browser fails due to unload handlers on
       // the page or in progress downloads, etc, destroy all tabs on the page.
-      while (browser->tab_count())
+      while (browser->tab_strip_model()->count())
         delete browser->tab_strip_model()->GetWebContentsAt(0);
     }
   }

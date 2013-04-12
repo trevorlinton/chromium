@@ -9,56 +9,51 @@
 #include <string>
 
 #include "base/basictypes.h"
+#include "base/compiler_specific.h"
+#include "base/memory/scoped_ptr.h"
+#include "base/memory/weak_ptr.h"
+#include "base/stl_util.h"
+#include "content/browser/devtools/devtools_protocol.h"
 
 namespace base {
-
 class DictionaryValue;
+class MessageLoopProxy;
 class Value;
-
 }  // namespace base
+
+namespace net {
+class HttpServer;
+}  // namespace net
 
 namespace content {
 
 // This class handles the "Browser" target for remote debugging.
 class DevToolsBrowserTarget {
  public:
-  class Handler {
-   public:
-    virtual ~Handler() {}
-
-    // Returns the domain name for this handler.
-    virtual std::string Domain() = 0;
-
-    // |return_value| and |error_message_out| ownership is transferred to the
-    // caller.
-    virtual base::Value* OnProtocolCommand(
-        const std::string& method,
-        const base::DictionaryValue* params,
-        base::Value** error_message_out) = 0;
-  };
-
-  explicit DevToolsBrowserTarget(int connection_id);
+  DevToolsBrowserTarget(base::MessageLoopProxy* message_loop_proxy,
+                        net::HttpServer* server,
+                        int connection_id);
   ~DevToolsBrowserTarget();
 
   int connection_id() const { return connection_id_; }
 
   // Takes ownership of |handler|.
-  void RegisterHandler(Handler* handler);
+  void RegisterDomainHandler(const std::string& domain,
+                             DevToolsProtocol::Handler* handler);
 
   std::string HandleMessage(const std::string& data);
 
  private:
+  void OnNotification(const std::string& message);
+
+  base::MessageLoopProxy* const message_loop_proxy_;
+  net::HttpServer* const http_server_;
   const int connection_id_;
 
-  typedef std::map<std::string, Handler*> HandlersMap;
-  HandlersMap handlers_;
-
-  // Takes ownership of |error_object|.
-  std::string SerializeErrorResponse(int request_id, base::Value* error_object);
-
-  base::Value* CreateErrorObject(int error_code, const std::string& message);
-
-  std::string SerializeResponse(int request_id, base::Value* response);
+  typedef std::map<std::string, DevToolsProtocol::Handler*> DomainHandlerMap;
+  DomainHandlerMap handlers_;
+  STLValueDeleter<DomainHandlerMap> handlers_deleter_;
+  base::WeakPtrFactory<DevToolsBrowserTarget> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(DevToolsBrowserTarget);
 };

@@ -40,12 +40,12 @@
       'sources!': [
         'app/content_main.cc',
       ],
-      'include_dirs': [
-        '<(SHARED_INTERMEDIATE_DIR)/content',
-      ],
       'dependencies': [
         'content.gyp:content_jni_headers',
         '../skia/skia.gyp:skia',
+      ],
+      'includes': [
+        '../build/android/cpufeatures.gypi',
       ],
     }],
     ['OS=="ios"', {

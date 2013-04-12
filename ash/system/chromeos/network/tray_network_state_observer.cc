@@ -39,15 +39,28 @@ void TrayNetworkStateObserver::NetworkManagerChanged() {
     detailed->ManagerChanged();
 }
 
-void TrayNetworkStateObserver::NetworkListChanged(
-    const NetworkStateList& networks) {
+void TrayNetworkStateObserver::NetworkListChanged() {
   tray::NetworkDetailedView* detailed = tray_->detailed();
   if (detailed)
-    detailed->NetworkListChanged(networks);
+    detailed->NetworkListChanged();
+  tray_->TrayNetworkUpdated();
+}
+
+void TrayNetworkStateObserver::DeviceListChanged() {
+  tray::NetworkDetailedView* detailed = tray_->detailed();
+  if (detailed)
+    detailed->ManagerChanged();
+  tray_->TrayNetworkUpdated();
+}
+
+void TrayNetworkStateObserver::DefaultNetworkChanged(
+    const chromeos::NetworkState* network) {
+  tray_->TrayNetworkUpdated();
 }
 
 void TrayNetworkStateObserver::NetworkPropertiesUpdated(
     const chromeos::NetworkState* network) {
+  tray_->NetworkServiceChanged(network);
   tray::NetworkDetailedView* detailed = tray_->detailed();
   if (detailed)
     detailed->NetworkServiceChanged(network);

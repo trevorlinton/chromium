@@ -25,6 +25,10 @@ class DesktopDispatcherClient;
 class DesktopDragDropClientWin;
 class HWNDMessageHandler;
 
+namespace corewm {
+class CursorManager;
+}
+
 class VIEWS_EXPORT DesktopRootWindowHostWin
     : public DesktopRootWindowHost,
       public aura::RootWindowHost,
@@ -73,7 +77,8 @@ class VIEWS_EXPORT DesktopRootWindowHostWin
   virtual void SetWindowTitle(const string16& title) OVERRIDE;
   virtual void ClearNativeFocus() OVERRIDE;
   virtual Widget::MoveLoopResult RunMoveLoop(
-      const gfx::Vector2d& drag_offset) OVERRIDE;
+      const gfx::Vector2d& drag_offset,
+      Widget::MoveLoopSource source) OVERRIDE;
   virtual void EndMoveLoop() OVERRIDE;
   virtual void SetVisibilityChangedAnimationsEnabled(bool value) OVERRIDE;
   virtual bool ShouldUseNativeFrame() OVERRIDE;
@@ -151,6 +156,7 @@ class VIEWS_EXPORT DesktopRootWindowHostWin
   virtual void HandleAppDeactivated() OVERRIDE;
   virtual void HandleActivationChanged(bool active) OVERRIDE;
   virtual bool HandleAppCommand(short command) OVERRIDE;
+  virtual void HandleCancelMode() OVERRIDE;
   virtual void HandleCaptureLost() OVERRIDE;
   virtual void HandleClose() OVERRIDE;
   virtual bool HandleCommand(int command) OVERRIDE;
@@ -172,6 +178,7 @@ class VIEWS_EXPORT DesktopRootWindowHostWin
   virtual bool HandleMouseEvent(const ui::MouseEvent& event) OVERRIDE;
   virtual bool HandleKeyEvent(const ui::KeyEvent& event) OVERRIDE;
   virtual bool HandleUntranslatedKeyEvent(const ui::KeyEvent& event) OVERRIDE;
+  virtual bool HandleTouchEvent(const ui::TouchEvent& event) OVERRIDE;
   virtual bool HandleIMEMessage(UINT message,
                                 WPARAM w_param,
                                 LPARAM l_param,
@@ -223,8 +230,8 @@ class VIEWS_EXPORT DesktopRootWindowHostWin
   // do, we're responsible for the lifetime.
   scoped_ptr<aura::client::ScreenPositionClient> position_client_;
 
-  // A simple cursor client which just forwards events to the RootWindow.
-  scoped_ptr<DesktopCursorClient> cursor_client_;
+  // Controls visibility of the cursor.
+  scoped_ptr<views::corewm::CursorManager> cursor_client_;
 
   scoped_ptr<DesktopDragDropClientWin> drag_drop_client_;
 

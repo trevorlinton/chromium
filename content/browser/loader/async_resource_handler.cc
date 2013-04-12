@@ -12,6 +12,7 @@
 #include "base/hash_tables.h"
 #include "base/logging.h"
 #include "base/metrics/histogram.h"
+#include "base/process_util.h"
 #include "base/shared_memory.h"
 #include "base/string_number_conversions.h"
 #include "content/browser/devtools/devtools_netlog_observer.h"
@@ -73,7 +74,7 @@ class DependentIOBuffer : public net::WrappedIOBuffer {
         backing_(backing) {
   }
  private:
-  ~DependentIOBuffer() {}
+  virtual ~DependentIOBuffer() {}
   scoped_refptr<ResourceBuffer> backing_;
 };
 
@@ -82,7 +83,8 @@ AsyncResourceHandler::AsyncResourceHandler(
     int routing_id,
     net::URLRequest* request,
     ResourceDispatcherHostImpl* rdh)
-    : filter_(filter),
+    : ResourceMessageDelegate(request),
+      filter_(filter),
       routing_id_(routing_id),
       request_(request),
       rdh_(rdh),
@@ -91,20 +93,25 @@ AsyncResourceHandler::AsyncResourceHandler(
       did_defer_(false),
       sent_received_response_msg_(false),
       sent_first_data_msg_(false) {
-  // Set a back-pointer from ResourceRequestInfoImpl to |this|, so that the
-  // ResourceDispatcherHostImpl can send us IPC messages.
-  // TODO(darin): Implement an IPC message filter instead?
-  ResourceRequestInfoImpl::ForRequest(request_)->set_async_handler(this);
-
   InitializeResourceBufferConstants();
 }
 
 AsyncResourceHandler::~AsyncResourceHandler() {
-  // Cleanup back-pointer stored on the request info.
-  ResourceRequestInfoImpl::ForRequest(request_)->set_async_handler(NULL);
+}
+
+bool AsyncResourceHandler::OnMessageReceived(const IPC::Message& message,
+                                             bool* message_was_ok) {
+  bool handled = true;
+  IPC_BEGIN_MESSAGE_MAP_EX(AsyncResourceHandler, message, *message_was_ok)
+    IPC_MESSAGE_HANDLER(ResourceHostMsg_FollowRedirect, OnFollowRedirect)
+    IPC_MESSAGE_HANDLER(ResourceHostMsg_DataReceived_ACK, OnDataReceivedACK)
+    IPC_MESSAGE_UNHANDLED(handled = false)
+  IPC_END_MESSAGE_MAP_EX()
+  return handled;
 }
 
 void AsyncResourceHandler::OnFollowRedirect(
+    int request_id,
     bool has_new_first_party_for_cookies,
     const GURL& new_first_party_for_cookies) {
   if (!request_->status().is_success()) {
@@ -118,7 +125,7 @@ void AsyncResourceHandler::OnFollowRedirect(
   ResumeIfDeferred();
 }
 
-void AsyncResourceHandler::OnDataReceivedACK() {
+void AsyncResourceHandler::OnDataReceivedACK(int request_id) {
   --pending_data_count_;
 
   buffer_->RecycleLeastRecentlyAllocated();
@@ -244,7 +251,8 @@ bool AsyncResourceHandler::OnReadCompleted(int request_id, int bytes_read,
     if (!buffer_->ShareToProcess(filter_->peer_handle(), &handle, &size))
       return false;
     filter_->Send(
-        new ResourceMsg_SetDataBuffer(routing_id_, request_id, handle, size));
+        new ResourceMsg_SetDataBuffer(routing_id_, request_id, handle, size,
+                                      base::GetProcId(filter_->peer_handle())));
     sent_first_data_msg_ = true;
   }
 

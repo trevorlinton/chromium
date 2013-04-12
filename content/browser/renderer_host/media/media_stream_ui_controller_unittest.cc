@@ -31,7 +31,9 @@ class MediaStreamDeviceUIControllerTest
   void GetAvailableDevices(MediaStreamDevices* devices) OVERRIDE {
     devices->push_back(MediaStreamDevice(MEDIA_DEVICE_AUDIO_CAPTURE,
                                          "mic",
-                                         "mic_id"));
+                                         "mic_id",
+                                         0,
+                                         0));
     devices->push_back(MediaStreamDevice(MEDIA_DEVICE_VIDEO_CAPTURE,
                                          "camera",
                                          "camera_id"));
@@ -63,7 +65,8 @@ class MediaStreamDeviceUIControllerTest
                                   dummy_render_view_id,
                                   components,
                                   security_origin,
-                                  MEDIA_GENERATE_STREAM);
+                                  MEDIA_GENERATE_STREAM,
+                                  std::string());
   }
 
   scoped_ptr<MessageLoop> message_loop_;

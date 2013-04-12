@@ -427,7 +427,7 @@
             # Copy CDM files to PRODUCT_DIR if applicable. Let the .gyp
             # file decide what to do on a per-OS basis; on Mac, internal plugins
             # go inside the framework, so this dependency is in chrome_dll.gypi.
-            '../third_party/widevine/cdm/widevine_cdm.gyp:widevinecdmplugin',
+            '../third_party/widevine/cdm/widevine_cdm.gyp:widevinecdmadapter',
           ],
         }],
         ['OS=="mac" and asan==1', {
@@ -474,6 +474,8 @@
           ],
           'sources': [
             'app/chrome_exe.rc',
+            'common/crash_keys.cc',
+            'common/crash_keys.h',
             '<(SHARED_INTERMEDIATE_DIR)/chrome_version/chrome_exe_version.rc',
           ],
           'msvs_settings': {
@@ -504,6 +506,7 @@
               ],
               'action': ['cp', '-f', '<@(_inputs)', '<@(_outputs)'],
               'message': 'Copy first run complete sentinel file',
+              'msvs_cygwin_shell': 1,
             },
           ],
         }, {  # 'OS!="win"
@@ -539,7 +542,7 @@
         },
       ],
       'conditions': [
-        ['disable_nacl!=1', {
+        ['disable_nacl!=1 and target_arch=="ia32"', {
           'targets': [
             {
               'target_name': 'chrome_nacl_win64',
@@ -549,6 +552,7 @@
                 'app/breakpad_win.cc',
                 'app/crash_analysis_win.cc',
                 'app/hard_error_handler_win.cc',
+                'common/crash_keys.cc',
                 'nacl/nacl_exe_win_64.cc',
                 '../content/app/startup_helper_win.cc',
                 '../content/common/debug_flags.cc',  # Needed for sandbox_policy.cc

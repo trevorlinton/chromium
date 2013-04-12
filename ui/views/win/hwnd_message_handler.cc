@@ -8,7 +8,7 @@
 #include <shellapi.h>
 
 #include "base/bind.h"
-#include "base/system_monitor/system_monitor.h"
+#include "base/debug/trace_event.h"
 #include "base/win/windows_version.h"
 #include "ui/base/events/event.h"
 #include "ui/base/events/event_utils.h"
@@ -295,6 +295,10 @@ const int kCustomObjectID = 1;
 // The thickness of an auto-hide taskbar in pixels.
 const int kAutoHideTaskbarThicknessPx = 2;
 
+// The touch id to be used for touch events coming in from Windows Aura
+// Desktop.
+const int kDesktopChromeAuraTouchId = 9;
+
 }  // namespace
 
 // A scoping class that prevents a window from being able to redraw in response
@@ -384,7 +388,8 @@ HWNDMessageHandler::HWNDMessageHandler(HWNDMessageHandlerDelegate* delegate)
       use_layered_buffer_(false),
       layered_alpha_(255),
       ALLOW_THIS_IN_INITIALIZER_LIST(paint_layered_window_factory_(this)),
-      can_update_layered_window_(true) {
+      can_update_layered_window_(true),
+      is_first_nccalc_(true) {
 }
 
 HWNDMessageHandler::~HWNDMessageHandler() {
@@ -397,6 +402,7 @@ HWNDMessageHandler::~HWNDMessageHandler() {
 }
 
 void HWNDMessageHandler::Init(HWND parent, const gfx::Rect& bounds) {
+  TRACE_EVENT0("views", "HWNDMessageHandler::Init");
   GetMonitorAndRects(bounds.ToRECT(), &last_monitor_, &last_monitor_rect_,
                      &last_work_area_);
 
@@ -556,6 +562,7 @@ void HWNDMessageHandler::Show() {
 }
 
 void HWNDMessageHandler::ShowWindowWithState(ui::WindowShowState show_state) {
+  TRACE_EVENT0("views", "HWNDMessageHandler::ShowWindowWithState");
   DWORD native_show_state;
   switch (show_state) {
     case ui::SHOW_STATE_INACTIVE:
@@ -1241,6 +1248,12 @@ BOOL HWNDMessageHandler::OnAppCommand(HWND window,
   return handled;
 }
 
+void HWNDMessageHandler::OnCancelMode() {
+  delegate_->HandleCancelMode();
+  // Need default handling, otherwise capture and other things aren't canceled.
+  SetMsgHandled(FALSE);
+}
+
 void HWNDMessageHandler::OnCaptureChanged(HWND window) {
   delegate_->HandleCaptureLost();
 }
@@ -1260,6 +1273,17 @@ void HWNDMessageHandler::OnCommand(UINT notification_code,
 
 LRESULT HWNDMessageHandler::OnCreate(CREATESTRUCT* create_struct) {
   use_layered_buffer_ = !!(window_ex_style() & WS_EX_LAYERED);
+
+#if defined(USE_AURA)
+  if (window_ex_style() &  WS_EX_COMPOSITED) {
+    if (base::win::GetVersion() >= base::win::VERSION_VISTA) {
+      // This is part of the magic to emulate layered windows with Aura
+      // see the explanation elsewere when we set WS_EX_COMPOSITED style.
+      MARGINS margins = {-1,-1,-1,-1};
+      DwmExtendFrameIntoClientArea(hwnd(), &margins);
+    }
+  }
+#endif
 
   fullscreen_handler_->set_hwnd(hwnd());
 
@@ -1437,7 +1461,7 @@ void HWNDMessageHandler::OnInputLangChange(DWORD character_set,
 LRESULT HWNDMessageHandler::OnKeyEvent(UINT message,
                                        WPARAM w_param,
                                        LPARAM l_param) {
-  MSG msg = { hwnd(), message, w_param, l_param };
+  MSG msg = { hwnd(), message, w_param, l_param, GetMessageTime() };
   ui::KeyEvent key(msg, message == WM_CHAR);
   if (!delegate_->HandleUntranslatedKeyEvent(key))
     DispatchKeyEventPostIME(key);
@@ -1465,6 +1489,12 @@ LRESULT HWNDMessageHandler::OnMouseActivate(UINT message,
 LRESULT HWNDMessageHandler::OnMouseRange(UINT message,
                                          WPARAM w_param,
                                          LPARAM l_param) {
+#if defined(USE_AURA)
+  // We handle touch events on Windows Aura. Ignore synthesized mouse messages
+  // from Windows.
+  if (!touch_ids_.empty() || ui::IsMouseEventFromTouch(message))
+    return 0;
+#endif
   if (message == WM_RBUTTONUP && is_right_mouse_pressed_on_caption_) {
     is_right_mouse_pressed_on_caption_ = false;
     ReleaseCapture();
@@ -1509,7 +1539,7 @@ LRESULT HWNDMessageHandler::OnMouseRange(UINT message,
     SetCapture();
   }
 
-  MSG msg = { hwnd(), message, w_param, l_param, 0,
+  MSG msg = { hwnd(), message, w_param, l_param, GetMessageTime(),
               { GET_X_LPARAM(l_param), GET_Y_LPARAM(l_param) } };
   ui::MouseEvent event(msg);
   if (!touch_ids_.empty() || ui::IsMouseEventFromTouch(message))
@@ -1610,6 +1640,19 @@ LRESULT HWNDMessageHandler::OnNCCalcSize(BOOL mode, LPARAM l_param) {
   // non-client edge width. Note that in most cases "no insets" means no
   // custom width, but in fullscreen mode or when the NonClientFrameView
   // requests it, we want a custom width of 0.
+
+  // Let User32 handle the first nccalcsize for captioned windows
+  // so it updates its internal structures (specifically caption-present)
+  // Without this Tile & Cascade windows won't work.
+  // See http://code.google.com/p/chromium/issues/detail?id=900
+  if (is_first_nccalc_) {
+    is_first_nccalc_ = false;
+    if (GetWindowLong(hwnd(), GWL_STYLE) & WS_CAPTION) {
+      SetMsgHandled(FALSE);
+      return 0;
+    }
+  }
+
   gfx::Insets insets = GetClientAreaInsets();
   if (insets.empty() && !fullscreen_handler_->fullscreen() &&
       !(mode && remove_standard_frame_)) {
@@ -1791,7 +1834,7 @@ void HWNDMessageHandler::OnNCPaint(HRGN rgn) {
   // gfx::CanvasSkiaPaint's destructor does the actual painting. As such, wrap
   // the following in a block to force paint to occur so that we can release
   // the dc.
-  {
+  if (!delegate_->HandlePaintAccelerated(gfx::Rect(dirty_region))) {
     gfx::CanvasSkiaPaint canvas(dc, true, dirty_region.left,
                                 dirty_region.top, dirty_region.Width(),
                                 dirty_region.Height());
@@ -1849,14 +1892,6 @@ void HWNDMessageHandler::OnPaint(HDC dc) {
     // Some scenarios otherwise fail to validate minimized app/popup windows.
     ValidateRect(hwnd(), NULL);
   }
-}
-
-LRESULT HWNDMessageHandler::OnPowerBroadcast(DWORD power_event, DWORD data) {
-  base::SystemMonitor* monitor = base::SystemMonitor::Get();
-  if (monitor)
-    monitor->ProcessWmPowerBroadcastMessage(power_event);
-  SetMsgHandled(FALSE);
-  return 0;
 }
 
 LRESULT HWNDMessageHandler::OnReflectedMessage(UINT message,
@@ -1977,14 +2012,38 @@ LRESULT HWNDMessageHandler::OnTouchEvent(UINT message,
                                          WPARAM w_param,
                                          LPARAM l_param) {
   int num_points = LOWORD(w_param);
-  scoped_array<TOUCHINPUT> input(new TOUCHINPUT[num_points]);
+  scoped_ptr<TOUCHINPUT[]> input(new TOUCHINPUT[num_points]);
   if (GetTouchInputInfo(reinterpret_cast<HTOUCHINPUT>(l_param),
                         num_points, input.get(), sizeof(TOUCHINPUT))) {
     for (int i = 0; i < num_points; ++i) {
-      if (input[i].dwFlags & TOUCHEVENTF_DOWN)
+      ui::EventType touch_event_type = ui::ET_UNKNOWN;
+
+      if (input[i].dwFlags & TOUCHEVENTF_DOWN) {
         touch_ids_.insert(input[i].dwID);
-      if (input[i].dwFlags & TOUCHEVENTF_UP)
+        touch_event_type = ui::ET_TOUCH_PRESSED;
+      } else if (input[i].dwFlags & TOUCHEVENTF_UP) {
         touch_ids_.erase(input[i].dwID);
+        touch_event_type = ui::ET_TOUCH_RELEASED;
+      } else if (input[i].dwFlags & TOUCHEVENTF_MOVE) {
+        touch_event_type = ui::ET_TOUCH_MOVED;
+      }
+      // Handle touch events only on Aura for now.
+#if defined(USE_AURA)
+      if (touch_event_type != ui::ET_UNKNOWN) {
+        POINT point;
+        point.x = TOUCH_COORD_TO_PIXEL(input[i].x);
+        point.y = TOUCH_COORD_TO_PIXEL(input[i].y);
+
+        ScreenToClient(hwnd(), &point);
+
+        ui::TouchEvent event(
+            touch_event_type,
+            gfx::Point(point.x, point.y),
+            kDesktopChromeAuraTouchId,
+            base::TimeDelta::FromMilliseconds(input[i].dwTime));
+        delegate_->HandleTouchEvent(event);
+      }
+#endif
     }
   }
   CloseTouchInputHandle(reinterpret_cast<HTOUCHINPUT>(l_param));

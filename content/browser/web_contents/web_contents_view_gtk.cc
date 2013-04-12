@@ -76,7 +76,7 @@ gboolean OnMouseScroll(GtkWidget* widget, GdkEventScroll* event,
 
 }  // namespace
 
-WebContentsView* CreateWebContentsView(
+WebContentsViewPort* CreateWebContentsView(
     WebContentsImpl* web_contents,
     WebContentsViewDelegate* delegate,
     RenderViewHostDelegateView** render_view_host_delegate_view) {
@@ -106,6 +106,91 @@ WebContentsViewGtk::WebContentsViewGtk(
 
 WebContentsViewGtk::~WebContentsViewGtk() {
   expanded_.Destroy();
+}
+
+gfx::NativeView WebContentsViewGtk::GetNativeView() const {
+  if (delegate_.get())
+    return delegate_->GetNativeView();
+
+  return expanded_.get();
+}
+
+gfx::NativeView WebContentsViewGtk::GetContentNativeView() const {
+  RenderWidgetHostView* rwhv = web_contents_->GetRenderWidgetHostView();
+  if (!rwhv)
+    return NULL;
+  return rwhv->GetNativeView();
+}
+
+gfx::NativeWindow WebContentsViewGtk::GetTopLevelNativeWindow() const {
+  GtkWidget* window = gtk_widget_get_ancestor(GetNativeView(), GTK_TYPE_WINDOW);
+  return window ? GTK_WINDOW(window) : NULL;
+}
+
+void WebContentsViewGtk::GetContainerBounds(gfx::Rect* out) const {
+  // This is used for positioning the download shelf arrow animation,
+  // as well as sizing some other widgets in Windows.  In GTK the size is
+  // managed for us, so it appears to be only used for the download shelf
+  // animation.
+  int x = 0;
+  int y = 0;
+  GdkWindow* expanded_window = gtk_widget_get_window(expanded_.get());
+  if (expanded_window)
+    gdk_window_get_origin(expanded_window, &x, &y);
+
+  GtkAllocation allocation;
+  gtk_widget_get_allocation(expanded_.get(), &allocation);
+  out->SetRect(x + allocation.x, y + allocation.y,
+               requested_size_.width(), requested_size_.height());
+}
+
+void WebContentsViewGtk::OnTabCrashed(base::TerminationStatus status,
+                                      int error_code) {
+}
+
+void WebContentsViewGtk::Focus() {
+  if (web_contents_->ShowingInterstitialPage()) {
+    web_contents_->GetInterstitialPage()->Focus();
+  } else if (delegate_.get()) {
+    delegate_->Focus();
+  } else {
+    gtk_widget_grab_focus(GetContentNativeView());
+  }
+}
+
+void WebContentsViewGtk::SetInitialFocus() {
+  if (web_contents_->FocusLocationBarByDefault())
+    web_contents_->SetFocusToLocationBar(false);
+  else
+    Focus();
+}
+
+void WebContentsViewGtk::StoreFocus() {
+  focus_store_.Store(GetNativeView());
+}
+
+void WebContentsViewGtk::RestoreFocus() {
+  if (focus_store_.widget())
+    gtk_widget_grab_focus(focus_store_.widget());
+  else
+    SetInitialFocus();
+}
+
+WebDropData* WebContentsViewGtk::GetDropData() const {
+  return drag_dest_->current_drop_data();
+}
+
+gfx::Rect WebContentsViewGtk::GetViewBounds() const {
+  gfx::Rect rect;
+  GdkWindow* window = gtk_widget_get_window(GetNativeView());
+  if (!window) {
+    rect.SetRect(0, 0, requested_size_.width(), requested_size_.height());
+    return rect;
+  }
+  int x = 0, y = 0, w, h;
+  gdk_window_get_geometry(window, &x, &y, &w, &h, NULL);
+  rect.SetRect(x, y, w, h);
+  return rect;
 }
 
 void WebContentsViewGtk::CreateView(
@@ -149,40 +234,9 @@ RenderWidgetHostView* WebContentsViewGtk::CreateViewForWidget(
   return view;
 }
 
-gfx::NativeView WebContentsViewGtk::GetNativeView() const {
-  if (delegate_.get())
-    return delegate_->GetNativeView();
-
-  return expanded_.get();
-}
-
-gfx::NativeView WebContentsViewGtk::GetContentNativeView() const {
-  RenderWidgetHostView* rwhv = web_contents_->GetRenderWidgetHostView();
-  if (!rwhv)
-    return NULL;
-  return rwhv->GetNativeView();
-}
-
-gfx::NativeWindow WebContentsViewGtk::GetTopLevelNativeWindow() const {
-  GtkWidget* window = gtk_widget_get_ancestor(GetNativeView(), GTK_TYPE_WINDOW);
-  return window ? GTK_WINDOW(window) : NULL;
-}
-
-void WebContentsViewGtk::GetContainerBounds(gfx::Rect* out) const {
-  // This is used for positioning the download shelf arrow animation,
-  // as well as sizing some other widgets in Windows.  In GTK the size is
-  // managed for us, so it appears to be only used for the download shelf
-  // animation.
-  int x = 0;
-  int y = 0;
-  GdkWindow* expanded_window = gtk_widget_get_window(expanded_.get());
-  if (expanded_window)
-    gdk_window_get_origin(expanded_window, &x, &y);
-
-  GtkAllocation allocation;
-  gtk_widget_get_allocation(expanded_.get(), &allocation);
-  out->SetRect(x + allocation.x, y + allocation.y,
-               requested_size_.width(), requested_size_.height());
+RenderWidgetHostView* WebContentsViewGtk::CreateViewForPopupWidget(
+    RenderWidgetHost* render_widget_host) {
+  return RenderWidgetHostViewPort::CreateViewForWidget(render_widget_host);
 }
 
 void WebContentsViewGtk::SetPageTitle(const string16& title) {
@@ -195,10 +249,6 @@ void WebContentsViewGtk::SetPageTitle(const string16& title) {
       gdk_window_set_title(content_window, UTF16ToUTF8(title).c_str());
     }
   }
-}
-
-void WebContentsViewGtk::OnTabCrashed(base::TerminationStatus status,
-                                      int error_code) {
 }
 
 void WebContentsViewGtk::SizeContents(const gfx::Size& size) {
@@ -214,56 +264,7 @@ void WebContentsViewGtk::SizeContents(const gfx::Size& size) {
 void WebContentsViewGtk::RenderViewCreated(RenderViewHost* host) {
 }
 
-void WebContentsViewGtk::Focus() {
-  if (web_contents_->ShowingInterstitialPage()) {
-    web_contents_->GetInterstitialPage()->Focus();
-  } else if (delegate_.get()) {
-    delegate_->Focus();
-  } else {
-    gtk_widget_grab_focus(GetContentNativeView());
-  }
-}
-
-void WebContentsViewGtk::SetInitialFocus() {
-  if (web_contents_->FocusLocationBarByDefault())
-    web_contents_->SetFocusToLocationBar(false);
-  else
-    Focus();
-}
-
-void WebContentsViewGtk::StoreFocus() {
-  focus_store_.Store(GetNativeView());
-}
-
-void WebContentsViewGtk::RestoreFocus() {
-  if (focus_store_.widget())
-    gtk_widget_grab_focus(focus_store_.widget());
-  else
-    SetInitialFocus();
-}
-
-WebDropData* WebContentsViewGtk::GetDropData() const {
-  return drag_dest_->current_drop_data();
-}
-
-bool WebContentsViewGtk::IsEventTracking() const {
-  return false;
-}
-
-void WebContentsViewGtk::CloseTabAfterEventTracking() {
-}
-
-gfx::Rect WebContentsViewGtk::GetViewBounds() const {
-  gfx::Rect rect;
-  GdkWindow* window = gtk_widget_get_window(GetNativeView());
-  if (!window) {
-    rect.SetRect(0, 0, requested_size_.width(), requested_size_.height());
-    return rect;
-  }
-  int x = 0, y = 0, w, h;
-  gdk_window_get_geometry(window, &x, &y, &w, &h, NULL);
-  rect.SetRect(x, y, w, h);
-  return rect;
+void WebContentsViewGtk::RenderViewSwappedIn(RenderViewHost* host) {
 }
 
 WebContents* WebContentsViewGtk::web_contents() {
@@ -284,7 +285,8 @@ void WebContentsViewGtk::GotFocus() {
 void WebContentsViewGtk::TakeFocus(bool reverse) {
   if (!web_contents_->GetDelegate())
     return;
-  if (!web_contents_->GetDelegate()->TakeFocus(web_contents_, reverse)) {
+  if (!web_contents_->GetDelegate()->TakeFocus(web_contents_, reverse) &&
+      GetTopLevelNativeWindow()) {
     gtk_widget_child_focus(GTK_WIDGET(GetTopLevelNativeWindow()),
         reverse ? GTK_DIR_TAB_BACKWARD : GTK_DIR_TAB_FORWARD);
   }

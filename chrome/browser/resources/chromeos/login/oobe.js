@@ -7,7 +7,28 @@
  * This is the main code for the OOBE WebUI implementation.
  */
 
-var localStrings = new LocalStrings();
+<include src="../user_images_grid.js"></include>
+<include src="apps_menu.js"></include>
+<include src="bubble.js"></include>
+<include src="display_manager.js"></include>
+<include src="header_bar.js"></include>
+<include src="managed_user_creation.js"></include>
+<include src="screen_locally_managed_user_creation.js"></include>
+<include src="network_dropdown.js"></include>
+<include src="oobe_screen_eula.js"></include>
+<include src="oobe_screen_network.js"></include>
+<include src="oobe_screen_reset.js"></include>
+<include src="oobe_screen_update.js"></include>
+<include src="oobe_screen_user_image.js"></include>
+<include src="oobe_screen_oauth_enrollment.js"></include>
+<include src="screen_account_picker.js"></include>
+<include src="screen_gaia_signin.js"></include>
+<include src="screen_error_message.js"></include>
+<include src="screen_tpm_error.js"></include>
+<include src="screen_password_changed.js"></include>
+<include src="oobe_screen_terms_of_service.js"></include>
+<include src="screen_wrong_hwid.js"></include>
+<include src="user_pod_row.js"></include>
 
 cr.define('cr.ui', function() {
   var DisplayManager = cr.ui.login.DisplayManager;
@@ -66,6 +87,7 @@ cr.define('cr.ui', function() {
    */
   Oobe.initialize = function() {
     DisplayManager.initialize();
+    oobe.WrongHWIDScreen.register();
     oobe.NetworkScreen.register();
     oobe.EulaScreen.register();
     oobe.UpdateScreen.register();
@@ -77,16 +99,12 @@ cr.define('cr.ui', function() {
     login.ErrorMessageScreen.register();
     login.TPMErrorMessageScreen.register();
     login.PasswordChangedScreen.register();
+    login.ManagedUserCreationScreen.register();
+    login.LocallyManagedUserCreationScreen.register();
+    oobe.TermsOfServiceScreen.register();
 
     cr.ui.Bubble.decorate($('bubble'));
     login.HeaderBar.decorate($('login-header-bar'));
-
-    // TODO: Cleanup with old OOBE style removal.
-    $('security-link').addEventListener('click', function(event) {
-      chrome.send('eulaOnInstallationSettingsPopupOpened');
-      $('popup-overlay').hidden = false;
-      $('installation-settings-ok-button').focus();
-    });
 
     Oobe.initializeA11yMenu();
 
@@ -136,6 +154,17 @@ cr.define('cr.ui', function() {
     $('accessibility-menu').showForElement(e.target,
                                            cr.ui.Bubble.Attachment.BOTTOM,
                                            BUBBLE_OFFSET, BUBBLE_PADDING);
+    if (Oobe.getInstance().currentScreen &&
+        Oobe.getInstance().currentScreen.defaultControl) {
+      $('accessibility-menu').elementToFocusOnHide =
+          Oobe.getInstance().currentScreen.defaultControl;
+    } else {
+      // Update screen falls into this category. Since it doesn't have any
+      // controls other than a11y link we don't want that link to receive focus
+      // when screen is shown i.e. defaultControl is not defined.
+      // Focus a11y link instead.
+      $('accessibility-menu').elementToFocusOnHide = e.target;
+    }
     e.stopPropagation();
   };
 
@@ -169,6 +198,13 @@ cr.define('cr.ui', function() {
    */
   Oobe.showScreen = function(screen) {
     Oobe.getInstance().showScreen(screen);
+  };
+
+  /**
+   * Shows the previous screen of workflow.
+   */
+  Oobe.goBack = function() {
+    Oobe.getInstance().goBack();
   };
 
   /**
@@ -225,20 +261,20 @@ cr.define('cr.ui', function() {
     var minutes = Math.ceil(seconds / 60);
     var message = '';
     if (minutes > 60) {
-      message = localStrings.getString('downloadingTimeLeftLong');
+      message = loadTimeData.getString('downloadingTimeLeftLong');
     } else if (minutes > 55) {
-      message = localStrings.getString('downloadingTimeLeftStatusOneHour');
+      message = loadTimeData.getString('downloadingTimeLeftStatusOneHour');
     } else if (minutes > 20) {
-      message = localStrings.getStringF('downloadingTimeLeftStatusMinutes',
+      message = loadTimeData.getStringF('downloadingTimeLeftStatusMinutes',
                                         Math.ceil(minutes / 5) * 5);
     } else if (minutes > 1) {
-      message = localStrings.getStringF('downloadingTimeLeftStatusMinutes',
+      message = loadTimeData.getStringF('downloadingTimeLeftStatusMinutes',
                                         minutes);
     } else {
-      message = localStrings.getString('downloadingTimeLeftSmall');
+      message = loadTimeData.getString('downloadingTimeLeftSmall');
     }
     $('estimated-time-left').textContent =
-      localStrings.getStringF('downloading', message);
+      loadTimeData.getStringF('downloading', message);
   };
 
   /**
@@ -308,8 +344,8 @@ cr.define('cr.ui', function() {
    */
   Oobe.reloadContent = function(data) {
     // Reload global local strings, process DOM tree again.
-    templateData = data;
-    i18nTemplate.process(document, data);
+    loadTimeData.overrideValues(data);
+    i18nTemplate.process(document, loadTimeData);
 
     // Update language and input method menu lists.
     Oobe.setupSelect($('language-select'), data.languageList, '');
@@ -395,6 +431,13 @@ cr.define('cr.ui', function() {
   };
 
   /**
+   * Shows dialog to create managed user.
+   */
+  Oobe.showManagedUserCreationScreen = function() {
+    DisplayManager.showManagedUserCreationScreen();
+  };
+
+  /**
    * Shows TPM error screen.
    */
   Oobe.showTpmError = function() {
@@ -460,6 +503,39 @@ cr.define('cr.ui', function() {
    */
   Oobe.forceLockedUserPodFocus = function() {
     login.AccountPickerScreen.forceLockedUserPodFocus();
+  };
+
+  /**
+   * Sets the domain name whose Terms of Service are being shown on the Terms of
+   * Service screen.
+   * @param {string} domain The domain name.
+   */
+  Oobe.setTermsOfServiceDomain = function(domain) {
+    oobe.TermsOfServiceScreen.setDomain(domain);
+  };
+
+  /**
+   * Displays an error message on the Terms of Service screen. Called when the
+   * download of the Terms of Service has failed.
+   */
+  Oobe.setTermsOfServiceLoadError = function() {
+    $('terms-of-service').classList.remove('tos-loading');
+    $('terms-of-service').classList.add('error');
+  };
+
+  /**
+   * Displays the given |termsOfService| on the Terms of Service screen.
+   * @param {string} termsOfService The terms of service, as plain text.
+   */
+  Oobe.setTermsOfService = function(termsOfService) {
+    oobe.TermsOfServiceScreen.setTermsOfService(termsOfService);
+  };
+
+  /**
+   * Clears password field in user-pod.
+   */
+  Oobe.clearUserPodPassword = function() {
+    DisplayManager.clearUserPodPassword();
   };
 
   // Export

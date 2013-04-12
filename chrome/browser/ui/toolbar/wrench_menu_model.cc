@@ -9,26 +9,22 @@
 
 #include "base/command_line.h"
 #include "base/i18n/number_formatting.h"
-#include "base/string_number_conversions.h"
+#include "base/prefs/pref_service.h"
 #include "base/string_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/utf_string_conversions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/defaults.h"
-#include "chrome/browser/prefs/pref_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/signin/signin_manager.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
-#include "chrome/browser/sync/profile_sync_service.h"
-#include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/browser/sync/sync_global_error.h"
-#include "chrome/browser/sync/sync_ui_util.h"
+#include "chrome/browser/signin/signin_ui_util.h"
 #include "chrome/browser/task_manager/task_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/global_error/global_error.h"
 #include "chrome/browser/ui/global_error/global_error_service.h"
@@ -59,6 +55,7 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
+#include "ui/native_theme/native_theme.h"
 
 #if defined(OS_WIN)
 #include "base/win/metro.h"
@@ -75,6 +72,20 @@
 using content::HostZoomMap;
 using content::UserMetricsAction;
 using content::WebContents;
+
+namespace {
+// Conditionally return the update app menu item title based on upgrade detector
+// state.
+string16 GetUpgradeDialogMenuItemName() {
+  if (UpgradeDetector::GetInstance()->is_outdated_install()) {
+    return l10n_util::GetStringFUTF16(
+        IDS_UPGRADE_BUBBLE_MENU_ITEM,
+        l10n_util::GetStringUTF16(IDS_SHORT_PRODUCT_NAME));
+  } else {
+    return l10n_util::GetStringUTF16(IDS_UPDATE_NOW);
+  }
+}
+}  // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
 // EncodingMenuModel
@@ -116,7 +127,8 @@ void EncodingMenuModel::Build() {
 }
 
 bool EncodingMenuModel::IsCommandIdChecked(int command_id) const {
-  WebContents* current_tab = chrome::GetActiveWebContents(browser_);
+  WebContents* current_tab =
+      browser_->tab_strip_model()->GetActiveWebContents();
   if (!current_tab)
     return false;
   EncodingMenuController controller;
@@ -217,16 +229,17 @@ WrenchMenuModel::WrenchMenuModel(ui::AcceleratorProvider* provider,
     : ALLOW_THIS_IN_INITIALIZER_LIST(ui::SimpleMenuModel(this)),
       provider_(provider),
       browser_(browser),
-      tab_strip_model_(browser_->tab_strip_model()) {
+      tab_strip_model_(browser_->tab_strip_model()),
+      zoom_callback_(base::Bind(&WrenchMenuModel::OnZoomLevelChanged,
+                                base::Unretained(this))) {
   Build(is_new_menu, supports_new_separators);
   UpdateZoomControls();
 
+  HostZoomMap::GetForBrowserContext(
+      browser->profile())->AddZoomLevelChangedCallback(zoom_callback_);
+
   tab_strip_model_->AddObserver(this);
 
-  registrar_.Add(
-      this, content::NOTIFICATION_ZOOM_LEVEL_CHANGED,
-      content::Source<HostZoomMap>(
-          HostZoomMap::GetForBrowserContext(browser_->profile())));
   registrar_.Add(this, content::NOTIFICATION_NAV_ENTRY_COMMITTED,
                  content::NotificationService::AllSources());
 }
@@ -234,6 +247,11 @@ WrenchMenuModel::WrenchMenuModel(ui::AcceleratorProvider* provider,
 WrenchMenuModel::~WrenchMenuModel() {
   if (tab_strip_model_)
     tab_strip_model_->RemoveObserver(this);
+
+  if (browser()) {
+    HostZoomMap::GetForBrowserContext(
+        browser()->profile())->RemoveZoomLevelChangedCallback(zoom_callback_);
+  }
 }
 
 bool WrenchMenuModel::DoesCommandIdDismissMenu(int command_id) const {
@@ -249,7 +267,7 @@ bool WrenchMenuModel::IsItemForCommandIdDynamic(int command_id) const {
 #endif
          command_id == IDC_VIEW_BACKGROUND_PAGES ||
          command_id == IDC_UPGRADE_DIALOG ||
-         command_id == IDC_SHOW_SYNC_SETUP;
+         command_id == IDC_SHOW_SIGNIN;
 }
 
 string16 WrenchMenuModel::GetLabelForCommandId(int command_id) const {
@@ -267,7 +285,8 @@ string16 WrenchMenuModel::GetLabelForCommandId(int command_id) const {
 #elif defined(OS_WIN)
     case IDC_PIN_TO_START_SCREEN: {
       int string_id = IDS_PIN_TO_START_SCREEN;
-      WebContents* web_contents = chrome::GetActiveWebContents(browser_);
+      WebContents* web_contents =
+          browser_->tab_strip_model()->GetActiveWebContents();
       MetroPinTabHelper* tab_helper =
           web_contents ? MetroPinTabHelper::FromWebContents(web_contents)
                        : NULL;
@@ -283,25 +302,10 @@ string16 WrenchMenuModel::GetLabelForCommandId(int command_id) const {
                                         num_background_pages);
     }
     case IDC_UPGRADE_DIALOG:
-      return l10n_util::GetStringUTF16(IDS_UPDATE_NOW);
-    case IDC_SHOW_SYNC_SETUP: {
-      ProfileSyncService* service =
-          ProfileSyncServiceFactory::GetInstance()->GetForProfile(
-              browser_->profile()->GetOriginalProfile());
-      SyncGlobalError* error = service->sync_global_error();
-      if (error && error->HasCustomizedSyncMenuItem())
-        return error->MenuItemLabel();
-      if (service->HasSyncSetupCompleted()) {
-        std::string username = browser_->profile()->GetPrefs()->GetString(
-            prefs::kGoogleServicesUsername);
-        if (!username.empty()) {
-          return l10n_util::GetStringFUTF16(IDS_SYNC_MENU_SYNCED_LABEL,
-                                            UTF8ToUTF16(username));
-        }
-      }
-      return l10n_util::GetStringFUTF16(IDS_SYNC_MENU_PRE_SYNCED_LABEL,
-          l10n_util::GetStringUTF16(IDS_SHORT_PRODUCT_NAME));
-    }
+      return GetUpgradeDialogMenuItemName();
+    case IDC_SHOW_SIGNIN:
+      return signin_ui_util::GetSigninMenuLabel(
+          browser_->profile()->GetOriginalProfile());
     default:
       NOTREACHED();
       return string16();
@@ -321,12 +325,10 @@ bool WrenchMenuModel::GetIconForCommandId(int command_id,
       }
       return false;
     }
-    case IDC_SHOW_SYNC_SETUP: {
-      ProfileSyncService* service =
-          ProfileSyncServiceFactory::GetInstance()->GetForProfile(
-              browser_->profile()->GetOriginalProfile());
-      SyncGlobalError* error = service->sync_global_error();
-      if (error && error->HasCustomizedSyncMenuItem()) {
+    case IDC_SHOW_SIGNIN: {
+      GlobalError* error = signin_ui_util::GetSignedInServiceError(
+          browser_->profile()->GetOriginalProfile());
+      if (error) {
         int icon_id = error->MenuItemIconResourceID();
         if (icon_id) {
           *icon = rb.GetNativeImageNamed(icon_id);
@@ -349,12 +351,11 @@ void WrenchMenuModel::ExecuteCommand(int command_id) {
     return;
   }
 
-  if (command_id == IDC_SHOW_SYNC_SETUP) {
-    ProfileSyncService* service =
-        ProfileSyncServiceFactory::GetInstance()->GetForProfile(
-            browser_->profile()->GetOriginalProfile());
-    SyncGlobalError* error = service->sync_global_error();
-    if (error && error->HasCustomizedSyncMenuItem()) {
+  if (command_id == IDC_SHOW_SIGNIN) {
+    // If a custom error message is being shown, handle it.
+    GlobalError* error = signin_ui_util::GetSignedInServiceError(
+        browser_->profile()->GetOriginalProfile());
+    if (error) {
       error->ExecuteMenuItem(browser_);
       return;
     }
@@ -443,14 +444,8 @@ void WrenchMenuModel::TabStripModelDeleted() {
 void WrenchMenuModel::Observe(int type,
                               const content::NotificationSource& source,
                               const content::NotificationDetails& details) {
-  switch (type) {
-    case content::NOTIFICATION_ZOOM_LEVEL_CHANGED:
-    case content::NOTIFICATION_NAV_ENTRY_COMMITTED:
-      UpdateZoomControls();
-      break;
-    default:
-      NOTREACHED();
-  }
+  DCHECK(type == content::NOTIFICATION_NAV_ENTRY_COMMITTED);
+  UpdateZoomControls();
 }
 
 // For testing.
@@ -463,7 +458,7 @@ WrenchMenuModel::WrenchMenuModel()
 
 void WrenchMenuModel::Build(bool is_new_menu, bool supports_new_separators) {
 #if defined(USE_AURA)
-  if (is_new_menu)
+  if (is_new_menu && !ui::NativeTheme::IsNewMenuStyleEnabled())
     AddSeparator(ui::SPACING_SEPARATOR);
 #endif
 
@@ -486,6 +481,14 @@ void WrenchMenuModel::Build(bool is_new_menu, bool supports_new_separators) {
     AddItemWithStringId(IDC_NEW_WINDOW, IDS_NEW_WINDOW);
     AddItemWithStringId(IDC_NEW_INCOGNITO_WINDOW, IDS_NEW_INCOGNITO_WINDOW);
   }
+#if !defined(NDEBUG) && defined(USE_ASH)
+  if (base::win::GetVersion() < base::win::VERSION_WIN8 &&
+      chrome::HOST_DESKTOP_TYPE_NATIVE != chrome::HOST_DESKTOP_TYPE_ASH) {
+    AddItemWithStringId(IDC_TOGGLE_ASH_DESKTOP,
+                        ash::Shell::HasInstance() ? IDS_CLOSE_ASH_DESKTOP :
+                                                    IDS_OPEN_ASH_DESKTOP);
+  }
+#endif
 #else  // defined(OS_WIN)
   AddItemWithStringId(IDC_NEW_WINDOW, IDS_NEW_WINDOW);
 #if defined(OS_CHROMEOS)
@@ -496,14 +499,6 @@ void WrenchMenuModel::Build(bool is_new_menu, bool supports_new_separators) {
 #endif
 
 #endif  // else of defined(OS_WIN)
-
-#if defined(USE_ASH)
-  if (chrome::HOST_DESKTOP_TYPE_NATIVE != chrome::HOST_DESKTOP_TYPE_ASH) {
-    AddItemWithStringId(IDC_TOGGLE_ASH_DESKTOP,
-                        ash::Shell::HasInstance() ? IDS_CLOSE_ASH_DESKTOP :
-                                                    IDS_OPEN_ASH_DESKTOP);
-  }
-#endif
 
   bookmark_sub_menu_model_.reset(new BookmarkSubMenuModel(this, browser_));
   AddSubMenuWithStringId(IDC_BOOKMARKS_MENU, IDS_BOOKMARKS_MENU,
@@ -517,7 +512,7 @@ void WrenchMenuModel::Build(bool is_new_menu, bool supports_new_separators) {
                            recent_tabs_sub_menu_model_.get());
   }
 
-#if defined(OS_WIN)
+#if defined(OS_WIN) && !defined(USE_ASH)
   if (base::win::IsMetroProcess()) {
     // Metro mode, add the 'Relaunch Chrome in desktop mode'.
     AddSeparator(ui::SPACING_SEPARATOR);
@@ -556,14 +551,18 @@ void WrenchMenuModel::Build(bool is_new_menu, bool supports_new_separators) {
   AddItemWithStringId(IDC_SHOW_DOWNLOADS, IDS_SHOW_DOWNLOADS);
   AddSeparator(ui::NORMAL_SEPARATOR);
 
-  if (browser_defaults::kShowSyncSetupMenuItem &&
-      browser_->profile()->GetOriginalProfile()->IsSyncAccessible()) {
+#if !defined(OS_CHROMEOS)
+  // No "Sign in to Chromium..." menu item on ChromeOS.
+  SigninManager* signin = SigninManagerFactory::GetForProfile(
+      browser_->profile()->GetOriginalProfile());
+  if (signin && signin->IsSigninAllowed()) {
     const string16 short_product_name =
         l10n_util::GetStringUTF16(IDS_SHORT_PRODUCT_NAME);
     AddItem(IDC_SHOW_SYNC_SETUP, l10n_util::GetStringFUTF16(
         IDS_SYNC_MENU_PRE_SYNCED_LABEL, short_product_name));
     AddSeparator(ui::NORMAL_SEPARATOR);
   }
+#endif
 
   AddItemWithStringId(IDC_OPTIONS, IDS_SETTINGS);
 
@@ -590,7 +589,8 @@ void WrenchMenuModel::Build(bool is_new_menu, bool supports_new_separators) {
   }
 
   if (browser_defaults::kShowUpgradeMenuItem)
-    AddItem(IDC_UPGRADE_DIALOG, l10n_util::GetStringUTF16(IDS_UPDATE_NOW));
+    AddItem(IDC_UPGRADE_DIALOG, GetUpgradeDialogMenuItemName());
+
   AddItem(IDC_VIEW_INCOMPATIBILITIES, l10n_util::GetStringUTF16(
       IDS_VIEW_INCOMPATIBILITIES));
 
@@ -625,8 +625,10 @@ void WrenchMenuModel::Build(bool is_new_menu, bool supports_new_separators) {
     AddItemWithStringId(IDC_EXIT, IDS_EXIT);
   }
 
-  if (is_new_menu && supports_new_separators)
+  if (is_new_menu && supports_new_separators &&
+      !ui::NativeTheme::IsNewMenuStyleEnabled()) {
     AddSeparator(ui::SPACING_SEPARATOR);
+  }
 }
 
 void WrenchMenuModel::AddGlobalErrorMenuItems() {
@@ -711,17 +713,15 @@ void WrenchMenuModel::UpdateZoomControls() {
   bool enable_increment = false;
   bool enable_decrement = false;
   int zoom_percent = 100;
-  if (chrome::GetActiveWebContents(browser_)) {
-    zoom_percent = chrome::GetActiveWebContents(browser_)->GetZoomPercent(
-        &enable_increment, &enable_decrement);
+  if (browser_->tab_strip_model()->GetActiveWebContents()) {
+    zoom_percent =
+        browser_->tab_strip_model()->GetActiveWebContents()->GetZoomPercent(
+            &enable_increment, &enable_decrement);
   }
   zoom_label_ = l10n_util::GetStringFUTF16(
       IDS_ZOOM_PERCENT, base::IntToString16(zoom_percent));
 }
 
-string16 WrenchMenuModel::GetSyncMenuLabel() const {
-  Profile* profile = browser_->profile()->GetOriginalProfile();
-  return sync_ui_util::GetSyncMenuLabel(
-      ProfileSyncServiceFactory::GetForProfile(profile),
-      *SigninManagerFactory::GetForProfile(profile));
+void WrenchMenuModel::OnZoomLevelChanged(const std::string& host) {
+  UpdateZoomControls();
 }

@@ -105,7 +105,6 @@ class FaviconHandler {
   // |bitmaps| is a list of all the frames of the icon at |image_url|.
   void OnDidDownloadFavicon(int id,
                             const GURL& image_url,
-                            bool errored,
                             int requested_size,
                             const std::vector<SkBitmap>& bitmaps);
 
@@ -191,8 +190,7 @@ class FaviconHandler {
 
   // See description above class for details.
   void OnFaviconDataForInitialURL(
-      const std::vector<history::FaviconBitmapResult>& favicon_bitmap_results,
-      const history::IconURLSizesMap& icon_url_sizes);
+      const std::vector<history::FaviconBitmapResult>& favicon_bitmap_results);
 
   // If the favicon has expired, asks the renderer to download the favicon.
   // Otherwise asks history to update the mapping between page url and icon
@@ -203,8 +201,7 @@ class FaviconHandler {
 
   // See description above class for details.
   void OnFaviconData(
-      const std::vector<history::FaviconBitmapResult>& favicon_bitmap_results,
-      const history::IconURLSizesMap& icon_url_sizes);
+      const std::vector<history::FaviconBitmapResult>& favicon_bitmap_results);
 
   // Schedules a download for the specified entry. This adds the request to
   // download_requests_.

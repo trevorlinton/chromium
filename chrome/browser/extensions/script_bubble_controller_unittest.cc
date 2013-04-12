@@ -5,7 +5,7 @@
 #include <string>
 
 #include "base/command_line.h"
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop.h"
 #include "chrome/browser/extensions/component_loader.h"
@@ -45,7 +45,7 @@ class ScriptBubbleControllerTest : public ChromeRenderViewHostTestHarness {
         Profile::FromBrowserContext(web_contents()->GetBrowserContext());
     extension_service_ = static_cast<TestExtensionSystem*>(
         ExtensionSystem::Get(profile))->CreateExtensionService(
-            &command_line, FilePath(), false);
+            &command_line, base::FilePath(), false);
     extension_service_->Init();
 
     TabHelper::CreateForWebContents(web_contents());
@@ -70,9 +70,9 @@ class ScriptBubbleControllerTest : public ChromeRenderViewHostTestHarness {
 
 TEST_F(ScriptBubbleControllerTest, Basics) {
 #if defined(OS_WIN)
-  FilePath root(FILE_PATH_LITERAL("c:\\"));
+  base::FilePath root(FILE_PATH_LITERAL("c:\\"));
 #else
-  FilePath root(FILE_PATH_LITERAL("/root"));
+  base::FilePath root(FILE_PATH_LITERAL("/root"));
 #endif
   scoped_refptr<const Extension> extension1 =
       ExtensionBuilder()
@@ -80,7 +80,9 @@ TEST_F(ScriptBubbleControllerTest, Basics) {
       .SetManifest(DictionaryBuilder()
                    .Set("name", "ex1")
                    .Set("version", "1")
-                   .Set("manifest_version", 2))
+                   .Set("manifest_version", 2)
+                   .Set("permissions", ListBuilder()
+                        .Append("activeTab")))
       .Build();
 
   scoped_refptr<const Extension> extension2 =
@@ -89,7 +91,9 @@ TEST_F(ScriptBubbleControllerTest, Basics) {
       .SetManifest(DictionaryBuilder()
                    .Set("name", "ex2")
                    .Set("version", "1")
-                   .Set("manifest_version", 2))
+                   .Set("manifest_version", 2)
+                   .Set("permissions", ListBuilder()
+                        .Append("activeTab")))
       .Build();
 
   scoped_refptr<const Extension> extension3 =
@@ -98,7 +102,9 @@ TEST_F(ScriptBubbleControllerTest, Basics) {
       .SetManifest(DictionaryBuilder()
                    .Set("name", "ex3")
                    .Set("version", "1")
-                   .Set("manifest_version", 2))
+                   .Set("manifest_version", 2)
+                   .Set("permissions", ListBuilder()
+                        .Append("activeTab")))
       .Build();
 
   extension_service_->AddExtension(extension1);

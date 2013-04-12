@@ -4,6 +4,7 @@
 {
   'variables': {
     'grit_out_dir': '<(SHARED_INTERMEDIATE_DIR)/chrome',
+    'about_credits_file': '<(SHARED_INTERMEDIATE_DIR)/about_credits.html',
     'repack_locales_cmd': ['python', 'tools/build/repack_locales.py'],
   },
   'targets': [
@@ -15,16 +16,16 @@
       # it easier for us to reference them internally.
       'actions': [
         {
-          'action_name': 'net_internals_resources',
+          'action_name': 'memory_internals_resources',
           'variables': {
-            'grit_grd_file': 'browser/resources/net_internals_resources.grd',
+            'grit_grd_file': 'browser/resources/memory_internals_resources.grd',
           },
           'includes': [ '../build/grit_action.gypi' ],
         },
         {
-          'action_name': 'shared_resources',
+          'action_name': 'net_internals_resources',
           'variables': {
-            'grit_grd_file': 'browser/resources/shared_resources.grd',
+            'grit_grd_file': 'browser/resources/net_internals_resources.grd',
           },
           'includes': [ '../build/grit_action.gypi' ],
         },
@@ -98,12 +99,18 @@
       # generated headers.
       'target_name': 'chrome_resources',
       'type': 'none',
+      'dependencies': [
+        'about_credits',
+      ],
       'actions': [
         # Data resources.
         {
           'action_name': 'browser_resources',
           'variables': {
             'grit_grd_file': 'browser/browser_resources.grd',
+            'grit_additional_defines': [
+              '-E', 'about_credits_file=<(about_credits_file)',
+            ],
           },
           'includes': [ '../build/grit_action.gypi' ],
         },
@@ -326,6 +333,7 @@
             # TODO(zork): Protect this with if use_aura==1
             '<(DEPTH)/ash/ash_strings.gyp:ash_strings',
             '<(DEPTH)/content/content_resources.gyp:content_resources',
+            '<(DEPTH)/device/device_bluetooth_strings.gyp:device_bluetooth_strings',
             '<(DEPTH)/webkit/support/webkit_support.gyp:webkit_resources',
             '<(DEPTH)/webkit/support/webkit_support.gyp:webkit_strings',
           ],
@@ -428,6 +436,32 @@
         },
       ],
       'includes': [ '../build/grit_target.gypi' ],
+    },
+    {
+      'target_name': 'about_credits',
+      'type': 'none',
+      'actions': [
+        {
+          'variables': {
+            'generator_path': '../tools/licenses.py',
+          },
+          'action_name': 'generate_about_credits',
+          'inputs': [
+            # TODO(phajdan.jr): make licenses.py print inputs too.
+            '<(generator_path)',
+          ],
+          'outputs': [
+            '<(about_credits_file)',
+          ],
+          'hard_dependency': 1,
+          'action': ['python',
+                     '<(generator_path)',
+                     'credits',
+                     '<(about_credits_file)',
+          ],
+          'message': 'Generating about:credits.',
+        },
+      ],
     },
   ], # targets
 }

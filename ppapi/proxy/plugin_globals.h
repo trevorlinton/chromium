@@ -30,14 +30,16 @@ class PluginProxyDelegate;
 class PPAPI_PROXY_EXPORT PluginGlobals : public PpapiGlobals {
  public:
   PluginGlobals();
-  PluginGlobals(PpapiGlobals::ForTest);
+  explicit PluginGlobals(PpapiGlobals::PerThreadForTest);
   virtual ~PluginGlobals();
 
   // Getter for the global singleton. Generally, you should use
   // PpapiGlobals::Get() when possible. Use this only when you need some
   // plugin-specific functionality.
   inline static PluginGlobals* Get() {
-    DCHECK(PpapiGlobals::Get()->IsPluginGlobals());
+    // Explicitly crash if this is the wrong process type, we want to get
+    // crash reports.
+    CHECK(PpapiGlobals::Get()->IsPluginGlobals());
     return static_cast<PluginGlobals*>(PpapiGlobals::Get());
   }
 

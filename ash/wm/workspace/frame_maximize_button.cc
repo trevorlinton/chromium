@@ -7,6 +7,7 @@
 #include "ash/launcher/launcher.h"
 #include "ash/screen_ash.h"
 #include "ash/shell.h"
+#include "ash/shell_delegate.h"
 #include "ash/wm/maximize_bubble_controller.h"
 #include "ash/wm/property_util.h"
 #include "ash/wm/workspace/phantom_window_controller.h"
@@ -253,7 +254,8 @@ void FrameMaximizeButton::OnGestureEvent(ui::GestureEvent* event) {
   }
 
   if (event->type() == ui::ET_GESTURE_TAP ||
-      event->type() == ui::ET_GESTURE_SCROLL_END) {
+      event->type() == ui::ET_GESTURE_SCROLL_END ||
+      event->type() == ui::ET_SCROLL_FLING_START) {
     // The position of the event may have changed from the previous event (both
     // for TAP and SCROLL_END). So it is necessary to update the snap-state for
     // the current event.
@@ -490,10 +492,14 @@ gfx::Point FrameMaximizeButton::LocationForSnapSizer(
 }
 
 void FrameMaximizeButton::Snap(const SnapSizer& snap_sizer) {
+  ash::Shell* shell = ash::Shell::GetInstance();
   views::Widget* widget = frame_->GetWidget();
   switch (snap_type_) {
     case SNAP_LEFT:
     case SNAP_RIGHT: {
+      shell->delegate()->RecordUserMetricsAction(
+          snap_type_ == SNAP_LEFT ? ash::UMA_MAXIMIZE_BUTTON_MAXIMIZE_LEFT :
+                                    ash::UMA_MAXIMIZE_BUTTON_MAXIMIZE_RIGHT);
       // Get the bounds in screen coordinates for restore purposes.
       gfx::Rect restore = widget->GetWindowBoundsInScreen();
       if (widget->IsMaximized()) {
@@ -521,12 +527,18 @@ void FrameMaximizeButton::Snap(const SnapSizer& snap_sizer) {
     }
     case SNAP_MAXIMIZE:
       widget->Maximize();
+      shell->delegate()->RecordUserMetricsAction(
+          ash::UMA_MAXIMIZE_BUTTON_MAXIMIZE);
       break;
     case SNAP_MINIMIZE:
       widget->Minimize();
+      shell->delegate()->RecordUserMetricsAction(
+          ash::UMA_MAXIMIZE_BUTTON_MINIMIZE);
       break;
     case SNAP_RESTORE:
       widget->Restore();
+      shell->delegate()->RecordUserMetricsAction(
+          ash::UMA_MAXIMIZE_BUTTON_RESTORE);
       break;
     case SNAP_NONE:
       NOTREACHED();

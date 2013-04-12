@@ -8,7 +8,7 @@
 #include "googleurl/src/gurl.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebVector.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebVector.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebPluginParams.h"
 #include "webkit/plugins/webplugininfo.h"
 
@@ -136,7 +136,7 @@ TEST_F(ChromeContentRendererClientTest, NaClRestriction) {
   // interfaces.
   {
     WebPluginParams params;
-    EXPECT_TRUE(ChromeContentRendererClient::IsNaClAllowed(
+    EXPECT_FALSE(ChromeContentRendererClient::IsNaClAllowed(
         GURL(), GURL("http://plus.google.com/games"),
         kNaClRestricted, kExtensionRestricted, kExtensionNotFromWebStore,
         &params));
@@ -151,7 +151,7 @@ TEST_F(ChromeContentRendererClientTest, NaClRestriction) {
         kNaClRestricted, kExtensionRestricted, kExtensionNotFromWebStore,
         &params));
     EXPECT_FALSE(AllowsDevInterfaces(params));
-    EXPECT_TRUE(ChromeContentRendererClient::IsNaClAllowed(
+    EXPECT_FALSE(ChromeContentRendererClient::IsNaClAllowed(
         GURL(), GURL("http://plus.sandbox.google.com/games"),
         kNaClRestricted, kExtensionRestricted, kExtensionNotFromWebStore,
         &params));
@@ -191,7 +191,7 @@ TEST_F(ChromeContentRendererClientTest, NaClRestriction) {
   {
     WebPluginParams params;
     EXPECT_FALSE(ChromeContentRendererClient::IsNaClAllowed(
-        GURL(), GURL("http://plus.google.com.evil.com/games"),
+        GURL(), GURL("https://plus.google.com.evil.com/games"),
         kNaClRestricted, kExtensionRestricted, kExtensionNotFromWebStore,
         &params));
   }

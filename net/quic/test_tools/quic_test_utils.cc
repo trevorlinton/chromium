@@ -4,18 +4,26 @@
 
 #include "net/quic/test_tools/quic_test_utils.h"
 
+#include "base/stl_util.h"
 #include "net/quic/crypto/crypto_framer.h"
+#include "net/quic/crypto/crypto_handshake.h"
+#include "net/quic/crypto/crypto_utils.h"
+#include "net/quic/crypto/null_encrypter.h"
+#include "net/quic/crypto/quic_decrypter.h"
+#include "net/quic/crypto/quic_encrypter.h"
+#include "net/quic/quic_packet_creator.h"
 
 using std::max;
 using std::min;
 using std::string;
+using testing::_;
 
 namespace net {
 namespace test {
 
 MockFramerVisitor::MockFramerVisitor() {
   // By default, we want to accept packets.
-  ON_CALL(*this, OnPacketHeader(testing::_))
+  ON_CALL(*this, OnPacketHeader(_))
       .WillByDefault(testing::Return(true));
 }
 
@@ -26,25 +34,69 @@ bool NoOpFramerVisitor::OnPacketHeader(const QuicPacketHeader& header) {
   return true;
 }
 
-FramerVisitorCapturingAcks::FramerVisitorCapturingAcks() {
+FramerVisitorCapturingFrames::FramerVisitorCapturingFrames() : frame_count_(0) {
 }
 
-FramerVisitorCapturingAcks::~FramerVisitorCapturingAcks() {
+FramerVisitorCapturingFrames::~FramerVisitorCapturingFrames() {
 }
 
-bool FramerVisitorCapturingAcks::OnPacketHeader(
+bool FramerVisitorCapturingFrames::OnPacketHeader(
     const QuicPacketHeader& header) {
   header_ = header;
+  frame_count_ = 0;
   return true;
 }
 
-void FramerVisitorCapturingAcks::OnAckFrame(const QuicAckFrame& frame) {
-  ack_.reset(new QuicAckFrame(frame));
+void FramerVisitorCapturingFrames::OnStreamFrame(const QuicStreamFrame& frame) {
+  // TODO(ianswett): Own the underlying string, so it will not exist outside
+  // this callback.
+  stream_frames_.push_back(frame);
+  ++frame_count_;
 }
 
-void FramerVisitorCapturingAcks::OnCongestionFeedbackFrame(
+void FramerVisitorCapturingFrames::OnAckFrame(const QuicAckFrame& frame) {
+  ack_.reset(new QuicAckFrame(frame));
+  ++frame_count_;
+}
+
+void FramerVisitorCapturingFrames::OnCongestionFeedbackFrame(
     const QuicCongestionFeedbackFrame& frame) {
   feedback_.reset(new QuicCongestionFeedbackFrame(frame));
+  ++frame_count_;
+}
+
+void FramerVisitorCapturingFrames::OnRstStreamFrame(
+    const QuicRstStreamFrame& frame) {
+  rst_.reset(new QuicRstStreamFrame(frame));
+  ++frame_count_;
+}
+
+void FramerVisitorCapturingFrames::OnConnectionCloseFrame(
+    const QuicConnectionCloseFrame& frame) {
+  close_.reset(new QuicConnectionCloseFrame(frame));
+  ++frame_count_;
+}
+
+void FramerVisitorCapturingFrames::OnGoAwayFrame(const QuicGoAwayFrame& frame) {
+  goaway_.reset(new QuicGoAwayFrame(frame));
+  ++frame_count_;
+}
+
+FramerVisitorCapturingPublicReset::FramerVisitorCapturingPublicReset() {
+}
+
+FramerVisitorCapturingPublicReset::~FramerVisitorCapturingPublicReset() {
+}
+
+void FramerVisitorCapturingPublicReset::OnPublicResetPacket(
+    const QuicPublicResetPacket& public_reset) {
+  public_reset_packet_ = public_reset;
+}
+
+MockConnectionVisitor::MockConnectionVisitor() {
+}
+
+MockConnectionVisitor::~MockConnectionVisitor() {
 }
 
 MockHelper::MockHelper() {
@@ -61,22 +113,16 @@ QuicRandom* MockHelper::GetRandomGenerator() {
   return &random_generator_;
 }
 
-MockConnectionVisitor::MockConnectionVisitor() {
-}
-
-MockConnectionVisitor::~MockConnectionVisitor() {
-}
-
-MockScheduler::MockScheduler()
-    : QuicSendScheduler(NULL, kFixRate) {
-}
-
-MockScheduler::~MockScheduler() {
-}
-
 MockConnection::MockConnection(QuicGuid guid, IPEndPoint address)
     : QuicConnection(guid, address, new MockHelper()),
       helper_(helper()) {
+}
+
+MockConnection::MockConnection(QuicGuid guid,
+                               IPEndPoint address,
+                               QuicConnectionHelperInterface* helper)
+    : QuicConnection(guid, address, helper),
+      helper_(helper) {
 }
 
 MockConnection::~MockConnection() {
@@ -88,22 +134,30 @@ PacketSavingConnection::PacketSavingConnection(QuicGuid guid,
 }
 
 PacketSavingConnection::~PacketSavingConnection() {
+  STLDeleteElements(&packets_);
 }
 
-bool PacketSavingConnection::SendPacket(QuicPacketSequenceNumber number,
-                                        QuicPacket* packet,
-                                        bool should_resend,
-                                        bool force,
-                                        bool is_retransmit) {
+bool PacketSavingConnection::SendOrQueuePacket(
+    QuicPacketSequenceNumber sequence_number,
+    QuicPacket* packet,
+    QuicPacketEntropyHash hash) {
   packets_.push_back(packet);
   return true;
 }
 
 MockSession::MockSession(QuicConnection* connection, bool is_server)
     : QuicSession(connection, is_server) {
+  ON_CALL(*this, WriteData(_, _, _, _))
+      .WillByDefault(testing::Return(QuicConsumedData(0, false)));
 }
 
 MockSession::~MockSession() {
+}
+
+MockSendAlgorithm::MockSendAlgorithm() {
+}
+
+MockSendAlgorithm::~MockSendAlgorithm() {
 }
 
 namespace {
@@ -188,18 +242,24 @@ void CompareQuicDataWithHexError(
       expected->data(), expected->length());
 }
 
-QuicPacket* ConstructHandshakePacket(QuicGuid guid, CryptoTag tag) {
-  CryptoHandshakeMessage message;
-  message.tag = tag;
+static QuicPacket* ConstructPacketFromHandshakeMessage(
+    QuicGuid guid,
+    const CryptoHandshakeMessage& message) {
   CryptoFramer crypto_framer;
   scoped_ptr<QuicData> data(crypto_framer.ConstructHandshakeMessage(message));
-  QuicFramer quic_framer(QuicDecrypter::Create(kNULL),
+  QuicFramer quic_framer(kQuicVersion1,
+                         QuicDecrypter::Create(kNULL),
                          QuicEncrypter::Create(kNULL));
 
   QuicPacketHeader header;
-  header.guid = guid;
+  header.public_header.guid = guid;
+  header.public_header.reset_flag = false;
+  header.public_header.version_flag = false;
   header.packet_sequence_number = 1;
-  header.flags = PACKET_FLAGS_NONE;
+  header.entropy_flag = false;
+  header.entropy_hash = 0;
+  header.fec_flag = false;
+  header.fec_entropy_flag = false;
   header.fec_group = 0;
 
   QuicStreamFrame stream_frame(kCryptoStreamId, false, 0,
@@ -208,7 +268,50 @@ QuicPacket* ConstructHandshakePacket(QuicGuid guid, CryptoTag tag) {
   QuicFrame frame(&stream_frame);
   QuicFrames frames;
   frames.push_back(frame);
-  return quic_framer.ConstructFrameDataPacket(header, frames);
+  return quic_framer.ConstructFrameDataPacket(header, frames).packet;
+}
+
+QuicPacket* ConstructHandshakePacket(QuicGuid guid, CryptoTag tag) {
+  CryptoHandshakeMessage message;
+  message.tag = tag;
+  return ConstructPacketFromHandshakeMessage(guid, message);
+}
+
+QuicPacket* ConstructClientHelloPacket(QuicGuid guid,
+                                       const QuicClock* clock,
+                                       QuicRandom* random_generator,
+                                       const string& server_hostname) {
+  QuicCryptoClientConfig config;
+  config.SetDefaults();
+  string nonce;
+  CryptoUtils::GenerateNonce(clock, random_generator, &nonce);
+
+  CryptoHandshakeMessage message;
+  config.FillClientHello(nonce, server_hostname, &message);
+  return ConstructPacketFromHandshakeMessage(guid, message);
+}
+
+QuicPacket* ConstructServerHelloPacket(QuicGuid guid,
+                                       const QuicClock* clock,
+                                       QuicRandom* random_generator) {
+  string nonce;
+  CryptoUtils::GenerateNonce(clock, random_generator, &nonce);
+
+  CryptoHandshakeMessage dummy_client_hello, server_hello;
+  QuicCryptoServerConfig server_config;
+  server_config.AddTestingConfig(random_generator, clock);
+  server_config.ProcessClientHello(dummy_client_hello, nonce, &server_hello);
+  return ConstructPacketFromHandshakeMessage(guid, server_hello);
+}
+
+size_t GetPacketLengthForOneStream(bool include_version, size_t payload) {
+  return NullEncrypter().GetCiphertextSize(payload) +
+      QuicPacketCreator::StreamFramePacketOverhead(1, include_version);
+}
+
+QuicPacketEntropyHash TestEntropyCalculator::ReceivedEntropyHash(
+    QuicPacketSequenceNumber sequence_number) const {
+  return 1u;
 }
 
 }  // namespace test

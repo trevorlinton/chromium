@@ -6,6 +6,7 @@
 
 #include "ash/shell.h"
 #include "ash/system/chromeos/network/network_list_detailed_view_base.h"
+#include "ash/system/tray/system_tray.h"
 #include "ash/system/tray/system_tray_delegate.h"
 #include "ash/system/tray/system_tray_notifier.h"
 #include "ash/system/tray/tray_constants.h"
@@ -27,6 +28,13 @@ class VpnDefaultView : public TrayItemMore {
 
   virtual ~VpnDefaultView() {}
 
+  static bool ShouldShow() {
+    // Do not show VPN line in uber tray bubble if VPN is not configured.
+    std::vector<NetworkIconInfo> list;
+    Shell::GetInstance()->system_tray_delegate()->GetVirtualNetworks(&list);
+    return list.size() != 0;
+  }
+
   void Update() {
     NetworkIconInfo info;
     Shell::GetInstance()->system_tray_delegate()->GetVirtualNetworkIcon(&info);
@@ -45,8 +53,10 @@ class VpnListDetailedView : public NetworkListDetailedViewBase {
                       user::LoginStatus login,
                       int header_string_id)
       : NetworkListDetailedViewBase(owner, login, header_string_id),
-        other_vpn_(NULL) {
+        other_vpn_(NULL),
+        no_networks_view_(NULL) {
   }
+
   virtual ~VpnListDetailedView() {
   }
 
@@ -67,18 +77,6 @@ class VpnListDetailedView : public NetworkListDetailedViewBase {
   virtual void GetAvailableNetworkList(
       std::vector<NetworkIconInfo>* list) OVERRIDE{
     Shell::GetInstance()->system_tray_delegate()->GetVirtualNetworks(list);
-  }
-
-  virtual void RefreshNetworkScrollWithEmptyNetworkList() OVERRIDE {
-    ClearNetworkScrollWithEmptyNetworkList();
-    HoverHighlightView* container = new HoverHighlightView(this);
-    container->set_fixed_height(kTrayPopupItemHeight);
-    container->AddLabel(ui::ResourceBundle::GetSharedInstance().
-        GetLocalizedString(IDS_ASH_STATUS_TRAY_NETWORK_NO_VPN),
-        gfx::Font::NORMAL);
-    scroll_content()->AddChildViewAt(container, 0);
-    scroll_content()->SizeToPreferredSize();
-    static_cast<views::View*>(scroller())->Layout();
   }
 
   virtual void UpdateNetworkEntries() OVERRIDE {
@@ -111,8 +109,38 @@ class VpnListDetailedView : public NetworkListDetailedViewBase {
     return false;
   }
 
+  virtual bool UpdateNetworkListEntries(
+      std::set<std::string>* new_service_paths) OVERRIDE {
+    ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
+    bool needs_relayout = false;
+
+    int index = 0;
+
+    for (size_t i = 0; i < network_list().size(); ++i) {
+      const NetworkIconInfo* info = &network_list()[i];
+      if (UpdateNetworkChild(index++, info))
+        needs_relayout = true;
+      new_service_paths->insert(info->service_path);
+    }
+
+    // We shouldn't be showing this list if there are no VPNs, but it could
+    // be possible to get here if a VPN were removed (e.g. by a policy) while
+    // the UI was open. Better to show something than nothing.
+    if (network_list().empty()) {
+      if (CreateOrUpdateInfoLabel(
+              index++,
+              rb.GetLocalizedString(IDS_ASH_STATUS_TRAY_NETWORK_NO_VPN),
+              &no_networks_view_)) {
+        needs_relayout = true;
+      }
+    }
+
+    return needs_relayout;
+  }
+
  private:
   TrayPopupLabelButton* other_vpn_;
+  views::Label* no_networks_view_;
 
   DISALLOW_COPY_AND_ASSIGN(VpnListDetailedView);
 };
@@ -139,10 +167,7 @@ views::View* TrayVPN::CreateDefaultView(user::LoginStatus status) {
   if (status == user::LOGGED_IN_NONE)
     return NULL;
 
-  // Do not show VPN line in uber tray bubble if VPN is not configured.
-  std::vector<NetworkIconInfo> list;
-  Shell::GetInstance()->system_tray_delegate()->GetVirtualNetworks(&list);
-  if (list.size() == 0)
+  if (!tray::VpnDefaultView::ShouldShow())
     return NULL;
 
   default_ = new tray::VpnDefaultView(this, status != user::LOGGED_IN_LOCKED);
@@ -182,8 +207,16 @@ void TrayVPN::UpdateAfterShelfAlignmentChange(ShelfAlignment alignment) {
 }
 
 void TrayVPN::OnNetworkRefresh(const NetworkIconInfo& info) {
-  if (default_)
+  if (default_) {
     default_->Update();
+  } else if (tray::VpnDefaultView::ShouldShow()) {
+    if (system_tray()->HasSystemBubbleType(
+            SystemTrayBubble::BUBBLE_TYPE_DEFAULT)) {
+      // We created the default view without a VPN view, so rebuild it.
+      system_tray()->ShowDefaultView(BUBBLE_USE_EXISTING);
+    }
+  }
+
   if (detailed_)
     detailed_->ManagerChanged();
 }

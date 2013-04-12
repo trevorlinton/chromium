@@ -25,13 +25,12 @@
 #include "chrome/browser/chromeos/mobile/mobile_activator.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_list.h"
-#include "chrome/browser/ui/webui/chrome_url_data_manager.h"
-#include "chrome/common/jstemplate_builder.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/render_messages.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_view_host_observer.h"
+#include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_message_handler.h"
@@ -42,6 +41,8 @@
 #include "grit/locale_settings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/webui/jstemplate_builder.h"
+#include "ui/webui/web_ui_util.h"
 
 using chromeos::CellularNetwork;
 using chromeos::CrosLibrary;
@@ -80,7 +81,7 @@ class PortalFrameLoadObserver : public content::RenderViewHostObserver {
   }
 
   // IPC::Listener implementation.
-  virtual bool OnMessageReceived(const IPC::Message& message) {
+  virtual bool OnMessageReceived(const IPC::Message& message) OVERRIDE {
     bool handled = true;
     IPC_BEGIN_MESSAGE_MAP(PortalFrameLoadObserver, message)
       IPC_MESSAGE_HANDLER(ChromeViewHostMsg_FrameLoadingError, OnFrameLoadError)
@@ -113,17 +114,21 @@ class PortalFrameLoadObserver : public content::RenderViewHostObserver {
   DISALLOW_COPY_AND_ASSIGN(PortalFrameLoadObserver);
 };
 
-class MobileSetupUIHTMLSource : public ChromeURLDataManager::DataSource {
+class MobileSetupUIHTMLSource : public content::URLDataSource {
  public:
   MobileSetupUIHTMLSource();
 
-  // Called when the network layer has requested a resource underneath
-  // the path we registered.
-  virtual void StartDataRequest(const std::string& path,
-                                bool is_incognito,
-                                int request_id);
-  virtual std::string GetMimeType(const std::string&) const {
+  // content::URLDataSource implementation.
+  virtual std::string GetSource() OVERRIDE;
+  virtual void StartDataRequest(
+      const std::string& path,
+      bool is_incognito,
+      const content::URLDataSource::GotDataCallback& callback) OVERRIDE;
+  virtual std::string GetMimeType(const std::string&) const OVERRIDE {
     return "text/html";
+  }
+  virtual bool ShouldAddContentSecurityPolicy() const OVERRIDE {
+    return false;
   }
 
  private:
@@ -146,9 +151,10 @@ class MobileSetupHandler
 
  private:
   // Changes internal state.
-  void OnActivationStateChanged(CellularNetwork* network,
-                                MobileActivator::PlanActivationState new_state,
-                                const std::string& error_description);
+  virtual void OnActivationStateChanged(
+      CellularNetwork* network,
+      MobileActivator::PlanActivationState new_state,
+      const std::string& error_description) OVERRIDE;
 
   // Handlers for JS WebUI messages.
   void HandleSetTransactionStatus(const ListValue* args);
@@ -171,20 +177,24 @@ class MobileSetupHandler
 //
 ////////////////////////////////////////////////////////////////////////////////
 
-MobileSetupUIHTMLSource::MobileSetupUIHTMLSource()
-    : DataSource(chrome::kChromeUIMobileSetupHost, MessageLoop::current()) {
+MobileSetupUIHTMLSource::MobileSetupUIHTMLSource() {
 }
 
-void MobileSetupUIHTMLSource::StartDataRequest(const std::string& path,
-                                               bool is_incognito,
-                                               int request_id) {
+std::string MobileSetupUIHTMLSource::GetSource() {
+  return chrome::kChromeUIMobileSetupHost;
+}
+
+void MobileSetupUIHTMLSource::StartDataRequest(
+    const std::string& path,
+    bool is_incognito,
+    const content::URLDataSource::GotDataCallback& callback) {
   CellularNetwork* network = !path.size() ? NULL :
       CrosLibrary::Get()->
           GetNetworkLibrary()->FindCellularNetworkByPath(path);
   if (!network || !network->SupportsActivation()) {
     LOG(WARNING) << "Can't find device to activate for service path " << path;
     scoped_refptr<base::RefCountedBytes> html_bytes(new base::RefCountedBytes);
-    SendResponse(request_id, html_bytes);
+    callback.Run(html_bytes);
     return;
   }
 
@@ -210,16 +220,15 @@ void MobileSetupUIHTMLSource::StartDataRequest(const std::string& path,
                     l10n_util::GetStringUTF16(IDS_CANCEL));
   strings.SetString("ok_button",
                     l10n_util::GetStringUTF16(IDS_OK));
-  SetFontAndTextDirection(&strings);
+  webui::SetFontAndTextDirection(&strings);
 
   static const base::StringPiece html(
       ResourceBundle::GetSharedInstance().GetRawDataResource(
           IDR_MOBILE_SETUP_PAGE_HTML));
 
-  std::string full_html = jstemplate_builder::GetI18nTemplateHtml(html,
-                                                                  &strings);
+  std::string full_html = webui::GetI18nTemplateHtml(html, &strings);
 
-  SendResponse(request_id, base::RefCountedString::TakeString(&full_html));
+  callback.Run(base::RefCountedString::TakeString(&full_html));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -338,7 +347,7 @@ MobileSetupUI::MobileSetupUI(content::WebUI* web_ui)
 
   // Set up the chrome://mobilesetup/ source.
   Profile* profile = Profile::FromWebUI(web_ui);
-  ChromeURLDataManager::AddDataSource(profile, html_source);
+  content::URLDataSource::Add(profile, html_source);
 }
 
 void MobileSetupUI::RenderViewCreated(RenderViewHost* host) {

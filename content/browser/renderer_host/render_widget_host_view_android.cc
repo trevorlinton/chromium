@@ -18,7 +18,6 @@
 #include "content/browser/renderer_host/image_transport_factory_android.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/surface_texture_transport_client_android.h"
-#include "content/common/android/device_info.h"
 #include "content/common/gpu/client/gl_helper.h"
 #include "content/common/gpu/gpu_messages.h"
 #include "content/common/view_messages.h"
@@ -27,27 +26,14 @@
 #include "third_party/WebKit/Source/Platform/chromium/public/Platform.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebExternalTextureLayer.h"
 #include "third_party/WebKit/Source/Platform/chromium/public/WebSize.h"
+#include "ui/gfx/android/device_display_info.h"
 #include "ui/gfx/android/java_bitmap.h"
+#include "ui/gfx/display.h"
+#include "ui/gfx/screen.h"
 #include "ui/gfx/size_conversions.h"
 #include "webkit/compositor_bindings/web_compositor_support_impl.h"
 
 namespace content {
-
-namespace {
-
-// TODO(pliard): http://crbug.com/142585. Remove this helper function and update
-// the clients to deal directly with WebKit::WebTextDirection.
-base::i18n::TextDirection ConvertTextDirection(WebKit::WebTextDirection dir) {
-  switch (dir) {
-    case WebKit::WebTextDirectionDefault: return base::i18n::UNKNOWN_DIRECTION;
-    case WebKit::WebTextDirectionLeftToRight: return base::i18n::LEFT_TO_RIGHT;
-    case WebKit::WebTextDirectionRightToLeft: return base::i18n::RIGHT_TO_LEFT;
-  }
-  NOTREACHED() << "Unsupported text direction " << dir;
-  return base::i18n::UNKNOWN_DIRECTION;
-}
-
-}  // namespace
 
 RenderWidgetHostViewAndroid::RenderWidgetHostViewAndroid(
     RenderWidgetHostImpl* widget_host,
@@ -79,6 +65,21 @@ RenderWidgetHostViewAndroid::~RenderWidgetHostViewAndroid() {
     ImageTransportFactoryAndroid::GetInstance()->DeleteTexture(
         texture_id_in_layer_);
   }
+}
+
+
+bool RenderWidgetHostViewAndroid::OnMessageReceived(
+    const IPC::Message& message) {
+  bool handled = true;
+  IPC_BEGIN_MESSAGE_MAP(RenderWidgetHostViewAndroid, message)
+    IPC_MESSAGE_HANDLER(ViewHostMsg_ImeBatchStateChanged_ACK,
+                        OnProcessImeBatchStateAck)
+    IPC_MESSAGE_HANDLER(ViewHostMsg_StartContentIntent, OnStartContentIntent)
+    IPC_MESSAGE_HANDLER(ViewHostMsg_DidChangeBodyBackgroundColor,
+                        OnDidChangeBodyBackgroundColor)
+    IPC_MESSAGE_UNHANDLED(handled = false)
+  IPC_END_MESSAGE_MAP()
+  return handled;
 }
 
 void RenderWidgetHostViewAndroid::InitAsChild(gfx::NativeView parent_view) {
@@ -116,17 +117,21 @@ void RenderWidgetHostViewAndroid::WasHidden() {
   host_->WasHidden();
 }
 
-void RenderWidgetHostViewAndroid::SetSize(const gfx::Size& size) {
-  if (surface_texture_transport_.get())
-    surface_texture_transport_->SetSize(size);
+void RenderWidgetHostViewAndroid::WasResized() {
+  if (surface_texture_transport_.get() && content_view_core_)
+    surface_texture_transport_->SetSize(
+        content_view_core_->GetPhysicalBackingSize());
 
   host_->WasResized();
 }
 
+void RenderWidgetHostViewAndroid::SetSize(const gfx::Size& size) {
+  // Ignore the given size as only the Java code has the power to
+  // resize the view on Android.
+  WasResized();
+}
+
 void RenderWidgetHostViewAndroid::SetBounds(const gfx::Rect& rect) {
-  if (rect.origin().x() || rect.origin().y()) {
-    VLOG(0) << "SetBounds not implemented for (x,y)!=(0,0)";
-  }
   SetSize(rect.size());
 }
 
@@ -190,8 +195,7 @@ bool RenderWidgetHostViewAndroid::PopulateBitmapWithContents(jobject jbitmap) {
 bool RenderWidgetHostViewAndroid::HasValidFrame() const {
   return texture_id_in_layer_ != 0 &&
       content_view_core_ &&
-      !texture_size_in_layer_.IsEmpty() &&
-      texture_size_in_layer_ == content_view_core_->GetBounds().size();
+      !texture_size_in_layer_.IsEmpty();
 }
 
 gfx::NativeView RenderWidgetHostViewAndroid::GetNativeView() const {
@@ -270,7 +274,14 @@ gfx::Rect RenderWidgetHostViewAndroid::GetViewBounds() const {
   if (!content_view_core_)
     return gfx::Rect();
 
-  return content_view_core_->GetBounds();
+  return gfx::Rect(content_view_core_->GetViewportSizeDip());
+}
+
+gfx::Size RenderWidgetHostViewAndroid::GetPhysicalBackingSize() const {
+  if (!content_view_core_)
+    return gfx::Size();
+
+  return content_view_core_->GetPhysicalBackingSize();
 }
 
 void RenderWidgetHostViewAndroid::UpdateCursor(const WebCursor& cursor) {
@@ -287,9 +298,7 @@ void RenderWidgetHostViewAndroid::TextInputStateChanged(
   if (!IsShowing())
     return;
 
-  // TODO(miguelg): this currently dispatches messages for text inputs
-  // and date/time value inputs. Split it into two adapters.
-  content_view_core_->ImeUpdateAdapter(
+  content_view_core_->UpdateImeAdapter(
       GetNativeImeAdapter(),
       static_cast<int>(params.type),
       params.value, params.selection_start, params.selection_end,
@@ -301,8 +310,34 @@ int RenderWidgetHostViewAndroid::GetNativeImeAdapter() {
   return reinterpret_cast<int>(&ime_adapter_android_);
 }
 
+void RenderWidgetHostViewAndroid::OnProcessImeBatchStateAck(bool is_begin) {
+  if (content_view_core_)
+    content_view_core_->ProcessImeBatchStateAck(is_begin);
+}
+
+void RenderWidgetHostViewAndroid::OnDidChangeBodyBackgroundColor(
+    SkColor color) {
+  if (cached_background_color_ == color)
+    return;
+
+  cached_background_color_ = color;
+  if (content_view_core_)
+    content_view_core_->OnBackgroundColorChanged(color);
+}
+
+void RenderWidgetHostViewAndroid::OnStartContentIntent(
+    const GURL& content_url) {
+  if (content_view_core_)
+    content_view_core_->StartContentIntent(content_url);
+}
+
 void RenderWidgetHostViewAndroid::ImeCancelComposition() {
   ime_adapter_android_.CancelComposition();
+}
+
+void RenderWidgetHostViewAndroid::ImeCompositionRangeChanged(
+    const ui::Range& range,
+    const std::vector<gfx::Rect>& character_bounds) {
 }
 
 void RenderWidgetHostViewAndroid::DidUpdateBackingStore(
@@ -356,17 +391,13 @@ void RenderWidgetHostViewAndroid::SelectionChanged(const string16& text,
 }
 
 void RenderWidgetHostViewAndroid::SelectionBoundsChanged(
-    const gfx::Rect& start_rect,
-    WebKit::WebTextDirection start_direction,
-    const gfx::Rect& end_rect,
-    WebKit::WebTextDirection end_direction) {
+    const ViewHostMsg_SelectionBounds_Params& params) {
   if (content_view_core_) {
-    content_view_core_->OnSelectionBoundsChanged(
-        start_rect,
-        ConvertTextDirection(start_direction),
-        end_rect,
-        ConvertTextDirection(end_direction));
+    content_view_core_->OnSelectionBoundsChanged(params);
   }
+}
+
+void RenderWidgetHostViewAndroid::ScrollOffsetChanged() {
 }
 
 BackingStore* RenderWidgetHostViewAndroid::AllocBackingStore(
@@ -383,10 +414,21 @@ void RenderWidgetHostViewAndroid::SetBackground(const SkBitmap& background) {
 void RenderWidgetHostViewAndroid::CopyFromCompositingSurface(
     const gfx::Rect& src_subrect,
     const gfx::Size& dst_size,
-    const base::Callback<void(bool)>& callback,
-    skia::PlatformBitmap* output) {
+    const base::Callback<void(bool, const SkBitmap&)>& callback) {
+  NOTIMPLEMENTED();
+  callback.Run(false, SkBitmap());
+}
+
+void RenderWidgetHostViewAndroid::CopyFromCompositingSurfaceToVideoFrame(
+      const gfx::Rect& src_subrect,
+      const scoped_refptr<media::VideoFrame>& target,
+      const base::Callback<void(bool)>& callback) {
   NOTIMPLEMENTED();
   callback.Run(false);
+}
+
+bool RenderWidgetHostViewAndroid::CanCopyToVideoFrame() const {
+  return false;
 }
 
 void RenderWidgetHostViewAndroid::ShowDisambiguationPopup(
@@ -468,6 +510,7 @@ void RenderWidgetHostViewAndroid::AcceleratedSurfaceRelease() {
     ImageTransportFactoryAndroid::GetInstance()->DeleteTexture(
         texture_id_in_layer_);
     texture_id_in_layer_ = 0;
+    current_mailbox_name_.clear();
   }
 }
 
@@ -475,21 +518,6 @@ bool RenderWidgetHostViewAndroid::HasAcceleratedSurface(
     const gfx::Size& desired_size) {
   NOTREACHED();
   return false;
-}
-
-void RenderWidgetHostViewAndroid::StartContentIntent(
-    const GURL& content_url) {
-  if (content_view_core_)
-    content_view_core_->StartContentIntent(content_url);
-}
-
-gfx::GLSurfaceHandle RenderWidgetHostViewAndroid::GetCompositingSurface() {
-  if (surface_texture_transport_.get()) {
-    return surface_texture_transport_->GetCompositingSurface(
-        host_->surface_id());
-  } else {
-    return gfx::GLSurfaceHandle(gfx::kNullPluginWindow, true);
-  }
 }
 
 void RenderWidgetHostViewAndroid::GetScreenInfo(WebKit::WebScreenInfo* result) {
@@ -503,9 +531,13 @@ gfx::Rect RenderWidgetHostViewAndroid::GetBoundsInRootWindow() {
   return GetViewBounds();
 }
 
-void RenderWidgetHostViewAndroid::UnhandledWheelEvent(
-    const WebKit::WebMouseWheelEvent& event) {
-  // intentionally empty, like RenderWidgetHostViewViews
+gfx::GLSurfaceHandle RenderWidgetHostViewAndroid::GetCompositingSurface() {
+  if (surface_texture_transport_.get()) {
+    return surface_texture_transport_->GetCompositingSurface(
+        host_->surface_id());
+  } else {
+    return gfx::GLSurfaceHandle(gfx::kNullPluginWindow, gfx::TEXTURE_TRANSPORT);
+  }
 }
 
 void RenderWidgetHostViewAndroid::ProcessAckedTouchEvent(
@@ -522,6 +554,15 @@ void RenderWidgetHostViewAndroid::SetHasHorizontalScrollbar(
 void RenderWidgetHostViewAndroid::SetScrollOffsetPinning(
     bool is_pinned_to_left, bool is_pinned_to_right) {
   // intentionally empty, like RenderWidgetHostViewViews
+}
+
+void RenderWidgetHostViewAndroid::UnhandledWheelEvent(
+    const WebKit::WebMouseWheelEvent& event) {
+  // intentionally empty, like RenderWidgetHostViewViews
+}
+
+void RenderWidgetHostViewAndroid::OnAccessibilityNotifications(
+    const std::vector<AccessibilityHostMsg_NotificationParams>& params) {
 }
 
 bool RenderWidgetHostViewAndroid::LockMouse() {
@@ -572,36 +613,33 @@ void RenderWidgetHostViewAndroid::SelectRange(const gfx::Point& start,
     host_->SelectRange(start, end);
 }
 
-
-void RenderWidgetHostViewAndroid::SetCachedBackgroundColor(SkColor color) {
-  cached_background_color_ = color;
+void RenderWidgetHostViewAndroid::MoveCaret(const gfx::Point& point) {
+  if (host_)
+    host_->MoveCaret(point);
 }
 
 SkColor RenderWidgetHostViewAndroid::GetCachedBackgroundColor() const {
   return cached_background_color_;
 }
 
-void RenderWidgetHostViewAndroid::SetCachedPageScaleFactorLimits(
-    float minimum_scale,
-    float maximum_scale) {
-  if (content_view_core_)
-    content_view_core_->UpdatePageScaleLimits(minimum_scale, maximum_scale);
-}
-
 void RenderWidgetHostViewAndroid::UpdateFrameInfo(
-    const gfx::Vector2d& scroll_offset,
+    const gfx::Vector2dF& scroll_offset,
     float page_scale_factor,
-    float min_page_scale_factor,
-    float max_page_scale_factor,
-    const gfx::Size& content_size) {
+    const gfx::Vector2dF& page_scale_factor_limits,
+    const gfx::SizeF& content_size,
+    const gfx::SizeF& viewport_size,
+    const gfx::Vector2dF& controls_offset,
+    const gfx::Vector2dF& content_offset) {
   if (content_view_core_) {
-    content_view_core_->UpdateContentSize(content_size.width(),
-                                          content_size.height());
-    content_view_core_->UpdatePageScaleLimits(min_page_scale_factor,
-                                              max_page_scale_factor);
-    content_view_core_->UpdateScrollOffsetAndPageScaleFactor(scroll_offset.x(),
-                                                             scroll_offset.y(),
-                                                             page_scale_factor);
+    // All offsets and sizes are in CSS pixels.
+    content_view_core_->UpdateFrameInfo(
+        scroll_offset.x(), scroll_offset.y(),
+        page_scale_factor,
+        page_scale_factor_limits.x(), page_scale_factor_limits.y(),
+        content_size.width(), content_size.height(),
+        viewport_size.width(), viewport_size.height());
+    content_view_core_->UpdateOffsetsForFullscreen(controls_offset.y(),
+                                                   content_offset.y());
   }
 }
 
@@ -624,16 +662,16 @@ void RenderWidgetHostViewAndroid::HasTouchEventHandlers(
 // static
 void RenderWidgetHostViewPort::GetDefaultScreenInfo(
     WebKit::WebScreenInfo* results) {
-  DeviceInfo info;
-  const int width = info.GetWidth();
-  const int height = info.GetHeight();
-  results->deviceScaleFactor = info.GetDPIScale();
+  const gfx::Display& display =
+      gfx::Screen::GetNativeScreen()->GetPrimaryDisplay();
+  results->rect = display.bounds();
+  // TODO(husky): Remove any system controls from availableRect.
+  results->availableRect = display.work_area();
+  results->deviceScaleFactor = display.device_scale_factor();
+  gfx::DeviceDisplayInfo info;
   results->depth = info.GetBitsPerPixel();
   results->depthPerComponent = info.GetBitsPerComponent();
   results->isMonochrome = (results->depthPerComponent == 0);
-  results->rect = WebKit::WebRect(0, 0, width, height);
-  // TODO(husky): Remove any system controls from availableRect.
-  results->availableRect = WebKit::WebRect(0, 0, width, height);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

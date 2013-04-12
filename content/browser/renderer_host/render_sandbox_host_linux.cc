@@ -7,12 +7,12 @@
 #include <fcntl.h>
 #include <fontconfig/fontconfig.h>
 #include <stdint.h>
-#include <unistd.h>
-#include <sys/uio.h>
-#include <sys/stat.h>
-#include <sys/socket.h>
 #include <sys/poll.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/uio.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <vector>
 
@@ -22,7 +22,7 @@
 #include "base/memory/singleton.h"
 #include "base/pickle.h"
 #include "base/posix/eintr_wrapper.h"
-#include "base/posix/unix_domain_socket.h"
+#include "base/posix/unix_domain_socket_linux.h"
 #include "base/process_util.h"
 #include "base/shared_memory.h"
 #include "base/string_number_conversions.h"
@@ -31,9 +31,9 @@
 #include "content/common/sandbox_linux.h"
 #include "content/common/webkitplatformsupport_impl.h"
 #include "skia/ext/SkFontHost_fontconfig_direct.h"
-#include "third_party/npapi/bindings/npapi_extensions.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/WebKit.h"
 #include "third_party/WebKit/Source/WebKit/chromium/public/linux/WebFontInfo.h"
+#include "third_party/npapi/bindings/npapi_extensions.h"
 #include "ui/gfx/font_render_params_linux.h"
 
 using WebKit::WebCString;
@@ -69,17 +69,7 @@ class SandboxIPCProcess  {
     // FontConfig doesn't provide a standard property to control subpixel
     // positioning, so we pass the current setting through to WebKit.
     WebFontInfo::setSubpixelPositioning(
-#if defined(TOOLKIT_GTK)
-        // The GTK implementation of GetDefaultFontRenderParams() uses
-        // GtkSettings, which requires a connection to the X server (as it uses
-        // XSETTINGS).  When running tests, X may not be ready at this point,
-        // though.  GTK doesn't currently provide a way to enable subpixel
-        // positioning, so just pass false here to avoid the issue.
-        false
-#else
-        gfx::GetDefaultWebKitFontRenderParams().subpixel_positioning
-#endif
-        );
+        gfx::GetDefaultWebkitSubpixelPositioning());
   }
 
   ~SandboxIPCProcess();
@@ -391,8 +381,10 @@ class SandboxIPCProcess  {
                                      PickleIterator iter,
                                      std::vector<int>& fds) {
     base::SharedMemoryCreateOptions options;
-    if (!pickle.ReadUInt32(&iter, &options.size))
+    uint32_t size;
+    if (!pickle.ReadUInt32(&iter, &size))
       return;
+    options.size = size;
     if (!pickle.ReadBool(&iter, &options.executable))
       return;
     int shm_fd = -1;

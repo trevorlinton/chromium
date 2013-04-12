@@ -80,6 +80,8 @@
         'cloud_policy_code_generate',
       ],
       'includes': [ '../../../build/protoc.gypi' ],
+      # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
+      'msvs_disabled_warnings': [4267, ],
     },
     {
       # This target builds the "full" protobuf, used for tests only.
@@ -99,13 +101,14 @@
       'includes': [ '../../../build/protoc.gypi' ],
     },
     {
-      'target_name': 'cloud_policy_backend_header_compile',
+      'target_name': 'policy_proto_compile',
       'type': 'static_library',
       'sources': [
         '<(proto_rel_path)/chrome_device_policy.proto',
+        '<(proto_rel_path)/chrome_extension_policy.proto',
         '<(proto_rel_path)/device_management_backend.proto',
         '<(proto_rel_path)/device_management_local.proto',
-        '<(proto_rel_path)/old_generic_format.proto',
+        '<(proto_rel_path)/install_attributes.proto',
       ],
       'variables': {
         'proto_in_dir': '<(proto_rel_path)',
@@ -137,7 +140,7 @@
       'dependencies': [
         'cloud_policy_code_generate',
         'cloud_policy_proto_compile',
-        'cloud_policy_backend_header_compile',
+        'policy_proto_compile',
         '<(DEPTH)/base/base.gyp:base',
         '<(DEPTH)/third_party/protobuf/protobuf.gyp:protobuf_lite',
       ],
@@ -159,7 +162,7 @@
     },
   ],
   'conditions': [
-    ['OS=="win"', {
+    ['OS=="win" and target_arch=="ia32"', {
       'targets': [
         {
           'target_name': 'policy_win64',

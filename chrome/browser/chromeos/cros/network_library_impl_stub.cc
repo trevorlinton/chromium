@@ -6,8 +6,9 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/stl_util.h"
 #include "chrome/browser/chromeos/cros/native_network_constants.h"
-#include "chrome/common/chrome_switches.h"
+#include "chromeos/chromeos_switches.h"
 #include "content/public/browser/browser_thread.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
@@ -17,7 +18,12 @@ namespace {
 
 bool IsEthernetEnabled() {
   return !CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kDisableStubEthernet);
+      chromeos::switches::kDisableStubEthernet);
+}
+
+bool IsInteractive() {
+  return CommandLine::ForCurrentProcess()->HasSwitch(
+      chromeos::switches::kEnableStubInteractive);
 }
 
 }  // namespace
@@ -30,8 +36,8 @@ NetworkLibraryImplStub::NetworkLibraryImplStub()
       pin_(""),
       pin_required_(false),
       pin_entered_(false),
-      connect_delay_ms_(0),
-      network_priority_order_(0) {
+      network_priority_order_(0),
+      ALLOW_THIS_IN_INITIALIZER_LIST(weak_pointer_factory_(this)) {
   // Emulate default setting of the CheckPortalList when OOBE is done.
   if (IsEthernetEnabled())
     check_portal_list_ = "ethernet,wifi,cellular";
@@ -43,53 +49,57 @@ NetworkLibraryImplStub::~NetworkLibraryImplStub() {
   disabled_wifi_networks_.clear();
   disabled_cellular_networks_.clear();
   disabled_wimax_networks_.clear();
+  STLDeleteValues(&service_configurations_);
 }
 
 void NetworkLibraryImplStub::Init() {
   is_locked_ = false;
 
-  // Devices
+  // Enable only Cellular initially
   int devices = (1 << TYPE_WIFI) | (1 << TYPE_CELLULAR) | (1 << TYPE_WIMAX);
   if (IsEthernetEnabled())
     devices |= 1 << TYPE_ETHERNET;
   available_devices_ = devices;
-  enabled_devices_ = devices;
-  connected_devices_ = devices;
+  uninitialized_devices_ = (1 << TYPE_CELLULAR);
+  enabled_devices_ = (available_devices_ & (1 << TYPE_ETHERNET));
 
-  base::ListValue supported_carriers;
-  supported_carriers.Append(new StringValue("Generic CDMA Carrier 1"));
-  supported_carriers.Append(new StringValue("Generic UMTS"));
-  supported_carriers.Append(new StringValue("Generic CDMA Carrier 2"));
-  supported_carriers.Append(new StringValue("Generic CDMA Carrier 3"));
+  if (IsInteractive()) {
+    const int kWifiInitDelaySeconds = 5;
+    const int kCellularInitDelaySeconds = 10;
+    const int kCellularActivateDelaySeconds = 15;
+    BrowserThread::PostDelayedTask(
+        BrowserThread::UI, FROM_HERE,
+        base::Bind(&NetworkLibraryImplStub::CompleteWifiInit,
+                   weak_pointer_factory_.GetWeakPtr()),
+        base::TimeDelta::FromSeconds(kWifiInitDelaySeconds));
+    BrowserThread::PostDelayedTask(
+        BrowserThread::UI, FROM_HERE,
+        base::Bind(&NetworkLibraryImplStub::CompleteCellularInit,
+                   weak_pointer_factory_.GetWeakPtr()),
+        base::TimeDelta::FromSeconds(kCellularInitDelaySeconds));
+    BrowserThread::PostDelayedTask(
+        BrowserThread::UI, FROM_HERE,
+        base::Bind(&NetworkLibraryImplStub::CompleteCellularActivate,
+                   weak_pointer_factory_.GetWeakPtr()),
+        base::TimeDelta::FromSeconds(kCellularActivateDelaySeconds));
+  } else {
+    CompleteWifiInit();
+    CompleteCellularInit();
+  }
+}
 
-  NetworkDevice* cellular = new NetworkDevice("cellular");
-  cellular->type_ = TYPE_CELLULAR;
-  cellular->set_technology_family(TECHNOLOGY_FAMILY_CDMA);
-  cellular->set_carrier("Generic CDMA Carrier 2");
-  cellular->imsi_ = "123456789012345";
-  cellular->set_supported_carriers(supported_carriers);
-  device_map_["cellular"] = cellular;
+bool NetworkLibraryImplStub::IsCros() const {
+  return false;
+}
 
-  CellularApn apn;
-  apn.apn = "apn";
-  apn.network_id = "network_id";
-  apn.username = "username";
-  apn.password = "password";
-  apn.name = "name";
-  apn.localized_name = "localized_name";
-  apn.language = "language";
+////////////////////////////////////////////////////////////////////////////
+// NetworkLibraryImplStub private methods.
 
-  CellularApnList apn_list;
-  apn_list.push_back(apn);
+void NetworkLibraryImplStub::CompleteWifiInit() {
+  VLOG(1) << "CompleteWifiInit()";
 
-  NetworkDevice* cellular_gsm = new NetworkDevice("cellular_gsm");
-  cellular_gsm->type_ = TYPE_CELLULAR;
-  cellular_gsm->set_technology_family(TECHNOLOGY_FAMILY_GSM);
-  cellular_gsm->imsi_ = "123456789012345";
-  cellular_gsm->set_sim_pin_required(SIM_PIN_REQUIRED);
-  cellular_gsm->set_provider_apn_list(apn_list);
-  cellular_gsm->set_supported_carriers(supported_carriers);
-  device_map_["cellular_gsm"] = cellular_gsm;
+  uninitialized_devices_ &= ~(1 << TYPE_WIFI);
+  enabled_devices_ |= (available_devices_ & (1 << TYPE_WIFI));
 
   // Profiles
   AddProfile("default", PROFILE_SHARED);
@@ -127,6 +137,15 @@ void NetworkLibraryImplStub::Init() {
   wifi3->set_passphrase_required(true);
   AddStubNetwork(wifi3, PROFILE_USER);
 
+  CertificatePattern pattern;
+  IssuerSubjectPattern issuer;
+  issuer.set_organization("Google, Inc.");
+  pattern.set_issuer(issuer);
+  std::vector<std::string> enrollment_uris;
+  enrollment_uris.push_back("http://youtu.be/dQw4w9WgXcQ");
+  enrollment_uris.push_back("chrome-extension://abc/keygen-cert.html");
+  pattern.set_enrollment_uri_list(enrollment_uris);
+
   WifiNetwork* wifi_cert_pattern = new WifiNetwork("wifi_cert_pattern");
   wifi_cert_pattern->set_name("Fake WiFi CertPattern 802.1x");
   wifi_cert_pattern->set_strength(50);
@@ -137,13 +156,6 @@ void NetworkLibraryImplStub::Init() {
   wifi_cert_pattern->SetEAPIdentity("user@example.com");
   wifi_cert_pattern->SetEAPPhase2Auth(EAP_PHASE_2_AUTH_AUTO);
   wifi_cert_pattern->set_client_cert_type(CLIENT_CERT_TYPE_PATTERN);
-  CertificatePattern pattern;
-  IssuerSubjectPattern subject;
-  subject.set_organization("Google Inc");
-  pattern.set_subject(subject);
-  std::vector<std::string> enrollment_uris;
-  enrollment_uris.push_back("http://www.google.com/chromebook");
-  pattern.set_enrollment_uri_list(enrollment_uris);
   wifi_cert_pattern->set_client_cert_pattern(pattern);
   wifi_cert_pattern->set_eap_save_credentials(true);
 
@@ -185,6 +197,124 @@ void NetworkLibraryImplStub::Init() {
   wifi7->set_ui_data(wifi7_ui_data);
   AddStubNetwork(wifi7, PROFILE_USER);
 
+  VirtualNetwork* vpn1 = new VirtualNetwork("vpn1");
+  vpn1->set_name("Fake VPN1");
+  vpn1->set_server_hostname("vpn1server.fake.com");
+  vpn1->set_provider_type(PROVIDER_TYPE_L2TP_IPSEC_PSK);
+  vpn1->set_username("VPN User 1");
+  AddStubNetwork(vpn1, PROFILE_USER);
+
+  VirtualNetwork* vpn2 = new VirtualNetwork("vpn2");
+  vpn2->set_name("Fake VPN2");
+  vpn2->set_server_hostname("vpn2server.fake.com");
+  vpn2->set_provider_type(PROVIDER_TYPE_L2TP_IPSEC_USER_CERT);
+  vpn2->set_username("VPN User 2");
+  AddStubNetwork(vpn2, PROFILE_USER);
+
+  VirtualNetwork* vpn3 = new VirtualNetwork("vpn3");
+  vpn3->set_name("Fake VPN3");
+  vpn3->set_server_hostname("vpn3server.fake.com");
+  vpn3->set_provider_type(PROVIDER_TYPE_OPEN_VPN);
+  AddStubNetwork(vpn3, PROFILE_USER);
+
+  VirtualNetwork* vpn4 = new VirtualNetwork("vpn4");
+  vpn4->set_name("Fake VPN4 (policy-managed)");
+  vpn4->set_server_hostname("vpn4server.fake.com");
+  vpn4->set_provider_type(PROVIDER_TYPE_OPEN_VPN);
+  NetworkUIData vpn4_ui_data;
+  vpn4_ui_data.set_onc_source(onc::ONC_SOURCE_DEVICE_POLICY);
+  vpn4->set_ui_data(vpn4_ui_data);
+  AddStubNetwork(vpn4, PROFILE_USER);
+
+  VirtualNetwork* vpn_cert_pattern = new VirtualNetwork("vpn_cert_pattern");
+  vpn_cert_pattern->set_name("Fake VPN CertPattern");
+  vpn_cert_pattern->set_server_hostname("vpn4server.fake.com");
+  vpn_cert_pattern->set_provider_type(PROVIDER_TYPE_OPEN_VPN);
+  vpn_cert_pattern->set_client_cert_type(CLIENT_CERT_TYPE_PATTERN);
+  vpn_cert_pattern->set_client_cert_pattern(pattern);
+
+  AddStubNetwork(vpn_cert_pattern, PROFILE_USER);
+
+  wifi_scanning_ = false;
+  offline_mode_ = false;
+
+  // Ensure our active network is connected and vice versa, otherwise our
+  // autotest browser_tests sometimes conclude the device is offline.
+  CHECK(active_network()->connected())
+      << "Active: " << active_network()->name();
+  CHECK(connected_network()->is_active());
+
+  std::string test_blob(
+        "{"
+        "  \"NetworkConfigurations\": ["
+        "    {"
+        "      \"GUID\": \"guid\","
+        "      \"Type\": \"VPN\","
+        "      \"Name\": \"VPNtest\","
+        "      \"VPN\": {"
+        "        \"Host\": \"172.22.12.98\","
+        "        \"Type\": \"L2TP-IPsec\","
+        "        \"IPsec\": {"
+        "          \"AuthenticationType\": \"PSK\","
+        "          \"IKEVersion\": 2,"
+        "          \"PSK\": \"chromeos\","
+        "        },"
+        "        \"L2TP\": {"
+        "          \"Username\": \"vpntest\","
+        "        }"
+        "      }"
+        "    }"
+        "  ],"
+        "  \"Certificates\": []"
+        "}");
+//  LoadOncNetworks(test_blob, "", onc::ONC_SOURCE_USER_IMPORT, NULL);
+
+  SignalNetworkManagerObservers();
+}
+
+void NetworkLibraryImplStub::CompleteCellularInit() {
+  VLOG(1) << "CompleteCellularInit()";
+
+  uninitialized_devices_ &= ~(1 << TYPE_CELLULAR);
+  uninitialized_devices_ &= ~(1 << TYPE_WIMAX);
+  enabled_devices_ |= (available_devices_ & (1 << TYPE_CELLULAR));
+  enabled_devices_ |= (available_devices_ & (1 << TYPE_WIMAX));
+
+  base::ListValue supported_carriers;
+  supported_carriers.Append(new StringValue("Generic CDMA Carrier 1"));
+  supported_carriers.Append(new StringValue("Generic UMTS"));
+  supported_carriers.Append(new StringValue("Generic CDMA Carrier 2"));
+  supported_carriers.Append(new StringValue("Generic CDMA Carrier 3"));
+
+  NetworkDevice* cellular = new NetworkDevice("cellular");
+  cellular->type_ = TYPE_CELLULAR;
+  cellular->set_technology_family(TECHNOLOGY_FAMILY_CDMA);
+  cellular->set_carrier("Generic CDMA Carrier 2");
+  cellular->imsi_ = "123456789012345";
+  cellular->set_supported_carriers(supported_carriers);
+  device_map_["cellular"] = cellular;
+
+  CellularApn apn;
+  apn.apn = "apn";
+  apn.network_id = "network_id";
+  apn.username = "username";
+  apn.password = "password";
+  apn.name = "name";
+  apn.localized_name = "localized_name";
+  apn.language = "language";
+
+  CellularApnList apn_list;
+  apn_list.push_back(apn);
+
+  NetworkDevice* cellular_gsm = new NetworkDevice("cellular_gsm");
+  cellular_gsm->type_ = TYPE_CELLULAR;
+  cellular_gsm->set_technology_family(TECHNOLOGY_FAMILY_GSM);
+  cellular_gsm->imsi_ = "123456789012345";
+  cellular_gsm->set_sim_pin_required(SIM_PIN_REQUIRED);
+  cellular_gsm->set_provider_apn_list(apn_list);
+  cellular_gsm->set_supported_carriers(supported_carriers);
+  device_map_["cellular_gsm"] = cellular_gsm;
+
   CellularNetwork* cellular1 = new CellularNetwork("cellular1");
   cellular1->set_name("Fake Cellular 1");
   cellular1->set_device_path(cellular->device_path());
@@ -196,11 +326,11 @@ void NetworkLibraryImplStub::Init() {
   cellular1->set_network_technology(NETWORK_TECHNOLOGY_EVDO);
   AddStubNetwork(cellular1, PROFILE_NONE);
 
-  CellularNetwork* cellular2 = new CellularNetwork("/cellular2");
+  CellularNetwork* cellular2 = new CellularNetwork("cellular2");
   cellular2->set_name("Fake Cellular 2");
   cellular2->set_device_path(cellular->device_path());
   cellular2->set_strength(50);
-  cellular2->set_activation_state(ACTIVATION_STATE_NOT_ACTIVATED);
+  cellular2->set_activation_state(ACTIVATION_STATE_ACTIVATING);
   cellular2->set_network_technology(NETWORK_TECHNOLOGY_UMTS);
   cellular2->set_roaming_state(ROAMING_STATE_ROAMING);
   cellular2->set_payment_url(std::string("http://www.google.com"));
@@ -242,76 +372,15 @@ void NetworkLibraryImplStub::Init() {
   wimax2->set_passphrase_required(false);
   AddStubNetwork(wimax2, PROFILE_NONE);
 
-  VirtualNetwork* vpn1 = new VirtualNetwork("vpn1");
-  vpn1->set_name("Fake VPN1");
-  vpn1->set_server_hostname("vpn1server.fake.com");
-  vpn1->set_provider_type(PROVIDER_TYPE_L2TP_IPSEC_PSK);
-  vpn1->set_username("VPN User 1");
-  AddStubNetwork(vpn1, PROFILE_USER);
-
-  VirtualNetwork* vpn2 = new VirtualNetwork("vpn2");
-  vpn2->set_name("Fake VPN2");
-  vpn2->set_server_hostname("vpn2server.fake.com");
-  vpn2->set_provider_type(PROVIDER_TYPE_L2TP_IPSEC_USER_CERT);
-  vpn2->set_username("VPN User 2");
-  AddStubNetwork(vpn2, PROFILE_USER);
-
-  VirtualNetwork* vpn3 = new VirtualNetwork("vpn3");
-  vpn3->set_name("Fake VPN3");
-  vpn3->set_server_hostname("vpn3server.fake.com");
-  vpn3->set_provider_type(PROVIDER_TYPE_OPEN_VPN);
-  AddStubNetwork(vpn3, PROFILE_USER);
-
-  VirtualNetwork* vpn4 = new VirtualNetwork("vpn4");
-  vpn4->set_name("Fake VPN4 (policy-managed)");
-  vpn4->set_server_hostname("vpn4server.fake.com");
-  vpn4->set_provider_type(PROVIDER_TYPE_OPEN_VPN);
-  NetworkUIData vpn4_ui_data;
-  vpn4_ui_data.set_onc_source(onc::ONC_SOURCE_DEVICE_POLICY);
-  vpn4->set_ui_data(vpn4_ui_data);
-  AddStubNetwork(vpn4, PROFILE_USER);
-
-  wifi_scanning_ = false;
-  offline_mode_ = false;
-
-  // Ensure our active network is connected and vice versa, otherwise our
-  // autotest browser_tests sometimes conclude the device is offline.
-  CHECK(active_network()->connected())
-      << "Active: " << active_network()->name();
-  CHECK(connected_network()->is_active());
-
-  std::string test_blob(
-        "{"
-        "  \"NetworkConfigurations\": ["
-        "    {"
-        "      \"GUID\": \"guid\","
-        "      \"Type\": \"VPN\","
-        "      \"Name\": \"VPNtest\","
-        "      \"VPN\": {"
-        "        \"Host\": \"172.22.12.98\","
-        "        \"Type\": \"L2TP-IPsec\","
-        "        \"IPsec\": {"
-        "          \"AuthenticationType\": \"PSK\","
-        "          \"IKEVersion\": 2,"
-        "          \"PSK\": \"chromeos\","
-        "        },"
-        "        \"L2TP\": {"
-        "          \"Username\": \"vpntest\","
-        "        }"
-        "      }"
-        "    }"
-        "  ],"
-        "  \"Certificates\": []"
-        "}");
-//  LoadOncNetworks(test_blob, "", onc::ONC_SOURCE_USER_IMPORT, NULL);
+  SignalNetworkManagerObservers();
 }
 
-bool NetworkLibraryImplStub::IsCros() const {
-  return false;
+void NetworkLibraryImplStub::CompleteCellularActivate() {
+  VLOG(1) << "CompleteCellularActivate()";
+  CellularNetwork* cellular2 = FindCellularNetworkByPath("cellular2");
+  cellular2->set_activation_state(ACTIVATION_STATE_ACTIVATED);
+  SignalNetworkManagerObservers();
 }
-
-////////////////////////////////////////////////////////////////////////////
-// NetworkLibraryImplStub private methods.
 
 void NetworkLibraryImplStub::AddStubNetwork(
     Network* network, NetworkProfileType profile_type) {
@@ -374,6 +443,8 @@ void NetworkLibraryImplStub::AddStubRememberedNetwork(Network* network) {
     // remembered_*_networks_ list and the remembered_network_map_.
     if (!ValidateAndAddRememberedNetwork(remembered))
       NOTREACHED();
+    remembered->set_profile_path(profile->path);
+    remembered->set_profile_type(profile->type);
   }
 }
 
@@ -405,8 +476,11 @@ void NetworkLibraryImplStub::ConnectToNetwork(Network* network) {
   }
 
   // Set connected state.
-  network->set_connected();
-  network->set_connection_started(false);
+  if (network->is_behind_portal_for_testing())
+    network->set_behind_portal();
+  else
+    network->set_connected();
+  network->set_user_connect_state(USER_CONNECT_CONNECTED);
 
   // Make the connected network the highest priority network.
   // Set all other networks of the same type to disconnected + inactive;
@@ -463,21 +537,24 @@ void NetworkLibraryImplStub::MonitorNetworkDeviceStop(
 
 void NetworkLibraryImplStub::CallConfigureService(
     const std::string& identifier,
-    const DictionaryValue* info) {}
+    const DictionaryValue* info) {
+  DictionaryValue*& config_entry = service_configurations_[identifier];
+  delete config_entry;
+  config_entry = info->DeepCopy();
+}
 
 void NetworkLibraryImplStub::CallConnectToNetwork(Network* network) {
   // Immediately set the network to active to mimic shill's behavior.
   SetActiveNetwork(network->type(), network->service_path());
   // If a delay has been set (i.e. we are interactive), delay the call to
   // ConnectToNetwork (but signal observers since we changed connecting state).
-  if (connect_delay_ms_) {
-    // This class is a Singleton and won't be deleted until this callbacks has
-    // run.
+  if (IsInteractive()) {
+    const int kConnectDelayMs = 4 * 1000;
     BrowserThread::PostDelayedTask(
         BrowserThread::UI, FROM_HERE,
         base::Bind(&NetworkLibraryImplStub::ConnectToNetwork,
-                   base::Unretained(this), network),
-        base::TimeDelta::FromMilliseconds(connect_delay_ms_));
+                   weak_pointer_factory_.GetWeakPtr(), network),
+        base::TimeDelta::FromMilliseconds(kConnectDelayMs));
     SignalNetworkManagerObservers();
     NotifyNetworkChanged(network);
   } else {
@@ -615,12 +692,16 @@ void NetworkLibraryImplStub::SetCellularDataRoamingAllowed(bool new_value) {}
 void NetworkLibraryImplStub::SetCarrier(
     const std::string& carrier,
     const NetworkOperationCallback& completed) {
-  // Call the completed callback with a 10s delay.
+  // Call the completed callback with a 10s delay if we're interactive.
+  int delay_ms = IsInteractive() ? 10000 : 100;
   BrowserThread::PostDelayedTask(
       BrowserThread::UI,
       FROM_HERE,
       base::Bind(completed, "", NETWORK_METHOD_ERROR_NONE,""),
-      base::TimeDelta::FromMilliseconds(10000));
+      base::TimeDelta::FromMilliseconds(delay_ms));
+}
+
+void NetworkLibraryImplStub::ResetModem() {
 }
 
 bool NetworkLibraryImplStub::IsCellularAlwaysInRoaming() {
@@ -629,21 +710,13 @@ bool NetworkLibraryImplStub::IsCellularAlwaysInRoaming() {
 
 void NetworkLibraryImplStub::RequestNetworkScan() {
   // This is triggered by user interaction, so set a network connect delay.
-  const int kScanDelayMs = 2 * 1000;
-  const int kConnectDelayMs = 4 * 1000;
+  int scan_delay_ms = IsInteractive() ? 2 * 1000 : 100;
   wifi_scanning_ = true;
-  connect_delay_ms_ = kConnectDelayMs;
   BrowserThread::PostDelayedTask(
       BrowserThread::UI, FROM_HERE,
       base::Bind(&NetworkLibraryImplStub::ScanCompleted,
-                 base::Unretained(this)),
-      base::TimeDelta::FromMilliseconds(kScanDelayMs));
-}
-
-bool NetworkLibraryImplStub::GetWifiAccessPoints(
-    WifiAccessPointVector* result) {
-  *result = WifiAccessPointVector();
-  return true;
+                 weak_pointer_factory_.GetWeakPtr()),
+      base::TimeDelta::FromMilliseconds(scan_delay_ms));
 }
 
 void NetworkLibraryImplStub::RefreshIPConfig(Network* network) {
@@ -724,7 +797,7 @@ void NetworkLibraryImplStub::RequestNetworkServiceProperties(
       BrowserThread::UI,
       FROM_HERE,
       base::Bind(&NetworkLibraryImplStub::SendNetworkServiceProperties,
-                 base::Unretained(this),
+                 weak_pointer_factory_.GetWeakPtr(),
                  service_path, callback),
       base::TimeDelta::FromMilliseconds(100));
 }
@@ -744,6 +817,11 @@ void NetworkLibraryImplStub::SendNetworkServiceProperties(
                           ConnectionStateToString(network->state()));
   }
   callback.Run(service_path, dictionary.get());
+}
+
+const std::map<std::string, base::DictionaryValue*>&
+NetworkLibraryImplStub::GetConfigurations() {
+  return service_configurations_;
 }
 
 }  // namespace chromeos

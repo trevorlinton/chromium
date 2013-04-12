@@ -5,16 +5,17 @@
 
 #include "base/logging.h"
 #include "base/utf_string_conversions.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebMediaStreamDescriptor.h"
-#include "third_party/WebKit/Source/WebKit/chromium/public/platform/WebString.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebMediaStream.h"
+#include "third_party/WebKit/Source/Platform/chromium/public/WebString.h"
 
 namespace content {
 
 MockWebRTCPeerConnectionHandlerClient::
 MockWebRTCPeerConnectionHandlerClient()
     : renegotiate_(false),
-      ready_state_(ReadyStateNew),
-      ice_state_(ICEStateNew),
+      signaling_state_(SignalingStateStable),
+      ice_connection_state_(ICEConnectionStateStarting),
+      ice_gathering_state_(ICEGatheringStateNew),
       candidate_mline_index_(-1) {
 }
 
@@ -38,22 +39,29 @@ void MockWebRTCPeerConnectionHandlerClient::didGenerateICECandidate(
   }
 }
 
-void MockWebRTCPeerConnectionHandlerClient::didChangeReadyState(
-    ReadyState state) {
-  ready_state_ = state;
+void MockWebRTCPeerConnectionHandlerClient::didChangeSignalingState(
+    SignalingState state) {
+  signaling_state_ = state;
 }
 
-void MockWebRTCPeerConnectionHandlerClient::didChangeICEState(ICEState state) {
-  ice_state_ = state;
+
+void MockWebRTCPeerConnectionHandlerClient::didChangeICEConnectionState(
+    ICEConnectionState state) {
+  ice_connection_state_ = state;
+}
+
+void MockWebRTCPeerConnectionHandlerClient::didChangeICEGatheringState(
+    ICEGatheringState state) {
+  ice_gathering_state_ = state;
 }
 
 void MockWebRTCPeerConnectionHandlerClient::didAddRemoteStream(
-    const WebKit::WebMediaStreamDescriptor& stream_descriptor) {
+    const WebKit::WebMediaStream& stream_descriptor) {
   stream_label_ = UTF16ToUTF8(stream_descriptor.label());
 }
 
 void MockWebRTCPeerConnectionHandlerClient::didRemoveRemoteStream(
-    const WebKit::WebMediaStreamDescriptor& stream_descriptor) {
+    const WebKit::WebMediaStream& stream_descriptor) {
   DCHECK(stream_label_ == UTF16ToUTF8(stream_descriptor.label()));
   stream_label_.clear();
 }

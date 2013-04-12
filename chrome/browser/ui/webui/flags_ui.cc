@@ -9,19 +9,18 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/memory/ref_counted_memory.h"
+#include "base/prefs/pref_registry_simple.h"
 #include "base/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/about_flags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
-#include "chrome/browser/prefs/pref_service.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/webui/chrome_url_data_manager.h"
-#include "chrome/browser/ui/webui/chrome_web_ui_data_source.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
+#include "content/public/browser/web_ui_data_source.h"
 #include "content/public/browser/web_ui_message_handler.h"
 #include "grit/browser_resources.h"
 #include "grit/chromium_strings.h"
@@ -41,11 +40,11 @@ using content::WebUIMessageHandler;
 
 namespace {
 
-ChromeWebUIDataSource* CreateFlagsUIHTMLSource() {
-  ChromeWebUIDataSource* source =
-      new ChromeWebUIDataSource(chrome::kChromeUIFlagsHost);
+content::WebUIDataSource* CreateFlagsUIHTMLSource() {
+  content::WebUIDataSource* source =
+      content::WebUIDataSource::Create(chrome::kChromeUIFlagsHost);
 
-  source->set_use_json_js_format_v2();
+  source->SetUseJsonJSFormatV2();
   source->AddLocalizedString("flagsLongTitle", IDS_FLAGS_LONG_TITLE);
   source->AddLocalizedString("flagsTableTitle", IDS_FLAGS_TABLE_TITLE);
   source->AddLocalizedString("flagsNoExperimentsAvailable",
@@ -55,6 +54,7 @@ ChromeWebUIDataSource* CreateFlagsUIHTMLSource() {
   source->AddLocalizedString("flagsNotSupported", IDS_FLAGS_NOT_AVAILABLE);
   source->AddLocalizedString("flagsRestartNotice", IDS_FLAGS_RELAUNCH_NOTICE);
   source->AddLocalizedString("flagsRestartButton", IDS_FLAGS_RELAUNCH_BUTTON);
+  source->AddLocalizedString("resetAllButton", IDS_FLAGS_RESET_ALL_BUTTON);
   source->AddLocalizedString("disable", IDS_FLAGS_DISABLE);
   source->AddLocalizedString("enable", IDS_FLAGS_ENABLE);
 #if defined(OS_CHROMEOS)
@@ -65,8 +65,8 @@ ChromeWebUIDataSource* CreateFlagsUIHTMLSource() {
   source->AddString("ownerUserId", UTF8ToUTF16(owner));
 #endif
 
-  source->set_json_path("strings.js");
-  source->add_resource_path("flags.js", IDR_FLAGS_JS);
+  source->SetJsonPath("strings.js");
+  source->AddResourcePath("flags.js", IDR_FLAGS_JS);
 
   int idr = IDR_FLAGS_HTML;
 #if defined (OS_CHROMEOS)
@@ -74,7 +74,7 @@ ChromeWebUIDataSource* CreateFlagsUIHTMLSource() {
       base::chromeos::IsRunningOnChromeOS())
     idr = IDR_FLAGS_HTML_WARNING;
 #endif
-  source->set_default_resource(idr);
+  source->SetDefaultResource(idr);
   return source;
 }
 
@@ -102,6 +102,9 @@ class FlagsDOMHandler : public WebUIMessageHandler {
   // Callback for the "restartBrowser" message. Restores all tabs on restart.
   void HandleRestartBrowser(const ListValue* args);
 
+  // Callback for the "resetAllFlags" message.
+  void HandleResetAllFlags(const ListValue* args);
+
  private:
   DISALLOW_COPY_AND_ASSIGN(FlagsDOMHandler);
 };
@@ -115,6 +118,9 @@ void FlagsDOMHandler::RegisterMessages() {
                  base::Unretained(this)));
   web_ui()->RegisterMessageCallback("restartBrowser",
       base::Bind(&FlagsDOMHandler::HandleRestartBrowser,
+                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback("resetAllFlags",
+      base::Bind(&FlagsDOMHandler::HandleResetAllFlags,
                  base::Unretained(this)));
 }
 
@@ -147,7 +153,11 @@ void FlagsDOMHandler::HandleEnableFlagsExperimentMessage(
 }
 
 void FlagsDOMHandler::HandleRestartBrowser(const ListValue* args) {
-  browser::AttemptRestart();
+  chrome::AttemptRestart();
+}
+
+void FlagsDOMHandler::HandleResetAllFlags(const ListValue* args) {
+  about_flags::ResetAllFlags(g_browser_process->local_state());
 }
 
 }  // namespace
@@ -163,7 +173,7 @@ FlagsUI::FlagsUI(content::WebUI* web_ui) : WebUIController(web_ui) {
 
   // Set up the about:flags source.
   Profile* profile = Profile::FromWebUI(web_ui);
-  ChromeURLDataManager::AddDataSource(profile, CreateFlagsUIHTMLSource());
+  content::WebUIDataSource::Add(profile, CreateFlagsUIHTMLSource());
 }
 
 // static
@@ -174,6 +184,6 @@ base::RefCountedMemory* FlagsUI::GetFaviconResourceBytes(
 }
 
 // static
-void FlagsUI::RegisterPrefs(PrefServiceSimple* prefs) {
-  prefs->RegisterListPref(prefs::kEnabledLabsExperiments);
+void FlagsUI::RegisterPrefs(PrefRegistrySimple* registry) {
+  registry->RegisterListPref(prefs::kEnabledLabsExperiments);
 }

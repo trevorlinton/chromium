@@ -4,7 +4,7 @@
 
 #include "webkit/media/android/webmediaplayer_android.h"
 
-#include "base/file_path.h"
+#include "base/files/file_path.h"
 #include "base/logging.h"
 #include "media/base/android/media_player_bridge.h"
 #include "media/base/video_frame.h"
@@ -146,7 +146,7 @@ bool WebMediaPlayerAndroid::hasVideo() const {
   if (!url_.has_path())
     return false;
   std::string mime;
-  if(!net::GetMimeTypeFromFile(FilePath(url_.path()), &mime))
+  if(!net::GetMimeTypeFromFile(base::FilePath(url_.path()), &mime))
     return true;
   return mime.find("audio/") == std::string::npos;
 }
@@ -360,6 +360,13 @@ void WebMediaPlayerAndroid::ReleaseMediaResources() {
 }
 
 void WebMediaPlayerAndroid::WillDestroyCurrentMessageLoop() {
+  if (manager_)
+    manager_->UnregisterMediaPlayer(player_id_);
+  Detach();
+  main_loop_ = NULL;
+}
+
+void WebMediaPlayerAndroid::Detach() {
   Destroy();
 
   if (stream_id_) {
@@ -369,11 +376,7 @@ void WebMediaPlayerAndroid::WillDestroyCurrentMessageLoop() {
 
   video_frame_.reset();
 
-  if (manager_)
-    manager_->UnregisterMediaPlayer(player_id_);
-
   manager_ = NULL;
-  main_loop_ = NULL;
 }
 
 void WebMediaPlayerAndroid::ReallocateVideoFrame() {

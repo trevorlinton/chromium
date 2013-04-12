@@ -5,17 +5,22 @@
 #ifndef CONTENT_BROWSER_DEVTOOLS_DEVTOOLS_TRACING_HANDLER_H_
 #define CONTENT_BROWSER_DEVTOOLS_DEVTOOLS_TRACING_HANDLER_H_
 
-#include "content/browser/devtools/devtools_browser_target.h"
+#include "base/debug/trace_event.h"
+#include "content/browser/devtools/devtools_protocol.h"
 #include "content/public/browser/trace_subscriber.h"
 
 namespace content {
+
+class DevToolsWebSocketSender;
 
 // This class bridges DevTools remote debugging server with the trace
 // infrastructure.
 class DevToolsTracingHandler
     : public TraceSubscriber,
-      public DevToolsBrowserTarget::Handler {
+      public DevToolsProtocol::Handler {
  public:
+  static const char kDomain[];
+
   DevToolsTracingHandler();
   virtual ~DevToolsTracingHandler();
 
@@ -24,23 +29,16 @@ class DevToolsTracingHandler
   virtual void OnTraceDataCollected(
       const scoped_refptr<base::RefCountedString>& trace_fragment) OVERRIDE;
 
-  // DevToolBrowserTarget::Handler:
-  virtual std::string Domain() OVERRIDE;
-  virtual base::Value* OnProtocolCommand(
-      const std::string& method,
-      const base::DictionaryValue* params,
-      base::Value** error_out) OVERRIDE;
-
  private:
-  base::Value* Start(const base::DictionaryValue* params);
-  base::Value* End(const base::DictionaryValue* params);
-  base::Value* HasCompleted(const base::DictionaryValue* params);
-  base::Value* GetTraceAndReset(const base::DictionaryValue* params);
+  scoped_ptr<DevToolsProtocol::Response> OnStart(
+      DevToolsProtocol::Command* command);
+  scoped_ptr<DevToolsProtocol::Response> OnEnd(
+      DevToolsProtocol::Command* command);
 
-  bool has_completed_;
+  base::debug::TraceLog::Options TraceOptionsFromString(
+      const std::string& options);
 
-  std::vector<std::string> buffer_;
-  int buffer_data_size_;
+  bool is_running_;
 
   DISALLOW_COPY_AND_ASSIGN(DevToolsTracingHandler);
 };

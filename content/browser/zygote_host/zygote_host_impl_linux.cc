@@ -20,7 +20,7 @@
 #include "base/metrics/histogram.h"
 #include "base/path_service.h"
 #include "base/posix/eintr_wrapper.h"
-#include "base/posix/unix_domain_socket.h"
+#include "base/posix/unix_domain_socket_linux.h"
 #include "base/process_util.h"
 #include "base/string_number_conversions.h"
 #include "base/string_util.h"
@@ -68,7 +68,7 @@ void ZygoteHostImpl::Init(const std::string& sandbox_cmd) {
   DCHECK(!init_);
   init_ = true;
 
-  FilePath chrome_path;
+  base::FilePath chrome_path;
   CHECK(PathService::Get(base::FILE_EXE, &chrome_path));
   CommandLine cmd_line(chrome_path);
 
@@ -311,12 +311,13 @@ pid_t ZygoteHostImpl::ForkRequest(
       // Here we're using whatever name we got from the other side.
       // But since it's likely that the same one will be used repeatedly
       // (even though it's not guaranteed), we cache it here.
-      static base::Histogram* uma_histogram;
+      static base::HistogramBase* uma_histogram;
       if (!uma_histogram || uma_histogram->histogram_name() != uma_name) {
         uma_histogram = base::LinearHistogram::FactoryGet(
             uma_name, 1,
             uma_boundary_value,
-            uma_boundary_value + 1, base::Histogram::kUmaTargetedHistogramFlag);
+            uma_boundary_value + 1,
+            base::HistogramBase::kUmaTargetedHistogramFlag);
       }
       uma_histogram->Add(uma_sample);
     }
@@ -371,7 +372,7 @@ void ZygoteHostImpl::AdjustRendererOOMScore(base::ProcessHandle pid,
   static bool selinux_valid = false;
 
   if (!selinux_valid) {
-    const FilePath kSelinuxPath("/selinux");
+    const base::FilePath kSelinuxPath("/selinux");
     selinux = access(kSelinuxPath.value().c_str(), X_OK) == 0 &&
         file_util::CountFilesCreatedAfter(kSelinuxPath,
                                           base::Time::UnixEpoch()) > 0;

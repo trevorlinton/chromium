@@ -11,6 +11,7 @@ import pickle
 import re
 
 from pylib import cmd_helper
+from pylib import constants
 
 
 # If you change the cached output of proguard, increment this number
@@ -32,7 +33,8 @@ class ApkInfo(object):
   """Helper class for inspecting APKs."""
 
   def __init__(self, apk_path, jar_path):
-    self._PROGUARD_PATH = os.path.join(os.environ['ANDROID_SDK_ROOT'],
+    sdk_root = os.getenv('ANDROID_SDK_ROOT', constants.ANDROID_SDK_ROOT)
+    self._PROGUARD_PATH = os.path.join(sdk_root,
                                        'tools/proguard/bin/proguard.sh')
     if not os.path.exists(self._PROGUARD_PATH):
       self._PROGUARD_PATH = os.path.join(os.environ['ANDROID_BUILD_TOP'],
