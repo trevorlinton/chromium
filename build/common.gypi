@@ -87,6 +87,7 @@
 
             # Compute the architecture that we're building on.
             ['OS=="win" or OS=="mac" or OS=="ios"', {
+	      #'host_arch%': 'x64',
               'host_arch%': 'ia32',
               'use_openssl%': '0',
             }, {
@@ -4456,6 +4457,7 @@
         'msvs_disabled_warnings': [4351, 4355, 4396, 4503, 4819,
           # TODO(maruel): These warnings are level 4. They will be slowly
           # removed as code is fixed.
+			# Intel C++ Ignores: 1879, 869, 7, 82, 3199, 94, 791, 803,
           4100, 4121, 4125, 4127, 4130, 4131, 4189, 4201, 4238, 4244, 4245,
           4310, 4428, 4481, 4505, 4510, 4512, 4530, 4610, 4611, 4701, 4702,
           4706,

@@ -21,8 +21,10 @@
       }],
     ],
   },
-  'targets': [
-    {
+  'conditions':[
+	['OS == "mac"', {
+  		'targets': [
+    		{
       'target_name':'Tint',
       'type':'none',
       'actions': [
@@ -35,6 +37,25 @@
         },
       ],
     }
+
+ 		],
+
+        }],
+  ],
+  'targets': [
+    #{
+    #  'target_name':'Tint',
+    #  'type':'none',
+    #  'actions': [
+    #    {
+    #      'action_name': 'builder',
+    #      'inputs':['DebugBuilder_in'],
+    #      'outputs':['DebugBuilder_out'],
+    #      'action': ['/Tint/Runtime/build.sh','$(CONFIGURATION)'],
+    #      'dependencies': [],
+    #    },
+    #  ],
+    #}
   ],
   'includes': [
     'content_tests.gypi',
