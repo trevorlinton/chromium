@@ -182,4 +182,8 @@ void WebContentsDelegate::Detach(WebContents* web_contents) {
   attached_contents_.erase(web_contents);
 }
 
+GURL WebContentsDelegate::OverrideDOMStorageOrigin(const GURL& origin) {
+  return origin;
+}
+
 }  // namespace content

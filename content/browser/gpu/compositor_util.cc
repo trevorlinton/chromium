@@ -71,9 +71,9 @@ bool IsThreadedCompositingEnabled() {
   if (IsForceCompositingModeBlacklisted())
     return false;
 
-#if defined(OS_MACOSX)
-  return true;
-#endif
+//#if defined(OS_MACOSX)
+//  return true;
+//#endif
 
   base::FieldTrial* trial =
       base::FieldTrialList::Find(kGpuCompositingFieldTrialName);

@@ -435,7 +435,8 @@ class CONTENT_EXPORT WebContentsDelegate {
       const base::FilePath& plugin_path,
       const base::Callback<void(bool)>& callback);
 
-  virtual GURL OverrideDOMStorageOrigin(const GURL& origin) { return origin; }
+  // Added to override dom storages
+  virtual GURL OverrideDOMStorageOrigin(const GURL& origin);
  protected:
   virtual ~WebContentsDelegate();
 
