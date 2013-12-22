@@ -47,7 +47,7 @@ NSComparisonResult OpaqueViewsOnTop(id view1, id view2, void* context) {
 @implementation OpaqueView
 
 - (void)drawRect:(NSRect)r {
-  [[NSColor clearColor] set];
+  [[NSColor blackColor] set];
   NSRectFill(r);
 }
 
@@ -119,7 +119,7 @@ NSComparisonResult OpaqueViewsOnTop(id view1, id view2, void* context) {
       // deeper level than the NSThemeFrame, so it is OK to have the opaques
       // go all the way to the bottom.
       const CGFloat kTopEdgeInset = 16;
-      const CGFloat kAlphaValueJustOpaqueEnough = 0.0f;
+      const CGFloat kAlphaValueJustOpaqueEnough = 0.015f;
 
       base::scoped_nsobject<NSView> leftOpaque([[OpaqueView alloc]
           initWithFrame:NSMakeRect(NSMinX(rootBounds),
