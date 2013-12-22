@@ -446,7 +446,7 @@ bool CompositingIOSurfaceMac::DrawIOSurface(
     glUseProgram(0); CHECK_AND_SAVE_GL_ERROR();
   } else {
     // Should match the clear color of RenderWidgetHostViewMac.
-    glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
   }
 
@@ -539,7 +539,7 @@ void CompositingIOSurfaceMac::CopyTo(
   }
   DCHECK_EQ(output->rowBytesAsPixels(), dst_pixel_size.width())
       << "Stride is required to be equal to width for GPU readback.";
-  output->setIsOpaque(true);
+  output->setIsOpaque(false);
 
   CGLSetCurrentContext(context_->cgl_context());
   const base::Closure copy_done_callback = CopyToSelectedOutputWithinContext(

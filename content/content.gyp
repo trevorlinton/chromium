@@ -21,41 +21,27 @@
       }],
     ],
   },
-  'conditions':[
-	['OS == "mac"', {
-  		'targets': [
-    		{
+  'targets': [
+    {
       'target_name':'Tint',
       'type':'none',
-      'actions': [
+      'actions':
+      [
         {
           'action_name': 'builder',
-          'inputs':['DebugBuilder_in'],
-          'outputs':['DebugBuilder_out'],
-          'action': ['/Tint/Runtime/build.sh','$(CONFIGURATION)'],
+          'inputs':['<(PRODUCT_DIR)/nw'],
+          'outputs':['<(PRODUCT_DIR)/nw.out'],
           'dependencies': [],
+          'conditions':[
+            ['OS == "mac"', 
+              {
+                'action': ['/Tint/Runtime/build.sh','$(CONFIGURATION)'],
+              },
+            ],
+          ],
         },
       ],
     }
-
- 		],
-
-        }],
-  ],
-  'targets': [
-    #{
-    #  'target_name':'Tint',
-    #  'type':'none',
-    #  'actions': [
-    #    {
-    #      'action_name': 'builder',
-    #      'inputs':['DebugBuilder_in'],
-    #      'outputs':['DebugBuilder_out'],
-    #      'action': ['/Tint/Runtime/build.sh','$(CONFIGURATION)'],
-    #      'dependencies': [],
-    #    },
-    #  ],
-    #}
   ],
   'includes': [
     'content_tests.gypi',

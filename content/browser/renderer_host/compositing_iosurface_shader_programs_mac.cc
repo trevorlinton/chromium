@@ -62,7 +62,7 @@ const char kvsSolidWhite[] = GLSL_PROGRAM_AS_STRING(
 // Always white.
 const char kfsSolidWhite[] = GLSL_PROGRAM_AS_STRING(
     void main() {
-      gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+      gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
     }
 );
 

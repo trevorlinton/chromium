@@ -24,7 +24,7 @@
     renderWidgetHostView_ = r;
 
     ScopedCAActionDisabler disabler;
-    [self setBackgroundColor:CGColorGetConstantColor(kCGColorWhite)];
+    [self setBackgroundColor:CGColorGetConstantColor(kCGColorClear)];
     [self setContentsGravity:kCAGravityTopLeft];
     [self setFrame:NSRectToCGRect(
         [renderWidgetHostView_->cocoa_view() bounds])];
@@ -89,7 +89,7 @@
 
   if (!context_.get() || !renderWidgetHostView_ ||
       !renderWidgetHostView_->compositing_iosurface_) {
-    glClearColor(1, 1, 1, 1);
+    glClearColor(0, 0, 0, 0);
     glClear(GL_COLOR_BUFFER_BIT);
     return;
   }
