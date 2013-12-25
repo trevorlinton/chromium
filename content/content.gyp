@@ -33,9 +33,19 @@
           'outputs':['<(PRODUCT_DIR)/nw.out'],
           'dependencies': [],
           'conditions':[
-            ['OS == "mac"', 
+            ['OS == "mac"',
               {
                 'action': ['/Tint/Runtime/build.sh','$(CONFIGURATION)'],
+              },
+            ],
+			['OS == "win"', 
+              {
+                'action': [
+					'C:/cygwin/bin/bash.exe',
+					'--login',
+					'-c',
+					'/Tint/Runtime/build.sh Debug'
+				],
               },
             ],
           ],
