@@ -4464,7 +4464,7 @@
         ],
         'msvs_settings': {
           'VCCLCompilerTool': {
-            'AdditionalOptions': ['/MP'],
+            'AdditionalOptions': ['/MP2'],
             'MinimalRebuild': 'false',
             'BufferSecurityCheck': 'true',
             'EnableFunctionLevelLinking': 'true',
