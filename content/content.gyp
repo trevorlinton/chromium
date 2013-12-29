@@ -23,8 +23,11 @@
   },
   'targets': [
     {
-      'target_name':'Tint',
+      'target_name':'Tint_Release',
       'type':'none',
+	  'variables': {
+		'component': 'static_library',
+	  },
       'actions':
       [
         {
@@ -35,7 +38,7 @@
           'conditions':[
             ['OS == "mac"',
               {
-                'action': ['/Tint/Runtime/build.sh','$(CONFIGURATION)'],
+                'action': ['/Tint/Runtime/build.sh','Release'],
               },
             ],
 			['OS == "win"', 
@@ -44,14 +47,47 @@
 					'C:/cygwin/bin/bash.exe',
 					'--login',
 					'-c',
-					'/Tint/Runtime/build.sh Debug'
+					'/Tint/Runtime/build.sh Release', 
 				],
               },
             ],
           ],
         },
       ],
-    }
+    },
+    {
+      'target_name':'Tint_Debug',
+      'type':'none',
+	  'variables': {
+		  'component': 'shared_library',
+	  },
+	  'actions':
+      [
+        {
+          'action_name': 'builder',
+          'inputs':['<(PRODUCT_DIR)/nw'],
+          'outputs':['<(PRODUCT_DIR)/nw.out'],
+          'dependencies': [],
+          'conditions':[
+            ['OS == "mac"',
+              {
+                'action': ['/Tint/Runtime/build.sh','Debug'],
+              },
+            ],
+			['OS == "win"', 
+              {
+                'action': [
+					'C:/cygwin/bin/bash.exe',
+					'--login',
+					'-c',
+					'/Tint/Runtime/build.sh Debug', 
+				],
+              },
+            ],
+          ],
+        },
+      ],
+    },
   ],
   'includes': [
     'content_tests.gypi',

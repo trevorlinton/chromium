@@ -1276,13 +1276,13 @@ LRESULT RenderWidgetHostViewWin::OnPaint(UINT message, WPARAM wparam, LPARAM lpa
 
       DeleteObject(brush);
       ReleaseDC(dc);
-    } //else if (!did_layered_reset_) {
+    } else if (!did_layered_reset_) {
       did_layered_reset_ = true;
 
       LONG flags = ::GetWindowLong(layered_parent_, GWL_EXSTYLE);
       ::SetWindowLong(layered_parent_, GWL_EXSTYLE, flags & ~WS_EX_LAYERED);
       ::SetWindowLong(layered_parent_, GWL_EXSTYLE, flags);
-    //}
+    }
     handled = FALSE;
     return 0L;
   }
@@ -1443,6 +1443,10 @@ void RenderWidgetHostViewWin::SetLayeredWindow(HWND layered) {
   SetTimer(NULL, 10, NULL);
 }
 
+bool RenderWidgetHostViewWin::IsLayeredWindow() {
+  return is_layered_window_;
+}
+
 LRESULT RenderWidgetHostViewWin::OnTimer(UINT message, WPARAM wparam, LPARAM lparam, BOOL& handled) {
   handled = TRUE;
 
@@ -1460,15 +1464,16 @@ LRESULT RenderWidgetHostViewWin::OnTimer(UINT message, WPARAM wparam, LPARAM lpa
     POINT ptSrc = {0, 0};
     BackingStoreWin* backing_store = static_cast<BackingStoreWin*>(
        render_widget_host_->GetBackingStore(true));
-
-    if(!UpdateLayeredWindow(layered_parent_, dc, &ptDest, &sizeDest, backing_store->hdc(), &ptSrc, 0, &ftn, ULW_ALPHA)) {
-      lerror = GetLastError();
-      LOG(ERROR) << "Unable to udpate layered window. GLE=" << std::hex << lerror;
+    if(backing_store) {
+      if(!UpdateLayeredWindow(layered_parent_, dc, &ptDest, &sizeDest, backing_store->hdc(), &ptSrc, 0, &ftn, ULW_ALPHA)) {
+        lerror = GetLastError();
+        LOG(ERROR) << "Unable to udpate layered window. GLE=" << std::hex << lerror;
+      }
     }
     ReleaseDC(dc);
     update_layered_window_ = false;
   }
-  return 0;
+  return 0L;
 }
 
 void RenderWidgetHostViewWin::DrawBackground(const RECT& dirty_rect,
@@ -2581,6 +2586,14 @@ gfx::GLSurfaceHandle RenderWidgetHostViewWin::GetCompositingSurface() {
   // If the window has been created, don't recreate it a second time
   if (compositor_host_window_)
     return gfx::GLSurfaceHandle(compositor_host_window_, gfx::NATIVE_TRANSPORT);
+  
+  // If we're using a layered window present to the parent window rather
+  // than our child.
+  //if (is_layered_window_ && GpuDataManagerImpl::GetInstance()->IsUsingAcceleratedSurface()) {
+  //  if (!accelerated_surface_)
+  //    accelerated_surface_.reset(new AcceleratedSurface(layered_parent_));
+  //  return gfx::GLSurfaceHandle(layered_parent_, gfx::NATIVE_TRANSPORT);
+  //}
 
   // On Vista and later we present directly to the view window rather than a
   // child window.

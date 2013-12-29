@@ -1278,11 +1278,11 @@ LRESULT HWNDMessageHandler::OnCreate(CREATESTRUCT* create_struct) {
   use_layered_buffer_ = !!(window_ex_style() & WS_EX_LAYERED);
 
 #if defined(USE_AURA)
-  if (window_ex_style() &  WS_EX_COMPOSITED) {
+  if (window_ex_style() & WS_EX_COMPOSITED) {
     if (base::win::GetVersion() >= base::win::VERSION_VISTA) {
       // This is part of the magic to emulate layered windows with Aura
       // see the explanation elsewere when we set WS_EX_COMPOSITED style.
-      MARGINS margins = {-1,-1,-1,-1};
+      MARGINS margins = {10,10,10,10};
       DwmExtendFrameIntoClientArea(hwnd(), &margins);
     }
   }
@@ -2171,7 +2171,7 @@ void HWNDMessageHandler::OnWindowPosChanged(WINDOWPOS* window_pos) {
   if (remove_standard_frame_ && window_pos->flags & SWP_FRAMECHANGED &&
       ui::win::IsAeroGlassEnabled() &&
       (window_ex_style() & WS_EX_COMPOSITED) == 0) {
-    MARGINS m = {10, 10, 10, 10};
+    MARGINS m = {-1, -1, -1, -1};
     DwmExtendFrameIntoClientArea(hwnd(), &m);
   }
   if (window_pos->flags & SWP_SHOWWINDOW)

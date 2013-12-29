@@ -168,6 +168,7 @@ class RenderWidgetHostViewWin
   virtual gfx::Rect GetViewBounds() const OVERRIDE;
   virtual void SetBackground(const SkBitmap& background) OVERRIDE;
   void SetLayeredWindow(HWND layered);
+  bool IsLayeredWindow();
 
   // Implementation of RenderWidgetHostViewPort.
   virtual void InitAsPopup(RenderWidgetHostView* parent_host_view,

@@ -62,12 +62,14 @@ void CalculateWindowStylesFromInitParams(
   // 5- When the window is created but before it is presented, call
   //    DwmExtendFrameIntoClientArea passing -1 as the margins.
   if (params.opacity == Widget::InitParams::TRANSLUCENT_WINDOW) {
-#if defined(USE_AURA)
+//#if defined(USE_AURA)
     if (ui::win::IsAeroGlassEnabled())
       *ex_style |= WS_EX_COMPOSITED;
-#else
+    else
+      *ex_style |= WS_EX_LAYERED;
+//#else
     *ex_style |= WS_EX_LAYERED;
-#endif
+//#endif
   }
   if (params.has_dropshadow) {
     *class_style |= (base::win::GetVersion() < base::win::VERSION_XP) ?

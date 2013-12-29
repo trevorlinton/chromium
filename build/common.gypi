@@ -2661,6 +2661,7 @@
             # information is used by the Syzygy optimization tool when
             # decomposing the release image.
             'Profile': 'true',
+	    'GenerateDebugInformation': 'false',
           },
         },
         'conditions': [
