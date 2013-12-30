@@ -4569,6 +4569,7 @@
               'dwmapi.dll',
               'shell32.dll',
               'uxtheme.dll',
+			  'comctl32.dll',
             ],
           },
         },
