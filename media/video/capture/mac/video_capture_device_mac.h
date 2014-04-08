@@ -13,7 +13,7 @@
 #include "media/video/capture/video_capture_device.h"
 #include "media/video/capture/video_capture_types.h"
 
-@class VideoCaptureDeviceQTKit;
+//@class VideoCaptureDeviceQTKit;
 
 namespace media {
 
@@ -54,7 +54,7 @@ class VideoCaptureDeviceMac : public VideoCaptureDevice {
   VideoCaptureDevice::EventHandler* observer_;
   InternalState state_;
 
-  VideoCaptureDeviceQTKit* capture_device_;
+  // VideoCaptureDeviceQTKit* capture_device_;
 
   DISALLOW_COPY_AND_ASSIGN(VideoCaptureDeviceMac);
 };

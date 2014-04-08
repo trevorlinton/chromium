@@ -386,8 +386,9 @@
         'video/capture/linux/video_capture_device_linux.h',
         'video/capture/mac/video_capture_device_mac.h',
         'video/capture/mac/video_capture_device_mac.mm',
-        'video/capture/mac/video_capture_device_qtkit_mac.h',
-        'video/capture/mac/video_capture_device_qtkit_mac.mm',
+        # deprecated and no longer used.
+	#'video/capture/mac/video_capture_device_qtkit_mac.h',
+        #'video/capture/mac/video_capture_device_qtkit_mac.mm',
 
         'video/capture/video_capture.h',
         'video/capture/video_capture_device.cc',
@@ -760,7 +761,8 @@
               '$(SDKROOT)/System/Library/Frameworks/CoreMIDI.framework',
               '$(SDKROOT)/System/Library/Frameworks/CoreVideo.framework',
               '$(SDKROOT)/System/Library/Frameworks/OpenGL.framework',
-              '$(SDKROOT)/System/Library/Frameworks/QTKit.framework',
+              	# no longer supported by the apple store as of mavericks.
+		#'$(SDKROOT)/System/Library/Frameworks/QTKit.framework',
             ],
           },
         }],

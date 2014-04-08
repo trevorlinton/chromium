@@ -4,7 +4,7 @@
 
 #include "content/browser/device_monitor_mac.h"
 
-#import <QTKit/QTKit.h>
+// #import <QTKit/QTKit.h>
 
 #include "base/logging.h"
 
@@ -40,7 +40,7 @@ DeviceMonitorMac::QTMonitorImpl::QTMonitorImpl(DeviceMonitorMac* monitor)
 }
 
 void DeviceMonitorMac::QTMonitorImpl::Start() {
-  NSNotificationCenter* nc = [NSNotificationCenter defaultCenter];
+/*  NSNotificationCenter* nc = [NSNotificationCenter defaultCenter];
   device_arrival_ =
     [nc addObserverForName:QTCaptureDeviceWasConnectedNotification
                     object:nil
@@ -54,18 +54,21 @@ void DeviceMonitorMac::QTMonitorImpl::Start() {
                        queue:nil
                   usingBlock:^(NSNotification* notification) {
                       OnDeviceChanged();}];
+*/
 }
 
 void DeviceMonitorMac::QTMonitorImpl::Stop() {
-  if (!monitor_)
+/*  if (!monitor_)
     return;
 
   NSNotificationCenter* nc = [NSNotificationCenter defaultCenter];
   [nc removeObserver:device_arrival_];
   [nc removeObserver:device_removal_];
+*/
 }
 
 void DeviceMonitorMac::QTMonitorImpl::OnDeviceChanged() {
+/*
   NSArray* devices = [QTCaptureDevice inputDevices];
   int number_video_devices = 0;
   int number_audio_devices = 0;
@@ -88,21 +91,22 @@ void DeviceMonitorMac::QTMonitorImpl::OnDeviceChanged() {
     number_audio_devices_ = number_audio_devices;
     monitor_->NotifyDeviceChanged(base::SystemMonitor::DEVTYPE_AUDIO_CAPTURE);
   }
+*/
 }
 
 DeviceMonitorMac::DeviceMonitorMac() {
-  qt_monitor_.reset(new QTMonitorImpl(this));
-  qt_monitor_->Start();
+//  qt_monitor_.reset(new QTMonitorImpl(this));
+//  qt_monitor_->Start();
 }
 
 DeviceMonitorMac::~DeviceMonitorMac() {
-  qt_monitor_->Stop();
+//  qt_monitor_->Stop();
 }
 
 void DeviceMonitorMac::NotifyDeviceChanged(
     base::SystemMonitor::DeviceType type) {
   // TODO(xians): Remove the global variable for SystemMonitor.
-  base::SystemMonitor::Get()->ProcessDevicesChanged(type);
+//  base::SystemMonitor::Get()->ProcessDevicesChanged(type);
 }
 
 }  // namespace content

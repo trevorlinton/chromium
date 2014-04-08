@@ -4,11 +4,11 @@
 
 #include "media/video/capture/mac/video_capture_device_mac.h"
 
-#import <QTKit/QTKit.h>
+// #import <QTKit/QTKit.h>
 
 #include "base/logging.h"
 #include "base/time/time.h"
-#include "media/video/capture/mac/video_capture_device_qtkit_mac.h"
+// #include "media/video/capture/mac/video_capture_device_qtkit_mac.h"
 
 namespace {
 
@@ -55,14 +55,14 @@ namespace media {
 
 void VideoCaptureDevice::GetDeviceNames(Names* device_names) {
   // Loop through all available devices and add to |device_names|.
-  device_names->clear();
+  // device_names->clear();
 
-  NSDictionary* capture_devices = [VideoCaptureDeviceQTKit deviceNames];
-  for (NSString* key in capture_devices) {
-    Name name([[capture_devices valueForKey:key] UTF8String],
-              [key UTF8String]);
-    device_names->push_back(name);
-  }
+  // NSDictionary* capture_devices = [VideoCaptureDeviceQTKit deviceNames];
+  // for (NSString* key in capture_devices) {
+  //  Name name([[capture_devices valueForKey:key] UTF8String],
+  //            [key UTF8String]);
+  //  device_names->push_back(name);
+  //}
 }
 
 const std::string VideoCaptureDevice::Name::GetModel() const {
@@ -94,12 +94,12 @@ VideoCaptureDevice* VideoCaptureDevice::Create(const Name& device_name) {
 VideoCaptureDeviceMac::VideoCaptureDeviceMac(const Name& device_name)
     : device_name_(device_name),
       observer_(NULL),
-      state_(kNotInitialized),
-      capture_device_(nil) {
+      state_(kNotInitialized) //,
+      { //capture_device_(nil) {
 }
 
 VideoCaptureDeviceMac::~VideoCaptureDeviceMac() {
-  [capture_device_ release];
+  //[capture_device_ release];
 }
 
 void VideoCaptureDeviceMac::Allocate(
@@ -119,51 +119,54 @@ void VideoCaptureDeviceMac::Allocate(
                                   &height);
 
   observer_ = observer;
-  NSString* deviceId =
-      [NSString stringWithUTF8String:device_name_.id().c_str()];
+  //NSString* deviceId =
+  //    [NSString stringWithUTF8String:device_name_.id().c_str()];
 
-  [capture_device_ setFrameReceiver:this];
+ // [capture_device_ setFrameReceiver:this];
 
-  if (![capture_device_ setCaptureDevice:deviceId]) {
+  //if (![capture_device_ setCaptureDevice:deviceId]) {
     SetErrorState("Could not open capture device.");
     return;
-  }
-  if (frame_rate < kMinFrameRate)
-    frame_rate = kMinFrameRate;
-  else if (frame_rate > kMaxFrameRate)
-    frame_rate = kMaxFrameRate;
+  //}
+  //if (frame_rate < kMinFrameRate)
+  //  frame_rate = kMinFrameRate;
+  //else if (frame_rate > kMaxFrameRate)
+  //  frame_rate = kMaxFrameRate;
 
-  if (![capture_device_ setCaptureHeight:height
-                                   width:width
-                               frameRate:frame_rate]) {
-    SetErrorState("Could not configure capture device.");
-    return;
-  }
+  //if (![capture_device_ setCaptureHeight:height
+  //                                 width:width
+  //                             frameRate:frame_rate]) {
+  //  SetErrorState("Could not configure capture device.");
+  //  return;
+  //}
 
-  state_ = kAllocated;
-  VideoCaptureCapability current_settings;
-  current_settings.color = VideoCaptureCapability::kARGB;
-  current_settings.width = width;
-  current_settings.height = height;
-  current_settings.frame_rate = frame_rate;
-  current_settings.expected_capture_delay = 0;
-  current_settings.interlaced = false;
+  //state_ = kAllocated;
+  //VideoCaptureCapability current_settings;
+  //current_settings.color = VideoCaptureCapability::kARGB;
+  //current_settings.width = width;
+  //current_settings.height = height;
+  //current_settings.frame_rate = frame_rate;
+  //current_settings.expected_capture_delay = 0;
+  //current_settings.interlaced = false;
 
-  observer_->OnFrameInfo(current_settings);
+  //observer_->OnFrameInfo(current_settings);
 }
 
 void VideoCaptureDeviceMac::Start() {
-  DCHECK_EQ(state_, kAllocated);
+  /*DCHECK_EQ(state_, kAllocated);
   if (![capture_device_ startCapture]) {
     SetErrorState("Could not start capture device.");
     return;
   }
-  state_ = kCapturing;
+  state_ = kCapturing;*/
+SetErrorState("Could not start capture device.");
+    return;
+
 }
 
 void VideoCaptureDeviceMac::Stop() {
   DCHECK_EQ(state_, kCapturing);
-  [capture_device_ stopCapture];
+  //[capture_device_ stopCapture];
   state_ = kAllocated;
 }
 
@@ -171,11 +174,11 @@ void VideoCaptureDeviceMac::DeAllocate() {
   if (state_ != kAllocated && state_ != kCapturing) {
     return;
   }
-  if (state_ == kCapturing) {
-    [capture_device_ stopCapture];
-  }
-  [capture_device_ setCaptureDevice:nil];
-  [capture_device_ setFrameReceiver:nil];
+  //if (state_ == kCapturing) {
+  //  [capture_device_ stopCapture];
+  //}
+  //[capture_device_ setCaptureDevice:nil];
+  //[capture_device_ setFrameReceiver:nil];
 
   state_ = kIdle;
 }
@@ -190,16 +193,16 @@ bool VideoCaptureDeviceMac::Init() {
   Names device_names;
   GetDeviceNames(&device_names);
   Name* found = device_names.FindById(device_name_.id());
-  if (!found)
+  //if (!found)
     return false;
 
-  capture_device_ =
-      [[VideoCaptureDeviceQTKit alloc] initWithFrameReceiver:this];
-  if (!capture_device_)
-    return false;
+  //capture_device_ =
+  //    [[VideoCaptureDeviceQTKit alloc] initWithFrameReceiver:this];
+  //if (!capture_device_)
+  //  return false;
 
-  state_ = kIdle;
-  return true;
+  //state_ = kIdle;
+  //return true;
 }
 
 void VideoCaptureDeviceMac::ReceiveFrame(
