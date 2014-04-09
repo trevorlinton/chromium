@@ -90,7 +90,7 @@
     },
   ],
   'includes': [
-    'content_tests.gypi',
+    # 'content_tests.gypi',
   ],
   'conditions': [
     ['OS != "ios"', {
