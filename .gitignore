@@ -35,27 +35,30 @@
 .pydevproject
 # Settings directory for eclipse
 /.settings
+cscope.*
+Session.vim
 tags
 Thumbs.db
 v8.log
 /Makefile
 /_out
 /tint/
+/android_emulator_sdk
 /arm-sysroot
+/base/base_unittests_run.xml
 /breakpad/src/
 /build/Debug
 /build/Debug_x64
-/build/Release
-/build/Release_x64
 /build/gomacc.lock
 /build/ipch/
+/build/Release
+/build/Release_x64
 /build/util/LASTCHANGE*
 /build/util/support
 /build/x64/
 # The Chrome OS build creates a /c symlink due to http://crbug.com/54866.
 /c
 /ceee/internal/
-/base/base_unittests_run.xml
 /chrome/app/policy/chrome_settings_proto_compile.xml
 /chrome/app/policy/chrome_settings_proto_generated_compile.xml
 /chrome/app/policy/cloud_policy_backend_header_compile.xml
@@ -69,8 +72,10 @@ v8.log
 /chrome/browser/extensions/default_extensions/chromeos
 /chrome/browser/google/linkdoctor_internal
 /chrome/browser/intents/internal/
+/chrome/browser/internal
 /chrome/browser/performance_monitor/performance_monitor.xml
 /chrome/browser/protector/internal
+/chrome/browser/resources/settings_internal/
 /chrome/browser/resources/software_rendering_list
 /chrome/browser/search_engines/prepopulated_engines.xml
 /chrome/browser/spellchecker/internal
@@ -87,6 +92,7 @@ v8.log
 /chrome/installer/mini_installer/mini_installer.aps
 /chrome/installer/mini_installer/support
 /chrome/installer/mini_installer_syzygy.xml
+/chrome/installer/mini_installer_tests_run.xml
 /chrome/installer_util_strings.xml
 /chrome/interactive_ui_tests_run.xml
 /chrome/setup.xml
@@ -121,6 +127,7 @@ v8.log
 /chrome_frame/chrome_frame_version_resources.xml
 /chrome_frame/tools/test/reference_build
 /cloud_print/cloud_print_version_resources.xml
+/components/variations.xml
 /content/test/data/layout_tests/
 /content/test/data/plugin/
 /content/nw/
@@ -130,8 +137,8 @@ v8.log
 /googleurl
 /gpu/gles2_conform_test
 /gyp-mac-tool
-/hideout
 /llvm
+/media/cdm/ppapi/api
 /media/media_asm.xml
 /media/test/data/content
 /media/test/data/security
@@ -177,7 +184,7 @@ v8.log
 /third_party/adobe/flash/symbols
 /third_party/amd/
 /third_party/android_tools/
-/third_party/angle
+/third_party/android_tools_internal/
 /third_party/angle_dx11
 /third_party/aosp
 /third_party/apache-mime4j
@@ -189,6 +196,7 @@ v8.log
 /third_party/chromeos_login_manager
 /third_party/chromeos_text_input
 /third_party/chromite
+/third_party/cld_2/src
 /third_party/cros
 /third_party/cros_dbus_cplusplus/source
 /third_party/cros_system_api
@@ -297,8 +305,12 @@ v8.log
 /third_party/yasm/generate_files.xml
 /third_party/yasm/source/patched-yasm
 /third_party/yasm/yasm.xml
+/tmp/
 /tools/deps2git/
 /tools/distcc
+/tools/gn/bin/linux
+/tools/gn/bin/mac
+/tools/gn/bin/win
 /tools/grit
 /tools/gyp
 /tools/histograms
@@ -306,7 +318,7 @@ v8.log
 /tools/page_cycler/acid3
 /tools/perf/data
 /tools/perf/results.html
-/tools/swarm_client
+/tools/swarming_client
 /tools/tryserver
 /tools/win/link_limiter/build
 /ui/surface/surface.xml
@@ -330,5 +342,4 @@ Session.vim
 
 # Dependencies of the node-webkit project
 /third_party/node
-
 /create-sdk

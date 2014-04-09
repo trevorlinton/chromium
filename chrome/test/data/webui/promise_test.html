@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html>
 <head>
-<script src="webui_resource_test.js"></script>
 <script src="mock_timer.js"></script>
 </head>
 <body>
@@ -213,7 +212,7 @@ function testAllAlreadyDone() {
 
 function testEvent() {
   var p = Promise.event(document.body, 'foo');
-  var e = new cr.Event('foo');
+  var e = new Event('foo');
   document.body.dispatchEvent(e);
   assertEquals(e, p.value);
 }

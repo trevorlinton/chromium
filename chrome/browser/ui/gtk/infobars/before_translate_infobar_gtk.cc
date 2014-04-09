@@ -87,7 +87,7 @@ bool BeforeTranslateInfoBar::ShowOptionsMenuButton() const {
 }
 
 void BeforeTranslateInfoBar::OnLanguageModified(GtkWidget* sender) {
-  GetDelegate()->set_original_language_index(
+  GetDelegate()->UpdateOriginalLanguageIndex(
       GetLanguageComboboxActiveId(GTK_COMBO_BOX(sender)));
 }
 

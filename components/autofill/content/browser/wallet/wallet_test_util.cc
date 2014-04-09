@@ -83,13 +83,18 @@ scoped_ptr<Address> GetTestMinimalAddress() {
 }
 
 scoped_ptr<FullWallet> GetTestFullWallet() {
+  return GetTestFullWalletWithRequiredActions(std::vector<RequiredAction>());
+}
+
+scoped_ptr<FullWallet> GetTestFullWalletWithRequiredActions(
+    const std::vector<RequiredAction>& actions) {
   scoped_ptr<FullWallet> wallet(new FullWallet(FutureYear(),
                                                12,
                                                "528512",
                                                "5ec4feecf9d6",
                                                GetTestAddress(),
                                                GetTestShippingAddress(),
-                                               std::vector<RequiredAction>()));
+                                               actions));
   std::vector<uint8> one_time_pad;
   base::HexStringToBytes("5F04A8704183", &one_time_pad);
   wallet->set_one_time_pad(one_time_pad);
@@ -179,13 +184,15 @@ scoped_ptr<WalletItems::MaskedInstrument> GetTestMaskedInstrumentInvalid() {
       WalletItems::MaskedInstrument::DECLINED);
 }
 
-scoped_ptr<WalletItems::MaskedInstrument> GetTestMaskedInstrumentAmex() {
+scoped_ptr<WalletItems::MaskedInstrument> GetTestMaskedInstrumentAmex(
+    AmexPermission amex_permission) {
   return GetTestMaskedInstrumentWithDetails(
       "default_instrument_id",
       GetTestAddress(),
       WalletItems::MaskedInstrument::AMEX,
-      // Amex cards are marked with status AMEX_NOT_SUPPORTED by the server.
-      WalletItems::MaskedInstrument::AMEX_NOT_SUPPORTED);
+      (amex_permission == AMEX_ALLOWED)
+         ? WalletItems::MaskedInstrument::VALID
+         : WalletItems::MaskedInstrument::AMEX_NOT_SUPPORTED);
 }
 
 scoped_ptr<WalletItems::MaskedInstrument> GetTestNonDefaultMaskedInstrument() {
@@ -224,13 +231,44 @@ scoped_ptr<Address> GetTestNonDefaultShippingAddress() {
   return address.Pass();
 }
 
-scoped_ptr<WalletItems> GetTestWalletItems() {
+scoped_ptr<WalletItems> GetTestWalletItems(
+    const std::vector<RequiredAction>& required_actions,
+    const std::string& default_instrument_id,
+    const std::string& default_address_id,
+    AmexPermission amex_permission) {
   return scoped_ptr<WalletItems>(
-      new wallet::WalletItems(std::vector<RequiredAction>(),
+      new wallet::WalletItems(required_actions,
                               "google_transaction_id",
-                              "default_instrument_id",
-                              "default_address_id",
-                              "obfuscated_gaia_id"));
+                              default_instrument_id,
+                              default_address_id,
+                              "obfuscated_gaia_id",
+                              amex_permission));
+}
+
+scoped_ptr<WalletItems> GetTestWalletItemsWithRequiredAction(
+    RequiredAction action) {
+  std::vector<RequiredAction> required_actions;
+  required_actions.push_back(action);
+  return GetTestWalletItems(required_actions,
+                            "default_instrument_id",
+                            "default_address_id",
+                            AMEX_ALLOWED);
+}
+
+scoped_ptr<WalletItems> GetTestWalletItems(AmexPermission amex_permission) {
+  return GetTestWalletItemsWithDefaultIds("default_instrument_id",
+                                          "default_address_id",
+                                          amex_permission);
+}
+
+scoped_ptr<WalletItems> GetTestWalletItemsWithDefaultIds(
+    const std::string& default_instrument_id,
+    const std::string& default_address_id,
+    AmexPermission amex_permission) {
+  return GetTestWalletItems(std::vector<RequiredAction>(),
+                            default_instrument_id,
+                            default_address_id,
+                            amex_permission);
 }
 
 }  // namespace wallet

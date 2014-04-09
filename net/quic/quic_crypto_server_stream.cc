@@ -7,8 +7,8 @@
 #include "base/base64.h"
 #include "crypto/secure_hash.h"
 #include "net/quic/crypto/crypto_protocol.h"
-#include "net/quic/crypto/crypto_server_config.h"
 #include "net/quic/crypto/crypto_utils.h"
+#include "net/quic/crypto/quic_crypto_server_config.h"
 #include "net/quic/quic_config.h"
 #include "net/quic/quic_protocol.h"
 #include "net/quic/quic_session.h"
@@ -27,6 +27,8 @@ QuicCryptoServerStream::~QuicCryptoServerStream() {
 
 void QuicCryptoServerStream::OnHandshakeMessage(
     const CryptoHandshakeMessage& message) {
+  QuicCryptoStream::OnHandshakeMessage(message);
+
   // Do not process handshake messages after the handshake is confirmed.
   if (handshake_confirmed_) {
     CloseConnection(QUIC_CRYPTO_MESSAGE_AFTER_HANDSHAKE_COMPLETE);
@@ -60,6 +62,7 @@ void QuicCryptoServerStream::OnHandshakeMessage(
     CloseConnectionWithDetails(error, error_details);
     return;
   }
+  session()->OnConfigNegotiated();
 
   config->ToHandshakeMessage(&reply);
 
@@ -129,7 +132,6 @@ QuicErrorCode QuicCryptoServerStream::ProcessClientHello(
     string* error_details) {
   return crypto_config_.ProcessClientHello(
       message,
-      session()->connection()->version(),
       session()->connection()->guid(),
       session()->connection()->peer_address(),
       session()->connection()->clock(),

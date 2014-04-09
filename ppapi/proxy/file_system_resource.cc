@@ -23,10 +23,21 @@ FileSystemResource::FileSystemResource(Connection connection,
       called_open_(false),
       callback_count_(0) {
   DCHECK(type_ != PP_FILESYSTEMTYPE_INVALID);
-  // TODO(teravest): Temporarily create hosts in both the browser and renderer
-  // while we move file related hosts to the browser.
   SendCreate(RENDERER, PpapiHostMsg_FileSystem_Create(type_));
   SendCreate(BROWSER, PpapiHostMsg_FileSystem_Create(type_));
+}
+
+FileSystemResource::FileSystemResource(Connection connection,
+                                       PP_Instance instance,
+                                       int pending_renderer_id,
+                                       int pending_browser_id,
+                                       PP_FileSystemType type)
+    : PluginResource(connection, instance),
+      type_(type),
+      called_open_(true) {
+  DCHECK(type_ != PP_FILESYSTEMTYPE_INVALID);
+  AttachToPendingHost(RENDERER, pending_renderer_id);
+  AttachToPendingHost(BROWSER, pending_browser_id);
 }
 
 FileSystemResource::~FileSystemResource() {
@@ -38,6 +49,7 @@ PPB_FileSystem_API* FileSystemResource::AsPPB_FileSystem_API() {
 
 int32_t FileSystemResource::Open(int64_t expected_size,
                                  scoped_refptr<TrackedCallback> callback) {
+  DCHECK(type_ != PP_FILESYSTEMTYPE_ISOLATED);
   if (called_open_)
     return PP_ERROR_FAILED;
   called_open_ = true;
@@ -59,11 +71,27 @@ PP_FileSystemType FileSystemResource::GetType() {
   return type_;
 }
 
-void FileSystemResource::InitIsolatedFileSystem(const char* fsid) {
-  Post(RENDERER,
-       PpapiHostMsg_FileSystem_InitIsolatedFileSystem(std::string(fsid)));
-  Post(BROWSER,
-       PpapiHostMsg_FileSystem_InitIsolatedFileSystem(std::string(fsid)));
+int32_t FileSystemResource::InitIsolatedFileSystem(
+    const std::string& fsid,
+    const base::Callback<void(int32_t)>& callback) {
+  // This call is mutually exclusive with Open() above, so we can reuse the
+  // called_open state.
+  DCHECK(type_ == PP_FILESYSTEMTYPE_ISOLATED);
+  if (called_open_)
+    return PP_ERROR_FAILED;
+  called_open_ = true;
+
+  Call<PpapiPluginMsg_FileSystem_InitIsolatedFileSystemReply>(RENDERER,
+      PpapiHostMsg_FileSystem_InitIsolatedFileSystem(fsid),
+      base::Bind(&FileSystemResource::InitIsolatedFileSystemComplete,
+      this,
+      callback));
+  Call<PpapiPluginMsg_FileSystem_InitIsolatedFileSystemReply>(BROWSER,
+      PpapiHostMsg_FileSystem_InitIsolatedFileSystem(fsid),
+      base::Bind(&FileSystemResource::InitIsolatedFileSystemComplete,
+      this,
+      callback));
+  return PP_OK_COMPLETIONPENDING;
 }
 
 void FileSystemResource::OpenComplete(
@@ -73,6 +101,15 @@ void FileSystemResource::OpenComplete(
   // Received callback from browser and renderer.
   if (callback_count_ == 2)
     callback->Run(params.result());
+}
+
+void FileSystemResource::InitIsolatedFileSystemComplete(
+    const base::Callback<void(int32_t)>& callback,
+    const ResourceMessageReplyParams& params) {
+  ++callback_count_;
+  // Received callback from browser and renderer.
+  if (callback_count_ == 2)
+    callback.Run(params.result());
 }
 
 }  // namespace proxy

@@ -20,6 +20,8 @@
 #include "sync/protocol/sync_protocol_error.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
+using ::testing::Invoke;
+
 class ProfileSyncServiceMock : public ProfileSyncService {
  public:
   // no-arg constructor provided so TestingProfile can use NiceMock.
@@ -96,6 +98,8 @@ class ProfileSyncServiceMock : public ProfileSyncService {
       const syncer::SyncProtocolError&));
   MOCK_METHOD1(SetSetupInProgress, void(bool));
 
+  MOCK_METHOD0(GetSessionModelAssociator,
+               browser_sync::SessionModelAssociator*());
   MOCK_CONST_METHOD0(GetAllSignedInDevicesMock,
                      std::vector<browser_sync::DeviceInfo*>* ());
   // This is to get around the fact that GMOCK does not handle Scoped*.

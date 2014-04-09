@@ -8,11 +8,11 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/extension_manifest_constants.h"
-
-namespace keys = extension_manifest_keys;
+#include "extensions/common/manifest_constants.h"
 
 namespace extensions {
+
+namespace keys = manifest_keys;
 
 IncognitoInfo::IncognitoInfo(bool incognito_split_mode)
     : split_mode(incognito_split_mode) {
@@ -36,25 +36,28 @@ IncognitoHandler::~IncognitoHandler() {
 
 bool IncognitoHandler::Parse(Extension* extension, string16* error) {
   if (!extension->manifest()->HasKey(keys::kIncognito)) {
-    // Apps default to split mode, extensions default to spanning.
-    extension->SetManifestData(keys::kIncognito,
-                               new IncognitoInfo(extension->is_app()));
+    // Extensions and Chrome apps default to spanning mode.
+    // Hosted and legacy packaged apps default to split mode.
+    extension->SetManifestData(
+        keys::kIncognito,
+        new IncognitoInfo(extension->is_hosted_app() ||
+                          extension->is_legacy_packaged_app()));
     return true;
   }
 
   bool split_mode = false;
   std::string incognito_string;
   if (!extension->manifest()->GetString(keys::kIncognito, &incognito_string)) {
-    *error = ASCIIToUTF16(extension_manifest_errors::kInvalidIncognitoBehavior);
+    *error = ASCIIToUTF16(manifest_errors::kInvalidIncognitoBehavior);
     return false;
   }
 
-  if (incognito_string == extension_manifest_values::kIncognitoSplit)
+  if (incognito_string == manifest_values::kIncognitoSplit)
     split_mode = true;
-  else if (incognito_string != extension_manifest_values::kIncognitoSpanning) {
+  else if (incognito_string != manifest_values::kIncognitoSpanning) {
     // If incognito_string == kIncognitoSpanning, it is valid and
     // split_mode remains false.
-    *error = ASCIIToUTF16(extension_manifest_errors::kInvalidIncognitoBehavior);
+    *error = ASCIIToUTF16(manifest_errors::kInvalidIncognitoBehavior);
     return false;
   }
 

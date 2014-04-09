@@ -8,12 +8,14 @@
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
 #include "cc/animation/animation_id_provider.h"
-#include "ui/base/animation/animation_container.h"
+#include "cc/output/begin_frame_args.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_animation_delegate.h"
 #include "ui/compositor/layer_animation_observer.h"
 #include "ui/compositor/layer_animation_sequence.h"
+#include "ui/gfx/animation/animation_container.h"
+#include "ui/gfx/frame_time.h"
 
 #define SAFE_INVOKE_VOID(function, running_anim, ...) \
     if (running_anim.is_sequence_alive()) \
@@ -37,10 +39,10 @@ const int kDefaultTransitionDurationMs = 120;
 const int kTimerIntervalMs = 10;
 
 // Returns the AnimationContainer we're added to.
-ui::AnimationContainer* GetAnimationContainer() {
-  static ui::AnimationContainer* container = NULL;
+gfx::AnimationContainer* GetAnimationContainer() {
+  static gfx::AnimationContainer* container = NULL;
   if (!container) {
-    container = new AnimationContainer();
+    container = new gfx::AnimationContainer();
     container->AddRef();
   }
   return container;
@@ -54,7 +56,7 @@ LayerAnimator::LayerAnimator(base::TimeDelta transition_duration)
     : delegate_(NULL),
       preemption_strategy_(IMMEDIATELY_SET_NEW_TARGET),
       transition_duration_(transition_duration),
-      tween_type_(Tween::LINEAR),
+      tween_type_(gfx::Tween::LINEAR),
       is_started_(false),
       disable_timer_for_test_(false),
       adding_animations_(false) {
@@ -177,7 +179,7 @@ void LayerAnimator::StartTogether(
     if (GetAnimationContainer()->is_running())
       last_step_time_ = GetAnimationContainer()->last_tick_time();
     else
-      last_step_time_ = base::TimeTicks::Now();
+      last_step_time_ = gfx::FrameTime::Now();
   }
 
   // Collect all the affected properties.
@@ -768,7 +770,7 @@ bool LayerAnimator::StartSequenceImmediately(LayerAnimationSequence* sequence) {
   else if (GetAnimationContainer()->is_running())
     start_time = GetAnimationContainer()->last_tick_time();
   else
-    start_time = base::TimeTicks::Now();
+    start_time = gfx::FrameTime::Now();
 
   if (!sequence->animation_group_id())
     sequence->set_animation_group_id(cc::AnimationIdProvider::NextGroupId());

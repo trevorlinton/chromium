@@ -2,6 +2,8 @@
 <html>
 <head>
   <title>WebRTC PeerConnection Manual Test</title>
+  <!-- Load the polyfill to switch-hit between Chrome and Firefox -->
+  <script src="../adapter.js"></script>
   <script src="../test_functions.js"></script>
   <script src="../message_handling.js"></script>
   <script src="../getusermedia.js"></script>
@@ -24,6 +26,12 @@
         onclick="updateGetUserMediaConstraints();"/>
     <button id="re-request" onclick="getUserMediaFromHere();">
         Request GetUserMedia</button><br/>
+    Audio source <select class="drop-down" id="audiosrc"
+        onchange="updateGetUserMediaConstraints();"></select>
+    Video source <select class="drop-down" id="videosrc"
+        onchange="updateGetUserMediaConstraints();"></select>
+    <button id="refresh-devices" onclick="getDevices();">
+        Refresh devices</button>
     Use <a href="constraints.html">constraints.html</a> to create more
         advanced constraints (then paste them into the Constraints box above).
     <a href="peerconnection-help.html" target="_blank">Help</a>
@@ -87,6 +95,8 @@
       <button onclick="toggleRemoteAudioFromHere();">Toggle Audio</button><br/>
       Data Channel:
       <button onclick="createDataChannelFromHere();">Create</button>
+      RTP <input type="checkbox" id="data-channel-type-rtp"
+          onclick="setPcDataChannelType();"/>
       <button onclick="closeDataChannelFromHere();">Close</button>
       status:
       <input type="text" id="data-channel-status" size="10" value="not created"
@@ -101,8 +111,8 @@
       <input type="text" id="dtmf-tones-gap" size="10" value="50" />
       <button onclick="insertDtmfFromHere();">Send</button><br/>
       Options:
-      <input type="checkbox" id="force-opus" onclick="forceOpusChanged();"/>
-      Force Opus in Outgoing SDP<br/>
+      <input type="checkbox" id="force-isac" onclick="forceIsacChanged();"/>
+      Force iSAC in Outgoing SDP<br/>
       <button onclick="clearLog();">Clear Logs</button>
 
       <h2>Messages</h2>

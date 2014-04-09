@@ -7,6 +7,7 @@
 #include <gtk/gtk.h>
 
 #include <algorithm>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
@@ -21,6 +22,7 @@
 #include "chrome/browser/extensions/extension_context_menu_model.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_system.h"
+#include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/ui/browser.h"
@@ -36,15 +38,15 @@
 #include "chrome/browser/ui/gtk/view_id_util.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/extension_manifest_constants.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
+#include "extensions/common/manifest_constants.h"
 #include "grit/theme_resources.h"
 #include "grit/ui_resources.h"
 #include "ui/base/accelerators/platform_accelerator_gtk.h"
-#include "ui/base/gtk/gtk_compat.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas_skia_paint.h"
+#include "ui/gfx/gtk_compat.h"
 #include "ui/gfx/gtk_util.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia_operations.h"
@@ -63,10 +65,6 @@ const int kButtonPadding = 4;
 // The padding to the right of the browser action buttons (between the buttons
 // and chevron if they are both showing).
 const int kButtonChevronPadding = 2;
-
-// The padding to the left, top and bottom of the browser actions toolbar
-// separator.
-const int kSeparatorPadding = 2;
 
 // Width of the invisible gripper for resizing the toolbar.
 const int kResizeGripperWidth = 4;
@@ -189,7 +187,7 @@ class BrowserActionButton : public content::NotificationObserver,
               details).ptr();
       if (extension_->id() == payload->first &&
           payload->second ==
-              extension_manifest_values::kBrowserActionCommandEvent) {
+              extensions::manifest_values::kBrowserActionCommandEvent) {
         if (type == chrome::NOTIFICATION_EXTENSION_COMMAND_ADDED)
           ConnectBrowserActionPopupAccelerator();
         else
@@ -256,21 +254,25 @@ class BrowserActionButton : public content::NotificationObserver,
   }
 
  private:
-  // Activate the browser action.
-  void Activate(GtkWidget* widget) {
+  // Activate the browser action. Returns true if a popup was shown. Showing the
+  // popup will grant tab permissions if |should_grant| is true. Popup's shown
+  // via an API should not grant permissions.
+  bool Activate(GtkWidget* widget, bool should_grant) {
     ExtensionToolbarModel* model = toolbar_->model();
     const Extension* extension = extension_;
     Browser* browser = toolbar_->browser();
     GURL popup_url;
 
-    switch (model->ExecuteBrowserAction(extension, browser, &popup_url)) {
+    switch (model->ExecuteBrowserAction(
+        extension, browser, &popup_url, should_grant)) {
       case ExtensionToolbarModel::ACTION_NONE:
         break;
       case ExtensionToolbarModel::ACTION_SHOW_POPUP:
         ExtensionPopupGtk::Show(popup_url, browser, widget,
                                 ExtensionPopupGtk::SHOW);
-        break;
+        return true;
     }
+    return false;
   }
 
   // MenuGtk::Delegate implementation.
@@ -327,7 +329,7 @@ class BrowserActionButton : public content::NotificationObserver,
 
   static void OnClicked(GtkWidget* widget, BrowserActionButton* button) {
     if (button->enabled_)
-      button->Activate(widget);
+      button->Activate(widget, true);
   }
 
   static gboolean OnExposeEvent(GtkWidget* widget,
@@ -368,7 +370,7 @@ class BrowserActionButton : public content::NotificationObserver,
     // The anchor might be in the overflow menu. Then we point to the chevron.
     if (!gtk_widget_get_visible(anchor))
       anchor = button->toolbar_->chevron();
-    button->Activate(anchor);
+    button->Activate(anchor, true);
     return TRUE;
   }
 
@@ -673,14 +675,17 @@ void BrowserActionsToolbarGtk::CreateButtonForExtension(
   UpdateVisibility();
 }
 
-GtkWidget* BrowserActionsToolbarGtk::GetBrowserActionWidget(
+BrowserActionButton* BrowserActionsToolbarGtk::GetBrowserActionButton(
     const Extension* extension) {
   ExtensionButtonMap::iterator it = extension_button_map_.find(
       extension->id());
-  if (it == extension_button_map_.end())
-    return NULL;
+  return it == extension_button_map_.end() ? NULL : it->second.get();
+}
 
-  return it->second.get()->widget();
+GtkWidget* BrowserActionsToolbarGtk::GetBrowserActionWidget(
+    const Extension* extension) {
+  BrowserActionButton* button = GetBrowserActionButton(extension);
+  return button == NULL ? NULL : button->widget();
 }
 
 void BrowserActionsToolbarGtk::RemoveButtonForExtension(
@@ -698,8 +703,9 @@ bool BrowserActionsToolbarGtk::ShouldDisplayBrowserAction(
     const Extension* extension) {
   // Only display incognito-enabled extensions while in incognito mode.
   return (!profile_->IsOffTheRecord() ||
-          extensions::ExtensionSystem::Get(profile_)->extension_service()->
-              IsIncognitoEnabled(extension->id()));
+          extension_util:: IsIncognitoEnabled(
+              extension->id(),
+              extensions::ExtensionSystem::Get(profile_)->extension_service()));
 }
 
 void BrowserActionsToolbarGtk::HidePopup() {
@@ -772,12 +778,30 @@ void BrowserActionsToolbarGtk::BrowserActionMoved(const Extension* extension,
   gtk_box_reorder_child(GTK_BOX(button_hbox_.get()), button_widget, index);
 }
 
+bool BrowserActionsToolbarGtk::BrowserActionShowPopup(
+    const Extension* extension) {
+  // Do not override other popups and only show in active window.
+  if (ExtensionPopupGtk::get_current_extension_popup() ||
+      !browser_->window()->IsActive()) {
+    return false;
+  }
+
+  BrowserActionButton* button = GetBrowserActionButton(extension);
+  if (button == NULL || button->widget() == NULL)
+    return false;
+
+  GtkWidget* anchor = button->widget();
+  if (!gtk_widget_get_visible(anchor))
+    anchor = button->toolbar_->chevron();
+  return button->Activate(anchor, false);
+}
+
 void BrowserActionsToolbarGtk::ModelLoaded() {
   SetContainerWidth();
 }
 
 void BrowserActionsToolbarGtk::AnimationProgressed(
-    const ui::Animation* animation) {
+    const gfx::Animation* animation) {
   int width = start_width_ + (desired_width_ - start_width_) *
       animation->GetCurrentValue();
   gtk_widget_set_size_request(button_hbox_.get(), width, -1);
@@ -786,7 +810,7 @@ void BrowserActionsToolbarGtk::AnimationProgressed(
     resize_animation_.Reset();
 }
 
-void BrowserActionsToolbarGtk::AnimationEnded(const ui::Animation* animation) {
+void BrowserActionsToolbarGtk::AnimationEnded(const gfx::Animation* animation) {
   gtk_widget_set_size_request(button_hbox_.get(), desired_width_, -1);
   UpdateChevronVisibility();
 }
@@ -811,7 +835,8 @@ void BrowserActionsToolbarGtk::ExecuteCommand(int command_id, int event_flags) {
   const Extension* extension = model_->toolbar_items()[command_id].get();
   GURL popup_url;
 
-  switch (model_->ExecuteBrowserAction(extension, browser(), &popup_url)) {
+  switch (model_->ExecuteBrowserAction(
+      extension, browser(), &popup_url, true)) {
     case ExtensionToolbarModel::ACTION_NONE:
       break;
     case ExtensionToolbarModel::ACTION_SHOW_POPUP:
@@ -1081,13 +1106,13 @@ gboolean BrowserActionsToolbarGtk::OnOverflowMenuButtonPress(
     item_index = model_->IncognitoIndexToOriginal(item_index);
 
   const Extension* extension = model_->toolbar_items()[item_index].get();
-  ExtensionButtonMap::iterator it = extension_button_map_.find(extension->id());
-  if (it == extension_button_map_.end()) {
+  BrowserActionButton* button = GetBrowserActionButton(extension);
+  if (button == NULL) {
     NOTREACHED();
     return FALSE;
   }
 
-  MenuGtk* menu = it->second.get()->GetContextMenu();
+  MenuGtk* menu = button->GetContextMenu();
   if (!menu)
     return FALSE;
 

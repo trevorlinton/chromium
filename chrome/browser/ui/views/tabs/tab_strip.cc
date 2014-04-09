@@ -30,15 +30,16 @@
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
 #include "ui/base/accessibility/accessible_view_state.h"
-#include "ui/base/animation/animation_container.h"
-#include "ui/base/animation/throb_animation.h"
 #include "ui/base/default_theme_provider.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/layout.h"
 #include "ui/base/models/list_selection_model.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/gfx/animation/animation_container.h"
+#include "ui/gfx/animation/throb_animation.h"
 #include "ui/gfx/canvas.h"
+#include "ui/gfx/display.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_operations.h"
 #include "ui/gfx/path.h"
@@ -52,8 +53,9 @@
 #include "ui/views/window/non_client_view.h"
 
 #if defined(OS_WIN)
-#include "ui/base/win/hwnd_util.h"
+#include "ui/gfx/win/hwnd_util.h"
 #include "ui/views/widget/monitor_win.h"
+#include "ui/views/win/hwnd_util.h"
 #include "win8/util/win8_util.h"
 #endif
 
@@ -94,8 +96,10 @@ static const int kMaxStackedCount = 4;
 static const int kStackedPadding = 6;
 
 // See UpdateLayoutTypeFromMouseEvent() for a description of these.
+#if !defined(USE_ASH)
 const int kMouseMoveTimeMS = 200;
 const int kMouseMoveCountBeforeConsiderReal = 3;
+#endif
 
 // Amount of time we delay before resizing after a close from a touch.
 const int kTouchResizeLayoutTimeMS = 2000;
@@ -240,11 +244,11 @@ class ResetDraggingStateDelegate
   explicit ResetDraggingStateDelegate(Tab* tab) : tab_(tab) {
   }
 
-  virtual void AnimationEnded(const ui::Animation* animation) OVERRIDE {
+  virtual void AnimationEnded(const gfx::Animation* animation) OVERRIDE {
     tab_->set_dragging(false);
   }
 
-  virtual void AnimationCanceled(const ui::Animation* animation) OVERRIDE {
+  virtual void AnimationCanceled(const gfx::Animation* animation) OVERRIDE {
     tab_->set_dragging(false);
   }
 
@@ -305,8 +309,9 @@ class NewTabButton : public views::ImageButton {
  protected:
   // Overridden from views::View:
   virtual bool HasHitTestMask() const OVERRIDE;
-  virtual void GetHitTestMask(gfx::Path* path) const OVERRIDE;
-#if defined(OS_WIN) && !defined(USE_AURA)
+  virtual void GetHitTestMask(HitTestSource source,
+                              gfx::Path* path) const OVERRIDE;
+#if defined(OS_WIN)
   virtual void OnMouseReleased(const ui::MouseEvent& event) OVERRIDE;
 #endif
   virtual void OnPaint(gfx::Canvas* canvas) OVERRIDE;
@@ -352,7 +357,7 @@ bool NewTabButton::HasHitTestMask() const {
   return !tab_strip_->SizeTabButtonToTopOfTabStrip();
 }
 
-void NewTabButton::GetHitTestMask(gfx::Path* path) const {
+void NewTabButton::GetHitTestMask(HitTestSource source, gfx::Path* path) const {
   DCHECK(path);
 
   SkScalar w = SkIntToScalar(width());
@@ -373,14 +378,14 @@ void NewTabButton::GetHitTestMask(gfx::Path* path) const {
   path->close();
 }
 
-#if defined(OS_WIN) && !defined(USE_AURA)
+#if defined(OS_WIN)
 void NewTabButton::OnMouseReleased(const ui::MouseEvent& event) {
   if (event.IsOnlyRightMouseButton()) {
     gfx::Point point = event.location();
     views::View::ConvertPointToScreen(this, &point);
     bool destroyed = false;
     destroyed_ = &destroyed;
-    ui::ShowSystemMenuAtPoint(GetWidget()->GetNativeView(), point);
+    gfx::ShowSystemMenuAtPoint(views::HWNDForView(this), point);
     if (destroyed)
       return;
 
@@ -393,7 +398,8 @@ void NewTabButton::OnMouseReleased(const ui::MouseEvent& event) {
 #endif
 
 void NewTabButton::OnPaint(gfx::Canvas* canvas) {
-  gfx::ImageSkia image = GetImageForScale(canvas->scale_factor());
+  gfx::ImageSkia image =
+      GetImageForScale(ui::GetSupportedScaleFactor(canvas->image_scale()));
   canvas->DrawImageInt(image, 0, height() - image.height());
 }
 
@@ -443,12 +449,12 @@ gfx::ImageSkia NewTabButton::GetBackgroundImage(
       GetThemeProvider()->GetImageSkiaNamed(IDR_NEWTAB_BUTTON_MASK);
   int height = mask->height();
   int width = mask->width();
-
+  float scale = ui::GetImageScale(scale_factor);
   // The canvas and mask has to use the same scale factor.
-  if (!mask->HasRepresentation(scale_factor))
+  if (!mask->HasRepresentation(scale))
     scale_factor = ui::SCALE_FACTOR_100P;
 
-  gfx::Canvas canvas(gfx::Size(width, height), scale_factor, false);
+  gfx::Canvas canvas(gfx::Size(width, height), scale, false);
 
   // For custom images the background starts at the top of the tab strip.
   // Otherwise the background starts at the top of the frame.
@@ -494,7 +500,9 @@ gfx::ImageSkia NewTabButton::GetImageForState(
   gfx::ImageSkia* overlay = GetThemeProvider()->GetImageSkiaNamed(overlay_id);
 
   gfx::Canvas canvas(
-      gfx::Size(overlay->width(), overlay->height()), scale_factor, false);
+      gfx::Size(overlay->width(), overlay->height()),
+      ui::GetImageScale(scale_factor),
+      false);
   canvas.DrawImageInt(GetBackgroundImage(state, scale_factor), 0, 0);
 
   // Draw the button border with a slight alpha.
@@ -527,8 +535,8 @@ class TabStrip::RemoveTabDelegate
  public:
   RemoveTabDelegate(TabStrip* tab_strip, Tab* tab);
 
-  virtual void AnimationEnded(const ui::Animation* animation) OVERRIDE;
-  virtual void AnimationCanceled(const ui::Animation* animation) OVERRIDE;
+  virtual void AnimationEnded(const gfx::Animation* animation) OVERRIDE;
+  virtual void AnimationCanceled(const gfx::Animation* animation) OVERRIDE;
 
  private:
   void CompleteRemove();
@@ -551,12 +559,12 @@ TabStrip::RemoveTabDelegate::RemoveTabDelegate(TabStrip* tab_strip,
 }
 
 void TabStrip::RemoveTabDelegate::AnimationEnded(
-    const ui::Animation* animation) {
+    const gfx::Animation* animation) {
   CompleteRemove();
 }
 
 void TabStrip::RemoveTabDelegate::AnimationCanceled(
-    const ui::Animation* animation) {
+    const gfx::Animation* animation) {
   CompleteRemove();
 }
 
@@ -598,7 +606,7 @@ TabStrip::TabStrip(TabStripController* controller)
       current_selected_width_(Tab::GetStandardSize().width()),
       available_width_for_tabs_(-1),
       in_tab_close_(false),
-      animation_container_(new ui::AnimationContainer()),
+      animation_container_(new gfx::AnimationContainer()),
       bounds_animator_(this),
       layout_type_(TAB_STRIP_LAYOUT_SHRINK),
       adjust_layout_(false),
@@ -843,14 +851,10 @@ void TabStrip::SetSelection(const ui::ListSelectionModel& old_selection,
     }
   }
 
-  ui::ListSelectionModel::SelectedIndices no_longer_selected;
-  std::insert_iterator<ui::ListSelectionModel::SelectedIndices>
-      it(no_longer_selected, no_longer_selected.begin());
-  std::set_difference(old_selection.selected_indices().begin(),
-                      old_selection.selected_indices().end(),
-                      new_selection.selected_indices().begin(),
-                      new_selection.selected_indices().end(),
-                      it);
+  ui::ListSelectionModel::SelectedIndices no_longer_selected =
+      base::STLSetDifference<ui::ListSelectionModel::SelectedIndices>(
+          old_selection.selected_indices(),
+          new_selection.selected_indices());
   for (size_t i = 0; i < no_longer_selected.size(); ++i)
     tab_at(no_longer_selected[i])->StopMiniTabTitleAnimation();
 }
@@ -1554,6 +1558,8 @@ void TabStrip::OnMouseEntered(const ui::MouseEvent& event) {
 void TabStrip::OnGestureEvent(ui::GestureEvent* event) {
   SetResetToShrinkOnExit(false);
   switch (event->type()) {
+    case ui::ET_GESTURE_SCROLL_END:
+    case ui::ET_SCROLL_FLING_START:
     case ui::ET_GESTURE_END:
       EndDrag(END_DRAG_COMPLETE);
       if (adjust_layout_) {
@@ -2308,14 +2314,9 @@ gfx::Rect TabStrip::GetDropBounds(int drop_index,
                         drop_indicator_height);
 
   // If the rect doesn't fit on the monitor, push the arrow to the bottom.
-#if defined(OS_WIN) && !defined(USE_AURA)
-  gfx::Rect monitor_bounds = views::GetMonitorBoundsForRect(drop_bounds);
-  *is_beneath = (monitor_bounds.IsEmpty() ||
-                 !monitor_bounds.Contains(drop_bounds));
-#else
-  *is_beneath = false;
-  NOTIMPLEMENTED();
-#endif
+  gfx::Screen* screen = gfx::Screen::GetScreenFor(GetWidget()->GetNativeView());
+  gfx::Display display = screen->GetDisplayMatching(drop_bounds);
+  *is_beneath = !display.bounds().Contains(drop_bounds);
   if (*is_beneath)
     drop_bounds.Offset(0, drop_bounds.height() + height());
 

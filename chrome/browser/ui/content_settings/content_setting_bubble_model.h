@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/common/content_settings.h"
 #include "chrome/common/custom_handlers/protocol_handler.h"
 #include "content/public/browser/notification_observer.h"
@@ -34,19 +35,11 @@ class ContentSettingBubbleModel : public content::NotificationObserver {
   typedef ContentSettingBubbleModelDelegate Delegate;
 
   struct PopupItem {
-    PopupItem(const gfx::Image& image,
-              const std::string& title,
-              content::WebContents* web_contents)
-        : image(image),
-          title(title),
-          web_contents(web_contents),
-          popup_id(-1) {}
     PopupItem(const gfx::Image& image, const std::string& title, int32 popup_id)
-        : image(image), title(title), web_contents(NULL), popup_id(popup_id) {}
+        : image(image), title(title), popup_id(popup_id) {}
 
     gfx::Image image;
     std::string title;
-    content::WebContents* web_contents;
     int32 popup_id;
   };
   typedef std::vector<PopupItem> PopupItems;
@@ -71,9 +64,13 @@ class ContentSettingBubbleModel : public content::NotificationObserver {
   };
 
   struct MediaMenu {
+    MediaMenu();
+    ~MediaMenu();
+
     std::string label;
     content::MediaStreamDevice default_device;
     content::MediaStreamDevice selected_device;
+    bool disabled;
   };
   typedef std::map<content::MediaStreamType, MediaMenu> MediaMenuMap;
 
@@ -120,9 +117,15 @@ class ContentSettingBubbleModel : public content::NotificationObserver {
   virtual void OnMediaMenuClicked(content::MediaStreamType type,
                                   const std::string& selected_device_id) {}
 
+  // Called by the view code when the cancel button in clicked by the user.
+  virtual void OnCancelClicked() {}
+
   // Called by the view code when the bubble is closed by the user using the
   // Done button.
   virtual void OnDoneClicked() {}
+
+  // Called by the view code when the save button in clicked by the user.
+  virtual void OnSaveClicked() {}
 
  protected:
   ContentSettingBubbleModel(
@@ -190,6 +193,24 @@ class ContentSettingTitleAndLinkModel : public ContentSettingBubbleModel {
   virtual void OnManageLinkClicked() OVERRIDE;
 
   Delegate* delegate_;
+};
+
+class SavePasswordBubbleModel : public ContentSettingTitleAndLinkModel {
+ public:
+  SavePasswordBubbleModel(Delegate* delegate,
+                          content::WebContents* web_contents,
+                          Profile* profile);
+  virtual ~SavePasswordBubbleModel();
+  virtual void OnCancelClicked() OVERRIDE;
+  virtual void OnDoneClicked() OVERRIDE;
+  virtual void OnSaveClicked() OVERRIDE;
+
+ private:
+  void SetTitle();
+
+  TabSpecificContentSettings::PasswordSavingState state_;
+
+  DISALLOW_COPY_AND_ASSIGN(SavePasswordBubbleModel);
 };
 
 class ContentSettingRPHBubbleModel : public ContentSettingTitleAndLinkModel {

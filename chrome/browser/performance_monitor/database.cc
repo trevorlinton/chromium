@@ -212,9 +212,9 @@ bool Database::AddMetric(const std::string& activity,
                          const Metric& metric) {
   CHECK(!content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
   if (!metric.IsValid()) {
-    LOG(ERROR) << "Metric to be added is invalid. Type: " << metric.type
-               << ", Time: " << metric.time.ToInternalValue()
-               << ", Value: " << metric.value << ". Ignoring.";
+    DLOG(ERROR) << "Metric to be added is invalid. Type: " << metric.type
+                << ", Time: " << metric.time.ToInternalValue()
+                << ", Value: " << metric.value << ". Ignoring.";
     return false;
   }
 
@@ -442,7 +442,7 @@ Database::~Database() {
 bool Database::InitDBs() {
   CHECK(!content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
   leveldb::Options open_options;
-  open_options.max_open_files = 64;  // Use minimum.
+  open_options.max_open_files = 0;  // Use minimum.
   open_options.create_if_missing = true;
 
   // TODO (rdevlin.cronin): This code is ugly. Fix it.

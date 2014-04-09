@@ -19,11 +19,10 @@
 #include "chrome/browser/extensions/api/web_request/web_request_api.h"
 #include "chrome/browser/extensions/event_names.h"
 #include "chrome/browser/extensions/extension_host.h"
-#include "chrome/browser/extensions/extension_prefs.h"
 #include "chrome/browser/extensions/extension_process_manager.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_system.h"
-#include "chrome/browser/extensions/lazy_background_task_queue.h"
+#include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/process_map.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -34,8 +33,11 @@
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_messages.h"
 #include "chrome/common/extensions/incognito_handler.h"
+#include "chrome/common/pref_names.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_process_host.h"
+#include "extensions/browser/lazy_background_task_queue.h"
+#include "extensions/common/extension_urls.h"
 
 using base::DictionaryValue;
 using base::ListValue;
@@ -124,19 +126,17 @@ void EventRouter::DispatchExtensionMessage(IPC::Sender* ipc_sender,
                                            ListValue* event_args,
                                            UserGestureState user_gesture,
                                            const EventFilteringInfo& info) {
-  if (ActivityLog::IsLogEnabledOnAnyProfile()) {
-    LogExtensionEventMessage(profile_id, extension_id, event_name,
-                             scoped_ptr<ListValue>(event_args->DeepCopy()));
-  }
+  LogExtensionEventMessage(profile_id, extension_id, event_name,
+                           scoped_ptr<ListValue>(event_args->DeepCopy()));
 
   ListValue args;
-  args.Set(0, Value::CreateStringValue(event_name));
+  args.Set(0, new base::StringValue(event_name));
   args.Set(1, event_args);
   args.Set(2, info.AsValue().release());
   ipc_sender->Send(new ExtensionMsg_MessageInvoke(
       MSG_ROUTING_CONTROL,
       extension_id,
-      "event_bindings",
+      kEventBindings,
       "dispatchEvent",
       args,
       user_gesture == USER_GESTURE_ENABLED));
@@ -415,15 +415,15 @@ bool EventRouter::CheckRegisteredEventsUpToDate() {
 
   base::Version version;
   PrefService* pref_service = profile_->GetPrefs();
-  if (pref_service->HasPrefPath(ExtensionPrefs::kExtensionsLastChromeVersion)) {
+  if (pref_service->HasPrefPath(prefs::kExtensionsLastChromeVersion)) {
     std::string version_str =
-        pref_service->GetString(ExtensionPrefs::kExtensionsLastChromeVersion);
+        pref_service->GetString(prefs::kExtensionsLastChromeVersion);
     version = Version(version_str);
   }
 
   chrome::VersionInfo current_version_info;
   std::string current_version = current_version_info.Version();
-  pref_service->SetString(ExtensionPrefs::kExtensionsLastChromeVersion,
+  pref_service->SetString(prefs::kExtensionsLastChromeVersion,
                           current_version);
 
   // If there was no version string in prefs, assume we're out of date.
@@ -632,9 +632,9 @@ bool EventRouter::CanDispatchEventToProfile(Profile* profile,
   // incognito tab event sent to a normal process, or vice versa).
   bool cross_incognito =
       event->restrict_to_profile && profile != event->restrict_to_profile;
-  if (cross_incognito &&
-      !ExtensionSystem::Get(profile)->extension_service()->
-          CanCrossIncognito(extension)) {
+  if (cross_incognito && !extension_util::CanCrossIncognito(
+          extension,
+          ExtensionSystem::Get(profile)->extension_service())) {
     return false;
   }
 

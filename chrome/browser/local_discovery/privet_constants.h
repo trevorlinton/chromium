@@ -9,21 +9,25 @@ namespace local_discovery {
 
 extern const char kPrivetKeyError[];
 extern const char kPrivetInfoKeyToken[];
+extern const char kPrivetInfoKeyAPIList[];
+extern const char kPrivetInfoKeyID[];
 extern const char kPrivetKeyDeviceID[];
 extern const char kPrivetKeyClaimURL[];
 extern const char kPrivetKeyClaimToken[];
 extern const char kPrivetKeyTimeout[];
 
+extern const char kPrivetActionNameInfo[];
+
 extern const char kPrivetErrorDeviceBusy[];
 extern const char kPrivetErrorPendingUserAction[];
 extern const char kPrivetErrorInvalidXPrivetToken[];
+extern const char kPrivetErrorTimeout[];
+extern const char kPrivetErrorCancel[];
 
 extern const char kPrivetActionStart[];
 extern const char kPrivetActionGetClaimToken[];
 extern const char kPrivetActionComplete[];
-
-// Name for pseudo-action "info", used only to show info stage in errors.
-extern const char kPrivetActionNameInfo[];
+extern const char kPrivetActionCancel[];
 
 extern const char kPrivetDefaultDeviceType[];
 extern const char kPrivetSubtypeTemplate[];
@@ -45,6 +49,8 @@ extern const char kPrivetConnectionStatusNotConfigured[];
 const int kPrivetDefaultTimeout = 15;
 
 const double kPrivetMaximumTimeRandomAddition = 0.2;
+
+const int kAccountIndexUseOAuth2 = -1;
 
 }  // namespace local_discovery
 

@@ -35,9 +35,7 @@ class GpuProcessTransportFactory
   scoped_ptr<WebGraphicsContext3DCommandBufferImpl>
   CreateOffscreenCommandBufferContext();
 
-  // ContextFactory implementation.
-  virtual scoped_ptr<WebKit::WebGraphicsContext3D> CreateOffscreenContext()
-      OVERRIDE;
+  // ui::ContextFactory implementation.
   virtual scoped_ptr<cc::OutputSurface> CreateOutputSurface(
       ui::Compositor* compositor) OVERRIDE;
   virtual scoped_refptr<ui::Reflector> CreateReflector(
@@ -46,6 +44,10 @@ class GpuProcessTransportFactory
   virtual void RemoveReflector(
       scoped_refptr<ui::Reflector> reflector) OVERRIDE;
   virtual void RemoveCompositor(ui::Compositor* compositor) OVERRIDE;
+  virtual scoped_refptr<cc::ContextProvider>
+      OffscreenCompositorContextProvider() OVERRIDE;
+  virtual scoped_refptr<cc::ContextProvider>
+      SharedMainThreadContextProvider() OVERRIDE;
   virtual bool DoesCreateTestContexts() OVERRIDE;
 
   // ImageTransportFactory implementation.
@@ -66,12 +68,6 @@ class GpuProcessTransportFactory
   virtual void RemoveObserver(
       ImageTransportFactoryObserver* observer) OVERRIDE;
 
-  // ui::ContextFactory implementation.
-  virtual scoped_refptr<cc::ContextProvider>
-      OffscreenContextProviderForMainThread() OVERRIDE;
-  virtual scoped_refptr<cc::ContextProvider>
-      OffscreenContextProviderForCompositorThread() OVERRIDE;
-
   void OnLostContext(ui::Compositor* compositor);
 
  private:
@@ -82,16 +78,13 @@ class GpuProcessTransportFactory
       const base::WeakPtr<WebGraphicsContext3DSwapBuffersClient>& swap_client,
       int surface_id);
 
-  void CreateSharedContextLazy();
-
   void OnLostMainThreadSharedContextInsideCallback();
   void OnLostMainThreadSharedContext();
 
   typedef std::map<ui::Compositor*, PerCompositorData*> PerCompositorDataMap;
   PerCompositorDataMap per_compositor_data_;
-  scoped_refptr<ContextProviderCommandBuffer> shared_contexts_main_thread_;
-  scoped_refptr<ContextProviderCommandBuffer>
-      shared_contexts_compositor_thread_;
+  scoped_refptr<ContextProviderCommandBuffer> offscreen_compositor_contexts_;
+  scoped_refptr<ContextProviderCommandBuffer> shared_main_thread_contexts_;
   scoped_ptr<GLHelper> gl_helper_;
   ObserverList<ImageTransportFactoryObserver> observer_list_;
   base::WeakPtrFactory<GpuProcessTransportFactory> callback_factory_;

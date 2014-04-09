@@ -10,7 +10,7 @@
 #include "ui/aura/client/capture_client.h"
 #include "ui/aura/client/focus_change_observer.h"
 #include "ui/aura/env.h"
-#include "ui/base/events/event.h"
+#include "ui/events/event.h"
 #include "ui/views/corewm/focus_rules.h"
 
 namespace views {
@@ -130,9 +130,12 @@ void FocusController::FocusWindow(aura::Window* window) {
     return;
   }
 
-  // We should not be messing with the focus if the window has capture.
-  if (window && (aura::client::GetCaptureWindow(window) == window))
+  // We should not be messing with the focus if the window has capture, unless
+  // no has focus.
+  if (window && (aura::client::GetCaptureWindow(window) == window) &&
+      focused_window_) {
     return;
+  }
 
   // Focusing a window also activates its containing activatable window. Note
   // that the rules could redirect activation activation and/or focus.
@@ -174,15 +177,6 @@ void FocusController::ResetFocusWithinActiveWindow(aura::Window* window) {
 
 aura::Window* FocusController::GetFocusedWindow() {
   return focused_window_;
-}
-
-void FocusController::OnWindowHiddenInRootWindow(
-    aura::Window* window,
-    aura::RootWindow* root_window,
-    bool destroyed) {
-  //NOTREACHED();
-  // This method is only for compat with aura::FocusManager. It should not be
-  // needed in the new FocusController.
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -9,6 +9,8 @@
 #include "net/quic/test_tools/mock_clock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+using std::pair;
+
 namespace net {
 namespace test {
 
@@ -35,13 +37,13 @@ class InterArrivalSenderTest : public ::testing::Test {
   void SendAvailableCongestionWindow() {
     while (sender_.TimeUntilSend(send_clock_.Now(),
         NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA, NOT_HANDSHAKE).IsZero()) {
-      QuicByteCount bytes_in_packet = kMaxPacketSize;
+      QuicByteCount bytes_in_packet = kDefaultMaxPacketSize;
       sent_packets_[sequence_number_] =
           new class SendAlgorithmInterface::SentPacket(
               bytes_in_packet, send_clock_.Now());
 
-      sender_.SentPacket(send_clock_.Now(), sequence_number_, bytes_in_packet,
-                         NOT_RETRANSMISSION);
+      sender_.OnPacketSent(send_clock_.Now(), sequence_number_, bytes_in_packet,
+                           NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA);
       sequence_number_++;
     }
     EXPECT_FALSE(sender_.TimeUntilSend(send_clock_.Now(),
@@ -50,7 +52,8 @@ class InterArrivalSenderTest : public ::testing::Test {
 
   void AckNPackets(int n) {
     for (int i = 0; i < n; ++i) {
-      sender_.OnIncomingAck(acked_sequence_number_++, kMaxPacketSize, rtt_);
+      sender_.OnIncomingAck(
+          acked_sequence_number_++, kDefaultMaxPacketSize, rtt_);
     }
   }
 
@@ -61,14 +64,14 @@ class InterArrivalSenderTest : public ::testing::Test {
     receive_clock_.AdvanceTime(spike_time);
     QuicTime receive_time = receive_clock_.ApproximateNow();
     feedback.inter_arrival.received_packet_times.insert(
-        std::pair<QuicPacketSequenceNumber, QuicTime>(
+        pair<QuicPacketSequenceNumber, QuicTime>(
             feedback_sequence_number_, receive_time));
     feedback_sequence_number_++;
 
     // We need to send feedback for 2 packets since they where sent at the
     // same time.
     feedback.inter_arrival.received_packet_times.insert(
-        std::pair<QuicPacketSequenceNumber, QuicTime>(
+        pair<QuicPacketSequenceNumber, QuicTime>(
             feedback_sequence_number_, receive_time));
     feedback_sequence_number_++;
 
@@ -90,7 +93,7 @@ class InterArrivalSenderTest : public ::testing::Test {
       }
       QuicTime receive_time = receive_clock_.ApproximateNow();
       feedback.inter_arrival.received_packet_times.insert(
-          std::pair<QuicPacketSequenceNumber, QuicTime>(
+          pair<QuicPacketSequenceNumber, QuicTime>(
               feedback_sequence_number_, receive_time));
       feedback_sequence_number_++;
     }
@@ -145,7 +148,7 @@ TEST_F(InterArrivalSenderTest, ProbeFollowedByFullRampUpCycle) {
 
   // We should now have our probe rate.
   QuicTime::Delta acc_arrival_time = QuicTime::Delta::FromMilliseconds(41);
-  int64 probe_rate = kMaxPacketSize * 9 * kNumMicrosPerSecond /
+  int64 probe_rate = kDefaultMaxPacketSize * 9 * kNumMicrosPerSecond /
       acc_arrival_time.ToMicroseconds();
   EXPECT_NEAR(0.7f * probe_rate,
               sender_.BandwidthEstimate().ToBytesPerSecond(), 1000);
@@ -257,7 +260,7 @@ TEST_F(InterArrivalSenderTest, ProbeFollowedByFullRampUpCycle) {
               sender_.BandwidthEstimate().ToBytesPerSecond(), 2000);
   EXPECT_NEAR(SenderDeltaSinceStart().ToMilliseconds(), 3400, 100);
 
-  int64 max_rate = kMaxPacketSize * kNumMicrosPerSecond /
+  int64 max_rate = kDefaultMaxPacketSize * kNumMicrosPerSecond /
       one_ms_.ToMicroseconds();
 
   int64 halfway_rate = probe_rate + (max_rate - probe_rate) / 2;
@@ -323,7 +326,7 @@ TEST_F(InterArrivalSenderTest, DelaySpikeFollowedBySlowDrain) {
 
   // We should now have our probe rate.
   QuicTime::Delta acc_arrival_time = QuicTime::Delta::FromMilliseconds(41);
-  int64 probe_rate = kMaxPacketSize * 9 * kNumMicrosPerSecond /
+  int64 probe_rate = kDefaultMaxPacketSize * 9 * kNumMicrosPerSecond /
       acc_arrival_time.ToMicroseconds();
   EXPECT_NEAR(0.7f * probe_rate,
               sender_.BandwidthEstimate().ToBytesPerSecond(), 1000);
@@ -420,7 +423,7 @@ TEST_F(InterArrivalSenderTest, DelaySpikeFollowedByImmediateDrain) {
 
   // We should now have our probe rate.
   QuicTime::Delta acc_arrival_time = QuicTime::Delta::FromMilliseconds(41);
-  int64 probe_rate = kMaxPacketSize * 9 * kNumMicrosPerSecond /
+  int64 probe_rate = kDefaultMaxPacketSize * 9 * kNumMicrosPerSecond /
       acc_arrival_time.ToMicroseconds();
   EXPECT_NEAR(0.7f * probe_rate,
               sender_.BandwidthEstimate().ToBytesPerSecond(), 1000);
@@ -524,7 +527,7 @@ TEST_F(InterArrivalSenderTest, MinBitrateDueToLoss) {
       NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA, NOT_HANDSHAKE).IsZero());
 
   QuicTime::Delta acc_arrival_time = QuicTime::Delta::FromMilliseconds(81);
-  int64 probe_rate = kMaxPacketSize * 9 * kNumMicrosPerSecond /
+  int64 probe_rate = kDefaultMaxPacketSize * 9 * kNumMicrosPerSecond /
       acc_arrival_time.ToMicroseconds();
   EXPECT_NEAR(0.7f * probe_rate,
               sender_.BandwidthEstimate().ToBytesPerSecond(), 1000);
@@ -537,7 +540,7 @@ TEST_F(InterArrivalSenderTest, MinBitrateDueToLoss) {
     EXPECT_TRUE(sender_.TimeUntilSend(send_clock_.Now(),
         NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA, NOT_HANDSHAKE).IsZero());
     sender_.OnIncomingLoss(send_clock_.Now());
-    sender_.OnIncomingAck(acked_sequence_number_, kMaxPacketSize, rtt_);
+    sender_.OnIncomingAck(acked_sequence_number_, kDefaultMaxPacketSize, rtt_);
     acked_sequence_number_ += 2;  // Create a loss by not acking both packets.
     SendFeedbackMessageNPackets(2, nine_ms_, nine_ms_);
   }
@@ -552,7 +555,7 @@ TEST_F(InterArrivalSenderTest, MinBitrateDueToLoss) {
     EXPECT_TRUE(sender_.TimeUntilSend(send_clock_.Now(),
         NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA, NOT_HANDSHAKE).IsZero());
     sender_.OnIncomingLoss(send_clock_.Now());
-    sender_.OnIncomingAck(acked_sequence_number_, kMaxPacketSize, rtt_);
+    sender_.OnIncomingAck(acked_sequence_number_, kDefaultMaxPacketSize, rtt_);
     acked_sequence_number_ += 2;  // Create a loss by not acking both packets.
     SendFeedbackMessageNPackets(2, nine_ms_, nine_ms_);
 

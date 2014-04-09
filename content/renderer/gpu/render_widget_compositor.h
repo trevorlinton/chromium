@@ -5,13 +5,16 @@
 #ifndef CONTENT_RENDERER_GPU_RENDER_WIDGET_COMPOSITOR_H_
 #define CONTENT_RENDERER_GPU_RENDER_WIDGET_COMPOSITOR_H_
 
+#include "base/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
+#include "base/values.h"
 #include "cc/debug/rendering_stats.h"
 #include "cc/input/top_controls_state.h"
 #include "cc/trees/layer_tree_host_client.h"
 #include "cc/trees/layer_tree_settings.h"
 #include "third_party/WebKit/public/platform/WebLayerTreeView.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/rect.h"
 
 namespace ui {
@@ -20,6 +23,7 @@ struct LatencyInfo;
 
 namespace cc {
 class InputHandler;
+class Layer;
 class LayerTreeHost;
 }
 
@@ -38,6 +42,7 @@ class RenderWidgetCompositor : public WebKit::WebLayerTreeView,
 
   const base::WeakPtr<cc::InputHandler>& GetInputHandler();
   void SetSuppressScheduleComposite(bool suppress);
+  bool BeginMainFrameRequested() const;
   void Animate(base::TimeTicks time);
   void Composite(base::TimeTicks frame_begin_time);
   void SetNeedsDisplayOnAllLayers();
@@ -48,9 +53,17 @@ class RenderWidgetCompositor : public WebKit::WebLayerTreeView,
                               bool animate);
   void SetOverdrawBottomHeight(float overdraw_bottom_height);
   void SetNeedsRedrawRect(gfx::Rect damage_rect);
+  // Like setNeedsRedraw but forces the frame to be drawn, without early-outs.
+  // Redraw will be forced after the next commit
+  void SetNeedsForcedRedraw();
   void SetLatencyInfo(const ui::LatencyInfo& latency_info);
   int GetLayerTreeId() const;
   void NotifyInputThrottledUntilCommit();
+  const cc::Layer* GetRootLayer() const;
+  bool ScheduleMicroBenchmark(
+      const std::string& name,
+      scoped_ptr<base::Value> value,
+      const base::Callback<void(scoped_ptr<base::Value>)>& callback);
 
   // WebLayerTreeView implementation.
   virtual void setSurfaceReady();
@@ -67,6 +80,7 @@ class RenderWidgetCompositor : public WebKit::WebLayerTreeView,
   virtual float deviceScaleFactor() const;
   virtual void setBackgroundColor(WebKit::WebColor color);
   virtual void setHasTransparentBackground(bool transparent);
+  virtual void setOverhangBitmap(const SkBitmap& bitmap);
   virtual void setVisible(bool visible);
   virtual void setPageScaleFactorAndLimits(float page_scale_factor,
                                            float minimum,
@@ -83,6 +97,11 @@ class RenderWidgetCompositor : public WebKit::WebLayerTreeView,
   virtual void finishAllRendering();
   virtual void setDeferCommits(bool defer_commits);
   virtual void registerForAnimations(WebKit::WebLayer* layer);
+  virtual void registerViewportLayers(
+      const WebKit::WebLayer* pageScaleLayer,
+      const WebKit::WebLayer* innerViewportScrollLayer,
+      const WebKit::WebLayer* outerViewportScrollLayer) OVERRIDE;
+  virtual void clearViewportLayers() OVERRIDE;
   virtual void renderingStats(WebKit::WebRenderingStats& stats) const {}
   virtual void setShowFPSCounter(bool show);
   virtual void setShowPaintRects(bool show);
@@ -91,8 +110,8 @@ class RenderWidgetCompositor : public WebKit::WebLayerTreeView,
   virtual void setShowScrollBottleneckRects(bool show);
 
   // cc::LayerTreeHostClient implementation.
-  virtual void WillBeginFrame() OVERRIDE;
-  virtual void DidBeginFrame() OVERRIDE;
+  virtual void WillBeginMainFrame() OVERRIDE;
+  virtual void DidBeginMainFrame() OVERRIDE;
   virtual void Animate(double frame_begin_time) OVERRIDE;
   virtual void Layout() OVERRIDE;
   virtual void ApplyScrollAndScale(gfx::Vector2d scroll_delta,
@@ -106,9 +125,7 @@ class RenderWidgetCompositor : public WebKit::WebLayerTreeView,
   virtual void DidCompleteSwapBuffers() OVERRIDE;
   virtual void ScheduleComposite() OVERRIDE;
   virtual scoped_refptr<cc::ContextProvider>
-      OffscreenContextProviderForMainThread() OVERRIDE;
-  virtual scoped_refptr<cc::ContextProvider>
-      OffscreenContextProviderForCompositorThread() OVERRIDE;
+      OffscreenContextProvider() OVERRIDE;
 
  private:
   RenderWidgetCompositor(RenderWidget* widget, bool threaded);

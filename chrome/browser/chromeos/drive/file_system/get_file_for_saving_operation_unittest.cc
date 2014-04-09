@@ -8,6 +8,7 @@
 #include "base/file_util.h"
 #include "base/files/file_path.h"
 #include "base/run_loop.h"
+#include "base/task_runner_util.h"
 #include "chrome/browser/chromeos/drive/drive.pb.h"
 #include "chrome/browser/chromeos/drive/file_errors.h"
 #include "chrome/browser/chromeos/drive/file_system/operation_test_base.h"
@@ -20,7 +21,7 @@ namespace file_system {
 
 namespace {
 
-// If OnCacheFileUploadNeededByOperation is called, records the resource ID and
+// If OnCacheFileUploadNeededByOperation is called, records the local ID and
 // calls |quit_closure|.
 class TestObserver : public OperationObserver {
  public:
@@ -28,8 +29,8 @@ class TestObserver : public OperationObserver {
     quit_closure_ = quit_closure;
   }
 
-  const std::string& observerd_resource_id() const {
-    return observed_resource_id_;
+  const std::string& observerd_local_id() const {
+    return observed_local_id_;
   }
 
   // OperationObserver overrides.
@@ -37,13 +38,13 @@ class TestObserver : public OperationObserver {
       const base::FilePath& path) OVERRIDE {}
 
   virtual void OnCacheFileUploadNeededByOperation(
-      const std::string& resource_id) OVERRIDE {
-    observed_resource_id_ = resource_id;
+      const std::string& local_id) OVERRIDE {
+    observed_local_id_ = local_id;
     quit_closure_.Run();
   }
 
  private:
-  std::string observed_resource_id_;
+  std::string observed_local_id_;
   base::Closure quit_closure_;
 };
 
@@ -92,9 +93,14 @@ TEST_F(GetFileForSavingOperationTest, GetFileForSaving_Exist) {
   // Checks that it presents in cache and marked dirty.
   bool success = false;
   FileCacheEntry cache_entry;
-  cache()->GetCacheEntryOnUIThread(
-      src_entry.resource_id(),
-      google_apis::test_util::CreateCopyResultCallback(&success, &cache_entry));
+  base::PostTaskAndReplyWithResult(
+      blocking_task_runner(),
+      FROM_HERE,
+      base::Bind(&internal::FileCache::GetCacheEntry,
+                 base::Unretained(cache()),
+                 GetLocalId(drive_path),
+                 &cache_entry),
+      google_apis::test_util::CreateCopyResultCallback(&success));
   test_util::RunBlockingPoolTask();
   EXPECT_TRUE(success);
   EXPECT_TRUE(cache_entry.is_present());
@@ -106,7 +112,7 @@ TEST_F(GetFileForSavingOperationTest, GetFileForSaving_Exist) {
     observer_.set_quit_closure(run_loop.QuitClosure());
     google_apis::test_util::WriteStringToFile(local_path, "hello");
     run_loop.Run();
-    EXPECT_EQ(entry->resource_id(), observer_.observerd_resource_id());
+    EXPECT_EQ(GetLocalId(drive_path), observer_.observerd_local_id());
   }
 }
 

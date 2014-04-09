@@ -19,9 +19,9 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "ui/base/events/event_constants.h"
-#include "ui/base/keycodes/keyboard_codes.h"
 #include "ui/base/test/ui_controls.h"
+#include "ui/events/event_constants.h"
+#include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/views/controls/menu/menu_listener.h"
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/view.h"
@@ -363,7 +363,7 @@ IN_PROC_BROWSER_TEST_F(KeyboardAccessTest,
   TestMenuKeyboardAccess(true, true, false);
 }
 
-#if defined(OS_WIN)
+#if defined(OS_WIN) && !defined(USE_AURA)
 IN_PROC_BROWSER_TEST_F(KeyboardAccessTest,
                        TestAltMenuKeyboardAccessFocusOmnibox) {
   TestMenuKeyboardAccess(true, false, true);
@@ -374,7 +374,7 @@ IN_PROC_BROWSER_TEST_F(KeyboardAccessTest, TestSystemMenuWithKeyboard) {
 }
 #endif
 
-#if defined(USE_AURA)
+#if !defined(OS_WIN) && defined(USE_AURA)
 IN_PROC_BROWSER_TEST_F(KeyboardAccessTest, TestMenuKeyboardOpenDismiss) {
   TestMenuKeyboardAccessAndDismiss();
 }

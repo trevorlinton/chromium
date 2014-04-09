@@ -5,6 +5,7 @@
 
 #include <cstring>
 
+#include "build/build_config.h"
 #include "ppapi/c/dev/ppb_audio_input_dev.h"
 #include "ppapi/c/dev/ppb_buffer_dev.h"
 #include "ppapi/c/dev/ppb_char_set_dev.h"
@@ -29,6 +30,7 @@
 #include "ppapi/c/dev/ppb_truetype_font_dev.h"
 #include "ppapi/c/dev/ppb_url_util_dev.h"
 #include "ppapi/c/dev/ppb_var_deprecated.h"
+#include "ppapi/c/dev/ppb_var_resource_dev.h"
 #include "ppapi/c/dev/ppb_video_capture_dev.h"
 #include "ppapi/c/dev/ppb_video_decoder_dev.h"
 #include "ppapi/c/dev/ppb_view_dev.h"
@@ -55,6 +57,8 @@
 #include "ppapi/c/ppb_mouse_cursor.h"
 #include "ppapi/c/ppb_mouse_lock.h"
 #include "ppapi/c/ppb_net_address.h"
+#include "ppapi/c/ppb_network_list.h"
+#include "ppapi/c/ppb_network_monitor.h"
 #include "ppapi/c/ppb_network_proxy.h"
 #include "ppapi/c/ppb_opengles2.h"
 #include "ppapi/c/ppb_tcp_socket.h"
@@ -83,10 +87,8 @@
 #include "ppapi/c/private/ppb_flash_menu.h"
 #include "ppapi/c/private/ppb_flash_message_loop.h"
 #include "ppapi/c/private/ppb_flash_print.h"
-#include "ppapi/c/private/ppb_gpu_blacklist_private.h"
 #include "ppapi/c/private/ppb_host_resolver_private.h"
-#include "ppapi/c/private/ppb_network_list_private.h"
-#include "ppapi/c/private/ppb_network_monitor_private.h"
+#include "ppapi/c/private/ppb_output_protection_private.h"
 #include "ppapi/c/private/ppb_pdf.h"
 #include "ppapi/c/private/ppb_proxy_private.h"
 #include "ppapi/c/private/ppb_talk_private.h"
@@ -101,9 +103,12 @@
 #include "ppapi/c/trusted/ppb_browser_font_trusted.h"
 #include "ppapi/c/trusted/ppb_char_set_trusted.h"
 #include "ppapi/c/trusted/ppb_file_chooser_trusted.h"
-#include "ppapi/c/trusted/ppb_file_io_trusted.h"
 #include "ppapi/c/trusted/ppb_url_loader_trusted.h"
 #include "ppapi/thunk/thunk.h"
+
+#if defined(OS_CHROMEOS)
+#include "ppapi/c/private/ppb_platform_verification_private.h"
+#endif
 
 bool IsSupportedPepperInterface(const char* name) {
   // TODO(brettw) put these in a hash map for better performance.

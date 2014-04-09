@@ -11,6 +11,7 @@
 #include "base/compiler_specific.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/policy/cloud/cloud_policy_client.h"
 #include "chrome/browser/policy/cloud/cloud_policy_constants.h"
@@ -22,12 +23,17 @@
 class GoogleServiceAuthError;
 class PrefService;
 
+namespace base {
+class SequencedTaskRunner;
+}
+
 namespace net {
 class URLRequestContextGetter;
 }
 
 namespace policy {
 
+class CloudExternalDataManager;
 class DeviceManagementService;
 class PolicyOAuth2TokenFetcher;
 class ResourceCache;
@@ -41,10 +47,13 @@ class UserCloudPolicyManagerChromeOS
       public ComponentCloudPolicyService::Delegate,
       public BrowserContextKeyedService {
  public:
+  // |task_runner| is the runner for policy refresh tasks.
   // If |wait_for_policy_fetch| is true, IsInitializationComplete() will return
   // false as long as there hasn't been a successful policy fetch.
   UserCloudPolicyManagerChromeOS(
       scoped_ptr<CloudPolicyStore> store,
+      scoped_ptr<CloudExternalDataManager> external_data_manager,
+      const scoped_refptr<base::SequencedTaskRunner>& task_runner,
       scoped_ptr<ResourceCache> resource_cache,
       bool wait_for_policy_fetch,
       base::TimeDelta initial_policy_fetch_timeout);
@@ -117,6 +126,9 @@ class UserCloudPolicyManagerChromeOS
   // Owns the store, note that CloudPolicyManager just keeps a plain pointer.
   scoped_ptr<CloudPolicyStore> store_;
 
+  // Manages external data referenced by policies.
+  scoped_ptr<CloudExternalDataManager> external_data_manager_;
+
   // Handles fetching and storing cloud policy for components. It uses the
   // |store_|, so destroy it first.
   scoped_ptr<ComponentCloudPolicyService> component_policy_service_;
@@ -139,6 +151,12 @@ class UserCloudPolicyManagerChromeOS
   // The access token passed to OnAccessTokenAvailable. It is stored here so
   // that it can be used if OnInitializationCompleted is called later.
   std::string access_token_;
+
+  // Timestamps for collecting timing UMA stats.
+  base::Time time_init_started_;
+  base::Time time_init_completed_;
+  base::Time time_token_available_;
+  base::Time time_client_registered_;
 
   DISALLOW_COPY_AND_ASSIGN(UserCloudPolicyManagerChromeOS);
 };

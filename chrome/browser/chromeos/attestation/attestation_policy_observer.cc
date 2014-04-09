@@ -27,8 +27,6 @@
 
 namespace {
 
-const char kEnterpriseMachineKey[] = "attest-ent-machine";
-
 // The number of days before a certificate expires during which it is
 // considered 'expiring soon' and replacement is initiated.  The Chrome OS CA
 // issues certificates with an expiry of at least two years.  This value has
@@ -102,7 +100,10 @@ AttestationPolicyObserver::AttestationPolicyObserver(
       retry_delay_(kRetryDelay),
       weak_factory_(this) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-  cros_settings_->AddSettingsObserver(kDeviceAttestationEnabled, this);
+  attestation_subscription_ = cros_settings_->AddSettingsObserver(
+      kDeviceAttestationEnabled,
+      base::Bind(&AttestationPolicyObserver::AttestationSettingChanged,
+                 base::Unretained(this)));
   Start();
 }
 
@@ -118,26 +119,19 @@ AttestationPolicyObserver::AttestationPolicyObserver(
       retry_delay_(kRetryDelay),
       weak_factory_(this) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-  cros_settings_->AddSettingsObserver(kDeviceAttestationEnabled, this);
+  attestation_subscription_ = cros_settings_->AddSettingsObserver(
+      kDeviceAttestationEnabled,
+      base::Bind(&AttestationPolicyObserver::AttestationSettingChanged,
+                 base::Unretained(this)));
   Start();
 }
 
 AttestationPolicyObserver::~AttestationPolicyObserver() {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-  cros_settings_->RemoveSettingsObserver(kDeviceAttestationEnabled, this);
 }
 
-void AttestationPolicyObserver::Observe(
-    int type,
-    const content::NotificationSource& source,
-    const content::NotificationDetails& details) {
+void AttestationPolicyObserver::AttestationSettingChanged() {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-  std::string* path = content::Details<std::string>(details).ptr();
-  if (type != chrome::NOTIFICATION_SYSTEM_SETTING_CHANGED ||
-      *path != kDeviceAttestationEnabled) {
-    LOG(WARNING) << "AttestationPolicyObserver: Unexpected event received.";
-    return;
-  }
   num_retries_ = 0;
   Start();
 }
@@ -176,6 +170,7 @@ void AttestationPolicyObserver::Start() {
                  weak_factory_.GetWeakPtr());
   cryptohome_client_->TpmAttestationDoesKeyExist(
       KEY_DEVICE,
+      std::string(),  // Not used.
       kEnterpriseMachineKey,
       base::Bind(DBusBoolRedirectCallback,
                  on_does_exist,
@@ -189,6 +184,8 @@ void AttestationPolicyObserver::GetNewCertificate() {
   // We can reuse the dbus callback handler logic.
   attestation_flow_->GetCertificate(
       PROFILE_ENTERPRISE_MACHINE_CERTIFICATE,
+      std::string(),  // Not used.
+      std::string(),  // Not used.
       true,  // Force a new key to be generated.
       base::Bind(DBusStringCallback,
                  base::Bind(&AttestationPolicyObserver::UploadCertificate,
@@ -202,6 +199,7 @@ void AttestationPolicyObserver::GetNewCertificate() {
 void AttestationPolicyObserver::GetExistingCertificate() {
   cryptohome_client_->TpmAttestationGetCertificate(
       KEY_DEVICE,
+      std::string(),  // Not used.
       kEnterpriseMachineKey,
       base::Bind(DBusStringCallback,
                  base::Bind(&AttestationPolicyObserver::CheckCertificateExpiry,
@@ -259,6 +257,7 @@ void AttestationPolicyObserver::GetKeyPayload(
     base::Callback<void(const std::string&)> callback) {
   cryptohome_client_->TpmAttestationGetKeyPayload(
       KEY_DEVICE,
+      std::string(),  // Not used.
       kEnterpriseMachineKey,
       base::Bind(DBusStringCallback,
                  callback,
@@ -287,6 +286,7 @@ void AttestationPolicyObserver::MarkAsUploaded(const std::string& key_payload) {
   }
   cryptohome_client_->TpmAttestationSetKeyPayload(
       KEY_DEVICE,
+      std::string(),  // Not used.
       kEnterpriseMachineKey,
       new_payload,
       base::Bind(DBusBoolRedirectCallback,

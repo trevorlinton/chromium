@@ -27,6 +27,8 @@ class StreamTextureManager;
 namespace gles2 {
 
 class GLES2Decoder;
+struct ContextState;
+struct DecoderFramebufferState;
 class Display;
 class ErrorState;
 class FeatureInfo;
@@ -111,6 +113,10 @@ class GPU_EXPORT Texture {
   // Get the image bound to a particular level. Returns NULL if level
   // does not exist.
   gfx::GLImage* GetLevelImage(GLint target, GLint level) const;
+
+  bool HasImages() const {
+    return has_images_;
+  }
 
   // Returns true of the given dimensions are inside the dimensions of the
   // level and if the format and type match the level.
@@ -315,6 +321,10 @@ class GPU_EXPORT Texture {
   // texture.
   void UpdateCanRenderCondition();
 
+  // Updates the images count in all the managers referencing this
+  // texture.
+  void UpdateHasImages();
+
   // Increment the framebuffer state change count in all the managers
   // referencing this texture.
   void IncAllFramebufferStateChangeCount();
@@ -376,6 +386,9 @@ class GPU_EXPORT Texture {
   // or dimensions of the texture object can be made.
   bool immutable_;
 
+  // Whether or not this texture has images.
+  bool has_images_;
+
   // Size in bytes this texture is assumed to take in memory.
   uint32 estimated_size_;
 
@@ -427,6 +440,29 @@ class GPU_EXPORT TextureRef : public base::RefCounted<TextureRef> {
   bool is_stream_texture_owner_;
 
   DISALLOW_COPY_AND_ASSIGN(TextureRef);
+};
+
+// Holds data that is per gles2_cmd_decoder, but is related to to the
+// TextureManager.
+struct DecoderTextureState {
+  // total_texture_upload_time automatically initialized to 0 in default
+  // constructor.
+  DecoderTextureState():
+      tex_image_2d_failed(false),
+      texture_upload_count(0),
+      teximage2d_faster_than_texsubimage2d(true) {}
+
+  // This indicates all the following texSubImage2D calls that are part of the
+  // failed texImage2D call should be ignored.
+  bool tex_image_2d_failed;
+
+  // Command buffer stats.
+  int texture_upload_count;
+  base::TimeDelta total_texture_upload_time;
+
+  // This is really not per-decoder, but the logic to decide this value is in
+  // the decoder for now, so it is simpler to leave it there.
+  bool teximage2d_faster_than_texsubimage2d;
 };
 
 // This class keeps track of the textures and their sizes so we can do NPOT and
@@ -503,8 +539,10 @@ class GPU_EXPORT TextureManager {
   }
 
   // Returns the maxium number of levels a texture of the given size can have.
-  static GLsizei ComputeMipMapCount(
-    GLsizei width, GLsizei height, GLsizei depth);
+  static GLsizei ComputeMipMapCount(GLenum target,
+                                    GLsizei width,
+                                    GLsizei height,
+                                    GLsizei depth);
 
   // Checks if a dimensions are valid for a given target.
   bool ValidForTarget(
@@ -629,6 +667,10 @@ class GPU_EXPORT TextureManager {
     return num_uncleared_mips_ > 0;
   }
 
+  bool HaveImages() const {
+    return num_images_ > 0;
+  }
+
   GLuint black_texture_id(GLenum target) const {
     switch (target) {
       case GL_SAMPLER_2D:
@@ -671,6 +713,43 @@ class GPU_EXPORT TextureManager {
     destruction_observers_.RemoveObserver(observer);
   }
 
+  struct DoTextImage2DArguments {
+    GLenum target;
+    GLint level;
+    GLenum internal_format;
+    GLsizei width;
+    GLsizei height;
+    GLint border;
+    GLenum format;
+    GLenum type;
+    const void* pixels;
+    uint32 pixels_size;
+  };
+
+  bool ValidateTexImage2D(
+    ContextState* state,
+    const char* function_name,
+    const DoTextImage2DArguments& args,
+    // Pointer to TextureRef filled in if validation successful.
+    // Presumes the pointer is valid.
+    TextureRef** texture_ref);
+
+  void ValidateAndDoTexImage2D(
+    DecoderTextureState* texture_state,
+    ContextState* state,
+    DecoderFramebufferState* framebuffer_state,
+    const DoTextImage2DArguments& args);
+
+  // TODO(kloveless): Make GetTexture* private once this is no longer called
+  // from gles2_cmd_decoder.
+  TextureRef* GetTextureInfoForTarget(ContextState* state, GLenum target);
+  TextureRef* GetTextureInfoForTargetUnlessDefault(
+      ContextState* state, GLenum target);
+
+  bool ValidateTextureParameters(
+    ErrorState* error_state, const char* function_name,
+    GLenum target, GLenum format, GLenum type, GLint level);
+
  private:
   friend class Texture;
   friend class TextureRef;
@@ -680,6 +759,13 @@ class GPU_EXPORT TextureManager {
       GLenum target,
       GLuint* black_texture);
 
+  void DoTexImage2D(
+    DecoderTextureState* texture_state,
+    ErrorState* error_state,
+    DecoderFramebufferState* framebuffer_state,
+    TextureRef* texture_ref,
+    const DoTextImage2DArguments& args);
+
   void StartTracking(TextureRef* texture);
   void StopTracking(TextureRef* texture);
 
@@ -687,6 +773,7 @@ class GPU_EXPORT TextureManager {
   void UpdateUnclearedMips(int delta);
   void UpdateCanRenderCondition(Texture::CanRenderCondition old_condition,
                                 Texture::CanRenderCondition new_condition);
+  void UpdateNumImages(int delta);
   void IncFramebufferStateChangeCount();
 
   MemoryTypeTracker* GetMemTracker(GLenum texture_pool);
@@ -710,6 +797,7 @@ class GPU_EXPORT TextureManager {
   int num_unrenderable_textures_;
   int num_unsafe_textures_;
   int num_uncleared_mips_;
+  int num_images_;
 
   // Counts the number of Textures allocated with 'this' as its manager.
   // Allows to check no Texture will outlive this.
@@ -728,6 +816,18 @@ class GPU_EXPORT TextureManager {
   ObserverList<DestructionObserver> destruction_observers_;
 
   DISALLOW_COPY_AND_ASSIGN(TextureManager);
+};
+
+// This class records texture upload time when in scope.
+class ScopedTextureUploadTimer {
+ public:
+  explicit ScopedTextureUploadTimer(DecoderTextureState* texture_state);
+  ~ScopedTextureUploadTimer();
+
+ private:
+  DecoderTextureState* texture_state_;
+  base::TimeTicks begin_time_;
+  DISALLOW_COPY_AND_ASSIGN(ScopedTextureUploadTimer);
 };
 
 }  // namespace gles2

@@ -10,15 +10,15 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/extension_manifest_constants.h"
-#include "chrome/common/extensions/manifest.h"
 #include "chrome/common/extensions/manifest_url_handler.h"
 #include "extensions/common/error_utils.h"
-
-namespace keys = extension_manifest_keys;
-namespace errors = extension_manifest_errors;
+#include "extensions/common/manifest.h"
+#include "extensions/common/manifest_constants.h"
 
 namespace extensions {
+
+namespace keys = manifest_keys;
+namespace errors = manifest_errors;
 
 InputComponentInfo::InputComponentInfo()
     : type(INPUT_COMPONENT_TYPE_NONE),
@@ -197,6 +197,11 @@ bool InputComponentsHandler::Parse(Extension* extension,
   }
   extension->SetManifestData(keys::kInputComponents, info.release());
   return true;
+}
+
+const std::vector<std::string>
+InputComponentsHandler::PrerequisiteKeys() const {
+  return SingleKey(keys::kOptionsPage);
 }
 
 const std::vector<std::string> InputComponentsHandler::Keys() const {

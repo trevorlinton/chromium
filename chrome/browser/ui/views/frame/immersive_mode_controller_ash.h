@@ -11,8 +11,8 @@
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "ui/aura/window_observer.h"
-#include "ui/base/animation/animation_delegate.h"
-#include "ui/base/events/event_handler.h"
+#include "ui/events/event_handler.h"
+#include "ui/gfx/animation/animation_delegate.h"
 #include "ui/gfx/rect.h"
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/widget/widget_observer.h"
@@ -25,13 +25,13 @@ class Window;
 }
 
 namespace gfx {
+class SlideAnimation;
 class Transform;
 }
 
 namespace ui {
 class Layer;
 class LocatedEvent;
-class SlideAnimation;
 }
 
 namespace views {
@@ -40,7 +40,7 @@ class View;
 
 class ImmersiveModeControllerAsh : public ImmersiveModeController,
                                    public content::NotificationObserver,
-                                   public ui::AnimationDelegate,
+                                   public gfx::AnimationDelegate,
                                    public ui::EventHandler,
                                    public views::FocusChangeListener,
                                    public views::WidgetObserver,
@@ -55,9 +55,6 @@ class ImmersiveModeControllerAsh : public ImmersiveModeController,
   // from 0 to 1 in |revealed_lock_count_| reveals the top-of-window views.
   void LockRevealedState(AnimateReveal animate_reveal);
   void UnlockRevealedState();
-
-  // Exits immersive fullscreen based on |native_window_|'s show state.
-  void MaybeExitImmersiveFullscreen();
 
   // ImmersiveModeController overrides:
   virtual void Init(Delegate* delegate,
@@ -74,6 +71,7 @@ class ImmersiveModeControllerAsh : public ImmersiveModeController,
       AnimateReveal animate_reveal) OVERRIDE WARN_UNUSED_RESULT;
   virtual void OnFindBarVisibleBoundsChanged(
       const gfx::Rect& new_visible_bounds_in_screen) OVERRIDE;
+  virtual void SetupForTest() OVERRIDE;
 
   // content::NotificationObserver override:
   virtual void Observe(int type,
@@ -96,9 +94,9 @@ class ImmersiveModeControllerAsh : public ImmersiveModeController,
   virtual void OnWidgetActivationChanged(views::Widget* widget,
                                          bool active) OVERRIDE;
 
-  // ui::AnimationDelegate overrides:
-  virtual void AnimationEnded(const ui::Animation* animation) OVERRIDE;
-  virtual void AnimationProgressed(const ui::Animation* animation) OVERRIDE;
+  // gfx::AnimationDelegate overrides:
+  virtual void AnimationEnded(const gfx::Animation* animation) OVERRIDE;
+  virtual void AnimationProgressed(const gfx::Animation* animation) OVERRIDE;
 
   // aura::WindowObserver overrides:
   virtual void OnWindowPropertyChanged(aura::Window* window,
@@ -108,12 +106,6 @@ class ImmersiveModeControllerAsh : public ImmersiveModeController,
                                    aura::Window* transient) OVERRIDE;
   virtual void OnRemoveTransientChild(aura::Window* window,
                                       aura::Window* transient) OVERRIDE;
-
-  // Testing interface.
-  void SetForceHideTabIndicatorsForTest(bool force);
-  void StartRevealForTest(bool hovered);
-  void SetMouseHoveredForTest(bool hovered);
-  void DisableAnimationsForTest();
 
  private:
   friend class ImmersiveModeControllerAshTest;
@@ -192,9 +184,6 @@ class ImmersiveModeControllerAsh : public ImmersiveModeController,
   // is not ANIMATE_NO, slides in the view, otherwise shows it immediately.
   void MaybeStartReveal(Animate animate);
 
-  // Enables or disables layer-based painting to allow smooth animations.
-  void EnablePaintToLayer(bool enable);
-
   // Updates the browser root view's layout including window caption controls.
   void LayoutBrowserRootView();
 
@@ -209,13 +198,6 @@ class ImmersiveModeControllerAsh : public ImmersiveModeController,
   // Called when the animation to slide out the top-of-window views has
   // completed.
   void OnSlideClosedAnimationCompleted();
-
-  // Returns whether immersive fullscreen should be exited based on
-  // |native_window_|'s show state. This handles cases where the user has
-  // exited immersive fullscreen without going through
-  // FullscreenController::ToggleFullscreenMode(). This is the case if the
-  // user exits fullscreen via the restore button.
-  bool ShouldExitImmersiveFullscreen() const;
 
   // Returns the type of swipe given |event|.
   SwipeType GetSwipeType(ui::GestureEvent* event) const;
@@ -295,7 +277,7 @@ class ImmersiveModeControllerAsh : public ImmersiveModeController,
   aura::Window* native_window_;
 
   // The animation which controls sliding the top-of-window views in and out.
-  scoped_ptr<ui::SlideAnimation> animation_;
+  scoped_ptr<gfx::SlideAnimation> animation_;
 
   // Whether the animations are disabled for testing.
   bool animations_disabled_for_test_;

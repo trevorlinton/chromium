@@ -24,6 +24,7 @@ FontListTest.Fonts_GetStyle
 FontTest.Ascent
 FontTest.AvgCharWidth
 FontTest.AvgWidths
+FontTest.CapHeight
 FontTest.Height
 FontTest.LoadArial
 FontTest.LoadArialBold
@@ -32,6 +33,7 @@ ResourceBundleTest.DelegateGetFontList
 TextEliderTest.ElideEmail
 TextEliderTest.ElideEmailMoreSpace
 TextEliderTest.ElideRectangleText
+TextEliderTest.ElideRectangleTextCheckLineWidth
 TextEliderTest.ElideRectangleTextLongWords
 TextEliderTest.ElideRectangleTextPunctuation
 TextEliderTest.ElideTextEllipsis

@@ -23,14 +23,16 @@
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "gpu/command_buffer/client/gles2_implementation.h"
-#include "gpu/command_buffer/client/gpu_memory_buffer_factory.h"
-#include "gpu/command_buffer/client/image_factory.h"
 #include "gpu/command_buffer/client/transfer_buffer.h"
 #include "gpu/command_buffer/common/command_buffer.h"
 #include "gpu/command_buffer/common/constants.h"
 #include "gpu/command_buffer/service/in_process_command_buffer.h"
 #include "ui/gfx/size.h"
 #include "ui/gl/gl_image.h"
+
+#if defined(OS_ANDROID)
+#include "ui/gl/android/surface_texture.h"
+#endif
 
 namespace gpu {
 
@@ -43,11 +45,8 @@ const size_t kStartTransferBufferSize = 4 * 1024 * 1024;
 const size_t kMinTransferBufferSize = 1 * 256 * 1024;
 const size_t kMaxTransferBufferSize = 16 * 1024 * 1024;
 
-static GpuMemoryBufferFactory* g_gpu_memory_buffer_factory = NULL;
-
 class GLInProcessContextImpl
     : public GLInProcessContext,
-      public gles2::ImageFactory,
       public base::SupportsWeakPtr<GLInProcessContextImpl> {
  public:
   explicit GLInProcessContextImpl();
@@ -58,28 +57,20 @@ class GLInProcessContextImpl
                   bool share_resources,
                   gfx::AcceleratedWidget window,
                   const gfx::Size& size,
-                  const char* allowed_extensions,
                   const GLInProcessContextAttribs& attribs,
                   gfx::GpuPreference gpu_preference);
 
   // GLInProcessContext implementation:
   virtual void SetContextLostCallback(const base::Closure& callback) OVERRIDE;
-  virtual void SignalSyncPoint(unsigned sync_point,
-                               const base::Closure& callback) OVERRIDE;
-  virtual void SignalQuery(unsigned query, const base::Closure& callback)
-      OVERRIDE;
   virtual gles2::GLES2Implementation* GetImplementation() OVERRIDE;
 
-  // ImageFactory implementation:
-  virtual scoped_ptr<gfx::GpuMemoryBuffer> CreateGpuMemoryBuffer(
-      int width, int height, GLenum internalformat,
-      unsigned* image_id) OVERRIDE;
-  virtual void DeleteGpuMemoryBuffer(unsigned image_id) OVERRIDE;
+#if defined(OS_ANDROID)
+  virtual scoped_refptr<gfx::SurfaceTexture> GetSurfaceTexture(
+      uint32 stream_id) OVERRIDE;
+#endif
 
  private:
   void Destroy();
-  void PollQueryCallbacks();
-  void CallQueryCallback(size_t index);
   void OnContextLost();
   void OnSignalSyncPoint(const base::Closure& callback);
 
@@ -87,9 +78,6 @@ class GLInProcessContextImpl
   scoped_ptr<TransferBuffer> transfer_buffer_;
   scoped_ptr<gles2::GLES2Implementation> gles2_implementation_;
   scoped_ptr<InProcessCommandBuffer> command_buffer_;
-
-  typedef std::pair<unsigned, base::Closure> QueryCallback;
-  std::vector<QueryCallback> query_callbacks_;
 
   unsigned int share_group_id_;
   bool context_lost_;
@@ -108,24 +96,6 @@ size_t SharedContextCount() {
   return g_all_shared_contexts.Get().size();
 }
 
-scoped_ptr<gfx::GpuMemoryBuffer> GLInProcessContextImpl::CreateGpuMemoryBuffer(
-    int width, int height, GLenum internalformat, unsigned int* image_id) {
-  scoped_ptr<gfx::GpuMemoryBuffer> buffer(
-      g_gpu_memory_buffer_factory->CreateGpuMemoryBuffer(width,
-                                                         height,
-                                                         internalformat));
-  if (!buffer)
-    return scoped_ptr<gfx::GpuMemoryBuffer>();
-
-  *image_id = command_buffer_->CreateImageForGpuMemoryBuffer(
-      buffer->GetHandle(), gfx::Size(width, height));
-  return buffer.Pass();
-}
-
-void GLInProcessContextImpl::DeleteGpuMemoryBuffer(unsigned int image_id) {
-  command_buffer_->RemoveImage(image_id);
-}
-
 GLInProcessContextImpl::GLInProcessContextImpl()
     : share_group_id_(0), context_lost_(false) {}
 
@@ -135,14 +105,6 @@ GLInProcessContextImpl::~GLInProcessContextImpl() {
     g_all_shared_contexts.Get().erase(this);
   }
   Destroy();
-}
-
-void GLInProcessContextImpl::SignalSyncPoint(unsigned sync_point,
-                                             const base::Closure& callback) {
-  DCHECK(!callback.is_null());
-  base::Closure wrapped_callback = base::Bind(
-      &GLInProcessContextImpl::OnSignalSyncPoint, AsWeakPtr(), callback);
-  command_buffer_->SignalSyncPoint(sync_point, wrapped_callback);
 }
 
 gles2::GLES2Implementation* GLInProcessContextImpl::GetImplementation() {
@@ -161,19 +123,12 @@ void GLInProcessContextImpl::OnContextLost() {
   }
 }
 
-void GLInProcessContextImpl::OnSignalSyncPoint(const base::Closure& callback) {
-  // TODO: Should it always trigger callbacks?
-  if (!context_lost_)
-    callback.Run();
-}
-
 bool GLInProcessContextImpl::Initialize(
     scoped_refptr<gfx::GLSurface> surface,
     bool is_offscreen,
     bool share_resources,
     gfx::AcceleratedWidget window,
     const gfx::Size& size,
-    const char* allowed_extensions,
     const GLInProcessContextAttribs& attribs,
     gfx::GpuPreference gpu_preference) {
   DCHECK(size.width() >= 0 && size.height() >= 0);
@@ -253,7 +208,6 @@ bool GLInProcessContextImpl::Initialize(
                                    share_resources,
                                    window,
                                    size,
-                                   allowed_extensions,
                                    attrib_vector,
                                    gpu_preference,
                                    wrapped_callback,
@@ -279,7 +233,7 @@ bool GLInProcessContextImpl::Initialize(
       share_group,
       transfer_buffer_.get(),
       false,
-      this));
+      command_buffer_.get()));
 
   if (share_resources) {
     g_all_shared_contexts.Get().insert(this);
@@ -289,7 +243,8 @@ bool GLInProcessContextImpl::Initialize(
   if (!gles2_implementation_->Initialize(
       kStartTransferBufferSize,
       kMinTransferBufferSize,
-      kMaxTransferBufferSize)) {
+      kMaxTransferBufferSize,
+      gles2::GLES2Implementation::kNoLimit)) {
     return false;
   }
 
@@ -297,10 +252,6 @@ bool GLInProcessContextImpl::Initialize(
 }
 
 void GLInProcessContextImpl::Destroy() {
-  while (!query_callbacks_.empty()) {
-    CallQueryCallback(0);
-  }
-
   if (gles2_implementation_) {
     // First flush the context to ensure that any pending frees of resources
     // are completed. Otherwise, if this context is part of a share group,
@@ -317,49 +268,12 @@ void GLInProcessContextImpl::Destroy() {
   command_buffer_.reset();
 }
 
-void GLInProcessContextImpl::CallQueryCallback(size_t index) {
-  DCHECK_LT(index, query_callbacks_.size());
-  QueryCallback query_callback = query_callbacks_[index];
-  query_callbacks_[index] = query_callbacks_.back();
-  query_callbacks_.pop_back();
-  query_callback.second.Run();
+#if defined(OS_ANDROID)
+scoped_refptr<gfx::SurfaceTexture>
+GLInProcessContextImpl::GetSurfaceTexture(uint32 stream_id) {
+  return command_buffer_->GetSurfaceTexture(stream_id);
 }
-
-// TODO(sievers): Move this to the service side
-void GLInProcessContextImpl::PollQueryCallbacks() {
-  for (size_t i = 0; i < query_callbacks_.size();) {
-    unsigned query = query_callbacks_[i].first;
-    GLuint param = 0;
-    gles2::GLES2Implementation* gl = GetImplementation();
-    if (gl->IsQueryEXT(query)) {
-      gl->GetQueryObjectuivEXT(query, GL_QUERY_RESULT_AVAILABLE_EXT, &param);
-    } else {
-      param = 1;
-    }
-    if (param) {
-      CallQueryCallback(i);
-    } else {
-      i++;
-    }
-  }
-  if (!query_callbacks_.empty()) {
-    base::MessageLoop::current()->PostDelayedTask(
-        FROM_HERE,
-        base::Bind(&GLInProcessContextImpl::PollQueryCallbacks,
-                   this->AsWeakPtr()),
-        base::TimeDelta::FromMilliseconds(5));
-  }
-}
-
-void GLInProcessContextImpl::SignalQuery(
-    unsigned query,
-    const base::Closure& callback) {
-  query_callbacks_.push_back(std::make_pair(query, callback));
-  // If size > 1, there is already a poll callback pending.
-  if (query_callbacks_.size() == 1) {
-    PollQueryCallbacks();
-  }
-}
+#endif
 
 }  // anonymous namespace
 
@@ -379,7 +293,6 @@ GLInProcessContext* GLInProcessContext::CreateContext(
     gfx::AcceleratedWidget window,
     const gfx::Size& size,
     bool share_resources,
-    const char* allowed_extensions,
     const GLInProcessContextAttribs& attribs,
     gfx::GpuPreference gpu_preference) {
   scoped_ptr<GLInProcessContextImpl> context(
@@ -390,7 +303,6 @@ GLInProcessContext* GLInProcessContext::CreateContext(
       share_resources,
       window,
       size,
-      allowed_extensions,
       attribs,
       gpu_preference))
     return NULL;
@@ -402,7 +314,6 @@ GLInProcessContext* GLInProcessContext::CreateContext(
 GLInProcessContext* GLInProcessContext::CreateWithSurface(
     scoped_refptr<gfx::GLSurface> surface,
     bool share_resources,
-    const char* allowed_extensions,
     const GLInProcessContextAttribs& attribs,
     gfx::GpuPreference gpu_preference) {
   scoped_ptr<GLInProcessContextImpl> context(
@@ -413,19 +324,11 @@ GLInProcessContext* GLInProcessContext::CreateWithSurface(
       share_resources,
       gfx::kNullAcceleratedWidget,
       surface->GetSize(),
-      allowed_extensions,
       attribs,
       gpu_preference))
     return NULL;
 
   return context.release();
-}
-
-// static
-void GLInProcessContext::SetGpuMemoryBufferFactory(
-    GpuMemoryBufferFactory* factory) {
-  DCHECK_EQ(0u, SharedContextCount());
-  g_gpu_memory_buffer_factory = factory;
 }
 
 }  // namespace gpu

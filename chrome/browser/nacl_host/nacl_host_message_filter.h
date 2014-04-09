@@ -10,13 +10,11 @@
 #include "base/platform_file.h"
 #include "content/public/browser/browser_message_filter.h"
 
-class ExtensionInfoMap;
 class GURL;
 
 namespace nacl {
 struct NaClLaunchParams;
 struct PnaclCacheInfo;
-struct PnaclInstallProgress;
 }
 
 namespace net {
@@ -31,7 +29,6 @@ class NaClHostMessageFilter : public content::BrowserMessageFilter {
   NaClHostMessageFilter(int render_process_id,
                         bool is_off_the_record,
                         const base::FilePath& profile_directory,
-                        ExtensionInfoMap* extension_info_map,
                         net::URLRequestContextGetter* request_context);
 
   // content::BrowserMessageFilter methods:
@@ -52,7 +49,6 @@ class NaClHostMessageFilter : public content::BrowserMessageFilter {
 #if !defined(DISABLE_NACL)
   void OnLaunchNaCl(const nacl::NaClLaunchParams& launch_params,
                     IPC::Message* reply_msg);
-  void OnEnsurePnaclInstalled(int instance);
   void OnGetReadonlyPnaclFd(const std::string& filename,
                             IPC::Message* reply_msg);
   void OnNaClCreateTemporaryFile(IPC::Message* reply_msg);
@@ -64,11 +60,6 @@ class NaClHostMessageFilter : public content::BrowserMessageFilter {
   void OnOpenNaClExecutable(int render_view_id,
                             const GURL& file_url,
                             IPC::Message* reply_msg);
-
-  void ReplyEnsurePnaclInstalled(int instance, bool success);
-  void SendProgressEnsurePnaclInstalled(
-      int instance,
-      const nacl::PnaclInstallProgress& progress);
   void SyncReturnTemporaryFile(IPC::Message* reply_msg,
                                base::PlatformFile fd);
   void AsyncReturnTemporaryFile(int pp_instance,
@@ -82,7 +73,6 @@ class NaClHostMessageFilter : public content::BrowserMessageFilter {
   bool off_the_record_;
   base::FilePath profile_directory_;
   scoped_refptr<net::URLRequestContextGetter> request_context_;
-  scoped_refptr<ExtensionInfoMap> extension_info_map_;
 
   base::WeakPtrFactory<NaClHostMessageFilter> weak_ptr_factory_;
 

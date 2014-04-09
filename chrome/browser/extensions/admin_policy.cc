@@ -6,7 +6,7 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/manifest.h"
+#include "extensions/common/manifest.h"
 #include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -17,7 +17,7 @@ bool ManagementPolicyImpl(const extensions::Extension* extension,
                           bool modifiable_value) {
   bool modifiable =
       extension->location() != extensions::Manifest::COMPONENT &&
-      extension->location() != extensions::Manifest::EXTERNAL_POLICY_DOWNLOAD;
+      !extensions::Manifest::IsPolicyLocation(extension->location());
   // Some callers equate "no restriction" to true, others to false.
   if (modifiable)
     return modifiable_value;
@@ -61,7 +61,8 @@ bool UserMayLoad(const base::ListValue* blacklist,
     return true;
 
   // Forced installed extensions cannot be overwritten manually.
-  if (extension->location() != Manifest::EXTERNAL_POLICY_DOWNLOAD &&
+  if (extension->location() != Manifest::EXTERNAL_POLICY &&
+      extension->location() != Manifest::EXTERNAL_POLICY_DOWNLOAD &&
       forcelist && forcelist->HasKey(extension->id())) {
     return ReturnLoadError(extension, error);
   }
@@ -116,5 +117,5 @@ bool MustRemainEnabled(const Extension* extension, string16* error) {
   return ManagementPolicyImpl(extension, error, false);
 }
 
-}  // namespace
-}  // namespace
+}  // namespace admin_policy
+}  // namespace extensions

@@ -32,16 +32,13 @@
 
 using views::View;
 using web_modal::WebContentsModalDialogHost;
-using web_modal::WebContentsModalDialogHostObserver;
+using web_modal::ModalDialogHostObserver;
 
 namespace {
 
 // The visible height of the shadow above the tabs. Clicks in this area are
 // treated as clicks to the frame, rather than clicks to the tab.
 const int kTabShadowSize = 2;
-// The number of pixels the bookmark bar should overlap the spacer by if the
-// spacer is visible.
-const int kSpacerBookmarkBarOverlap = 1;
 // The number of pixels the metro switcher is offset from the right edge.
 const int kWindowSwitcherOffsetX = 7;
 // The number of pixels the constrained window should overlap the bottom
@@ -69,18 +66,16 @@ class BrowserViewLayout::WebContentsModalDialogHostViews
           : browser_view_layout_(browser_view_layout) {
   }
 
-  void NotifyPositionRequiresUpdate() {
-    FOR_EACH_OBSERVER(WebContentsModalDialogHostObserver,
+  virtual ~WebContentsModalDialogHostViews() {
+    FOR_EACH_OBSERVER(web_modal::ModalDialogHostObserver,
                       observer_list_,
-                      OnPositionRequiresUpdate());
+                      OnHostDestroying());
   }
 
- private:
-  virtual gfx::NativeView GetHostView() const OVERRIDE {
-    gfx::NativeWindow native_window =
-        browser_view_layout_->browser()->window()->GetNativeWindow();
-    return views::Widget::GetWidgetForNativeWindow(native_window)->
-        GetNativeView();
+  void NotifyPositionRequiresUpdate() {
+    FOR_EACH_OBSERVER(ModalDialogHostObserver,
+                      observer_list_,
+                      OnPositionRequiresUpdate());
   }
 
   // Center horizontally over the content area, with the top overlapping the
@@ -93,19 +88,41 @@ class BrowserViewLayout::WebContentsModalDialogHostViews
     return gfx::Point(middle_x - size.width() / 2, top_y);
   }
 
+ private:
+  virtual gfx::NativeView GetHostView() const OVERRIDE {
+    gfx::NativeWindow native_window =
+        browser_view_layout_->browser()->window()->GetNativeWindow();
+    return views::Widget::GetWidgetForNativeWindow(native_window)->
+        GetNativeView();
+  }
+
+  virtual gfx::Size GetMaximumDialogSize() OVERRIDE {
+    gfx::Rect content_area =
+        browser_view_layout_->contents_container_->ConvertRectToWidget(
+            browser_view_layout_->contents_container_->GetLocalBounds());
+
+    gfx::Size max_dialog_size = content_area.size();
+    // Adjust for difference in alignment between the dialog top and the top of
+    // the content area.
+    int height_offset = content_area.y() -
+        browser_view_layout_->web_contents_modal_dialog_top_y_;
+    max_dialog_size.Enlarge(0, height_offset);
+    return max_dialog_size;
+  }
+
   // Add/remove observer.
   virtual void AddObserver(
-      WebContentsModalDialogHostObserver* observer) OVERRIDE {
+      ModalDialogHostObserver* observer) OVERRIDE {
     observer_list_.AddObserver(observer);
   }
   virtual void RemoveObserver(
-      WebContentsModalDialogHostObserver* observer) OVERRIDE {
+      ModalDialogHostObserver* observer) OVERRIDE {
     observer_list_.RemoveObserver(observer);
   }
 
   BrowserViewLayout* const browser_view_layout_;
 
-  ObserverList<WebContentsModalDialogHostObserver> observer_list_;
+  ObserverList<ModalDialogHostObserver> observer_list_;
 
   DISALLOW_COPY_AND_ASSIGN(WebContentsModalDialogHostViews);
 };
@@ -363,8 +380,11 @@ void BrowserViewLayout::Layout(views::View* browser_view) {
   if (fullscreen_exit_bubble)
     fullscreen_exit_bubble->RepositionIfVisible();
 
-  // Adjust any web contents modal dialogs.
-  dialog_host_->NotifyPositionRequiresUpdate();
+  // Adjust any hosted dialogs if the browser's dialog positioning has changed.
+  if (dialog_host_->GetDialogPosition(gfx::Size()) != latest_dialog_position_) {
+    latest_dialog_position_ = dialog_host_->GetDialogPosition(gfx::Size());
+    dialog_host_->NotifyPositionRequiresUpdate();
+  }
 }
 
 // Return the preferred size which is the size required to give each
@@ -441,6 +461,9 @@ int BrowserViewLayout::LayoutToolbar(int top) {
 }
 
 int BrowserViewLayout::LayoutBookmarkAndInfoBars(int top, int browser_view_y) {
+  web_contents_modal_dialog_top_y_ =
+      top + browser_view_y - kConstrainedWindowOverlap;
+
   if (bookmark_bar_) {
     // If we're showing the Bookmark bar in detached style, then we
     // need to show any Info bar _above_ the Bookmark bar, since the
@@ -453,9 +476,6 @@ int BrowserViewLayout::LayoutBookmarkAndInfoBars(int top, int browser_view_y) {
     // Otherwise, Bookmark bar first, Info bar second.
     top = std::max(toolbar_->bounds().bottom(), LayoutBookmarkBar(top));
   }
-
-  web_contents_modal_dialog_top_y_ =
-      top + browser_view_y - kConstrainedWindowOverlap;
 
   return LayoutInfoBar(top);
 }

@@ -19,12 +19,13 @@
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/accessibility/accessibility_types.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
+#include "ui/base/dragdrop/drop_target_event.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
-#include "ui/base/events/event.h"
-#include "ui/base/events/event_target.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/compositor/layer_delegate.h"
 #include "ui/compositor/layer_owner.h"
+#include "ui/events/event.h"
+#include "ui/events/event_target.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/rect.h"
 #include "ui/gfx/vector2d.h"
@@ -106,6 +107,18 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
                           public ui::EventTarget {
  public:
   typedef std::vector<View*> Views;
+
+  // TODO(tdanderson,sadrul): Becomes obsolete with the refactoring of the
+  // event targeting logic for views and windows.
+  // Specifies the source of the region used in a hit test.
+  // HIT_TEST_SOURCE_MOUSE indicates the hit test is being performed with a
+  // single point and HIT_TEST_SOURCE_TOUCH indicates the hit test is being
+  // performed with a rect larger than a single point. This value can be used,
+  // for example, to add extra padding or change the shape of the hit test mask.
+  enum HitTestSource {
+    HIT_TEST_SOURCE_MOUSE,
+    HIT_TEST_SOURCE_TOUCH
+  };
 
   struct ViewHierarchyChangedDetails {
     ViewHierarchyChangedDetails()
@@ -447,6 +460,16 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   static void ConvertPointToTarget(const View* source,
                                    const View* target,
                                    gfx::Point* point);
+
+  // Convert |rect| from the coordinate system of |source| to the coordinate
+  // system of |target|.
+  //
+  // |source| and |target| must be in the same widget, but doesn't need to be in
+  // the same view hierarchy.
+  // |source| can be NULL in which case it means the screen coordinate system.
+  static void ConvertRectToTarget(const View* source,
+                                  const View* target,
+                                  gfx::RectF* rect);
 
   // Convert a point from a View's coordinate system to that of its Widget.
   static void ConvertPointToWidget(const View* src, gfx::Point* point);
@@ -1032,17 +1055,13 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // invoked for that view as well as all the children recursively.
   virtual void VisibilityChanged(View* starting_from, bool is_visible);
 
-  // Called when the native view hierarchy changed.
-  // |attached| is true if that view has been attached to a new NativeView
-  // hierarchy, false if it has been detached.
-  // |native_view| is the NativeView this view was attached/detached from, and
-  // |root_view| is the root view associated with the NativeView.
-  // Views created without a native view parent don't have a focus manager.
-  // When this function is called they could do the processing that requires
-  // it - like registering accelerators, for example.
-  virtual void NativeViewHierarchyChanged(bool attached,
-                                          gfx::NativeView native_view,
-                                          internal::RootView* root_view);
+  // This method is invoked when the parent NativeView of the widget that the
+  // view is attached to has changed and the view hierarchy has not changed.
+  // ViewHierarchyChanged() is called when the parent NativeView of the widget
+  // that the view is attached to is changed as a result of changing the view
+  // hierarchy. Overriding this method is useful for tracking which
+  // FocusManager manages this view.
+  virtual void NativeViewHierarchyChanged();
 
   // Painting ------------------------------------------------------------------
 
@@ -1068,15 +1087,6 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   virtual void OnPaintFocusBorder(gfx::Canvas* canvas);
 
   // Accelerated painting ------------------------------------------------------
-
-  // This creates a layer for the view, if one does not exist. It then
-  // passes the texture to a layer associated with the view. While an external
-  // texture is set, the view will not update the layer contents.
-  //
-  // |texture| cannot be NULL.
-  //
-  // Returns false if it cannot create a layer to which to assign the texture.
-  bool SetExternalTexture(ui::Texture* texture);
 
   // Returns the offset from this view to the nearest ancestor with a layer. If
   // |layer_parent| is non-NULL it is set to the nearest ancestor with a layer.
@@ -1128,7 +1138,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // Called by HitTestRect() to retrieve a mask for hit-testing against.
   // Subclasses override to provide custom shaped hit test regions.
-  virtual void GetHitTestMask(gfx::Path* mask) const;
+  virtual void GetHitTestMask(HitTestSource source, gfx::Path* mask) const;
 
   virtual DragInfo* GetDragInfo();
 
@@ -1260,9 +1270,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // Propagates NativeViewHierarchyChanged() notification through all the
   // children.
-  void PropagateNativeViewHierarchyChanged(bool attached,
-                                           gfx::NativeView native_view,
-                                           internal::RootView* root_view);
+  void PropagateNativeViewHierarchyChanged();
 
   // Takes care of registering/unregistering accelerators if
   // |register_accelerators| true and calls ViewHierarchyChanged().
@@ -1320,9 +1328,20 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // Convert a point in the ancestor's coordinate system to the view's
   // coordinate system using necessary transformations. Returns whether the
-  // point was successfully from the ancestor's coordinate system to the view's
-  // coordinate system.
+  // point was successfully converted from the ancestor's coordinate system
+  // to the view's coordinate system.
   bool ConvertPointFromAncestor(const View* ancestor, gfx::Point* point) const;
+
+  // Convert a rect in the view's coordinate to an ancestor view's coordinate
+  // system using necessary transformations. Returns whether the rect was
+  // successfully converted to the ancestor's coordinate system.
+  bool ConvertRectForAncestor(const View* ancestor, gfx::RectF* rect) const;
+
+  // Convert a rect in the ancestor's coordinate system to the view's
+  // coordinate system using necessary transformations. Returns whether the
+  // rect was successfully converted from the ancestor's coordinate system
+  // to the view's coordinate system.
+  bool ConvertRectFromAncestor(const View* ancestor, gfx::RectF* rect) const;
 
   // Accelerated painting ------------------------------------------------------
 
@@ -1502,10 +1521,6 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   bool paint_to_layer_;
 
   // Accelerators --------------------------------------------------------------
-
-  // true if when we were added to hierarchy we were without focus manager
-  // attempt addition when ancestor chain changed.
-  bool accelerator_registration_delayed_;
 
   // Focus manager accelerators registered on.
   FocusManager* accelerator_focus_manager_;

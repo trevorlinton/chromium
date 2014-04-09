@@ -17,6 +17,7 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
 #include "base/process/launch.h"
+#include "base/safe_numerics.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -87,7 +88,7 @@ void LogShortcutOperation(ShellUtil::ShortcutLocation location,
   if (properties.has_shortcut_name())
     message.append(UTF16ToUTF8(properties.shortcut_name));
   else
-    message.append(UTF16ToUTF8(dist->GetAppShortCutName()));
+    message.append(UTF16ToUTF8(dist->GetDisplayName()));
   message.push_back('"');
 
   message.append(" shortcut to ");
@@ -330,7 +331,7 @@ bool CreateVisualElementsManifest(const base::FilePath& src_path,
         BrowserDistribution::CHROME_BROWSER);
     // TODO(grt): http://crbug.com/75152 Write a reference to a localized
     // resource for |display_name|.
-    string16 display_name(dist->GetAppShortCutName());
+    string16 display_name(dist->GetDisplayName());
     EscapeXmlAttributeValueInSingleQuotes(&display_name);
 
     // Fill the manifest with the desired values.
@@ -340,9 +341,10 @@ bool CreateVisualElementsManifest(const base::FilePath& src_path,
 
     // Write the manifest to |src_path|.
     const std::string manifest(UTF16ToUTF8(manifest16));
+    int size = base::checked_numeric_cast<int>(manifest.size());
     if (file_util::WriteFile(
-            src_path.Append(installer::kVisualElementsManifest),
-            manifest.c_str(), manifest.size())) {
+        src_path.Append(installer::kVisualElementsManifest),
+            manifest.c_str(), size) == size) {
       VLOG(1) << "Successfully wrote " << installer::kVisualElementsManifest
               << " to " << src_path.value();
       return true;
@@ -411,8 +413,11 @@ void CreateOrUpdateShortcuts(
   if (!do_not_create_desktop_shortcut ||
       shortcut_operation == ShellUtil::SHELL_SHORTCUT_REPLACE_EXISTING) {
     ShellUtil::ShortcutProperties desktop_properties(base_properties);
-    if (alternate_desktop_shortcut)
-      desktop_properties.set_shortcut_name(dist->GetAlternateApplicationName());
+    if (alternate_desktop_shortcut) {
+      desktop_properties.set_shortcut_name(
+          dist->GetShortcutName(
+              BrowserDistribution::SHORTCUT_CHROME_ALTERNATE));
+    }
     ExecuteAndLogShortcutOperation(
         ShellUtil::SHORTCUT_LOCATION_DESKTOP, dist, desktop_properties,
         shortcut_operation);
@@ -421,7 +426,9 @@ void CreateOrUpdateShortcuts(
     // Desktop shortcut.
     if (!alternate_desktop_shortcut &&
         shortcut_operation == ShellUtil::SHELL_SHORTCUT_REPLACE_EXISTING) {
-      desktop_properties.set_shortcut_name(dist->GetAlternateApplicationName());
+      desktop_properties.set_shortcut_name(
+          dist->GetShortcutName(
+              BrowserDistribution::SHORTCUT_CHROME_ALTERNATE));
       ExecuteAndLogShortcutOperation(
           ShellUtil::SHORTCUT_LOCATION_DESKTOP, dist, desktop_properties,
           shortcut_operation);
@@ -499,10 +506,8 @@ InstallStatus InstallOrUpdateProduct(
   DCHECK(products.size());
   if (installer_state.FindProduct(BrowserDistribution::CHROME_FRAME)) {
     // Make sure that we don't end up deleting installed files on next reboot.
-    if (!RemoveFromMovesPendingReboot(
-            installer_state.target_path().value().c_str())) {
+    if (!RemoveFromMovesPendingReboot(installer_state.target_path()))
       LOG(ERROR) << "Error accessing pending moves value.";
-    }
   }
 
   // Create VisualElementManifest.xml in |src_path| (if required) so that it

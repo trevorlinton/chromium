@@ -27,36 +27,24 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
-using ::testing::_;
 using ::testing::Invoke;
+using ::testing::_;
 
-namespace {
-static const char kGetAuthCodeValidCookie[] =
+const char kGetAuthCodeValidCookie[] =
     "oauth_code=test-code; Path=/test; Secure; HttpOnly";
-static const char kGetAuthCodeCookieNoSecure[] =
+const char kGetAuthCodeCookieNoSecure[] =
     "oauth_code=test-code; Path=/test; HttpOnly";
-static const char kGetAuthCodeCookieNoHttpOnly[] =
+const char kGetAuthCodeCookieNoHttpOnly[] =
     "oauth_code=test-code; Path=/test; Secure";
-static const char kGetAuthCodeCookieNoOAuthCode[] =
+const char kGetAuthCodeCookieNoOAuthCode[] =
     "Path=/test; Secure; HttpOnly";
-static const char kGetTokenPairValidResponse[] =
+const char kGetTokenPairValidResponse[] =
     "{"
     "  \"refresh_token\": \"rt1\","
     "  \"access_token\": \"at1\","
     "  \"expires_in\": 3600,"
     "  \"token_type\": \"Bearer\""
     "}";
-static const char kClientOAuthValidResponse[] =
-    "{"
-    "  \"oauth2\": {"
-    "    \"refresh_token\": \"rt1\","
-    "    \"access_token\": \"at1\","
-    "    \"expires_in\": 3600,"
-    "    \"token_type\": \"Bearer\""
-    "  }"
-    "}";
-
-}  // namespace
 
 MockFetcher::MockFetcher(bool success,
                          const GURL& url,
@@ -111,9 +99,9 @@ class GaiaAuthFetcherTest : public testing::Test {
         oauth2_token_source_(GaiaUrls::GetInstance()->oauth2_token_url()),
         token_auth_source_(GaiaUrls::GetInstance()->token_auth_url()),
         merge_session_source_(GaiaUrls::GetInstance()->merge_session_url()),
-        uberauth_token_source_(base::StringPrintf(
-            "%s?source=&issueuberauth=1",
-            GaiaUrls::GetInstance()->oauth1_login_url().c_str())),
+        uberauth_token_source_(
+            GaiaUrls::GetInstance()->oauth1_login_url().Resolve(
+                "?source=&issueuberauth=1")),
         oauth_login_gurl_(GaiaUrls::GetInstance()->oauth1_login_url()) {}
 
   void RunParsingTest(const std::string& data,

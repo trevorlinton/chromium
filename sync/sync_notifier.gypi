@@ -23,11 +23,17 @@
     '../third_party/cacheinvalidation/cacheinvalidation.gyp:cacheinvalidation',
   ],
   'sources': [
+    'notifier/ack_handler.cc',
+    'notifier/ack_handler.h',
+    'notifier/dropped_invalidation_tracker.cc',
+    'notifier/dropped_invalidation_tracker.h',
     'notifier/invalidation_handler.h',
     'notifier/invalidation_state_tracker.cc',
     'notifier/invalidation_state_tracker.h',
     'notifier/invalidation_util.cc',
     'notifier/invalidation_util.h',
+    'notifier/unacked_invalidation_set.cc',
+    'notifier/unacked_invalidation_set.h',
     'notifier/invalidator.h',
     'notifier/invalidator_registrar.cc',
     'notifier/invalidator_registrar.h',
@@ -35,6 +41,8 @@
     'notifier/invalidator_state.h',
     'notifier/object_id_invalidation_map.cc',
     'notifier/object_id_invalidation_map.h',
+    'notifier/single_object_invalidation_set.cc',
+    'notifier/single_object_invalidation_set.h',
   ],
   'conditions': [
     ['OS != "android"', {

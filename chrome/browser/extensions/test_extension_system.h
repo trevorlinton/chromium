@@ -48,9 +48,14 @@ class TestExtensionSystem : public ExtensionSystem {
   // ExtensionProcessManager is NULL.
   void CreateExtensionProcessManager();
 
+  // Allows the ExtensionProcessManager to be overriden, for example by a
+  // stub implementation. Takes ownership of |manager|.
+  void SetExtensionProcessManager(ExtensionProcessManager* manager);
+
   void CreateSocketManager();
 
-  virtual void InitForRegularProfile(bool extensions_enabled) OVERRIDE {}
+  virtual void InitForRegularProfile(bool extensions_enabled,
+                                     bool defer_background_creation) OVERRIDE {}
   void SetExtensionService(ExtensionService* service);
   virtual ExtensionService* extension_service() OVERRIDE;
   virtual ManagementPolicy* management_policy() OVERRIDE;

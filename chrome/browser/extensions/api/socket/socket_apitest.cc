@@ -82,8 +82,7 @@ class SocketPpapiTest : public SocketApiTest {
     command_line->AppendSwitch("enable-pepper-testing");
 
     PathService::Get(chrome::DIR_GEN_TEST_DATA, &app_dir_);
-    app_dir_ = app_dir_.AppendASCII(
-        "chrome/test/data/extensions/api_test/socket/ppapi/newlib");
+    app_dir_ = app_dir_.AppendASCII("ppapi/tests/extensions/socket/newlib");
   }
 
  protected:
@@ -91,11 +90,11 @@ class SocketPpapiTest : public SocketApiTest {
     const Extension* extension = LoadExtension(app_dir_);
     ASSERT_TRUE(extension);
 
-    chrome::AppLaunchParams params(browser()->profile(), extension,
+    AppLaunchParams params(browser()->profile(), extension,
                                    extension_misc::LAUNCH_NONE,
                                    NEW_WINDOW);
     params.command_line = CommandLine::ForCurrentProcess();
-    chrome::OpenApplication(params);
+    OpenApplication(params);
   }
 
  private:
@@ -326,7 +325,8 @@ IN_PROC_BROWSER_TEST_F(SocketPpapiTest, MAYBE(TCPServer)) {
   EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
 }
 
-IN_PROC_BROWSER_TEST_F(SocketPpapiTest, MAYBE(Multicast)) {
+// Disabled due to flakiness: http://crbug.com/314899
+IN_PROC_BROWSER_TEST_F(SocketPpapiTest, DISABLED_Multicast) {
   ResultCatcher catcher;
   catcher.RestrictToProfile(browser()->profile());
   ExtensionTestMessageListener listener("info_please", true);

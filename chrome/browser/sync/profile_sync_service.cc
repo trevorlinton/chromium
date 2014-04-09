@@ -109,9 +109,7 @@ const char* ProfileSyncService::kSyncServerUrl =
 const char* ProfileSyncService::kDevServerUrl =
     "https://clients4.google.com/chrome-sync/dev";
 
-static const int kSyncClearDataTimeoutInSeconds = 60;  // 1 minute.
-
-static const char* kSyncUnrecoverableErrorHistogram =
+const char kSyncUnrecoverableErrorHistogram[] =
     "Sync.UnrecoverableErrors";
 
 const net::BackoffEntry::Policy kRequestAccessTokenBackoffPolicy = {
@@ -149,10 +147,12 @@ bool ShouldShowActionOnUI(
           error.action != syncer::STOP_SYNC_FOR_DISABLED_ACCOUNT);
 }
 
-ProfileSyncService::ProfileSyncService(ProfileSyncComponentsFactory* factory,
-                                       Profile* profile,
-                                       SigninManagerBase* signin_manager,
-                                       StartBehavior start_behavior)
+ProfileSyncService::ProfileSyncService(
+    ProfileSyncComponentsFactory* factory,
+    Profile* profile,
+    SigninManagerBase* signin_manager,
+    ProfileOAuth2TokenService* oauth2_token_service,
+    StartBehavior start_behavior)
     : last_auth_error_(AuthError::AuthErrorNone()),
       passphrase_required_reason_(syncer::REASON_PASSPHRASE_NOT_REQUIRED),
       factory_(factory),
@@ -167,7 +167,6 @@ ProfileSyncService::ProfileSyncService(ProfileSyncComponentsFactory* factory,
       is_auth_in_progress_(false),
       signin_(signin_manager),
       unrecoverable_error_reason_(ERROR_REASON_UNSET),
-      weak_factory_(this),
       expect_sync_configuration_aborted_(false),
       encrypted_types_(syncer::SyncEncryptionHandler::SensitiveTypes()),
       encrypt_everything_(false),
@@ -175,7 +174,9 @@ ProfileSyncService::ProfileSyncService(ProfileSyncComponentsFactory* factory,
       auto_start_enabled_(start_behavior == AUTO_START),
       configure_status_(DataTypeManager::UNKNOWN),
       setup_in_progress_(false),
-      request_access_token_backoff_(&kRequestAccessTokenBackoffPolicy) {
+      oauth2_token_service_(oauth2_token_service),
+      request_access_token_backoff_(&kRequestAccessTokenBackoffPolicy),
+      weak_factory_(this) {
   // By default, dev, canary, and unbranded Chromium users will go to the
   // development servers. Development servers have more features than standard
   // sync servers. Users with officially-branded Chrome stable and beta builds
@@ -206,22 +207,10 @@ bool ProfileSyncService::IsSyncEnabledAndLoggedIn() {
 }
 
 bool ProfileSyncService::IsOAuthRefreshTokenAvailable() {
-  // Function name doesn't reflect which token is checked. Function checks
-  // refresh token when use_oauth2_token_ is true (all platforms except android)
-  // and sync token otherwise (for android).
-  // TODO(pavely): Remove "else" part once use_oauth2_token_ is gone.
-  if (use_oauth2_token_) {
-    ProfileOAuth2TokenService* token_service =
-        ProfileOAuth2TokenServiceFactory::GetForProfile(profile_);
-    if (!token_service)
-      return false;
-    return token_service->RefreshTokenIsAvailable();
-  } else {
-    TokenService* token_service = TokenServiceFactory::GetForProfile(profile_);
-    if (!token_service)
-      return false;
-    return token_service->HasTokenForService(GaiaConstants::kSyncService);
-  }
+  if (!oauth2_token_service_)
+    return false;
+  return oauth2_token_service_->RefreshTokenIsAvailable(
+      oauth2_token_service_->GetPrimaryAccountId());
 }
 
 void ProfileSyncService::Initialize() {
@@ -304,14 +293,12 @@ void ProfileSyncService::TryStart() {
     return;
   }
 
-  if (use_oauth2_token_) {
-    // If we got here then tokens are loaded and user logged in and sync is
-    // enabled. If OAuth refresh token is not available then something is wrong.
-    // When PSS requests access token, OAuth2TokenService will return error and
-    // PSS will show error to user asking to reauthenticate.
-    UMA_HISTOGRAM_BOOLEAN("Sync.RefreshTokenAvailable",
-        IsOAuthRefreshTokenAvailable());
-  }
+  // If we got here then tokens are loaded and user logged in and sync is
+  // enabled. If OAuth refresh token is not available then something is wrong.
+  // When PSS requests access token, OAuth2TokenService will return error and
+  // PSS will show error to user asking to reauthenticate.
+  UMA_HISTOGRAM_BOOLEAN("Sync.RefreshTokenAvailable",
+      IsOAuthRefreshTokenAvailable());
 
   // If sync setup has completed we always start the backend. If the user is in
   // the process of setting up now, we should start the backend to download
@@ -347,9 +334,7 @@ void ProfileSyncService::StartSyncingWithServer() {
 }
 
 void ProfileSyncService::RegisterAuthNotifications() {
-  ProfileOAuth2TokenService* token_service =
-      ProfileOAuth2TokenServiceFactory::GetForProfile(profile_);
-  token_service->AddObserver(this);
+  oauth2_token_service_->AddObserver(this);
 
   registrar_.Add(this,
                  chrome::NOTIFICATION_GOOGLE_SIGNIN_SUCCESSFUL,
@@ -360,9 +345,7 @@ void ProfileSyncService::RegisterAuthNotifications() {
 }
 
 void ProfileSyncService::UnregisterAuthNotifications() {
-  ProfileOAuth2TokenService* token_service =
-      ProfileOAuth2TokenServiceFactory::GetForProfile(profile_);
-  token_service->RemoveObserver(this);
+  oauth2_token_service_->RemoveObserver(this);
   registrar_.RemoveAll();
 }
 
@@ -422,6 +405,41 @@ ScopedVector<browser_sync::DeviceInfo>
   return devices.Pass();
 }
 
+std::string ProfileSyncService::GetLocalDeviceGUID() const {
+  if (backend_) {
+    browser_sync::SyncedDeviceTracker* device_tracker =
+        backend_->GetSyncedDeviceTracker();
+    if (device_tracker) {
+      return device_tracker->cache_guid();
+    }
+  }
+  return std::string();
+}
+
+// Notifies the observer of any device info changes.
+void ProfileSyncService::AddObserverForDeviceInfoChange(
+    browser_sync::SyncedDeviceTracker::Observer* observer) {
+  if (backend_) {
+    browser_sync::SyncedDeviceTracker* device_tracker =
+        backend_->GetSyncedDeviceTracker();
+    if (device_tracker) {
+      device_tracker->AddObserver(observer);
+    }
+  }
+}
+
+// Removes the observer from device info change notification.
+void ProfileSyncService::RemoveObserverForDeviceInfoChange(
+    browser_sync::SyncedDeviceTracker::Observer* observer) {
+  if (backend_) {
+    browser_sync::SyncedDeviceTracker* device_tracker =
+        backend_->GetSyncedDeviceTracker();
+    if (device_tracker) {
+      device_tracker->RemoveObserver(observer);
+    }
+  }
+}
+
 void ProfileSyncService::GetDataTypeControllerStates(
   browser_sync::DataTypeController::StateMap* state_map) const {
     for (browser_sync::DataTypeController::TypeMap::const_iterator iter =
@@ -448,24 +466,13 @@ void ProfileSyncService::InitSettings() {
       }
     }
   }
-
-  use_oauth2_token_ = !command_line.HasSwitch(
-      switches::kSyncDisableOAuth2Token);
 }
 
 SyncCredentials ProfileSyncService::GetCredentials() {
   SyncCredentials credentials;
   credentials.email = GetEffectiveUsername();
   DCHECK(!credentials.email.empty());
-  if (use_oauth2_token_) {
-    credentials.sync_token = access_token_;
-  } else {
-    TokenService* service = TokenServiceFactory::GetForProfile(profile_);
-    if (service->HasTokenForService(GaiaConstants::kSyncService)) {
-      credentials.sync_token = service->GetTokenForService(
-          GaiaConstants::kSyncService);
-    }
-  }
+  credentials.sync_token = access_token_;
 
   if (credentials.sync_token.empty())
     credentials.sync_token = "credentials_lost";
@@ -549,14 +556,14 @@ void ProfileSyncService::StartUp(StartUpDeferredOption deferred_option) {
     }
 #endif
 
-    if (!sync_global_error_) {
 #if !defined(OS_ANDROID)
+    if (!sync_global_error_) {
       sync_global_error_.reset(new SyncGlobalError(this, signin()));
-#endif
       GlobalErrorServiceFactory::GetForProfile(profile_)->AddGlobalError(
           sync_global_error_.get());
       AddObserver(sync_global_error_.get());
     }
+#endif
   } else {
     // We don't care to prevent multiple calls to StartUp in deferred mode
     // because it's fast and has no side effects.
@@ -665,8 +672,6 @@ void ProfileSyncService::OnGetTokenFailure(
     }
     case GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS: {
       // Report time since token was issued for invalid credentials error.
-      // TODO(pavely): crbug.com/246817 Collect UMA histogram for auth token
-      // rejections from invalidation service.
       base::Time auth_token_time =
           AboutSigninInternalsFactory::GetForProfile(profile_)->
               GetTokenTime(GaiaConstants::kGaiaOAuth2LoginRefreshToken);
@@ -693,20 +698,22 @@ void ProfileSyncService::OnGetTokenFailure(
 
 void ProfileSyncService::OnRefreshTokenAvailable(
     const std::string& account_id) {
-  OnRefreshTokensLoaded();
+  if (oauth2_token_service_->GetPrimaryAccountId() == account_id)
+    OnRefreshTokensLoaded();
 }
 
 void ProfileSyncService::OnRefreshTokenRevoked(
-    const std::string& account_id,
-    const GoogleServiceAuthError& error) {
+    const std::string& account_id) {
   if (!IsOAuthRefreshTokenAvailable()) {
+    access_token_.clear();
     // The additional check around IsOAuthRefreshTokenAvailable() above
     // prevents us sounding the alarm if we actually have a valid token but
     // a refresh attempt by TokenService failed for any variety of reasons
     // (e.g. flaky network). It's possible the token we do have is also
     // invalid, but in that case we should already have (or can expect) an
     // auth error sent from the sync backend.
-    UpdateAuthErrorState(error);
+    UpdateAuthErrorState(
+        GoogleServiceAuthError(GoogleServiceAuthError::REQUEST_CANCELED));
   }
 }
 
@@ -721,10 +728,6 @@ void ProfileSyncService::OnRefreshTokensLoaded() {
   } else {
     TryStart();
   }
-}
-
-void ProfileSyncService::OnRefreshTokensCleared() {
-  access_token_.clear();
 }
 
 void ProfileSyncService::Shutdown() {
@@ -787,6 +790,7 @@ void ProfileSyncService::ShutdownImpl(
   is_auth_in_progress_ = false;
   backend_initialized_ = false;
   cached_passphrase_.clear();
+  access_token_.clear();
   encryption_pending_ = false;
   encrypt_everything_ = false;
   encrypted_types_ = syncer::SyncEncryptionHandler::SensitiveTypes();
@@ -1076,12 +1080,6 @@ void ProfileSyncService::UpdateAuthErrorState(const AuthError& error) {
   is_auth_in_progress_ = false;
   last_auth_error_ = error;
 
-  // Fan the notification out to interested UI-thread components. Notify the
-  // SigninGlobalError first so it reflects the latest auth state before we
-  // notify observers.
-  if (profile_)
-    SigninGlobalError::GetForProfile(profile_)->AuthStatusChanged();
-
   NotifyObservers();
 }
 
@@ -1109,7 +1107,7 @@ AuthError ConnectionStatusToAuthError(
 
 void ProfileSyncService::OnConnectionStatusChange(
     syncer::ConnectionStatus status) {
-  if (use_oauth2_token_ && status == syncer::CONNECTION_AUTH_ERROR) {
+  if (status == syncer::CONNECTION_AUTH_ERROR) {
     // Sync server returned error indicating that access token is invalid. It
     // could be either expired or access is revoked. Let's request another
     // access token and if access is revoked then request for token will fail
@@ -1369,21 +1367,39 @@ void ProfileSyncService::OnConfigureStart() {
   NotifyObservers();
 }
 
-std::string ProfileSyncService::QuerySyncStatusSummary() {
+ProfileSyncService::SyncStatusSummary
+      ProfileSyncService::QuerySyncStatusSummary() {
   if (HasUnrecoverableError()) {
-    return "Unrecoverable error detected";
+    return UNRECOVERABLE_ERROR;
   } else if (!backend_) {
-    return "Syncing not enabled";
+    return NOT_ENABLED;
   } else if (backend_.get() && !HasSyncSetupCompleted()) {
-    return "First time sync setup incomplete";
+    return SETUP_INCOMPLETE;
   } else if (backend_.get() && HasSyncSetupCompleted() &&
              data_type_manager_.get() &&
              data_type_manager_->state() != DataTypeManager::CONFIGURED) {
-    return "Datatypes not fully initialized";
+    return DATATYPES_NOT_INITIALIZED;
   } else if (ShouldPushChanges()) {
-    return "Sync service initialized";
-  } else {
-    return "Status unknown: Internal error?";
+    return INITIALIZED;
+  }
+  return UNKNOWN_ERROR;
+}
+
+std::string ProfileSyncService::QuerySyncStatusSummaryString() {
+  SyncStatusSummary status = QuerySyncStatusSummary();
+  switch (status) {
+    case UNRECOVERABLE_ERROR:
+      return "Unrecoverable error detected";
+    case NOT_ENABLED:
+      return "Syncing not enabled";
+    case SETUP_INCOMPLETE:
+      return "First time sync setup incomplete";
+    case DATATYPES_NOT_INITIALIZED:
+      return "Datatypes not fully initialized";
+    case INITIALIZED:
+      return "Sync service initialized";
+    default:
+      return "Status unknown: Internal error?";
   }
 }
 
@@ -1413,7 +1429,20 @@ const AuthError& ProfileSyncService::GetAuthError() const {
   return last_auth_error_;
 }
 
+std::string ProfileSyncService::GetAccountId() const {
+  return ProfileOAuth2TokenServiceFactory::GetForProfile(profile_)->
+      GetPrimaryAccountId();
+}
+
 GoogleServiceAuthError ProfileSyncService::GetAuthStatus() const {
+  // If waiting_for_auth() returns true, it means that ProfileSyncService has
+  // detected that the user has just successfully completed gaia signin, but the
+  // backend is yet to update its connection state. In such a case, we do not
+  // want to continue surfacing an auth error to the UI via SigninGlobalError.
+  // Otherwise, it will make for a confusing UX, since the user just re-entered
+  // their credentials. See http://crbug.com/261317.
+  if (waiting_for_auth())
+    return AuthError::AuthErrorNone();
   return GetAuthError();
 }
 
@@ -1495,7 +1524,7 @@ const browser_sync::user_selectable_type::UserSelectableSyncType
     browser_sync::user_selectable_type::PROXY_TABS
   };
 
-  COMPILE_ASSERT(28 == syncer::MODEL_TYPE_COUNT, UpdateCustomConfigHistogram);
+  COMPILE_ASSERT(29 == syncer::MODEL_TYPE_COUNT, UpdateCustomConfigHistogram);
 
   if (!sync_everything) {
     const syncer::ModelTypeSet current_types = GetPreferredDataTypes();
@@ -1856,14 +1885,17 @@ void ProfileSyncService::RequestAccessToken() {
     oauth2_scopes.insert(GaiaConstants::kChromeSyncOAuth2Scope);
   }
 
-  OAuth2TokenService* token_service =
-      ProfileOAuth2TokenServiceFactory::GetForProfile(profile_);
   // Invalidate previous token, otherwise token service will return the same
   // token again.
-  if (!access_token_.empty())
-    token_service->InvalidateToken(oauth2_scopes, access_token_);
+  const std::string& account_id = oauth2_token_service_->GetPrimaryAccountId();
+  if (!access_token_.empty()) {
+    oauth2_token_service_->InvalidateToken(
+        account_id, oauth2_scopes, access_token_);
+  }
+
   access_token_.clear();
-  access_token_request_ = token_service->StartRequest(oauth2_scopes, this);
+  access_token_request_ =
+      oauth2_token_service_->StartRequest(account_id, oauth2_scopes, this);
 }
 
 void ProfileSyncService::SetEncryptionPassphrase(const std::string& passphrase,
@@ -1965,6 +1997,14 @@ void ProfileSyncService::Observe(int type,
           GetAuthError().state() != AuthError::NONE) {
         // Track the fact that we're still waiting for auth to complete.
         is_auth_in_progress_ = true;
+
+        // The user has just successfully completed re-auth, so immediately
+        // clear any auth error that was showing in the UI. If the backend is
+        // yet to update its connection state, GetAuthStatus() will return
+        // AuthError::NONE while |is_auth_in_progress_| is set to true.
+        // See http://crbug.com/261317.
+        if (profile_)
+          SigninGlobalError::GetForProfile(profile_)->AuthStatusChanged();
       }
       break;
     }

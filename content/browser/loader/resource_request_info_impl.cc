@@ -5,11 +5,11 @@
 #include "content/browser/loader/resource_request_info_impl.h"
 
 #include "content/browser/loader/global_routing_id.h"
+#include "content/browser/loader/resource_message_filter.h"
 #include "content/browser/worker_host/worker_service_impl.h"
 #include "content/common/net/url_request_user_data.h"
 #include "content/public/browser/global_request_id.h"
 #include "net/url_request/url_request.h"
-#include "webkit/common/blob/blob_data.h"
 
 namespace content {
 
@@ -28,7 +28,8 @@ void ResourceRequestInfo::AllocateForTesting(
     ResourceType::Type resource_type,
     ResourceContext* context,
     int render_process_id,
-    int render_view_id) {
+    int render_view_id,
+    bool is_async) {
   ResourceRequestInfoImpl* info =
       new ResourceRequestInfoImpl(
           PROCESS_TYPE_RENDERER,             // process_type
@@ -48,7 +49,8 @@ void ResourceRequestInfo::AllocateForTesting(
           false,                             // has_user_gesture
           WebKit::WebReferrerPolicyDefault,  // referrer_policy
           context,                           // context
-          false);                            // is_async
+          base::WeakPtr<ResourceMessageFilter>(),  // filter
+          is_async);                         // is_async
   info->AssociateWithRequest(request);
 }
 
@@ -99,6 +101,7 @@ ResourceRequestInfoImpl::ResourceRequestInfoImpl(
     bool has_user_gesture,
     WebKit::WebReferrerPolicy referrer_policy,
     ResourceContext* context,
+    base::WeakPtr<ResourceMessageFilter> filter,
     bool is_async)
     : cross_site_handler_(NULL),
       process_type_(process_type),
@@ -120,6 +123,7 @@ ResourceRequestInfoImpl::ResourceRequestInfoImpl(
       memory_cost_(0),
       referrer_policy_(referrer_policy),
       context_(context),
+      filter_(filter),
       is_async_(is_async) {
 }
 
@@ -196,6 +200,9 @@ bool ResourceRequestInfoImpl::GetAssociatedRenderView(
       *render_view_id = -1;
       return false;
     }
+  } else if (process_type_ == PROCESS_TYPE_PLUGIN) {
+    *render_process_id = origin_pid_;
+    *render_view_id = route_id_;
   } else {
     *render_process_id = child_id_;
     *render_view_id = route_id_;
@@ -226,9 +233,20 @@ GlobalRoutingID ResourceRequestInfoImpl::GetGlobalRoutingID() const {
   return GlobalRoutingID(child_id_, route_id_);
 }
 
-void ResourceRequestInfoImpl::set_requested_blob_data(
-    webkit_blob::BlobData* data) {
-  requested_blob_data_ = data;
+void ResourceRequestInfoImpl::UpdateForTransfer(
+    int child_id,
+    int route_id,
+    int origin_pid,
+    int request_id,
+    int64 frame_id,
+    int64 parent_frame_id,
+    base::WeakPtr<ResourceMessageFilter> filter) {
+  child_id_ = child_id;
+  route_id_ = route_id;
+  origin_pid_ = origin_pid;
+  request_id_ = request_id;
+  frame_id_ = frame_id;
+  filter_ = filter;
 }
 
 }  // namespace content

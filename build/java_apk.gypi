@@ -48,7 +48,11 @@
 #    strings.xml files, if any.
 #  library_manifest_paths'- Paths to additional AndroidManifest.xml files from
 #    libraries.
-
+#  use_content_linker - Enable the content dynamic linker that allows sharing the
+#    RELRO section of the native libraries between the different processes.
+#  enable_content_linker_tests - Enable the content dynamic linker test support
+#    code. This allows a test APK to inject a Linker.TestRunner instance at
+#    runtime. Should only be used by the content_linker_test_apk target!!
 {
   'variables': {
     'additional_input_paths': [],
@@ -87,15 +91,18 @@
     'native_libraries_template_data_file': '<(native_libraries_template_data_dir)/native_libraries_array.h',
     'native_libraries_template_data_stamp': '<(intermediate_dir)/native_libraries_template_data.stamp',
     'compile_stamp': '<(intermediate_dir)/compile.stamp',
+    'instr_stamp': '<(intermediate_dir)/instr.stamp',
     'jar_stamp': '<(intermediate_dir)/jar.stamp',
     'obfuscate_stamp': '<(intermediate_dir)/obfuscate.stamp',
     'strip_stamp': '<(intermediate_dir)/strip.stamp',
     'classes_dir': '<(intermediate_dir)/classes',
+    'classes_final_dir': '<(intermediate_dir)/classes_instr',
     'javac_includes': [],
     'jar_excluded_classes': [],
     'jar_path': '<(PRODUCT_DIR)/lib.java/<(jar_name)',
     'obfuscated_jar_path': '<(intermediate_dir)/obfuscated.jar',
     'dex_path': '<(intermediate_dir)/classes.dex',
+    'emma_device_jar': '<(android_sdk_root)/tools/lib/emma_device.jar',
     'android_manifest_path%': '<(java_in_dir)/AndroidManifest.xml',
     'push_stamp': '<(intermediate_dir)/push.stamp',
     'link_stamp': '<(intermediate_dir)/link.stamp',
@@ -113,6 +120,9 @@
     'variables': {
       'variables': {
         'native_lib_target%': '',
+        'use_content_linker%': 0,
+        'enable_content_linker_tests%': 0,
+        'is_test_apk%': 0,
       },
       'conditions': [
         ['gyp_managed_install == 1 and native_lib_target != ""', {
@@ -125,11 +135,20 @@
         }, {
           'apk_package_native_libs_dir': '<(intermediate_dir)/libs',
         }],
+        ['is_test_apk == 0 and emma_coverage != 0', {
+          'emma_instrument': 1,
+        },{
+          'emma_instrument': 0,
+        }],
       ],
     },
     'native_lib_target%': '',
+    'use_content_linker%': 0,
+    'enable_content_linker_tests%': 0,
+    'emma_instrument': '<(emma_instrument)',
     'apk_package_native_libs_dir': '<(apk_package_native_libs_dir)',
     'unsigned_standalone_apk_path': '<(unsigned_standalone_apk_path)',
+    'extra_native_libs': [],
   },
   # Pass the jar path to the apk's "fake" jar target.  This would be better as
   # direct_dependent_settings, but a variable set by a direct_dependent_settings
@@ -159,6 +178,11 @@
         '<(DEPTH)/build/android/setup.gyp:copy_system_libraries',
       ],
     }],
+    ['use_content_linker == 1', {
+      'dependencies': [
+        '<(DEPTH)/content/content.gyp:content_android_linker',
+      ],
+    }],
     ['native_lib_target != ""', {
       'variables': {
         'compile_input_paths': [ '<(native_libraries_java_stamp)' ],
@@ -178,19 +202,37 @@
           'destination': '<(apk_package_native_libs_dir)/<(android_app_abi)',
           'files': [
             '<(android_gdbserver)',
+            '<@(extra_native_libs)',
           ],
         },
       ],
       'actions': [
         {
           'variables': {
-            'input_libraries': ['<@(native_libs_paths)'],
+            'conditions': [
+              ['use_content_linker == 1', {
+                'variables': {
+                  'linker_input_libraries': [
+                    '<(SHARED_LIB_DIR)/libcontent_android_linker.>(android_product_extension)',
+                  ],
+                }
+              }, {
+                'variables': {
+                  'linker_input_libraries': [],
+                },
+              }],
+            ],
+            'input_libraries': [
+              '<@(native_libs_paths)',
+              '<@(extra_native_libs)',
+              '<@(linker_input_libraries)',
+            ],
           },
           'includes': ['../build/android/write_ordered_libraries.gypi'],
         },
         {
           'action_name': 'native_libraries_template_data_<(_target_name)',
-          'message': 'Creating native_libraries_list.h for <(_target_name).',
+          'message': 'Creating native_libraries_list.h for <(_target_name)',
           'inputs': [
             '<(DEPTH)/build/android/gyp/util/build_utils.py',
             '<(DEPTH)/build/android/gyp/create_native_libraries_header.py',
@@ -208,6 +250,36 @@
         },
         {
           'action_name': 'native_libraries_<(_target_name)',
+          'variables': {
+            'conditions': [
+              ['use_content_linker == 1', {
+                'variables': {
+                  'linker_gcc_preprocess_defines': [
+                    '--defines', 'ENABLE_CONTENT_LINKER',
+                  ],
+                }
+              }, {
+                'variables': {
+                  'linker_gcc_preprocess_defines': [],
+                },
+              }],
+              ['enable_content_linker_tests == 1', {
+                'variables': {
+                  'linker_tests_gcc_preprocess_defines': [
+                    '--defines', 'ENABLE_CONTENT_LINKER_TESTS',
+                  ],
+                }
+              }, {
+                'variables': {
+                  'linker_tests_gcc_preprocess_defines': [],
+                },
+              }],
+            ],
+            'gcc_preprocess_defines': [
+              '<@(linker_gcc_preprocess_defines)',
+              '<@(linker_tests_gcc_preprocess_defines)',
+            ],
+          },
           'message': 'Creating NativeLibraries.java for <(_target_name).',
           'inputs': [
             '<(DEPTH)/build/android/gyp/util/build_utils.py',
@@ -224,6 +296,7 @@
             '--output=<(native_libraries_java_file)',
             '--template=<(native_libraries_template)',
             '--stamp=<(native_libraries_java_stamp)',
+            '<@(gcc_preprocess_defines)',
           ],
         },
         {
@@ -231,7 +304,10 @@
           'variables': {
             'ordered_libraries_file%': '<(ordered_libraries_file)',
             'stripped_libraries_dir': '<(libraries_source_dir)',
-            'input_paths': ['<@(native_libs_paths)'],
+            'input_paths': [
+              '<@(native_libs_paths)',
+              '<@(extra_native_libs)',
+            ],
             'stamp': '<(strip_stamp)'
           },
           'includes': ['../build/android/strip_native_libraries.gypi'],
@@ -243,9 +319,9 @@
             'libraries_top_dir': '<(intermediate_dir)/lib.stripped',
             'libraries_source_dir': '<(libraries_top_dir)/lib/<(android_app_abi)',
             'device_library_dir': '<(device_intermediate_dir)/lib.stripped',
+            'configuration_name': '<(CONFIGURATION_NAME)',
           },
           'dependencies': [
-            '<(DEPTH)/tools/android/md5sum/md5sum.gyp:md5sum',
             '<(DEPTH)/build/android/setup.gyp:get_build_device_configurations',
           ],
           'actions': [
@@ -274,6 +350,7 @@
                 '--target-dir=<(device_library_dir)',
                 '--apk=<(incomplete_apk_path)',
                 '--stamp=<(link_stamp)',
+                '--configuration-name=<(CONFIGURATION_NAME)',
               ],
             },
           ],
@@ -367,10 +444,19 @@
             '--apk-path=<(incomplete_apk_path)',
             '--build-device-configuration=<(build_device_config_path)',
             '--install-record=<(apk_install_record)',
+            '--configuration-name=<(CONFIGURATION_NAME)',
           ],
         },
       ],
     }],
+    ['is_test_apk == 1', {
+      'dependencies': [
+        '<(DEPTH)/tools/android/android_tools.gyp:android_tools',
+      ]
+    }],
+  ],
+  'dependencies': [
+    '<(DEPTH)/tools/android/md5sum/md5sum.gyp:md5sum',
   ],
   'actions': [
     {
@@ -461,20 +547,37 @@
       ],
     },
     {
+      'action_name': 'instr_classes_<(_target_name)',
+      'message': 'Instrumenting <(_target_name) classes',
+      'variables': {
+        'input_path': '<(classes_dir)',
+        'output_path': '<(classes_final_dir)',
+        'stamp_path': '<(instr_stamp)',
+        'instr_type': 'classes',
+      },
+      'outputs': [
+        '<(instr_stamp)',
+      ],
+      'inputs': [
+        '<(compile_stamp)',
+      ],
+      'includes': [ 'android/instr_action.gypi' ],
+    },
+    {
       'action_name': 'jar_<(_target_name)',
       'message': 'Creating <(_target_name) jar',
       'inputs': [
+        '<(instr_stamp)',
         '<(DEPTH)/build/android/gyp/util/build_utils.py',
         '<(DEPTH)/build/android/gyp/util/md5_check.py',
         '<(DEPTH)/build/android/gyp/jar.py',
-        '<(compile_stamp)',
       ],
       'outputs': [
         '<(jar_stamp)',
       ],
       'action': [
         'python', '<(DEPTH)/build/android/gyp/jar.py',
-        '--classes-dir=<(classes_dir)',
+        '--classes-dir=<(classes_final_dir)',
         '--jar-path=<(jar_path)',
         '--excluded-classes=<(jar_excluded_classes)',
         '--stamp=<(jar_stamp)',
@@ -491,7 +594,7 @@
         '<(DEPTH)/build/android/ant/create-test-jar.js',
         '<(DEPTH)/build/android/gyp/util/build_utils.py',
         '<(DEPTH)/build/android/gyp/ant.py',
-        '<(compile_stamp)',
+        '<(instr_stamp)',
         '>@(proguard_flags_paths)',
       ],
       'outputs': [
@@ -537,10 +640,16 @@
             'input_paths': [ '<(obfuscate_stamp)' ],
             'proguard_enabled_input_path': '<(obfuscated_jar_path)',
           }],
+          ['emma_instrument != 0', {
+            'dex_no_locals': 1,
+          }],
+          ['emma_instrument != 0 and is_test_apk == 0', {
+            'dex_input_paths': [ '<(emma_device_jar)' ],
+          }],
         ],
-        'input_paths': [ '<(compile_stamp)' ],
+        'input_paths': [ '<(instr_stamp)' ],
         'dex_input_paths': [ '>@(library_dexed_jars_paths)' ],
-        'dex_generated_input_dirs': [ '<(classes_dir)' ],
+        'dex_generated_input_dirs': [ '<(classes_final_dir)' ],
         'output_path': '<(dex_path)',
       },
       'includes': [ 'android/dex_action.gypi' ],
@@ -625,6 +734,8 @@
         '-DOUT_DIR=<(intermediate_dir)',
         '-DSOURCE_DIR=<(source_dir)',
         '-DUNSIGNED_APK_PATH=<(unsigned_apk_path)',
+        '-DEMMA_INSTRUMENT=<(emma_instrument)',
+        '-DEMMA_DEVICE_JAR=<(emma_device_jar)',
 
         '-Dbasedir=.',
         '-buildfile',

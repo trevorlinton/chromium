@@ -39,8 +39,7 @@ const char kTestDownloadPathPrefix[] = "/download/";
 
 class GDataWapiRequestsTest : public testing::Test {
  public:
-  GDataWapiRequestsTest()
-      : test_server_(message_loop_.message_loop_proxy()) {
+  GDataWapiRequestsTest() {
   }
 
   virtual void SetUp() OVERRIDE {
@@ -494,9 +493,11 @@ TEST_F(GDataWapiRequestsTest, GetResourceEntryRequest_ValidResourceId) {
   EXPECT_EQ("/feeds/default/private/full/file%3A2_file_resource_id"
             "?v=3&alt=json&showroot=true",
             http_request_.relative_url);
-  EXPECT_TRUE(test_util::VerifyJsonData(
-      test_util::GetTestFilePath("gdata/file_entry.json"),
-      result_data.get()));
+  scoped_ptr<base::Value> expected_json =
+      test_util::LoadJSONFile("gdata/file_entry.json");
+  ASSERT_TRUE(expected_json);
+  EXPECT_TRUE(result_data);
+  EXPECT_TRUE(base::Value::Equals(expected_json.get(), result_data.get()));
 }
 
 TEST_F(GDataWapiRequestsTest, GetResourceEntryRequest_InvalidResourceId) {
@@ -1580,7 +1581,7 @@ TEST_F(GDataWapiRequestsTest, DownloadFileRequest) {
   }
 
   std::string contents;
-  file_util::ReadFileToString(temp_file, &contents);
+  base::ReadFileToString(temp_file, &contents);
   base::DeleteFile(temp_file, false);
 
   EXPECT_EQ(HTTP_SUCCESS, result_code);

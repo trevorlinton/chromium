@@ -80,29 +80,25 @@ namespace history {
 // This value needs to be greater or equal to
 // MostVisitedModel::kMostVisitedScope but we don't want to introduce a direct
 // dependency between MostVisitedModel and the history backend.
-static const int kSegmentDataRetention = 90;
+const int kSegmentDataRetention = 90;
 
 // How long we'll wait to do a commit, so that things are batched together.
-static const int kCommitIntervalSeconds = 10;
+const int kCommitIntervalSeconds = 10;
 
 // The amount of time before we re-fetch the favicon.
-static const int kFaviconRefetchDays = 7;
-
-// GetSessionTabs returns all open tabs, or tabs closed kSessionCloseTimeWindow
-// seconds ago.
-static const int kSessionCloseTimeWindowSecs = 10;
+const int kFaviconRefetchDays = 7;
 
 // The maximum number of items we'll allow in the redirect list before
 // deleting some.
-static const int kMaxRedirectCount = 32;
+const int kMaxRedirectCount = 32;
 
 // The number of days old a history entry can be before it is considered "old"
 // and is archived.
-static const int kArchiveDaysThreshold = 90;
+const int kArchiveDaysThreshold = 90;
 
 #if defined(OS_ANDROID)
 // The maximum number of top sites to track when recording top page visit stats.
-static const size_t kPageVisitStatsMaxTopSites = 50;
+const size_t kPageVisitStatsMaxTopSites = 50;
 #endif
 
 // Converts from PageUsageData to MostVisitedURL. |redirects| is a
@@ -308,7 +304,7 @@ SegmentID HistoryBackend::UpdateSegments(
   // google.com users navigates through a link, then press back. That last
   // navigation is for the entry google.com transition typed. We end up adding
   // a segment for that one as well. So we end up with google.net and google.com
-  // in the segement table, showing as 2 entries in the NTP.
+  // in the segment table, showing as 2 entries in the NTP.
   // Note also that we should still be updating the visit count for that segment
   // which we are not doing now. It should be addressed when
   // http://crbug.com/96860 is fixed.
@@ -413,8 +409,8 @@ void HistoryBackend::AddPage(const HistoryAddPageArgs& request) {
       !is_keyword_generated) {
     const GURL& origin_url(has_redirects ?
         request.redirects[0] : request.url);
-    if (origin_url.SchemeIs(chrome::kHttpScheme) ||
-        origin_url.SchemeIs(chrome::kHttpsScheme) ||
+    if (origin_url.SchemeIs(content::kHttpScheme) ||
+        origin_url.SchemeIs(content::kHttpsScheme) ||
         origin_url.SchemeIs(chrome::kFtpScheme)) {
       std::string host(origin_url.host());
       size_t registry_length =
@@ -568,7 +564,7 @@ void HistoryBackend::InitImpl(const std::string& languages) {
 
   // Compute the file names.
   base::FilePath history_name = history_dir_.Append(chrome::kHistoryFilename);
-  base::FilePath thumbnail_name = GetThumbnailFileName();
+  base::FilePath thumbnail_name = GetFaviconsFileName();
   base::FilePath archived_name = GetArchivedFileName();
 
   // Delete the old index database files which are no longer used.
@@ -632,26 +628,19 @@ void HistoryBackend::InitImpl(const std::string& languages) {
   }
 
   // Thumbnail database.
+  // TODO(shess): "thumbnail database" these days only stores
+  // favicons.  Thumbnails are stored in "top sites".  Consider
+  // renaming "thumbnail" references to "favicons" or something of the
+  // sort.
   thumbnail_db_.reset(new ThumbnailDatabase());
-  if (!db_->GetNeedsThumbnailMigration()) {
-    // No convertion needed - use new filename right away.
-    thumbnail_name = GetFaviconsFileName();
-  }
-  if (thumbnail_db_->Init(thumbnail_name,
-                          history_publisher_.get(),
-                          db_.get()) != sql::INIT_OK) {
+  if (thumbnail_db_->Init(thumbnail_name) != sql::INIT_OK) {
     // Unlike the main database, we don't error out when the database is too
     // new because this error is much less severe. Generally, this shouldn't
-    // happen since the thumbnail and main datbase versions should be in sync.
+    // happen since the thumbnail and main database versions should be in sync.
     // We'll just continue without thumbnails & favicons in this case or any
     // other error.
     LOG(WARNING) << "Could not initialize the thumbnail database.";
     thumbnail_db_.reset();
-  }
-
-  if (db_->GetNeedsThumbnailMigration()) {
-    VLOG(1) << "Starting TopSites migration";
-    delegate_->StartTopSitesMigration(id_);
   }
 
   // Archived database.
@@ -727,6 +716,8 @@ void HistoryBackend::CloseAllDatabases() {
     // Commit the long-running transaction.
     db_->CommitTransaction();
     db_.reset();
+    // Forget the first recorded time since the database is closed.
+    first_recorded_time_ = base::Time();
   }
   if (thumbnail_db_) {
     thumbnail_db_->CommitTransaction();
@@ -1175,22 +1166,18 @@ void HistoryBackend::SetKeywordSearchTermsForURL(const GURL& url,
     return;
 
   // Get the ID for this URL.
-  URLRow url_row;
-  if (!db_->GetRowForURL(url, &url_row)) {
+  URLID url_id = db_->GetRowForURL(url, NULL);
+  if (!url_id) {
     // There is a small possibility the url was deleted before the keyword
     // was added. Ignore the request.
     return;
   }
 
-  db_->SetKeywordSearchTermsForURL(url_row.id(), keyword_id, term);
+  db_->SetKeywordSearchTermsForURL(url_id, keyword_id, term);
 
-  // details is deleted by BroadcastNotifications.
-  KeywordSearchTermDetails* details = new KeywordSearchTermDetails;
-  details->url = url;
-  details->keyword_id = keyword_id;
-  details->term = term;
   BroadcastNotifications(
-      chrome::NOTIFICATION_HISTORY_KEYWORD_SEARCH_TERM_UPDATED, details);
+      chrome::NOTIFICATION_HISTORY_KEYWORD_SEARCH_TERM_UPDATED,
+      new KeywordSearchUpdatedDetails(url, keyword_id, term));
   ScheduleCommit();
 }
 
@@ -1217,6 +1204,21 @@ void HistoryBackend::GetMostRecentKeywordSearchTerms(
                                          &(request->value));
   }
   request->ForwardResult(request->handle(), &request->value);
+}
+
+void HistoryBackend::DeleteKeywordSearchTermForURL(const GURL& url) {
+  if (!db_)
+    return;
+
+  URLID url_id = db_->GetRowForURL(url, NULL);
+  if (!url_id)
+    return;
+  db_->DeleteKeywordSearchTermForURL(url_id);
+
+  BroadcastNotifications(
+      chrome::NOTIFICATION_HISTORY_KEYWORD_SEARCH_TERM_DELETED,
+      new KeywordSearchDeletedDetails(url));
+  ScheduleCommit();
 }
 
 // Downloads -------------------------------------------------------------------
@@ -1389,7 +1391,7 @@ void HistoryBackend::QueryHistoryText(URLDatabase* url_db,
   for (size_t i = 0; i < text_matches.size(); i++) {
     const URLRow& text_match = text_matches[i];
     // Get all visits for given URL match.
-    visit_db->GetVisitsForURLWithOptions(text_match.id(), options, &visits);
+    visit_db->GetVisibleVisitsForURL(text_match.id(), options, &visits);
     for (size_t j = 0; j < visits.size(); j++) {
       URLResult url_result(text_match);
       url_result.set_visit_time(visits[j].visit_time);
@@ -1671,89 +1673,6 @@ void HistoryBackend::ScheduleAutocomplete(HistoryURLProvider* provider,
   provider->ExecuteWithDB(this, db_.get(), params);
 }
 
-void HistoryBackend::SetPageThumbnail(
-    const GURL& url,
-    const gfx::Image* thumbnail,
-    const ThumbnailScore& score) {
-  if (!db_ || !thumbnail_db_)
-    return;
-
-  URLRow url_row;
-  URLID url_id = db_->GetRowForURL(url, &url_row);
-  if (url_id) {
-    thumbnail_db_->SetPageThumbnail(url, url_id, thumbnail, score,
-                                    url_row.last_visit());
-  }
-
-  ScheduleCommit();
-}
-
-void HistoryBackend::GetPageThumbnail(
-    scoped_refptr<GetPageThumbnailRequest> request,
-    const GURL& page_url) {
-  if (request->canceled())
-    return;
-
-  scoped_refptr<base::RefCountedBytes> data;
-  GetPageThumbnailDirectly(page_url, &data);
-
-  request->ForwardResult(request->handle(), data);
-}
-
-void HistoryBackend::GetPageThumbnailDirectly(
-    const GURL& page_url,
-    scoped_refptr<base::RefCountedBytes>* data) {
-  if (thumbnail_db_) {
-    *data = new base::RefCountedBytes;
-
-    // Time the result.
-    TimeTicks beginning_time = TimeTicks::Now();
-
-    history::RedirectList redirects;
-    URLID url_id;
-    bool success = false;
-
-    // If there are some redirects, try to get a thumbnail from the last
-    // redirect destination.
-    if (GetMostRecentRedirectsFrom(page_url, &redirects) &&
-        !redirects.empty()) {
-      if ((url_id = db_->GetRowForURL(redirects.back(), NULL)))
-        success = thumbnail_db_->GetPageThumbnail(url_id, &(*data)->data());
-    }
-
-    // If we don't have a thumbnail from redirects, try the URL directly.
-    if (!success) {
-      if ((url_id = db_->GetRowForURL(page_url, NULL)))
-        success = thumbnail_db_->GetPageThumbnail(url_id, &(*data)->data());
-    }
-
-    // In this rare case, we start to mine the older redirect sessions
-    // from the visit table to try to find a thumbnail.
-    if (!success) {
-      success = GetThumbnailFromOlderRedirect(page_url, &(*data)->data());
-    }
-
-    if (!success)
-      *data = NULL;  // This will tell the callback there was an error.
-
-    UMA_HISTOGRAM_TIMES("History.GetPageThumbnail",
-                        TimeTicks::Now() - beginning_time);
-  }
-}
-
-void HistoryBackend::MigrateThumbnailsDatabase() {
-  // If there is no History DB, we can't record that the migration was done.
-  // It will be recorded on the next run.
-  if (db_) {
-    // If there is no thumbnail DB, we can still record a successful migration.
-    if (thumbnail_db_) {
-      thumbnail_db_->RenameAndDropThumbnails(GetThumbnailFileName(),
-                                             GetFaviconsFileName());
-    }
-    db_->ThumbnailMigrationDone();
-  }
-}
-
 void HistoryBackend::DeleteFTSIndexDatabases() {
   // Find files on disk matching the text databases file pattern so we can
   // quickly test for and delete them.
@@ -1771,37 +1690,6 @@ void HistoryBackend::DeleteFTSIndexDatabases() {
                        num_databases_deleted);
 }
 
-bool HistoryBackend::GetThumbnailFromOlderRedirect(
-    const GURL& page_url,
-    std::vector<unsigned char>* data) {
-  // Look at a few previous visit sessions.
-  VisitVector older_sessions;
-  URLID page_url_id = db_->GetRowForURL(page_url, NULL);
-  static const int kVisitsToSearchForThumbnail = 4;
-  db_->GetMostRecentVisitsForURL(
-      page_url_id, kVisitsToSearchForThumbnail, &older_sessions);
-
-  // Iterate across all those previous visits, and see if any of the
-  // final destinations of those redirect chains have a good thumbnail
-  // for us.
-  bool success = false;
-  for (VisitVector::const_iterator it = older_sessions.begin();
-       !success && it != older_sessions.end(); ++it) {
-    history::RedirectList redirects;
-    if (it->visit_id) {
-      GetRedirectsFromSpecificVisit(it->visit_id, &redirects);
-
-      if (!redirects.empty()) {
-        URLID url_id;
-        if ((url_id = db_->GetRowForURL(redirects.back(), NULL)))
-          success = thumbnail_db_->GetPageThumbnail(url_id, data);
-      }
-    }
-  }
-
-  return success;
-}
-
 void HistoryBackend::SetPageContents(const GURL& url,
                                      const string16& contents) {
   if (page_collector_)
@@ -1817,6 +1705,100 @@ void HistoryBackend::GetFavicons(
   UpdateFaviconMappingsAndFetchImpl(NULL, icon_urls, icon_types,
                                     desired_size_in_dip, desired_scale_factors,
                                     bitmap_results);
+}
+
+void HistoryBackend::GetLargestFaviconForURL(
+      const GURL& page_url,
+      const std::vector<int>& icon_types,
+      int minimum_size_in_pixels,
+      chrome::FaviconBitmapResult* favicon_bitmap_result) {
+  DCHECK(favicon_bitmap_result);
+
+  if (!db_ || !thumbnail_db_)
+    return;
+
+  TimeTicks beginning_time = TimeTicks::Now();
+
+  std::vector<IconMapping> icon_mappings;
+  if (!thumbnail_db_->GetIconMappingsForPageURL(page_url, &icon_mappings) ||
+      icon_mappings.empty())
+    return;
+
+  int required_icon_types = 0;
+  for (std::vector<int>::const_iterator i = icon_types.begin();
+       i != icon_types.end(); ++i) {
+    required_icon_types |= *i;
+  }
+
+  // Find the largest bitmap for each IconType placing in
+  // |largest_favicon_bitmaps|.
+  std::map<chrome::IconType, FaviconBitmap> largest_favicon_bitmaps;
+  for (std::vector<IconMapping>::const_iterator i = icon_mappings.begin();
+       i != icon_mappings.end(); ++i) {
+    if (!(i->icon_type & required_icon_types))
+      continue;
+    std::vector<FaviconBitmapIDSize> bitmap_id_sizes;
+    thumbnail_db_->GetFaviconBitmapIDSizes(i->icon_id, &bitmap_id_sizes);
+    FaviconBitmap& largest = largest_favicon_bitmaps[i->icon_type];
+    for (std::vector<FaviconBitmapIDSize>::const_iterator j =
+             bitmap_id_sizes.begin(); j != bitmap_id_sizes.end(); ++j) {
+      if (largest.bitmap_id == 0 ||
+          (largest.pixel_size.width() < j->pixel_size.width() &&
+           largest.pixel_size.height() < j->pixel_size.height())) {
+        largest.icon_id = i->icon_id;
+        largest.bitmap_id = j->bitmap_id;
+        largest.pixel_size = j->pixel_size;
+      }
+    }
+  }
+  if (largest_favicon_bitmaps.empty())
+    return;
+
+  // Find an icon which is larger than minimum_size_in_pixels in the order of
+  // icon_types.
+  FaviconBitmap largest_icon;
+  for (std::vector<int>::const_iterator t = icon_types.begin();
+       t != icon_types.end(); ++t) {
+    for (std::map<chrome::IconType, FaviconBitmap>::const_iterator f =
+            largest_favicon_bitmaps.begin(); f != largest_favicon_bitmaps.end();
+        ++f) {
+      if (f->first & *t &&
+          (largest_icon.bitmap_id == 0 ||
+           (largest_icon.pixel_size.height() < f->second.pixel_size.height() &&
+            largest_icon.pixel_size.width() < f->second.pixel_size.width()))) {
+        largest_icon = f->second;
+      }
+    }
+    if (largest_icon.pixel_size.width() > minimum_size_in_pixels &&
+        largest_icon.pixel_size.height() > minimum_size_in_pixels)
+      break;
+  }
+
+  GURL icon_url;
+  chrome::IconType icon_type;
+  if (!thumbnail_db_->GetFaviconHeader(largest_icon.icon_id, &icon_url,
+                                       &icon_type)) {
+    return;
+  }
+
+  base::Time last_updated;
+  chrome::FaviconBitmapResult bitmap_result;
+  bitmap_result.icon_url = icon_url;
+  bitmap_result.icon_type = icon_type;
+  if (!thumbnail_db_->GetFaviconBitmap(largest_icon.bitmap_id,
+                                       &last_updated,
+                                       &bitmap_result.bitmap_data,
+                                       &bitmap_result.pixel_size)) {
+    return;
+  }
+
+  bitmap_result.expired = (Time::Now() - last_updated) >
+      TimeDelta::FromDays(kFaviconRefetchDays);
+  if (bitmap_result.is_valid())
+    *favicon_bitmap_result = bitmap_result;
+
+  HISTOGRAM_TIMES("History.GetLargestFaviconForURL",
+                  TimeTicks::Now() - beginning_time);
 }
 
 void HistoryBackend::GetFaviconsForURL(
@@ -1923,7 +1905,7 @@ void HistoryBackend::MergeFavicon(
   // A site may have changed the favicons that it uses for |page_url|.
   // Example Scenario:
   //   page_url = news.google.com
-  //   Intial State: www.google.com/favicon.ico 16x16, 32x32
+  //   Initial State: www.google.com/favicon.ico 16x16, 32x32
   //   MergeFavicon(news.google.com, news.google.com/news_specific.ico, ...,
   //                ..., 16x16)
   //
@@ -1943,7 +1925,7 @@ void HistoryBackend::MergeFavicon(
   // news.google.com/news_specific.ico (|icon_url|). The favicon sizes for
   // |icon_url| are set to default to indicate that |icon_url| has incomplete
   // / incorrect data.
-  // Difficlty 1: All but news.google.com/news_specific.ico are unmapped from
+  // Difficulty 1: All but news.google.com/news_specific.ico are unmapped from
   //              news.google.com
   // Difficulty 2: The favicon bitmaps for www.google.com/favicon.ico are not
   //               modified.
@@ -2630,20 +2612,21 @@ void HistoryBackend::ExpireHistoryBetween(
     const std::set<GURL>& restrict_urls,
     Time begin_time,
     Time end_time) {
-  if (db_) {
-    if (begin_time.is_null() && (end_time.is_null() || end_time.is_max()) &&
-        restrict_urls.empty()) {
-      // Special case deleting all history so it can be faster and to reduce the
-      // possibility of an information leak.
-      DeleteAllHistory();
-    } else {
-      // Clearing parts of history, have the expirer do the depend
-      expirer_.ExpireHistoryBetween(restrict_urls, begin_time, end_time);
+  if (!db_)
+    return;
 
-      // Force a commit, if the user is deleting something for privacy reasons,
-      // we want to get it on disk ASAP.
-      Commit();
-    }
+  if (begin_time.is_null() && (end_time.is_null() || end_time.is_max()) &&
+      restrict_urls.empty()) {
+    // Special case deleting all history so it can be faster and to reduce the
+    // possibility of an information leak.
+    DeleteAllHistory();
+  } else {
+    // Clearing parts of history, have the expirer do the depend
+    expirer_.ExpireHistoryBetween(restrict_urls, begin_time, end_time);
+
+    // Force a commit, if the user is deleting something for privacy reasons,
+    // we want to get it on disk ASAP.
+    Commit();
   }
 
   if (begin_time <= first_recorded_time_)
@@ -2851,14 +2834,15 @@ void HistoryBackend::DeleteAllHistory() {
 
   // Clear thumbnail and favicon history. The favicons for the given URLs will
   // be kept.
-  if (!ClearAllThumbnailHistory(&kept_urls)) {
+  if (!ClearAllThumbnailHistory(kept_urls)) {
     LOG(ERROR) << "Thumbnail history could not be cleared";
     // We continue in this error case. If the user wants to delete their
     // history, we should delete as much as we can.
   }
 
-  // ClearAllMainHistory will change the IDs of the URLs in kept_urls. Therfore,
-  // we clear the list afterwards to make sure nobody uses this invalid data.
+  // ClearAllMainHistory will change the IDs of the URLs in kept_urls.
+  // Therefore, we clear the list afterwards to make sure nobody uses this
+  // invalid data.
   if (!ClearAllMainHistory(kept_urls))
     LOG(ERROR) << "Main history could not be cleared";
   kept_urls.clear();
@@ -2883,7 +2867,7 @@ void HistoryBackend::DeleteAllHistory() {
 
   db_->GetStartDate(&first_recorded_time_);
 
-  // Send out the notfication that history is cleared. The in-memory datdabase
+  // Send out the notification that history is cleared. The in-memory database
   // will pick this up and clear itself.
   URLsDeletedDetails* details = new URLsDeletedDetails;
   details->all_history = true;
@@ -2891,62 +2875,43 @@ void HistoryBackend::DeleteAllHistory() {
   BroadcastNotifications(chrome::NOTIFICATION_HISTORY_URLS_DELETED, details);
 }
 
-bool HistoryBackend::ClearAllThumbnailHistory(URLRows* kept_urls) {
+bool HistoryBackend::ClearAllThumbnailHistory(const URLRows& kept_urls) {
   if (!thumbnail_db_) {
     // When we have no reference to the thumbnail database, maybe there was an
     // error opening it. In this case, we just try to blow it away to try to
     // fix the error if it exists. This may fail, in which case either the
     // file doesn't exist or there's no more we can do.
+    sql::Connection::Delete(GetFaviconsFileName());
+
+    // Older version of the database.
     sql::Connection::Delete(GetThumbnailFileName());
     return true;
   }
 
-  // Create duplicate icon_mapping, favicon, and favicon_bitmaps tables, this
-  // is where the favicons we want to keep will be stored.
-  if (!thumbnail_db_->InitTemporaryTables())
-    return false;
-
-  // This maps existing favicon IDs to the ones in the temporary table.
-  typedef std::map<chrome::FaviconID, chrome::FaviconID> FaviconMap;
-  FaviconMap copied_favicons;
-
-  // Copy all unique favicons to the temporary table, and update all the
-  // URLs to have the new IDs.
-  for (URLRows::iterator i = kept_urls->begin(); i != kept_urls->end(); ++i) {
-    std::vector<IconMapping> icon_mappings;
-    if (!thumbnail_db_->GetIconMappingsForPageURL(i->url(), &icon_mappings))
-      continue;
-
-    for (std::vector<IconMapping>::iterator m = icon_mappings.begin();
-         m != icon_mappings.end(); ++m) {
-      chrome::FaviconID old_id = m->icon_id;
-      chrome::FaviconID new_id;
-      FaviconMap::const_iterator found = copied_favicons.find(old_id);
-      if (found == copied_favicons.end()) {
-        new_id = thumbnail_db_->CopyFaviconAndFaviconBitmapsToTemporaryTables(
-            old_id);
-        copied_favicons[old_id] = new_id;
-      } else {
-        // We already encountered a URL that used this favicon, use the ID we
-        // previously got.
-        new_id = found->second;
-      }
-      // Add Icon mapping, and we don't care wheteher it suceeded or not.
-      thumbnail_db_->AddToTemporaryIconMappingTable(i->url(), new_id);
-    }
+  // Urls to retain mappings for.
+  std::vector<GURL> urls_to_keep;
+  for (URLRows::const_iterator i = kept_urls.begin();
+       i != kept_urls.end(); ++i) {
+    urls_to_keep.push_back(i->url());
   }
+
+  // Isolate from any long-running transaction.
+  thumbnail_db_->CommitTransaction();
+  thumbnail_db_->BeginTransaction();
+
+  // TODO(shess): If this fails, perhaps the database should be razed
+  // or deleted.
+  if (!thumbnail_db_->RetainDataForPageUrls(urls_to_keep)) {
+    thumbnail_db_->RollbackTransaction();
+    thumbnail_db_->BeginTransaction();
+    return false;
+  }
+
 #if defined(OS_ANDROID)
   // TODO (michaelbai): Add the unit test once AndroidProviderBackend is
   // avaliable in HistoryBackend.
   db_->ClearAndroidURLRows();
 #endif
-
-  // Drop original favicon_bitmaps, favicons, and icon mapping tables and
-  // replace them with the duplicate tables. Recreate the other tables. This
-  // will make the database consistent again.
-  thumbnail_db_->CommitTemporaryTables();
-
-  thumbnail_db_->RecreateThumbnailTable();
 
   // Vacuum to remove all the pages associated with the dropped tables. There
   // must be no transaction open on the table when we do this. We assume that
@@ -2963,14 +2928,10 @@ bool HistoryBackend::ClearAllMainHistory(const URLRows& kept_urls) {
   if (!db_->CreateTemporaryURLTable())
     return false;
 
-  // Insert the URLs into the temporary table, we need to keep a map of changed
-  // IDs since the ID will be different in the new table.
-  typedef std::map<URLID, URLID> URLIDMap;
-  URLIDMap old_to_new;  // Maps original ID to new one.
+  // Insert the URLs into the temporary table.
   for (URLRows::const_iterator i = kept_urls.begin(); i != kept_urls.end();
        ++i) {
-    URLID new_id = db_->AddTemporaryURL(*i);
-    old_to_new[i->id()] = new_id;
+    db_->AddTemporaryURL(*i);
   }
 
   // Replace the original URL table with the temporary one.

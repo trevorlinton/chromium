@@ -6,9 +6,9 @@
 
 #include <map>
 
-#include "base/chromeos/chromeos_version.h"
 #include "base/command_line.h"
 #include "base/observer_list.h"
+#include "base/sys_info.h"
 #include "base/threading/thread.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/dbus/bluetooth_adapter_client.h"
@@ -23,26 +23,28 @@
 #include "chromeos/dbus/dbus_thread_manager_observer.h"
 #include "chromeos/dbus/debug_daemon_client.h"
 #include "chromeos/dbus/gsm_sms_client.h"
+#include "chromeos/dbus/ibus/ibus_client.h"
+#include "chromeos/dbus/ibus/ibus_engine_factory_service.h"
+#include "chromeos/dbus/ibus/ibus_engine_service.h"
+#include "chromeos/dbus/image_burner_client.h"
+#include "chromeos/dbus/introspectable_client.h"
+#include "chromeos/dbus/modem_messaging_client.h"
+#include "chromeos/dbus/nfc_adapter_client.h"
+#include "chromeos/dbus/nfc_device_client.h"
+#include "chromeos/dbus/nfc_manager_client.h"
+#include "chromeos/dbus/nfc_tag_client.h"
+#include "chromeos/dbus/permission_broker_client.h"
+#include "chromeos/dbus/power_manager_client.h"
+#include "chromeos/dbus/power_policy_controller.h"
+#include "chromeos/dbus/session_manager_client.h"
 #include "chromeos/dbus/shill_device_client.h"
 #include "chromeos/dbus/shill_ipconfig_client.h"
 #include "chromeos/dbus/shill_manager_client.h"
 #include "chromeos/dbus/shill_profile_client.h"
 #include "chromeos/dbus/shill_service_client.h"
-#include "chromeos/dbus/system_clock_client.h"
-#include "chromeos/dbus/ibus/ibus_client.h"
-#include "chromeos/dbus/ibus/ibus_config_client.h"
-#include "chromeos/dbus/ibus/ibus_engine_factory_service.h"
-#include "chromeos/dbus/ibus/ibus_engine_service.h"
-#include "chromeos/dbus/ibus/ibus_input_context_client.h"
-#include "chromeos/dbus/ibus/ibus_panel_service.h"
-#include "chromeos/dbus/image_burner_client.h"
-#include "chromeos/dbus/introspectable_client.h"
-#include "chromeos/dbus/modem_messaging_client.h"
-#include "chromeos/dbus/permission_broker_client.h"
-#include "chromeos/dbus/power_manager_client.h"
-#include "chromeos/dbus/power_policy_controller.h"
-#include "chromeos/dbus/session_manager_client.h"
+#include "chromeos/dbus/shill_stub_helper.h"
 #include "chromeos/dbus/sms_client.h"
+#include "chromeos/dbus/system_clock_client.h"
 #include "chromeos/dbus/update_engine_client.h"
 #include "dbus/bus.h"
 #include "dbus/dbus_statistics.h"
@@ -55,14 +57,13 @@ static bool g_dbus_thread_manager_set_for_testing = false;
 // The DBusThreadManager implementation used in production.
 class DBusThreadManagerImpl : public DBusThreadManager {
  public:
-  explicit DBusThreadManagerImpl(DBusClientImplementationType client_type)
-      : client_type_(client_type),
-        client_type_override_(client_type) {
+  explicit DBusThreadManagerImpl(DBusClientImplementationType client_type) {
+    DBusClientImplementationType client_type_override = client_type;
     // If --dbus-stub was requested, pass STUB to specific components;
     // Many components like login are not useful with a stub implementation.
     if (CommandLine::ForCurrentProcess()->HasSwitch(
             chromeos::switches::kDbusStub)) {
-      client_type_override_ = STUB_DBUS_CLIENT_IMPLEMENTATION;
+      client_type_override = STUB_DBUS_CLIENT_IMPLEMENTATION;
     }
 
     // Create the D-Bus thread.
@@ -77,76 +78,51 @@ class DBusThreadManagerImpl : public DBusThreadManager {
     system_bus_options.connection_type = dbus::Bus::PRIVATE;
     system_bus_options.dbus_task_runner = dbus_thread_->message_loop_proxy();
     system_bus_ = new dbus::Bus(system_bus_options);
+
+    CreateDefaultClients(client_type, client_type_override);
   }
 
   // InitializeClients gets called after g_dbus_thread_manager is set.
-  // NOTE: Clients that access other clients in their constructor must be
-  // construced in the correct order.
+  // NOTE: Clients that access other clients in their Init() must be
+  // initialized in the correct order. This is the only place where Clients'
+  // Init() should be called if DBusThreadManager is being used.
   void InitializeClients() {
-    bluetooth_adapter_client_.reset(
-        BluetoothAdapterClient::Create(client_type_, system_bus_.get()));
-    bluetooth_agent_manager_client_.reset(
-        BluetoothAgentManagerClient::Create(client_type_, system_bus_.get()));
-    bluetooth_device_client_.reset(
-        BluetoothDeviceClient::Create(client_type_, system_bus_.get()));
-    bluetooth_input_client_.reset(
-        BluetoothInputClient::Create(client_type_, system_bus_.get()));
-    bluetooth_profile_manager_client_.reset(
-        BluetoothProfileManagerClient::Create(client_type_, system_bus_.get()));
-    cras_audio_client_.reset(CrasAudioClient::Create(
-        client_type_, system_bus_.get()));
-    cros_disks_client_.reset(
-        CrosDisksClient::Create(client_type_, system_bus_.get()));
-    cryptohome_client_.reset(
-        CryptohomeClient::Create(client_type_, system_bus_.get()));
-    debug_daemon_client_.reset(
-        DebugDaemonClient::Create(client_type_, system_bus_.get()));
-
-    // Construction order of the Stub implementations of the Shill clients
-    // matters; stub clients may only have construction dependencies on clients
-    // previously constructed.
-    shill_manager_client_.reset(
-        ShillManagerClient::Create(client_type_override_, system_bus_.get()));
-    shill_device_client_.reset(
-        ShillDeviceClient::Create(client_type_override_, system_bus_.get()));
-    shill_ipconfig_client_.reset(
-        ShillIPConfigClient::Create(client_type_override_, system_bus_.get()));
-    shill_service_client_.reset(
-        ShillServiceClient::Create(client_type_override_, system_bus_.get()));
-    shill_profile_client_.reset(
-        ShillProfileClient::Create(client_type_override_, system_bus_.get()));
-    gsm_sms_client_.reset(
-        GsmSMSClient::Create(client_type_override_, system_bus_.get()));
-
-    // If the Service client has a TestInterface, add the default services.
-    ShillServiceClient::TestInterface* service_client_test =
-        DBusThreadManager::Get()->GetShillServiceClient()->GetTestInterface();
-    if (service_client_test)
-      service_client_test->AddDefaultServices();
-
-    image_burner_client_.reset(ImageBurnerClient::Create(client_type_,
-                                                         system_bus_.get()));
-    introspectable_client_.reset(
-        IntrospectableClient::Create(client_type_, system_bus_.get()));
-    modem_messaging_client_.reset(
-        ModemMessagingClient::Create(client_type_, system_bus_.get()));
-    permission_broker_client_.reset(
-        PermissionBrokerClient::Create(client_type_, system_bus_.get()));
-    power_manager_client_.reset(
-        PowerManagerClient::Create(client_type_override_, system_bus_.get()));
-    session_manager_client_.reset(
-        SessionManagerClient::Create(client_type_, system_bus_.get()));
-    sms_client_.reset(
-        SMSClient::Create(client_type_, system_bus_.get()));
-    system_clock_client_.reset(
-        SystemClockClient::Create(client_type_, system_bus_.get()));
-    update_engine_client_.reset(
-        UpdateEngineClient::Create(client_type_, system_bus_.get()));
+    InitClient(bluetooth_adapter_client_.get());
+    InitClient(bluetooth_agent_manager_client_.get());
+    InitClient(bluetooth_device_client_.get());
+    InitClient(bluetooth_input_client_.get());
+    InitClient(bluetooth_profile_manager_client_.get());
+    InitClient(cras_audio_client_.get());
+    InitClient(cros_disks_client_.get());
+    InitClient(cryptohome_client_.get());
+    InitClient(debug_daemon_client_.get());
+    InitClient(shill_manager_client_.get());
+    InitClient(shill_device_client_.get());
+    InitClient(shill_ipconfig_client_.get());
+    InitClient(shill_service_client_.get());
+    InitClient(shill_profile_client_.get());
+    InitClient(gsm_sms_client_.get());
+    InitClient(image_burner_client_.get());
+    InitClient(introspectable_client_.get());
+    InitClient(modem_messaging_client_.get());
+    // Initialize the NFC clients in the correct order.
+    InitClient(nfc_manager_client_.get());
+    InitClient(nfc_adapter_client_.get());
+    InitClient(nfc_device_client_.get());
+    InitClient(nfc_tag_client_.get());
+    InitClient(permission_broker_client_.get());
+    InitClient(power_manager_client_.get());
+    InitClient(session_manager_client_.get());
+    InitClient(sms_client_.get());
+    InitClient(system_clock_client_.get());
+    InitClient(update_engine_client_.get());
 
     // PowerPolicyController is dependent on PowerManagerClient, so
     // initialize it after the main list of clients.
     power_policy_controller_.reset(
         new PowerPolicyController(this, power_manager_client_.get()));
+
+    shill_stub_helper::SetupDefaultEnvironment();
 
     // This must be called after the list of clients so they've each had a
     // chance to register with their object managers.
@@ -201,22 +177,12 @@ class DBusThreadManagerImpl : public DBusThreadManager {
     ibus_address_ = ibus_address;
     VLOG(1) << "Connected to ibus-daemon: " << ibus_address;
 
-    DBusClientImplementationType client_type =
-        base::chromeos::IsRunningOnChromeOS() ? REAL_DBUS_CLIENT_IMPLEMENTATION
-                                              : STUB_DBUS_CLIENT_IMPLEMENTATION;
+    DBusClientImplementationType client_type = STUB_DBUS_CLIENT_IMPLEMENTATION;
 
     ibus_client_.reset(
         IBusClient::Create(client_type, ibus_bus_.get()));
-    ibus_config_client_.reset(
-        IBusConfigClient::Create(client_type, ibus_bus_.get()));
-    ibus_input_context_client_.reset(
-        IBusInputContextClient::Create(client_type));
     ibus_engine_factory_service_.reset(
         IBusEngineFactoryService::Create(ibus_bus_.get(), client_type));
-    ibus_panel_service_.reset(
-        IBusPanelService::Create(client_type,
-                                 ibus_bus_.get(),
-                                 ibus_input_context_client_.get()));
 
     ibus_engine_services_.clear();
   }
@@ -304,6 +270,22 @@ class DBusThreadManagerImpl : public DBusThreadManager {
     return modem_messaging_client_.get();
   }
 
+  virtual NfcAdapterClient* GetNfcAdapterClient() OVERRIDE {
+    return nfc_adapter_client_.get();
+  }
+
+  virtual NfcDeviceClient* GetNfcDeviceClient() OVERRIDE {
+    return nfc_device_client_.get();
+  }
+
+  virtual NfcManagerClient* GetNfcManagerClient() OVERRIDE {
+    return nfc_manager_client_.get();
+  }
+
+  virtual NfcTagClient* GetNfcTagClient() OVERRIDE {
+    return nfc_tag_client_.get();
+  }
+
   virtual PermissionBrokerClient* GetPermissionBrokerClient() OVERRIDE {
     return permission_broker_client_.get();
   }
@@ -336,28 +318,15 @@ class DBusThreadManagerImpl : public DBusThreadManager {
     return ibus_client_.get();
   }
 
-  virtual IBusConfigClient* GetIBusConfigClient() OVERRIDE {
-    return ibus_config_client_.get();
-  }
-
-  virtual IBusInputContextClient* GetIBusInputContextClient() OVERRIDE {
-    return ibus_input_context_client_.get();
-  }
-
   virtual IBusEngineFactoryService* GetIBusEngineFactoryService() OVERRIDE {
     return ibus_engine_factory_service_.get();
   }
 
   virtual IBusEngineService* GetIBusEngineService(
       const dbus::ObjectPath& object_path) OVERRIDE {
-    const DBusClientImplementationType client_type =
-        base::chromeos::IsRunningOnChromeOS() ? REAL_DBUS_CLIENT_IMPLEMENTATION
-                                              : STUB_DBUS_CLIENT_IMPLEMENTATION;
-
     if (ibus_engine_services_.find(object_path)
             == ibus_engine_services_.end()) {
-      ibus_engine_services_[object_path] =
-          IBusEngineService::Create(client_type, ibus_bus_.get(), object_path);
+      ibus_engine_services_[object_path] = IBusEngineService::Create();
     }
     return ibus_engine_services_[object_path];
   }
@@ -373,12 +342,60 @@ class DBusThreadManagerImpl : public DBusThreadManager {
     ibus_engine_services_.erase(object_path);
   }
 
-  virtual IBusPanelService* GetIBusPanelService() OVERRIDE {
-    return ibus_panel_service_.get();
+ private:
+  // Initializes |client| with the |system_bus_|.
+  void InitClient(DBusClient* client) {
+    client->Init(system_bus_.get());
   }
 
-  DBusClientImplementationType client_type_;
-  DBusClientImplementationType client_type_override_;
+  // Constructs all clients -- stub or real implementation according to
+  // |client_type| and |client_type_override| -- and stores them in the
+  // respective *_client_ member variable.
+  void CreateDefaultClients(DBusClientImplementationType client_type,
+                            DBusClientImplementationType client_type_override) {
+    bluetooth_adapter_client_.reset(
+        BluetoothAdapterClient::Create(client_type));
+    bluetooth_agent_manager_client_.reset(
+        BluetoothAgentManagerClient::Create(client_type));
+    bluetooth_device_client_.reset(BluetoothDeviceClient::Create(client_type));
+    bluetooth_input_client_.reset(BluetoothInputClient::Create(client_type));
+    bluetooth_profile_manager_client_.reset(
+        BluetoothProfileManagerClient::Create(client_type));
+    cras_audio_client_.reset(CrasAudioClient::Create(client_type));
+    cros_disks_client_.reset(CrosDisksClient::Create(client_type));
+    cryptohome_client_.reset(CryptohomeClient::Create(client_type));
+    debug_daemon_client_.reset(DebugDaemonClient::Create(client_type));
+    shill_manager_client_.reset(
+        ShillManagerClient::Create(client_type_override));
+    shill_device_client_.reset(
+        ShillDeviceClient::Create(client_type_override));
+    shill_ipconfig_client_.reset(
+        ShillIPConfigClient::Create(client_type_override));
+    shill_service_client_.reset(
+        ShillServiceClient::Create(client_type_override));
+    shill_profile_client_.reset(
+        ShillProfileClient::Create(client_type_override));
+    gsm_sms_client_.reset(GsmSMSClient::Create(client_type_override));
+    image_burner_client_.reset(ImageBurnerClient::Create(client_type));
+    introspectable_client_.reset(IntrospectableClient::Create(client_type));
+    modem_messaging_client_.reset(ModemMessagingClient::Create(client_type));
+    // Create the NFC clients in the correct order based on their dependencies.
+    nfc_manager_client_.reset(NfcManagerClient::Create(client_type));
+    nfc_adapter_client_.reset(
+        NfcAdapterClient::Create(client_type, nfc_manager_client_.get()));
+    nfc_device_client_.reset(
+        NfcDeviceClient::Create(client_type, nfc_adapter_client_.get()));
+    nfc_tag_client_.reset(
+        NfcTagClient::Create(client_type, nfc_adapter_client_.get()));
+    permission_broker_client_.reset(
+        PermissionBrokerClient::Create(client_type));
+    power_manager_client_.reset(
+        PowerManagerClient::Create(client_type_override));
+    session_manager_client_.reset(SessionManagerClient::Create(client_type));
+    sms_client_.reset(SMSClient::Create(client_type));
+    system_clock_client_.reset(SystemClockClient::Create(client_type));
+    update_engine_client_.reset(UpdateEngineClient::Create(client_type));
+  }
 
   // Note: Keep this before other members so they can call AddObserver() in
   // their c'tors.
@@ -405,6 +422,12 @@ class DBusThreadManagerImpl : public DBusThreadManager {
   scoped_ptr<ImageBurnerClient> image_burner_client_;
   scoped_ptr<IntrospectableClient> introspectable_client_;
   scoped_ptr<ModemMessagingClient> modem_messaging_client_;
+  // The declaration order for NFC client objects is important. See
+  // DBusThreadManager::CreateDefaultClients for the dependencies.
+  scoped_ptr<NfcManagerClient> nfc_manager_client_;
+  scoped_ptr<NfcAdapterClient> nfc_adapter_client_;
+  scoped_ptr<NfcDeviceClient> nfc_device_client_;
+  scoped_ptr<NfcTagClient> nfc_tag_client_;
   scoped_ptr<PermissionBrokerClient> permission_broker_client_;
   scoped_ptr<SystemClockClient> system_clock_client_;
   scoped_ptr<PowerManagerClient> power_manager_client_;
@@ -412,11 +435,8 @@ class DBusThreadManagerImpl : public DBusThreadManager {
   scoped_ptr<SMSClient> sms_client_;
   scoped_ptr<UpdateEngineClient> update_engine_client_;
   scoped_ptr<IBusClient> ibus_client_;
-  scoped_ptr<IBusConfigClient> ibus_config_client_;
-  scoped_ptr<IBusInputContextClient> ibus_input_context_client_;
   scoped_ptr<IBusEngineFactoryService> ibus_engine_factory_service_;
   std::map<dbus::ObjectPath, IBusEngineService*> ibus_engine_services_;
-  scoped_ptr<IBusPanelService> ibus_panel_service_;
   scoped_ptr<PowerPolicyController> power_policy_controller_;
 
   std::string ibus_address_;
@@ -432,7 +452,7 @@ void DBusThreadManager::Initialize() {
   CHECK(g_dbus_thread_manager == NULL);
   // Determine whether we use stub or real client implementations.
   DBusThreadManagerImpl* dbus_thread_manager_impl;
-  if (base::chromeos::IsRunningOnChromeOS()) {
+  if (base::SysInfo::IsRunningOnChromeOS()) {
     dbus_thread_manager_impl =
         new DBusThreadManagerImpl(REAL_DBUS_CLIENT_IMPLEMENTATION);
     VLOG(1) << "DBusThreadManager initialized for ChromeOS";

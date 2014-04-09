@@ -20,11 +20,12 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/media_galleries/media_file_system_registry.h"
 #include "chrome/browser/media_galleries/media_galleries_dialog_controller.h"
-#include "chrome/browser/storage_monitor/storage_monitor.h"
+#include "chrome/browser/media_galleries/media_galleries_histograms.h"
+#include "chrome/browser/media_galleries/media_galleries_preferences.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/chrome_select_file_policy.h"
 #include "chrome/common/extensions/api/media_galleries.h"
 #include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/permissions/api_permission.h"
 #include "chrome/common/extensions/permissions/media_galleries_permission.h"
 #include "chrome/common/extensions/permissions/permissions_data.h"
 #include "chrome/common/pref_names.h"
@@ -33,15 +34,13 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/common/permissions/api_permission.h"
 
 #if defined(OS_WIN)
 #include "base/strings/sys_string_conversions.h"
 #endif
 
 using apps::ShellWindow;
-using chrome::MediaFileSystemInfo;
-using chrome::MediaFileSystemRegistry;
-using chrome::MediaFileSystemsCallback;
 using content::ChildProcessSecurityPolicy;
 using content::WebContents;
 using web_modal::WebContentsModalDialogManager;
@@ -83,6 +82,7 @@ bool MediaGalleriesGetMediaFileSystemsFunction::RunImpl() {
   if (!ApiIsAccessible(&error_))
     return false;
 
+  media_galleries::UsageCount(media_galleries::GET_MEDIA_FILE_SYSTEMS);
   scoped_ptr<GetMediaFileSystems::Params> params(
       GetMediaFileSystems::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
@@ -93,14 +93,18 @@ bool MediaGalleriesGetMediaFileSystemsFunction::RunImpl() {
     interactive = params->details->interactive;
   }
 
-  chrome::StorageMonitor::GetInstance()->EnsureInitialized(base::Bind(
-      &MediaGalleriesGetMediaFileSystemsFunction::OnStorageMonitorInit,
+  Profile* profile = Profile::FromBrowserContext(
+      render_view_host()->GetProcess()->GetBrowserContext());
+  MediaGalleriesPreferences* preferences =
+      g_browser_process->media_file_system_registry()->GetPreferences(profile);
+  preferences->EnsureInitialized(base::Bind(
+      &MediaGalleriesGetMediaFileSystemsFunction::OnPreferencesInit,
       this,
       interactive));
   return true;
 }
 
-void MediaGalleriesGetMediaFileSystemsFunction::OnStorageMonitorInit(
+void MediaGalleriesGetMediaFileSystemsFunction::OnPreferencesInit(
     MediaGalleries::GetMediaFileSystemsInteractivity interactive) {
   switch (interactive) {
     case MediaGalleries::GET_MEDIA_FILE_SYSTEMS_INTERACTIVITY_YES: {
@@ -192,11 +196,10 @@ void MediaGalleriesGetMediaFileSystemsFunction::ReturnGalleries(
     if (filesystems[i].path.empty())
       continue;
 
-    if (has_read_permission || has_copy_to_permission) {
+    if (has_read_permission) {
       content::ChildProcessSecurityPolicy* policy =
           ChildProcessSecurityPolicy::GetInstance();
-      if (has_read_permission)
-        policy->GrantReadFileSystem(child_id, filesystems[i].fsid);
+      policy->GrantReadFileSystem(child_id, filesystems[i].fsid);
       if (has_copy_to_permission)
         policy->GrantCopyIntoFileSystem(child_id, filesystems[i].fsid);
     }
@@ -207,6 +210,7 @@ void MediaGalleriesGetMediaFileSystemsFunction::ReturnGalleries(
 }
 
 void MediaGalleriesGetMediaFileSystemsFunction::ShowDialog() {
+  media_galleries::UsageCount(media_galleries::SHOW_DIALOG);
   WebContents* contents = WebContents::FromRenderViewHost(render_view_host());
   WebContentsModalDialogManager* web_contents_modal_dialog_manager =
       WebContentsModalDialogManager::FromWebContents(contents);
@@ -214,8 +218,8 @@ void MediaGalleriesGetMediaFileSystemsFunction::ShowDialog() {
     // If there is no WebContentsModalDialogManager, then this contents is
     // probably the background page for an app. Try to find a shell window to
     // host the dialog.
-    ShellWindow* window = apps::ShellWindowRegistry::Get(profile())->
-        GetCurrentShellWindowForApp(GetExtension()->id());
+    ShellWindow* window = apps::ShellWindowRegistry::Get(
+        GetProfile())->GetCurrentShellWindowForApp(GetExtension()->id());
     if (window) {
       contents = window->web_contents();
     } else {
@@ -228,17 +232,18 @@ void MediaGalleriesGetMediaFileSystemsFunction::ShowDialog() {
   // Controller will delete itself.
   base::Closure cb = base::Bind(
       &MediaGalleriesGetMediaFileSystemsFunction::GetAndReturnGalleries, this);
-  new chrome::MediaGalleriesDialogController(contents, *GetExtension(), cb);
+  new MediaGalleriesDialogController(contents, *GetExtension(), cb);
 }
 
 void MediaGalleriesGetMediaFileSystemsFunction::GetMediaFileSystemsForExtension(
-    const chrome::MediaFileSystemsCallback& cb) {
+    const MediaFileSystemsCallback& cb) {
   if (!render_view_host()) {
     cb.Run(std::vector<MediaFileSystemInfo>());
     return;
   }
-
-  DCHECK(chrome::StorageMonitor::GetInstance()->IsInitialized());
+  DCHECK(g_browser_process->media_file_system_registry()
+             ->GetPreferences(GetProfile())
+             ->IsInitialized());
   MediaFileSystemRegistry* registry =
       g_browser_process->media_file_system_registry();
   registry->GetMediaFileSystemsForExtension(

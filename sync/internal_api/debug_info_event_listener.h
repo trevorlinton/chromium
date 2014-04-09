@@ -47,7 +47,6 @@ class SYNC_EXPORT_PRIVATE DebugInfoEventListener
   virtual void OnConnectionStatusChange(
       ConnectionStatus connection_status) OVERRIDE;
   virtual void OnStopSyncingPermanently() OVERRIDE;
-  virtual void OnUpdatedToken(const std::string& token) OVERRIDE;
   virtual void OnActionableError(
       const SyncProtocolError& sync_error) OVERRIDE;
 
@@ -71,16 +70,15 @@ class SYNC_EXPORT_PRIVATE DebugInfoEventListener
 
   // Sync manager events.
   void OnNudgeFromDatatype(ModelType datatype);
-  void OnIncomingNotification(
-      const ModelTypeInvalidationMap& invalidation_map);
+  void OnIncomingNotification(const ObjectIdInvalidationMap& invalidations);
 
   // DebugInfoGetter implementation.
   virtual void GetAndClearDebugInfo(sync_pb::DebugInfo* debug_info) OVERRIDE;
 
   // DataTypeDebugInfoListener implementation.
-  virtual void OnSingleDataTypeConfigureComplete(
-      const DataTypeConfigurationStats& configuration_stats) OVERRIDE;
-  virtual void OnConfigureComplete() OVERRIDE;
+  virtual void OnDataTypeConfigureComplete(
+      const std::vector<DataTypeConfigurationStats>& configuration_stats)
+      OVERRIDE;
 
   // Returns a weak pointer to this object.
   base::WeakPtr<DataTypeDebugInfoListener> GetWeakPtr();
@@ -104,9 +102,9 @@ class SYNC_EXPORT_PRIVATE DebugInfoEventListener
   // Cryptographer is initialized and does not have pending keys.
   bool cryptographer_ready_;
 
-  base::WeakPtrFactory<DebugInfoEventListener> weak_ptr_factory_;
-
   base::ThreadChecker thread_checker_;
+
+  base::WeakPtrFactory<DebugInfoEventListener> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(DebugInfoEventListener);
 };

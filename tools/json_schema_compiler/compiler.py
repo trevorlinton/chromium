@@ -25,7 +25,7 @@ from cpp_generator import CppGenerator
 from cpp_type_generator import CppTypeGenerator
 from dart_generator import DartGenerator
 import json_schema
-from model import Model, UnixName
+from model import Model
 from schema_loader import SchemaLoader
 
 # Names of supported code generators, as specified on the command-line.
@@ -38,15 +38,14 @@ def GenerateSchema(generator,
                    destdir,
                    root_namespace,
                    dart_overrides_dir):
-  schema_loader = SchemaLoader(os.path.dirname(os.path.relpath(
-      os.path.normpath(filenames[0]), root)))
+  schema_loader = SchemaLoader(
+      os.path.dirname(os.path.relpath(os.path.normpath(filenames[0]), root)),
+      os.path.dirname(filenames[0]))
   # Merge the source files into a single list of schemas.
   api_defs = []
   for filename in filenames:
     schema = os.path.normpath(filename)
-    schema_filename, schema_extension = os.path.splitext(schema)
-    path, short_filename = os.path.split(schema_filename)
-    api_def = schema_loader.LoadSchema(schema)
+    api_def = schema_loader.LoadSchema(os.path.split(schema)[1])
 
     # If compiling the C++ model code, delete 'nocompile' nodes.
     if generator == 'cpp':
@@ -77,10 +76,6 @@ def GenerateSchema(generator,
     if namespace.unix_name != short_filename:
       sys.exit("Filename %s is illegal. Name files using unix_hacker style." %
                schema_filename)
-
-    # The output filename must match the input filename for gyp to deal with it
-    # properly.
-    out_file = namespace.unix_name
 
   # Construct the type generator with all the namespaces in this model.
   type_generator = CppTypeGenerator(api_model,
@@ -124,13 +119,14 @@ def GenerateSchema(generator,
 
   return '\n'.join(output_code)
 
+
 if __name__ == '__main__':
   parser = optparse.OptionParser(
       description='Generates a C++ model of an API from JSON schema',
       usage='usage: %prog [option]... schema')
   parser.add_option('-r', '--root', default='.',
       help='logical include root directory. Path to schema files from specified'
-      'dir will be the include path.')
+      ' dir will be the include path.')
   parser.add_option('-d', '--destdir',
       help='root directory to output generated files.')
   parser.add_option('-n', '--namespace', default='generated_api_schemas',

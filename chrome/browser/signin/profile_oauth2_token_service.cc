@@ -46,19 +46,46 @@ std::string RemoveAccountIdPrefix(const std::string& prefixed_account_id) {
   return prefixed_account_id.substr(kAccountIdPrefixLength);
 }
 
-std::string GetAccountId(Profile* profile) {
-  SigninManagerBase* signin_manager =
-      SigninManagerFactory::GetForProfileIfExists(profile);
-  return signin_manager ? signin_manager->GetAuthenticatedUsername() :
-      std::string();
+}  // namespace
+
+
+ProfileOAuth2TokenService::AccountInfo::AccountInfo(
+    ProfileOAuth2TokenService* token_service,
+    const std::string& account_id,
+    const std::string& refresh_token)
+  : token_service_(token_service),
+    account_id_(account_id),
+    refresh_token_(refresh_token),
+    last_auth_error_(GoogleServiceAuthError::NONE) {
+  DCHECK(token_service_);
+  DCHECK(!account_id_.empty());
+  token_service_->signin_global_error()->AddProvider(this);
 }
 
-}  // namespace
+ProfileOAuth2TokenService::AccountInfo::~AccountInfo() {
+  token_service_->signin_global_error()->RemoveProvider(this);
+}
+
+void ProfileOAuth2TokenService::AccountInfo::SetLastAuthError(
+    const GoogleServiceAuthError& error) {
+  if (error.state() != last_auth_error_.state()) {
+    last_auth_error_ = error;
+    token_service_->signin_global_error()->AuthStatusChanged();
+  }
+}
+
+std::string ProfileOAuth2TokenService::AccountInfo::GetAccountId() const {
+  return account_id_;
+}
+
+GoogleServiceAuthError
+ProfileOAuth2TokenService::AccountInfo::GetAuthStatus() const {
+  return last_auth_error_;
+}
 
 ProfileOAuth2TokenService::ProfileOAuth2TokenService()
     : profile_(NULL),
-      web_data_service_request_(0),
-      last_auth_error_(GoogleServiceAuthError::NONE) {
+      web_data_service_request_(0) {
 }
 
 ProfileOAuth2TokenService::~ProfileOAuth2TokenService() {
@@ -68,8 +95,6 @@ ProfileOAuth2TokenService::~ProfileOAuth2TokenService() {
 }
 
 void ProfileOAuth2TokenService::Initialize(Profile* profile) {
-  DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
-
   DCHECK(profile);
   DCHECK(!profile_);
   profile_ = profile;
@@ -77,7 +102,6 @@ void ProfileOAuth2TokenService::Initialize(Profile* profile) {
   signin_global_error_.reset(new SigninGlobalError(profile));
   GlobalErrorServiceFactory::GetForProfile(profile_)->AddGlobalError(
       signin_global_error_.get());
-  signin_global_error_->AddProvider(this);
 
   content::Source<TokenService> token_service_source(
       TokenServiceFactory::GetForProfile(profile));
@@ -88,30 +112,33 @@ void ProfileOAuth2TokenService::Initialize(Profile* profile) {
                  chrome::NOTIFICATION_TOKEN_AVAILABLE,
                  token_service_source);
   registrar_.Add(this,
-                 chrome::NOTIFICATION_TOKEN_REQUEST_FAILED,
-                 token_service_source);
-  registrar_.Add(this,
                  chrome::NOTIFICATION_TOKEN_LOADING_FINISHED,
                  token_service_source);
 }
 
 void ProfileOAuth2TokenService::Shutdown() {
+  DCHECK(profile_) << "Shutdown() called without matching call to Initialize()";
   CancelAllRequests();
-  signin_global_error_->RemoveProvider(this);
+  refresh_tokens_.clear();
   GlobalErrorServiceFactory::GetForProfile(profile_)->RemoveGlobalError(
       signin_global_error_.get());
   signin_global_error_.reset();
 }
 
-std::string ProfileOAuth2TokenService::GetRefreshToken() {
-  TokenService* token_service = TokenServiceFactory::GetForProfile(profile_);
-  if (!token_service || !token_service->HasOAuthLoginToken()) {
-    return std::string();
-  }
-  return token_service->GetOAuth2LoginRefreshToken();
+std::string ProfileOAuth2TokenService::GetRefreshToken(
+    const std::string& account_id) {
+  AccountInfoMap::const_iterator iter = refresh_tokens_.find(account_id);
+  if (iter != refresh_tokens_.end())
+    return iter->second->refresh_token();
+  return std::string();
+}
+
+net::URLRequestContextGetter* ProfileOAuth2TokenService::GetRequestContext() {
+  return profile_->GetRequestContext();
 }
 
 void ProfileOAuth2TokenService::UpdateAuthError(
+    const std::string& account_id,
     const GoogleServiceAuthError& error) {
   // Do not report connection errors as these are not actually auth errors.
   // We also want to avoid masking a "real" auth error just because we
@@ -119,61 +146,60 @@ void ProfileOAuth2TokenService::UpdateAuthError(
   if (error.state() == GoogleServiceAuthError::CONNECTION_FAILED)
     return;
 
-  if (error.state() != last_auth_error_.state()) {
-    last_auth_error_ = error;
-    signin_global_error_->AuthStatusChanged();
-  }
+  DCHECK_GT(refresh_tokens_.count(account_id), 0u);
+  refresh_tokens_[account_id]->SetLastAuthError(error);
 }
 
 void ProfileOAuth2TokenService::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
+  const std::string& account_id = GetPrimaryAccountId();
   switch (type) {
     case chrome::NOTIFICATION_TOKEN_AVAILABLE: {
       TokenService::TokenAvailableDetails* tok_details =
           content::Details<TokenService::TokenAvailableDetails>(details).ptr();
       if (tok_details->service() ==
           GaiaConstants::kGaiaOAuth2LoginRefreshToken) {
-        // TODO(fgorski): Canceling all requests will not be correct in a
-        // multi-login environment. We should cancel only the requests related
-        // to the token being replaced (old token for the same account_id).
-        // Previous refresh token is not available at this point, but since
-        // there are no other refresh tokens, we cancel all active requests.
-        CancelAllRequests();
-        ClearCache();
-        UpdateAuthError(GoogleServiceAuthError::AuthErrorNone());
-        FireRefreshTokenAvailable(GetAccountId(profile_));
-      }
-      break;
-    }
-    case chrome::NOTIFICATION_TOKEN_REQUEST_FAILED: {
-      TokenService::TokenRequestFailedDetails* tok_details =
-          content::Details<TokenService::TokenRequestFailedDetails>(details)
-              .ptr();
-      if (tok_details->service() == GaiaConstants::kLSOService ||
-          tok_details->service() ==
-              GaiaConstants::kGaiaOAuth2LoginRefreshToken) {
-        // TODO(fgorski): Canceling all requests will not be correct in a
-        // multi-login environment. We should cacnel only the requests related
-        // to the failed refresh token.
-        // Failed refresh token is not available at this point, but since
-        // there are no other refresh tokens, we cancel all active requests.
-        CancelAllRequests();
-        ClearCache();
-        UpdateAuthError(tok_details->error());
-        FireRefreshTokenRevoked(GetAccountId(profile_), tok_details->error());
+        // TODO(fgorski): Work on removing this code altogether in favor of the
+        // upgrade steps invoked by Initialize.
+        // TODO(fgorski): Refresh token received that way is not persisted in
+        // the token DB.
+        CancelRequestsForAccount(account_id);
+        ClearCacheForAccount(account_id);
+        refresh_tokens_[account_id].reset(
+            new AccountInfo(this, account_id, tok_details->token()));
+        UpdateAuthError(account_id, GoogleServiceAuthError::AuthErrorNone());
+        FireRefreshTokenAvailable(account_id);
       }
       break;
     }
     case chrome::NOTIFICATION_TOKENS_CLEARED: {
       CancelAllRequests();
       ClearCache();
-      UpdateAuthError(GoogleServiceAuthError::AuthErrorNone());
-      FireRefreshTokensCleared();
+      if (!account_id.empty())
+        UpdateAuthError(account_id, GoogleServiceAuthError::AuthErrorNone());
       break;
     }
     case chrome::NOTIFICATION_TOKEN_LOADING_FINISHED:
+      // During startup, if the user is signed in and the OAuth2 refresh token
+      // is empty, flag it as an error by badging the menu. Otherwise, if the
+      // user goes on to set up sync, they will have to make two attempts:
+      // One to surface the OAuth2 error, and a second one after signing in.
+      // See crbug.com/276650.
+
+      // If |account_id| is not empty, make sure that we have an entry in the
+      // map for it.  The entry could be missing if there is a corruption in
+      // the token DB while this profile is connected to an account.
+      if (!account_id.empty() && refresh_tokens_.count(account_id) == 0) {
+        refresh_tokens_[account_id].reset(new AccountInfo(
+            this, account_id, std::string()));
+      }
+
+      if (!account_id.empty() && !RefreshTokenIsAvailable(account_id)) {
+        UpdateAuthError(account_id, GoogleServiceAuthError(
+            GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS));
+      }
       FireRefreshTokensLoaded();
       break;
     default:
@@ -182,62 +208,52 @@ void ProfileOAuth2TokenService::Observe(
   }
 }
 
-GoogleServiceAuthError ProfileOAuth2TokenService::GetAuthStatus() const {
-  return last_auth_error_;
+std::string ProfileOAuth2TokenService::GetPrimaryAccountId() {
+  if (profile_->IsManaged())
+    return std::string("SupervisedUser");
+
+  SigninManagerBase* signin_manager =
+      SigninManagerFactory::GetForProfileIfExists(profile_);
+  // TODO(fgorski): DCHECK(signin_manager) here - it may require update to test
+  // code and the line above (SigninManager might not exist yet).
+  return signin_manager ? signin_manager->GetAuthenticatedUsername()
+      : std::string();
 }
 
-net::URLRequestContextGetter* ProfileOAuth2TokenService::GetRequestContext() {
-  return profile_->GetRequestContext();
-}
-
-void ProfileOAuth2TokenService::RegisterCacheEntry(
-    const std::string& refresh_token,
-    const ScopeSet& scopes,
-    const std::string& access_token,
-    const base::Time& expiration_date) {
-  if (ShouldCacheForRefreshToken(TokenServiceFactory::GetForProfile(profile_),
-                                 refresh_token)) {
-    OAuth2TokenService::RegisterCacheEntry(refresh_token,
-                                           scopes,
-                                           access_token,
-                                           expiration_date);
+std::vector<std::string> ProfileOAuth2TokenService::GetAccounts() {
+  std::vector<std::string> account_ids;
+  for (AccountInfoMap::const_iterator iter = refresh_tokens_.begin();
+           iter != refresh_tokens_.end(); ++iter) {
+    account_ids.push_back(iter->first);
   }
-}
-
-bool ProfileOAuth2TokenService::ShouldCacheForRefreshToken(
-    TokenService *token_service,
-    const std::string& refresh_token) {
-  if (!token_service ||
-      !token_service->HasOAuthLoginToken() ||
-      token_service->GetOAuth2LoginRefreshToken().compare(refresh_token) != 0) {
-    DLOG(INFO) <<
-        "Received a token with a refresh token not maintained by TokenService.";
-    return false;
-  }
-  return true;
+  return account_ids;
 }
 
 void ProfileOAuth2TokenService::UpdateCredentials(
     const std::string& account_id,
     const std::string& refresh_token) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
+  DCHECK(!account_id.empty());
   DCHECK(!refresh_token.empty());
 
   bool refresh_token_present = refresh_tokens_.count(account_id) > 0;
   if (!refresh_token_present ||
-      refresh_tokens_[account_id] != refresh_token) {
-    // If token present, and different from the new one, cancel its requests.
-    if (refresh_token_present)
-      CancelRequestsForToken(refresh_tokens_[account_id]);
+      refresh_tokens_[account_id]->refresh_token() != refresh_token) {
+    // If token present, and different from the new one, cancel its requests,
+    // and clear the entries in cache related to that account.
+    if (refresh_token_present) {
+      CancelRequestsForAccount(account_id);
+      ClearCacheForAccount(account_id);
+      refresh_tokens_[account_id]->set_refresh_token(refresh_token);
+    } else {
+      refresh_tokens_[account_id].reset(
+          new AccountInfo(this, account_id, refresh_token));
+    }
 
     // Save the token in memory and in persistent store.
-    refresh_tokens_[account_id] = refresh_token;
-    scoped_refptr<TokenWebData> token_web_data =
-        TokenWebData::FromBrowserContext(profile_);
-    if (token_web_data.get())
-      token_web_data->SetTokenForService(ApplyAccountIdPrefix(account_id),
-                                         refresh_token);
+    PersistCredentials(account_id, refresh_token);
 
+    UpdateAuthError(account_id, GoogleServiceAuthError::AuthErrorNone());
     FireRefreshTokenAvailable(account_id);
     // TODO(fgorski): Notify diagnostic observers.
   }
@@ -248,29 +264,42 @@ void ProfileOAuth2TokenService::RevokeCredentials(
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
 
   if (refresh_tokens_.count(account_id) > 0) {
-    CancelRequestsForToken(refresh_tokens_[account_id]);
+    CancelRequestsForAccount(account_id);
+    ClearCacheForAccount(account_id);
     refresh_tokens_.erase(account_id);
-    scoped_refptr<TokenWebData> token_web_data =
-        TokenWebData::FromBrowserContext(profile_);
-    if (token_web_data.get())
-      token_web_data->RemoveTokenForService(ApplyAccountIdPrefix(account_id));
-    FireRefreshTokenRevoked(account_id,
-        GoogleServiceAuthError(GoogleServiceAuthError::REQUEST_CANCELED));
+    ClearPersistedCredentials(account_id);
+    FireRefreshTokenRevoked(account_id);
 
     // TODO(fgorski): Notify diagnostic observers.
   }
+}
+
+void ProfileOAuth2TokenService::PersistCredentials(
+    const std::string& account_id,
+    const std::string& refresh_token) {
+  scoped_refptr<TokenWebData> token_web_data =
+      TokenWebData::FromBrowserContext(profile_);
+  if (token_web_data.get()) {
+    token_web_data->SetTokenForService(ApplyAccountIdPrefix(account_id),
+                                       refresh_token);
+  }
+}
+
+void ProfileOAuth2TokenService::ClearPersistedCredentials(
+    const std::string& account_id) {
+  scoped_refptr<TokenWebData> token_web_data =
+      TokenWebData::FromBrowserContext(profile_);
+  if (token_web_data.get())
+    token_web_data->RemoveTokenForService(ApplyAccountIdPrefix(account_id));
 }
 
 void ProfileOAuth2TokenService::RevokeAllCredentials() {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
 
   CancelAllRequests();
-  GoogleServiceAuthError error(GoogleServiceAuthError::REQUEST_CANCELED);
-  for (std::map<std::string, std::string>::const_iterator iter =
-           refresh_tokens_.begin();
-       iter != refresh_tokens_.end();
-       ++iter) {
-    FireRefreshTokenRevoked(iter->first, error);
+  for (AccountInfoMap::const_iterator iter = refresh_tokens_.begin();
+           iter != refresh_tokens_.end(); ++iter) {
+    FireRefreshTokenRevoked(iter->first);
   }
   refresh_tokens_.clear();
 
@@ -278,7 +307,6 @@ void ProfileOAuth2TokenService::RevokeAllCredentials() {
       TokenWebData::FromBrowserContext(profile_);
   if (token_web_data.get())
     token_web_data->RemoveAllTokens();
-  FireRefreshTokensCleared();
 
   // TODO(fgorski): Notify diagnostic observers.
 }
@@ -333,15 +361,16 @@ void ProfileOAuth2TokenService::LoadAllCredentialsIntoMemory(
     } else {
       DCHECK(!refresh_token.empty());
       std::string account_id = RemoveAccountIdPrefix(prefixed_account_id);
-      refresh_tokens_[account_id] = refresh_token;
+      refresh_tokens_[account_id].reset(
+          new AccountInfo(this, account_id, refresh_token));
       FireRefreshTokenAvailable(account_id);
       // TODO(fgorski): Notify diagnostic observers.
     }
   }
 
   if (!old_login_token.empty() &&
-      refresh_tokens_.count(GetAccountId(profile_)) == 0) {
-    UpdateCredentials(GetAccountId(profile_), old_login_token);
+      refresh_tokens_.count(GetPrimaryAccountId()) == 0) {
+    UpdateCredentials(GetPrimaryAccountId(), old_login_token);
   }
 
   FireRefreshTokensLoaded();

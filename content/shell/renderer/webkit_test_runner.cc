@@ -9,6 +9,7 @@
 #include <cmath>
 
 #include "base/base64.h"
+#include "base/command_line.h"
 #include "base/debug/debugger.h"
 #include "base/files/file_path.h"
 #include "base/md5.h"
@@ -19,6 +20,7 @@
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/renderer/history_item_serialization.h"
 #include "content/public/renderer/render_view.h"
@@ -48,7 +50,6 @@
 #include "third_party/WebKit/public/web/WebContextMenuData.h"
 #include "third_party/WebKit/public/web/WebDataSource.h"
 #include "third_party/WebKit/public/web/WebDevToolsAgent.h"
-#include "third_party/WebKit/public/web/WebDeviceOrientation.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebElement.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
@@ -66,7 +67,7 @@ using WebKit::WebArrayBufferView;
 using WebKit::WebContextMenuData;
 using WebKit::WebDevToolsAgent;
 using WebKit::WebDeviceMotionData;
-using WebKit::WebDeviceOrientation;
+using WebKit::WebDeviceOrientationData;
 using WebKit::WebElement;
 using WebKit::WebFrame;
 using WebKit::WebGamepads;
@@ -109,14 +110,16 @@ void MakeBitmapOpaque(SkBitmap* bitmap) {
 #endif
 
 void CopyCanvasToBitmap(SkCanvas* canvas,  SkBitmap* snapshot) {
-  SkDevice* device = skia::GetTopDevice(*canvas);
+  SkBaseDevice* device = skia::GetTopDevice(*canvas);
   const SkBitmap& bitmap = device->accessBitmap(false);
   const bool success = bitmap.copyTo(snapshot, SkBitmap::kARGB_8888_Config);
   DCHECK(success);
 
 #if !defined(OS_MACOSX)
   // Only the expected PNGs for Mac have a valid alpha channel.
-  MakeBitmapOpaque(snapshot);
+  if (!CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kEnableOverlayFullscreenVideo))
+    MakeBitmapOpaque(snapshot);
 #endif
 }
 
@@ -215,6 +218,11 @@ void WebKitTestRunner::setGamepadData(const WebGamepads& gamepads) {
 
 void WebKitTestRunner::setDeviceMotionData(const WebDeviceMotionData& data) {
   SetMockDeviceMotionData(data);
+}
+
+void WebKitTestRunner::setDeviceOrientationData(
+    const WebDeviceOrientationData& data) {
+  SetMockDeviceOrientationData(data);
 }
 
 void WebKitTestRunner::printMessage(const std::string& message) {
@@ -341,8 +349,8 @@ std::string WebKitTestRunner::makeURLErrorDescription(
       domain.c_str(), code, error.unreachableURL.spec().data());
 }
 
-void WebKitTestRunner::setClientWindowRect(const WebRect& rect) {
-  ForceResizeRenderView(render_view(), WebSize(rect.width, rect.height));
+void WebKitTestRunner::useUnfortunateSynchronousResizeMode(bool enable) {
+  UseSynchronousResizeMode(render_view(), enable);
 }
 
 void WebKitTestRunner::enableAutoResizeMode(const WebSize& min_size,
@@ -581,8 +589,6 @@ void WebKitTestRunner::Reset() {
   render_view()->GetWebView()->mainFrame()->clearOpener();
   render_view()->GetWebView()->setPageScaleFactorLimits(-1, -1);
   render_view()->GetWebView()->setPageScaleFactor(1, WebPoint(0, 0));
-  render_view()->GetWebView()->enableFixedLayoutMode(false);
-  render_view()->GetWebView()->setFixedLayoutSize(WebSize(0, 0));
 
   // Resetting the internals object also overrides the WebPreferences, so we
   // have to sync them to WebKit again.

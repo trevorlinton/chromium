@@ -6,8 +6,6 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <linux/audit.h>
-#include <linux/filter.h>
 #include <linux/net.h>
 #include <signal.h>
 #include <string.h>
@@ -1405,6 +1403,8 @@ ErrorCode RestrictSocketcallCommand(Sandbox* sandbox) {
 }
 #endif
 
+const int kFSDeniedErrno = EPERM;
+
 ErrorCode BaselinePolicy(Sandbox* sandbox, int sysno) {
   if (IsBaselinePolicyAllowed(sysno)) {
     return ErrorCode(ErrorCode::ERR_ALLOWED);
@@ -1450,7 +1450,7 @@ ErrorCode BaselinePolicy(Sandbox* sandbox, int sysno) {
 #endif
 
   if (IsFileSystem(sysno) || IsCurrentDirectory(sysno)) {
-    return ErrorCode(EPERM);
+    return ErrorCode(kFSDeniedErrno);
   }
 
   if (IsAnySystemV(sysno)) {
@@ -1761,7 +1761,7 @@ void RunSandboxSanityChecks(const std::string& process_type) {
     // open() must be restricted.
     syscall_ret = open("/etc/passwd", O_RDONLY);
     CHECK_EQ(-1, syscall_ret);
-    CHECK_EQ(EPERM, errno);
+    CHECK_EQ(kFSDeniedErrno, errno);
 
     // We should never allow the creation of netlink sockets.
     syscall_ret = socket(AF_NETLINK, SOCK_DGRAM, 0);
@@ -1794,13 +1794,18 @@ void AddArmMaliGpuWhitelist(std::vector<std::string>* read_whitelist,
   static const char kDevMfcDecPath[] = "/dev/mfc-dec";
   static const char kDevGsc1Path[] = "/dev/gsc1";
 
+  // Devices needed for video encode acceleration on ARM.
+  static const char kDevMfcEncPath[] = "/dev/mfc-enc";
+
   read_whitelist->push_back(kMali0Path);
   read_whitelist->push_back(kDevMfcDecPath);
   read_whitelist->push_back(kDevGsc1Path);
+  read_whitelist->push_back(kDevMfcEncPath);
 
   write_whitelist->push_back(kMali0Path);
   write_whitelist->push_back(kDevMfcDecPath);
   write_whitelist->push_back(kDevGsc1Path);
+  write_whitelist->push_back(kDevMfcEncPath);
 }
 
 void AddArmTegraGpuWhitelist(std::vector<std::string>* read_whitelist,
@@ -1880,7 +1885,8 @@ void InitGpuBrokerProcess(Sandbox::EvaluateSyscall gpu_policy,
     NOTREACHED();
   }
 
-  *broker_process = new BrokerProcess(read_whitelist, write_whitelist);
+  *broker_process = new BrokerProcess(kFSDeniedErrno,
+                                      read_whitelist, write_whitelist);
   // Initialize the broker process and give it a sandbox callback.
   CHECK((*broker_process)->Init(sandbox_callback));
 }
@@ -1912,11 +1918,6 @@ void WarmupPolicy(Sandbox::EvaluateSyscall policy,
              policy == ArmGpuProcessPolicyWithShmat) {
     // Create a new broker process.
     InitGpuBrokerProcess(policy, broker_process);
-
-    // Preload the GL libraries. These are in the read whitelist but we have to
-    // preload them anyways to work around ld.so bugs. See crbug.com/268439.
-    dlopen(kLibGlesPath, RTLD_NOW|RTLD_GLOBAL|RTLD_NODELETE);
-    dlopen(kLibEglPath, RTLD_NOW|RTLD_GLOBAL|RTLD_NODELETE);
 
     // Preload the Tegra libraries.
     dlopen("/usr/lib/libnvrm.so", RTLD_NOW|RTLD_GLOBAL|RTLD_NODELETE);
@@ -1957,6 +1958,8 @@ Sandbox::EvaluateSyscall GetProcessSyscallPolicy(
   }
 
   if (process_type == switches::kUtilityProcess) {
+    // TODO(jorgelo): review sandbox initialization in utility_main.cc if we
+    // change this policy.
     return BlacklistDebugAndNumaPolicy;
   }
 

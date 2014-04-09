@@ -22,6 +22,7 @@ class ImageSkia;
 namespace chromeos {
 
 class UserImage;
+class UserImageSyncObserver;
 
 // Base class that provides a mechanism for updating user images.
 class UserImageManager {
@@ -75,7 +76,12 @@ class UserImageManager {
   // Otherwise, returns an empty bitmap.
   virtual const gfx::ImageSkia& DownloadedProfileImage() const = 0;
 
-  // Cancels any profile image download in progress.
+  // Returns sync observer attached to current user. Returns NULL if current
+  // user can't sync images or user is not logged in.
+  virtual UserImageSyncObserver* GetSyncObserver() const = 0;
+
+  // Unregisters preference observers before browser process shutdown.
+  // Also cancels any profile image download in progress.
   virtual void Shutdown() = 0;
 };
 

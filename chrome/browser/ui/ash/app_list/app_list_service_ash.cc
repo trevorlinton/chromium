@@ -9,6 +9,7 @@
 #include "base/memory/singleton.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/app_list_service_impl.h"
+#include "chrome/browser/ui/ash/app_list/app_list_controller_ash.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller.h"
 
 namespace {
@@ -34,6 +35,8 @@ class AppListServiceAsh : public AppListServiceImpl {
   virtual void DismissAppList() OVERRIDE;
   virtual void EnableAppList(Profile* initial_profile) OVERRIDE;
   virtual gfx::NativeWindow GetAppListWindow() OVERRIDE;
+  virtual Profile* GetCurrentAppListProfile() OVERRIDE;
+  virtual AppListControllerDelegate* CreateControllerDelegate() OVERRIDE;
 
   DISALLOW_COPY_AND_ASSIGN(AppListServiceAsh);
 };
@@ -70,6 +73,14 @@ gfx::NativeWindow AppListServiceAsh::GetAppListWindow() {
   return NULL;
 }
 
+Profile* AppListServiceAsh::GetCurrentAppListProfile() {
+  return ChromeLauncherController::instance()->profile();
+}
+
+AppListControllerDelegate* AppListServiceAsh::CreateControllerDelegate() {
+  return new AppListControllerDelegateAsh();
+}
+
 }  // namespace
 
 namespace chrome {
@@ -84,13 +95,13 @@ AppListService* GetAppListServiceAsh() {
 #if !defined(OS_WIN)
 
 // static
-AppListService* AppListService::Get() {
+AppListService* AppListService::Get(chrome::HostDesktopType desktop_type) {
   return chrome::GetAppListServiceAsh();
 }
 
 // static
 void AppListService::InitAll(Profile* initial_profile) {
-  Get()->Init(initial_profile);
+  AppListServiceAsh::GetInstance()->Init(initial_profile);
 }
 
 #endif  // !defined(OS_WIN)

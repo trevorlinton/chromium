@@ -33,8 +33,8 @@
 #include "net/base/data_url.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/base/webui/web_ui_util.h"
 #include "ui/views/widget/widget.h"
-#include "ui/webui/web_ui_util.h"
 #include "url/gurl.h"
 
 using content::BrowserThread;
@@ -78,6 +78,8 @@ ChangePictureOptionsHandler::ChangePictureOptionsHandler()
   registrar_.Add(this, chrome::NOTIFICATION_PROFILE_IMAGE_UPDATED,
       content::NotificationService::AllSources());
   registrar_.Add(this, chrome::NOTIFICATION_PROFILE_IMAGE_UPDATE_FAILED,
+      content::NotificationService::AllSources());
+  registrar_.Add(this, chrome::NOTIFICATION_LOGIN_USER_IMAGE_CHANGED,
       content::NotificationService::AllSources());
 }
 
@@ -411,6 +413,11 @@ void ChangePictureOptionsHandler::Observe(
     // User profile image has been updated.
     SendProfileImage(*content::Details<const gfx::ImageSkia>(details).ptr(),
                      false);
+  } else if (type == chrome::NOTIFICATION_LOGIN_USER_IMAGE_CHANGED) {
+    // Not initialized yet.
+    if (previous_image_index_ == User::kInvalidImageIndex)
+      return;
+    SendSelectedImage();
   }
 }
 

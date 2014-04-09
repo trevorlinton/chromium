@@ -9,7 +9,7 @@
 #include <string>
 
 #include "base/threading/non_thread_safe.h"
-#include "chrome/browser/signin/oauth2_token_service.h"
+#include "google_apis/gaia/oauth2_token_service.h"
 
 class Profile;
 
@@ -24,8 +24,11 @@ class Profile;
 class ProfileOAuth2TokenServiceRequest : public OAuth2TokenService::Request,
                                          public base::NonThreadSafe {
  public:
+  // Creates and starts a request for |account_id| and |scopes|.
+  // Uses the primary account id if |account_id| is the empty string.
   static ProfileOAuth2TokenServiceRequest* CreateAndStart(
       Profile* profile,
+      const std::string& account_id,
       const OAuth2TokenService::ScopeSet& scopes,
       OAuth2TokenService::Consumer* consumer);
 
@@ -36,8 +39,9 @@ class ProfileOAuth2TokenServiceRequest : public OAuth2TokenService::Request,
   friend class Core;
 
   ProfileOAuth2TokenServiceRequest(Profile* profile,
-                            const OAuth2TokenService::ScopeSet& scopes,
-                            OAuth2TokenService::Consumer* consumer);
+                                   const std::string& account_id,
+                                   const OAuth2TokenService::ScopeSet& scopes,
+                                   OAuth2TokenService::Consumer* consumer);
   OAuth2TokenService::Consumer* const consumer_;
   scoped_refptr<Core> core_;
 

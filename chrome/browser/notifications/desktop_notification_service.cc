@@ -5,6 +5,7 @@
 #include "chrome/browser/notifications/desktop_notification_service.h"
 
 #include "base/metrics/histogram.h"
+#include "base/prefs/scoped_user_pref_update.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread.h"
 #include "chrome/browser/browser_process.h"
@@ -12,6 +13,8 @@
 #include "chrome/browser/content_settings/content_settings_details.h"
 #include "chrome/browser/content_settings/content_settings_provider.h"
 #include "chrome/browser/content_settings/host_content_settings_map.h"
+#include "chrome/browser/extensions/api/notifications/notifications_api.h"
+#include "chrome/browser/extensions/event_router.h"
 #include "chrome/browser/extensions/extension_info_map.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_system.h"
@@ -23,7 +26,6 @@
 #include "chrome/browser/notifications/notification_ui_manager.h"
 #include "chrome/browser/notifications/sync_notifier/chrome_notifier_service.h"
 #include "chrome/browser/notifications/sync_notifier/chrome_notifier_service_factory.h"
-#include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/content_settings.h"
@@ -44,9 +46,13 @@
 #include "net/base/escape.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/base/webui/web_ui_util.h"
 #include "ui/message_center/message_center_util.h"
 #include "ui/message_center/notifier_settings.h"
-#include "ui/webui/web_ui_util.h"
+
+#if defined(OS_CHROMEOS)
+#include "ash/system/system_notifier.h"
+#endif
 
 using content::BrowserThread;
 using content::RenderViewHost;
@@ -196,12 +202,16 @@ bool NotificationPermissionInfoBarDelegate::Cancel() {
 // static
 void DesktopNotificationService::RegisterProfilePrefs(
     user_prefs::PrefRegistrySyncable* registry) {
-  registry->RegisterListPref(prefs::kMessageCenterDisabledExtensionIds,
-                             user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
-  registry->RegisterListPref(prefs::kMessageCenterDisabledSystemComponentIds,
-                             user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
-  registry->RegisterListPref(prefs::kMessageCenterEnabledSyncNotifierIds,
-                             user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterListPref(
+      prefs::kMessageCenterDisabledExtensionIds,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterListPref(
+      prefs::kMessageCenterDisabledSystemComponentIds,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterListPref(
+      prefs::kMessageCenterEnabledSyncNotifierIds,
+      user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  WelcomeNotification::RegisterProfilePrefs(registry);
 }
 
 // static
@@ -351,24 +361,6 @@ DesktopNotificationService::DesktopNotificationService(
           base::Unretained(&enabled_sync_notifier_ids_)));
   registrar_.Add(this, chrome::NOTIFICATION_EXTENSION_UNINSTALLED,
                  content::Source<Profile>(profile_));
-  // TODO(mukai, petewil): invoking notifier_service here directly may cause
-  // crashes on several tests, since notifier_service relies on
-  // NotificationUIManager in g_browser_process. To suppress the crashes,
-  // here checks if it really needs to ping notifier_service here.
-  if (!enabled_sync_notifier_ids_.empty()) {
-    notifier::ChromeNotifierService* notifier_service =
-        notifier::ChromeNotifierServiceFactory::GetInstance()->GetForProfile(
-            profile_, Profile::EXPLICIT_ACCESS);
-    // incognito profiles have enabled sync notifier ids but not a notifier
-    // service.
-    if (notifier_service) {
-      for (std::set<std::string>::const_iterator it =
-               enabled_sync_notifier_ids_.begin();
-           it != enabled_sync_notifier_ids_.end(); ++it) {
-        notifier_service->OnSyncedNotificationServiceEnabled(*it, true);
-      }
-    }
-  }
 }
 
 DesktopNotificationService::~DesktopNotificationService() {
@@ -566,9 +558,15 @@ bool DesktopNotificationService::IsNotifierEnabled(
     case NotifierId::WEB_PAGE:
       return GetContentSetting(notifier_id.url) == CONTENT_SETTING_ALLOW;
     case NotifierId::SYSTEM_COMPONENT:
+#if defined(OS_CHROMEOS)
       return disabled_system_component_ids_.find(
-          message_center::ToString(notifier_id.system_component_type)) ==
-          disabled_system_component_ids_.end();
+          ash::system_notifier::SystemComponentTypeToString(
+              static_cast<ash::system_notifier::AshSystemComponentNotifierType>(
+                  notifier_id.system_component_type)))
+          == disabled_system_component_ids_.end();
+#else
+      return false;
+#endif
     case NotifierId::SYNCED_NOTIFICATION_SERVICE:
       return enabled_sync_notifier_ids_.find(notifier_id.id) !=
           enabled_sync_notifier_ids_.end();
@@ -591,12 +589,19 @@ void DesktopNotificationService::SetNotifierEnabled(
       pref_name = prefs::kMessageCenterDisabledExtensionIds;
       add_new_item = !enabled;
       id.reset(new base::StringValue(notifier_id.id));
+      FirePermissionLevelChangedEvent(notifier_id, enabled);
       break;
     case NotifierId::SYSTEM_COMPONENT:
+#if defined(OS_CHROMEOS)
       pref_name = prefs::kMessageCenterDisabledSystemComponentIds;
       add_new_item = !enabled;
       id.reset(new base::StringValue(
-          message_center::ToString(notifier_id.system_component_type)));
+          ash::system_notifier::SystemComponentTypeToString(
+              static_cast<ash::system_notifier::AshSystemComponentNotifierType>(
+                  notifier_id.system_component_type))));
+#else
+      return;
+#endif
       break;
     case NotifierId::SYNCED_NOTIFICATION_SERVICE:
       pref_name = prefs::kMessageCenterEnabledSyncNotifierIds;
@@ -619,6 +624,17 @@ void DesktopNotificationService::SetNotifierEnabled(
   } else {
     list->Remove(*id, NULL);
   }
+}
+
+void DesktopNotificationService::ShowWelcomeNotificationIfNecessary(
+    const Notification& notification) {
+  if (!welcome_notification && message_center::IsRichNotificationEnabled()) {
+    welcome_notification.reset(
+        new WelcomeNotification(profile_, g_browser_process->message_center()));
+  }
+
+  if (welcome_notification)
+    welcome_notification->ShowWelcomeNotificationIfNecessary(notification);
 }
 
 void DesktopNotificationService::OnStringListPrefChanged(
@@ -668,4 +684,20 @@ void DesktopNotificationService::Observe(
     return;
 
   SetNotifierEnabled(notifier_id, true);
+}
+
+void DesktopNotificationService::FirePermissionLevelChangedEvent(
+    const NotifierId& notifier_id, bool enabled) {
+  DCHECK_EQ(NotifierId::APPLICATION, notifier_id.type);
+  extensions::api::notifications::PermissionLevel permission =
+      enabled ? extensions::api::notifications::PERMISSION_LEVEL_GRANTED
+              : extensions::api::notifications::PERMISSION_LEVEL_DENIED;
+  scoped_ptr<base::ListValue> args(new base::ListValue());
+  args->Append(new base::StringValue(
+      extensions::api::notifications::ToString(permission)));
+  scoped_ptr<extensions::Event> event(new extensions::Event(
+      extensions::api::notifications::OnPermissionLevelChanged::kEventName,
+      args.Pass()));
+  extensions::ExtensionSystem::Get(profile_)->event_router()->
+      DispatchEventToExtension(notifier_id.id, event.Pass());
 }

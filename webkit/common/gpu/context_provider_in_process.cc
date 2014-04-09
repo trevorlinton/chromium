@@ -4,9 +4,15 @@
 
 #include "webkit/common/gpu/context_provider_in_process.h"
 
+#include <set>
+
+#include "base/bind.h"
 #include "base/callback_helpers.h"
+#include "base/strings/string_split.h"
+#include "base/strings/stringprintf.h"
+#include "cc/output/managed_memory_policy.h"
+#include "gpu/command_buffer/client/gles2_implementation.h"
 #include "webkit/common/gpu/grcontext_for_webgraphicscontext3d.h"
-#include "webkit/common/gpu/webgraphicscontext3d_in_process_command_buffer_impl.h"
 
 namespace webkit {
 namespace gpu {
@@ -31,43 +37,39 @@ class ContextProviderInProcess::LostContextCallbackProxy
   ContextProviderInProcess* provider_;
 };
 
-class ContextProviderInProcess::MemoryAllocationCallbackProxy
+class ContextProviderInProcess::SwapBuffersCompleteCallbackProxy
     : public WebKit::WebGraphicsContext3D::
-          WebGraphicsMemoryAllocationChangedCallbackCHROMIUM {
+          WebGraphicsSwapBuffersCompleteCallbackCHROMIUM {
  public:
-  explicit MemoryAllocationCallbackProxy(ContextProviderInProcess* provider)
+  explicit SwapBuffersCompleteCallbackProxy(ContextProviderInProcess* provider)
       : provider_(provider) {
-    provider_->context3d_->setMemoryAllocationChangedCallbackCHROMIUM(this);
+    provider_->context3d_->setSwapBuffersCompleteCallbackCHROMIUM(this);
   }
 
-  virtual ~MemoryAllocationCallbackProxy() {
-    provider_->context3d_->setMemoryAllocationChangedCallbackCHROMIUM(NULL);
+  virtual ~SwapBuffersCompleteCallbackProxy() {
+    provider_->context3d_->setSwapBuffersCompleteCallbackCHROMIUM(NULL);
   }
 
-  virtual void onMemoryAllocationChanged(
-      WebKit::WebGraphicsMemoryAllocation alloc) {
-    provider_->OnMemoryAllocationChanged(!!alloc.gpuResourceSizeInBytes);
+  virtual void onSwapBuffersComplete() {
+    provider_->OnSwapBuffersComplete();
   }
 
  private:
   ContextProviderInProcess* provider_;
 };
 
-ContextProviderInProcess::ContextProviderInProcess()
-    : destroyed_(false) {
-  DCHECK(main_thread_checker_.CalledOnValidThread());
-  context_thread_checker_.DetachFromThread();
+// static
+scoped_refptr<ContextProviderInProcess> ContextProviderInProcess::Create(
+    scoped_ptr<WebGraphicsContext3DInProcessCommandBufferImpl> context3d,
+    const std::string& debug_name) {
+  if (!context3d)
+    return NULL;
+  return new ContextProviderInProcess(context3d.Pass(), debug_name);
 }
 
-ContextProviderInProcess::~ContextProviderInProcess() {
-  DCHECK(main_thread_checker_.CalledOnValidThread() ||
-         context_thread_checker_.CalledOnValidThread());
-}
-
-bool ContextProviderInProcess::InitializeOnMainThread() {
-  DCHECK(!context3d_);
-  DCHECK(main_thread_checker_.CalledOnValidThread());
-
+// static
+scoped_refptr<ContextProviderInProcess>
+ContextProviderInProcess::CreateOffscreen() {
   WebKit::WebGraphicsContext3D::Attributes attributes;
   attributes.depth = false;
   attributes.stencil = true;
@@ -75,12 +77,25 @@ bool ContextProviderInProcess::InitializeOnMainThread() {
   attributes.shareResources = true;
   attributes.noAutomaticFlushes = true;
 
-  using webkit::gpu::WebGraphicsContext3DInProcessCommandBufferImpl;
-  context3d_ =
+  return Create(
       WebGraphicsContext3DInProcessCommandBufferImpl::CreateOffscreenContext(
-          attributes);
+          attributes), "Offscreen");
+}
 
-  return context3d_;
+ContextProviderInProcess::ContextProviderInProcess(
+    scoped_ptr<WebGraphicsContext3DInProcessCommandBufferImpl> context3d,
+    const std::string& debug_name)
+    : context3d_(context3d.Pass()),
+      destroyed_(false),
+      debug_name_(debug_name) {
+  DCHECK(main_thread_checker_.CalledOnValidThread());
+  DCHECK(context3d_);
+  context_thread_checker_.DetachFromThread();
+}
+
+ContextProviderInProcess::~ContextProviderInProcess() {
+  DCHECK(main_thread_checker_.CalledOnValidThread() ||
+         context_thread_checker_.CalledOnValidThread());
 }
 
 bool ContextProviderInProcess::BindToCurrentThread() {
@@ -95,8 +110,39 @@ bool ContextProviderInProcess::BindToCurrentThread() {
   if (!context3d_->makeContextCurrent())
     return false;
 
+  std::string unique_context_name =
+      base::StringPrintf("%s-%p", debug_name_.c_str(), context3d_.get());
+  context3d_->pushGroupMarkerEXT(unique_context_name.c_str());
+
   lost_context_callback_proxy_.reset(new LostContextCallbackProxy(this));
+  swap_buffers_complete_callback_proxy_.reset(
+      new SwapBuffersCompleteCallbackProxy(this));
   return true;
+}
+
+cc::ContextProvider::Capabilities
+ContextProviderInProcess::ContextCapabilities() {
+  // We always use a WebGraphicsContext3DInProcessCommandBufferImpl which
+  // provides the following capabilities:
+  Capabilities caps;
+  caps.bind_uniform_location = true;
+  caps.discard_backbuffer = true;
+  caps.map_image = true;
+  caps.map_sub = true;
+  caps.set_visibility = true;
+  caps.shallow_flush = true;
+  caps.texture_format_bgra8888 = true;
+  caps.texture_rectangle = true;
+
+  WebKit::WebString extensions =
+      context3d_->getString(0x1F03 /* GL_EXTENSIONS */);
+  std::vector<std::string> extension_list;
+  base::SplitString(extensions.utf8(), ' ', &extension_list);
+  std::set<std::string> extension_set(extension_list.begin(),
+                                      extension_list.end());
+
+  caps.post_sub_buffer = extension_set.count("GL_CHROMIUM_post_sub_buffer") > 0;
+  return caps;
 }
 
 WebKit::WebGraphicsContext3D* ContextProviderInProcess::Context3d() {
@@ -105,6 +151,14 @@ WebKit::WebGraphicsContext3D* ContextProviderInProcess::Context3d() {
   DCHECK(context_thread_checker_.CalledOnValidThread());
 
   return context3d_.get();
+}
+
+::gpu::ContextSupport* ContextProviderInProcess::ContextSupport() {
+  DCHECK(context3d_);
+  DCHECK(lost_context_callback_proxy_);  // Is bound to thread.
+  DCHECK(context_thread_checker_.CalledOnValidThread());
+
+  return context3d_->GetContextSupport();
 }
 
 class GrContext* ContextProviderInProcess::GrContext() {
@@ -117,8 +171,6 @@ class GrContext* ContextProviderInProcess::GrContext() {
 
   gr_context_.reset(
       new webkit::gpu::GrContextForWebGraphicsContext3D(context3d_.get()));
-  memory_allocation_callback_proxy_.reset(
-      new MemoryAllocationCallbackProxy(this));
   return gr_context_->get();
 }
 
@@ -143,6 +195,12 @@ void ContextProviderInProcess::OnLostContext() {
     base::ResetAndReturn(&lost_context_callback_).Run();
 }
 
+void ContextProviderInProcess::OnSwapBuffersComplete() {
+  DCHECK(context_thread_checker_.CalledOnValidThread());
+  if (!swap_buffers_complete_callback_.is_null())
+    swap_buffers_complete_callback_.Run();
+}
+
 bool ContextProviderInProcess::DestroyedOnMainThread() {
   DCHECK(main_thread_checker_.CalledOnValidThread());
 
@@ -153,15 +211,22 @@ bool ContextProviderInProcess::DestroyedOnMainThread() {
 void ContextProviderInProcess::SetLostContextCallback(
     const LostContextCallback& lost_context_callback) {
   DCHECK(context_thread_checker_.CalledOnValidThread());
-  DCHECK(lost_context_callback_.is_null());
+  DCHECK(lost_context_callback_.is_null() ||
+         lost_context_callback.is_null());
   lost_context_callback_ = lost_context_callback;
 }
 
-void ContextProviderInProcess::OnMemoryAllocationChanged(
-    bool nonzero_allocation) {
+void ContextProviderInProcess::SetSwapBuffersCompleteCallback(
+    const SwapBuffersCompleteCallback& swap_buffers_complete_callback) {
   DCHECK(context_thread_checker_.CalledOnValidThread());
-  if (gr_context_)
-    gr_context_->SetMemoryLimit(nonzero_allocation);
+  DCHECK(swap_buffers_complete_callback_.is_null() ||
+         swap_buffers_complete_callback.is_null());
+  swap_buffers_complete_callback_ = swap_buffers_complete_callback;
+}
+
+void ContextProviderInProcess::SetMemoryPolicyChangedCallback(
+    const MemoryPolicyChangedCallback& memory_policy_changed_callback) {
+  // There's no memory manager for the in-process implementation.
 }
 
 }  // namespace gpu

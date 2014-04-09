@@ -8,14 +8,15 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/common/extensions/api/commands/commands_handler.h"
 #include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/extension_manifest_constants.h"
+#include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/manifest_handler_helpers.h"
 #include "extensions/common/error_utils.h"
-
-namespace errors = extension_manifest_errors;
-namespace keys = extension_manifest_keys;
+#include "extensions/common/manifest_constants.h"
 
 namespace extensions {
+
+namespace errors = manifest_errors;
+namespace keys = manifest_keys;
 
 namespace {
 
@@ -63,18 +64,15 @@ scoped_ptr<ActionInfo> ActionInfo::Load(const Extension* extension,
     const base::ListValue* icons = NULL;
     if (dict->HasKey(keys::kPageActionIcons) &&
         dict->GetList(keys::kPageActionIcons, &icons)) {
-      for (base::ListValue::const_iterator iter = icons->begin();
-           iter != icons->end(); ++iter) {
-        std::string path;
-        if (!(*iter)->GetAsString(&path) ||
-            !manifest_handler_helpers::NormalizeAndValidatePath(&path)) {
-          *error = ASCIIToUTF16(errors::kInvalidPageActionIconPath);
-          return scoped_ptr<ActionInfo>();
-        }
-
-        result->default_icon.Add(extension_misc::EXTENSION_ICON_ACTION, path);
-        break;
+      base::ListValue::const_iterator iter = icons->begin();
+      std::string path;
+      if (iter == icons->end() ||
+          !(*iter)->GetAsString(&path) ||
+          !manifest_handler_helpers::NormalizeAndValidatePath(&path)) {
+        *error = ASCIIToUTF16(errors::kInvalidPageActionIconPath);
+        return scoped_ptr<ActionInfo>();
       }
+      result->default_icon.Add(extension_misc::EXTENSION_ICON_ACTION, path);
     }
 
     std::string id;

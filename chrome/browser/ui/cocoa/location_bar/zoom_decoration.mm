@@ -45,11 +45,9 @@ void ZoomDecoration::Update(ZoomController* zoom_controller) {
   [bubble_ onZoomChanged];
 }
 
-void ZoomDecoration::ToggleBubble(BOOL auto_close) {
-  if (bubble_) {
-    [bubble_ close];
+void ZoomDecoration::ShowBubble(BOOL auto_close) {
+  if (bubble_)
     return;
-  }
 
   content::WebContents* web_contents = owner_->GetWebContents();
   if (!web_contents)
@@ -72,8 +70,10 @@ void ZoomDecoration::ToggleBubble(BOOL auto_close) {
         // If the page is at default zoom then hiding the zoom decoration was
         // suppressed while the bubble was open. Now that the bubble is closed
         // the decoration can be hidden.
-        if (IsAtDefaultZoom())
+        if (IsAtDefaultZoom() && IsVisible()) {
           SetVisible(false);
+          owner_->OnDecorationsChanged();
+        }
     };
     bubble_ =
         [[ZoomBubbleController alloc] initWithParentWindow:[field window]
@@ -83,6 +83,10 @@ void ZoomDecoration::ToggleBubble(BOOL auto_close) {
   [bubble_ showForWebContents:web_contents
                    anchoredAt:anchor
                     autoClose:auto_close];
+}
+
+void ZoomDecoration::CloseBubble() {
+  [bubble_ close];
 }
 
 NSPoint ZoomDecoration::GetBubblePointInFrame(NSRect frame) {
@@ -99,11 +103,8 @@ bool ZoomDecoration::IsAtDefaultZoom() const {
 }
 
 bool ZoomDecoration::ShouldShowDecoration() const {
-  if (owner_->toolbar_model()->GetInputInProgress())
-    return false;
-  if (bubble_)
-    return true;
-  return !IsAtDefaultZoom();
+  return !owner_->GetToolbarModel()->input_in_progress() &&
+      (bubble_ || !IsAtDefaultZoom());
 }
 
 bool ZoomDecoration::AcceptsMousePress() {
@@ -111,7 +112,10 @@ bool ZoomDecoration::AcceptsMousePress() {
 }
 
 bool ZoomDecoration::OnMousePressed(NSRect frame) {
-  ToggleBubble(NO);
+  if (bubble_)
+    CloseBubble();
+  else
+    ShowBubble(NO);
   return true;
 }
 

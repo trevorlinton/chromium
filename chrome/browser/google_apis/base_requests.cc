@@ -11,6 +11,8 @@
 #include "base/task_runner_util.h"
 #include "base/values.h"
 #include "chrome/browser/google_apis/request_sender.h"
+#include "chrome/browser/google_apis/task_util.h"
+#include "net/base/io_buffer.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_byte_range.h"
@@ -48,8 +50,19 @@ scoped_ptr<base::Value> ParseJsonOnBlockingPool(const std::string& json) {
       json, base::JSON_PARSE_RFC, &error_code, &error_message));
 
   if (!value.get()) {
-    LOG(ERROR) << "Error while parsing entry response: " << error_message
-               << ", code: " << error_code << ", json:\n" << json;
+    std::string trimmed_json;
+    if (json.size() < 80) {
+      trimmed_json  = json;
+    } else {
+      // Take the first 50 and the last 10 bytes.
+      trimmed_json = base::StringPrintf(
+          "%s [%s bytes] %s",
+          json.substr(0, 50).c_str(),
+          base::Uint64ToString(json.size() - 60).c_str(),
+          json.substr(json.size() - 10).c_str());
+    }
+    LOG(WARNING) << "Error while parsing entry response: " << error_message
+                 << ", code: " << error_code << ", json:\n" << trimmed_json;
   }
   return value.Pass();
 }
@@ -86,6 +99,56 @@ void ParseJson(base::TaskRunner* blocking_task_runner,
       FROM_HERE,
       base::Bind(&ParseJsonOnBlockingPool, json),
       callback);
+}
+
+//=========================== ResponseWriter ==================================
+ResponseWriter::ResponseWriter(base::TaskRunner* file_task_runner,
+                               const base::FilePath& file_path,
+                               const GetContentCallback& get_content_callback)
+    : get_content_callback_(get_content_callback) {
+  if (!file_path.empty()) {
+    file_writer_.reset(
+        new net::URLFetcherFileWriter(file_task_runner, file_path));
+  }
+}
+
+ResponseWriter::~ResponseWriter() {
+}
+
+void ResponseWriter::DisownFile() {
+  DCHECK(file_writer_);
+  file_writer_->DisownFile();
+}
+
+int ResponseWriter::Initialize(const net::CompletionCallback& callback) {
+  if (file_writer_)
+    return file_writer_->Initialize(callback);
+
+  data_.clear();
+  return net::OK;
+}
+
+int ResponseWriter::Write(net::IOBuffer* buffer,
+                          int num_bytes,
+                          const net::CompletionCallback& callback) {
+  if (!get_content_callback_.is_null()) {
+    get_content_callback_.Run(
+        HTTP_SUCCESS,
+        make_scoped_ptr(new std::string(buffer->data(), num_bytes)));
+  }
+
+  if (file_writer_)
+    return file_writer_->Write(buffer, num_bytes, callback);
+
+  data_.append(buffer->data(), num_bytes);
+  return num_bytes;
+}
+
+int ResponseWriter::Finish(const net::CompletionCallback& callback) {
+  if (file_writer_)
+    return file_writer_->Finish(callback);
+
+  return net::OK;
 }
 
 //============================ UrlFetchRequestBase ===========================
@@ -128,11 +191,15 @@ void UrlFetchRequestBase::Start(const std::string& access_token,
       net::LOAD_DISABLE_CACHE);
 
   base::FilePath output_file_path;
-  if (GetOutputFilePath(&output_file_path)) {
-    url_fetcher_->SaveResponseToFileAtPath(
-        output_file_path,
-        blocking_task_runner());
-  }
+  GetContentCallback get_content_callback;
+  GetOutputFilePath(&output_file_path, &get_content_callback);
+  if (!get_content_callback.is_null())
+    get_content_callback = CreateRelayCallback(get_content_callback);
+  response_writer_ = new ResponseWriter(blocking_task_runner(),
+                                        output_file_path,
+                                        get_content_callback);
+  url_fetcher_->SaveResponseWithWriter(
+      scoped_ptr<net::URLFetcherResponseWriter>(response_writer_));
 
   // Add request headers.
   // Note that SetExtraRequestHeaders clears the current headers and sets it
@@ -204,11 +271,13 @@ bool UrlFetchRequestBase::GetContentFile(base::FilePath* local_file_path,
   return false;
 }
 
-bool UrlFetchRequestBase::GetOutputFilePath(base::FilePath* local_file_path) {
-  return false;
+void UrlFetchRequestBase::GetOutputFilePath(
+    base::FilePath* local_file_path,
+    GetContentCallback* get_content_callback) {
 }
 
 void UrlFetchRequestBase::Cancel() {
+  response_writer_ = NULL;
   url_fetcher_.reset(NULL);
   RunCallbackOnPrematureFailure(GDATA_CANCELLED);
   sender_->RequestFinished(this);
@@ -237,7 +306,7 @@ base::TaskRunner* UrlFetchRequestBase::blocking_task_runner() const {
   return sender_->blocking_task_runner();
 }
 
-void UrlFetchRequestBase::OnProcessURLFetchResultsComplete(bool result) {
+void UrlFetchRequestBase::OnProcessURLFetchResultsComplete() {
   sender_->RequestFinished(this);
 }
 
@@ -284,10 +353,8 @@ EntryActionRequest::EntryActionRequest(RequestSender* sender,
 EntryActionRequest::~EntryActionRequest() {}
 
 void EntryActionRequest::ProcessURLFetchResults(const URLFetcher* source) {
-  GDataErrorCode code = GetErrorCode(source);
-  callback_.Run(code);
-  const bool success = true;
-  OnProcessURLFetchResultsComplete(success);
+  callback_.Run(GetErrorCode(source));
+  OnProcessURLFetchResultsComplete();
 }
 
 void EntryActionRequest::RunCallbackOnPrematureFailure(GDataErrorCode code) {
@@ -320,20 +387,16 @@ void GetDataRequest::ParseResponse(GDataErrorCode fetch_error_code,
 }
 
 void GetDataRequest::ProcessURLFetchResults(const URLFetcher* source) {
-  std::string data;
-  source->GetResponseAsString(&data);
-  scoped_ptr<base::Value> root_value;
   GDataErrorCode fetch_error_code = GetErrorCode(source);
 
   switch (fetch_error_code) {
     case HTTP_SUCCESS:
     case HTTP_CREATED:
-      ParseResponse(fetch_error_code, data);
+      ParseResponse(fetch_error_code, response_writer()->data());
       break;
     default:
       RunCallbackOnPrematureFailure(fetch_error_code);
-      const bool success = false;
-      OnProcessURLFetchResultsComplete(success);
+      OnProcessURLFetchResultsComplete();
       break;
   }
 }
@@ -347,22 +410,11 @@ void GetDataRequest::OnDataParsed(GDataErrorCode fetch_error_code,
                                   scoped_ptr<base::Value> value) {
   DCHECK(CalledOnValidThread());
 
-  bool success = true;
-  if (!value.get()) {
+  if (!value.get())
     fetch_error_code = GDATA_PARSE_ERROR;
-    success = false;
-  }
 
-  RunCallbackOnSuccess(fetch_error_code, value.Pass());
-
-  DCHECK(!value.get());
-  OnProcessURLFetchResultsComplete(success);
-}
-
-void GetDataRequest::RunCallbackOnSuccess(GDataErrorCode fetch_error_code,
-                                          scoped_ptr<base::Value> value) {
-  DCHECK(CalledOnValidThread());
   callback_.Run(fetch_error_code, value.Pass());
+  OnProcessURLFetchResultsComplete();
 }
 
 //========================= InitiateUploadRequestBase ========================
@@ -396,7 +448,7 @@ void InitiateUploadRequestBase::ProcessURLFetchResults(
   }
 
   callback_.Run(code, GURL(upload_location));
-  OnProcessURLFetchResultsComplete(code == HTTP_SUCCESS);
+  OnProcessURLFetchResultsComplete();
 }
 
 void InitiateUploadRequestBase::RunCallbackOnPrematureFailure(
@@ -489,15 +541,12 @@ void UploadRangeRequestBase::ProcessURLFetchResults(
                                                end_position_received),
                            scoped_ptr<base::Value>());
 
-    OnProcessURLFetchResultsComplete(true);
+    OnProcessURLFetchResultsComplete();
   } else if (code == HTTP_CREATED || code == HTTP_SUCCESS) {
     // The upload is successfully done. Parse the response which should be
     // the entry's metadata.
-    std::string response_content;
-    source->GetResponseAsString(&response_content);
-
     ParseJson(blocking_task_runner(),
-              response_content,
+              response_writer()->data(),
               base::Bind(&UploadRangeRequestBase::OnDataParsed,
                          weak_ptr_factory_.GetWeakPtr(),
                          code));
@@ -505,7 +554,7 @@ void UploadRangeRequestBase::ProcessURLFetchResults(
     // Failed to upload. Run callbacks to notify the error.
     OnRangeRequestComplete(
         UploadRangeResponse(code, -1, -1), scoped_ptr<base::Value>());
-    OnProcessURLFetchResultsComplete(false);
+    OnProcessURLFetchResultsComplete();
   }
 }
 
@@ -515,7 +564,7 @@ void UploadRangeRequestBase::OnDataParsed(GDataErrorCode code,
   DCHECK(code == HTTP_CREATED || code == HTTP_SUCCESS);
 
   OnRangeRequestComplete(UploadRangeResponse(code, -1, -1), value.Pass());
-  OnProcessURLFetchResultsComplete(true);
+  OnProcessURLFetchResultsComplete();
 }
 
 void UploadRangeRequestBase::RunCallbackOnPrematureFailure(
@@ -641,11 +690,12 @@ GURL DownloadFileRequestBase::GetURL() const {
   return download_url_;
 }
 
-bool DownloadFileRequestBase::GetOutputFilePath(
-    base::FilePath* local_file_path) {
+void DownloadFileRequestBase::GetOutputFilePath(
+    base::FilePath* local_file_path,
+    GetContentCallback* get_content_callback) {
   // Configure so that the downloaded content is saved to |output_file_path_|.
   *local_file_path = output_file_path_;
-  return true;
+  *get_content_callback = get_content_callback_;
 }
 
 void DownloadFileRequestBase::OnURLFetchDownloadProgress(
@@ -656,30 +706,18 @@ void DownloadFileRequestBase::OnURLFetchDownloadProgress(
     progress_callback_.Run(current, total);
 }
 
-bool DownloadFileRequestBase::ShouldSendDownloadData() {
-  return !get_content_callback_.is_null();
-}
-
-void DownloadFileRequestBase::OnURLFetchDownloadData(
-    const URLFetcher* source,
-    scoped_ptr<std::string> download_data) {
-  if (!get_content_callback_.is_null())
-    get_content_callback_.Run(HTTP_SUCCESS, download_data.Pass());
-}
-
 void DownloadFileRequestBase::ProcessURLFetchResults(const URLFetcher* source) {
   GDataErrorCode code = GetErrorCode(source);
 
   // Take over the ownership of the the downloaded temp file.
   base::FilePath temp_file;
-  if (code == HTTP_SUCCESS &&
-      !source->GetResponseAsFilePath(true,  // take_ownership
-                                     &temp_file)) {
-    code = GDATA_FILE_ERROR;
+  if (code == HTTP_SUCCESS) {
+    response_writer()->DisownFile();
+    temp_file = output_file_path_;
   }
 
   download_action_callback_.Run(code, temp_file);
-  OnProcessURLFetchResultsComplete(code == HTTP_SUCCESS);
+  OnProcessURLFetchResultsComplete();
 }
 
 void DownloadFileRequestBase::RunCallbackOnPrematureFailure(

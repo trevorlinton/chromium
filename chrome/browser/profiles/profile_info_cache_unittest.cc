@@ -4,6 +4,8 @@
 
 #include "chrome/browser/profiles/profile_info_cache_unittest.h"
 
+#include <vector>
+
 #include "base/prefs/testing_pref_service.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -16,6 +18,7 @@
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_service.h"
+#include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -457,6 +460,44 @@ TEST_F(ProfileInfoCacheTest, CreateManagedTestingProfile) {
     std::string managed_user_id = is_managed ? "TEST_ID" : "";
     EXPECT_EQ(managed_user_id, GetCache()->GetManagedUserIdOfProfileAtIndex(i));
   }
+
+  // Managed profiles have a custom theme, which needs to be deleted on the FILE
+  // thread. Reset the profile manager now so everything is deleted while we
+  // still have a FILE thread.
+  TestingBrowserProcess::GetGlobal()->SetProfileManager(NULL);
+}
+
+TEST_F(ProfileInfoCacheTest, AddStubProfile) {
+  EXPECT_EQ(0u, GetCache()->GetNumberOfProfiles());
+
+  // Add some profiles with and without a '.' in their paths.
+  const struct {
+    const char* profile_path;
+    const char* profile_name;
+  } kTestCases[] = {
+    { "path.test0", "name_0" },
+    { "path_test1", "name_1" },
+    { "path.test2", "name_2" },
+    { "path_test3", "name_3" },
+  };
+
+  for (size_t i = 0; i < ARRAYSIZE_UNSAFE(kTestCases); ++i) {
+    base::FilePath profile_path = GetProfilePath(kTestCases[i].profile_path);
+    string16 profile_name = ASCIIToUTF16(kTestCases[i].profile_name);
+
+    GetCache()->AddProfileToCache(profile_path, profile_name, string16(), i,
+                                  "");
+
+    EXPECT_EQ(profile_path, GetCache()->GetPathOfProfileAtIndex(i));
+    EXPECT_EQ(profile_name, GetCache()->GetNameOfProfileAtIndex(i));
+  }
+
+  ASSERT_EQ(4U, GetCache()->GetNumberOfProfiles());
+
+  // Check that the profiles can be extracted from the local state.
+  std::vector<string16> names = ProfileInfoCache::GetProfileNames();
+  for (size_t i = 0; i < 4; i++)
+    ASSERT_FALSE(names[i].empty());
 }
 
 }  // namespace

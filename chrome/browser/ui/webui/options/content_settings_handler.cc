@@ -32,7 +32,6 @@
 #include "chrome/common/content_settings_pattern.h"
 #include "chrome/common/extensions/extension_set.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
-#include "chrome/common/extensions/permissions/api_permission.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/notification_service.h"
@@ -41,6 +40,7 @@
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/common/content_switches.h"
+#include "extensions/common/permissions/api_permission.h"
 #include "grit/generated_resources.h"
 #include "grit/locale_settings.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -102,6 +102,10 @@ const ContentSettingsTypeNameEntry kContentSettingsTypeGroupNames[] = {
   {CONTENT_SETTINGS_TYPE_PPAPI_BROKER, "ppapi-broker"},
   {CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS, "multiple-automatic-downloads"},
   {CONTENT_SETTINGS_TYPE_MIDI_SYSEX, "midi-sysex"},
+  {CONTENT_SETTINGS_TYPE_SAVE_PASSWORD, "save-password"},
+#if defined(OS_CHROMEOS)
+  {CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER, "protectedContent"},
+#endif
 };
 
 ContentSettingsType ContentSettingsTypeFromGroupName(const std::string& name) {
@@ -353,7 +357,8 @@ void ContentSettingsHandler::GetLocalizedValues(
     // Protected Content filter
     { "protectedContentTabLabel", IDS_PROTECTED_CONTENT_TAB_LABEL },
     { "protectedContentInfo", IDS_PROTECTED_CONTENT_INFO },
-    { "protectedContentEnable", IDS_PROTECTED_CONTENT_ENABLE},
+    { "protectedContentEnable", IDS_PROTECTED_CONTENT_ENABLE },
+    { "protectedContent_header", IDS_PROTECTED_CONTENT_HEADER },
 #endif  // defined(OS_CHROMEOS) || defined(OS_WIN)
     // Media stream capture device filter.
     { "mediaStreamTabLabel", IDS_MEDIA_STREAM_TAB_LABEL },
@@ -422,6 +427,10 @@ void ContentSettingsHandler::GetLocalizedValues(
                 IDS_FULLSCREEN_TAB_LABEL);
   RegisterTitle(localized_strings, "mouselock",
                 IDS_MOUSE_LOCK_TAB_LABEL);
+#if defined(OS_CHROMEOS)
+  RegisterTitle(localized_strings, "protectedContent",
+                IDS_PROTECTED_CONTENT_TAB_LABEL);
+#endif
   RegisterTitle(localized_strings, "media-stream",
                 IDS_MEDIA_STREAM_TAB_LABEL);
   RegisterTitle(localized_strings, "ppapi-broker",
@@ -702,6 +711,9 @@ void ContentSettingsHandler::UpdateExceptionsViewFromModel(
     case CONTENT_SETTINGS_TYPE_PROTOCOL_HANDLERS:
       // The RPH settings are retrieved separately.
       break;
+    case CONTENT_SETTINGS_TYPE_SAVE_PASSWORD:
+      // There is no user facing UI for this content type and we skip it here.
+      break;
     case CONTENT_SETTINGS_TYPE_MIDI_SYSEX:
       UpdateMIDISysExExceptionsView();
       break;
@@ -962,6 +974,12 @@ void ContentSettingsHandler::UpdateExceptionsViewFromHostContentSettingsMap(
   // http://crbug.com/104683
   if (type == CONTENT_SETTINGS_TYPE_FULLSCREEN)
     return;
+
+#if defined(OS_CHROMEOS)
+  // Also the default for protected contents is managed in another place.
+  if (type == CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER)
+    return;
+#endif
 
   // The default may also have changed (we won't get a separate notification).
   // If it hasn't changed, this call will be harmless.

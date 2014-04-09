@@ -1183,9 +1183,7 @@ cr.define('ntp', function() {
    * @param {Object} evt User interface event that triggered the action.
    */
   function executePromoAction(evt) {
-    if (evt.preventDefault)
-      evt.preventDefault();
-    evt.returnValue = false;
+    evt.preventDefault();
     chrome.send('promoActionTriggered');
   }
 
@@ -2155,7 +2153,7 @@ cr.define('ntp', function() {
     currentPane = pane;
     currentPaneIndex = paneIndex;
 
-    document.body.scrollTop = 0;
+    document.documentElement.scrollTop = 0;
 
     var panelPrefix = sectionPrefixes[paneIndex];
     var title = templateData[panelPrefix + '_document_title'];
@@ -2475,7 +2473,8 @@ cr.define('ntp', function() {
             [ContextMenuItemIds.BOOKMARK_DELETE, templateData.bookmarkdelete]);
       }
       if (contextMenuUrl.search('chrome://') == -1 &&
-          contextMenuUrl.search('about://') == -1) {
+          contextMenuUrl.search('about://') == -1 &&
+          document.body.getAttribute('shortcut_item_enabled') == 'true') {
         menuOptions.push([
           ContextMenuItemIds.BOOKMARK_SHORTCUT,
           templateData.bookmarkshortcut

@@ -8,7 +8,9 @@
 #include <string>
 
 #include "base/basictypes.h"
+#include "base/callback_forward.h"
 #include "base/compiler_specific.h"
+#include "chrome/browser/ui/host_desktop.h"
 #include "ui/gfx/native_widget_types.h"
 
 class AppListControllerDelegate;
@@ -26,8 +28,9 @@ class ImageSkia;
 
 class AppListService {
  public:
-  // Get the AppListService for the current platform and desktop type.
-  static AppListService* Get();
+  // Get the AppListService for the current platform and specified
+  // |desktop_type|.
+  static AppListService* Get(chrome::HostDesktopType desktop_type);
 
   // Call Init for all AppListService instances on this platform.
   static void InitAll(Profile* initial_profile);
@@ -35,6 +38,10 @@ class AppListService {
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
   static void RecordShowTimings(const CommandLine& command_line);
+
+  // Indicates that |callback| should be called next time the app list is
+  // painted.
+  virtual void SetAppListNextPaintCallback(const base::Closure& callback) = 0;
 
   // Perform Chrome first run logic. This is executed before Chrome's threads
   // have been created.
@@ -72,7 +79,7 @@ class AppListService {
   // Get the window the app list is in, or NULL if the app list isn't visible.
   virtual gfx::NativeWindow GetAppListWindow() = 0;
 
-  // Exposed to allow testing of the controller delegate.
+  // Creates a platform specific AppListControllerDelegate.
   virtual AppListControllerDelegate* CreateControllerDelegate() = 0;
 
  protected:

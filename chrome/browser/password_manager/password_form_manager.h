@@ -12,7 +12,7 @@
 
 #include "base/stl_util.h"
 #include "chrome/browser/password_manager/password_store_consumer.h"
-#include "content/public/common/password_form.h"
+#include "components/autofill/core/common/password_form.h"
 
 namespace content {
 class WebContents;
@@ -35,7 +35,7 @@ class PasswordFormManager : public PasswordStoreConsumer {
   PasswordFormManager(Profile* profile,
                       PasswordManager* password_manager,
                       content::WebContents* web_contents,
-                      const content::PasswordForm& observed_form,
+                      const autofill::PasswordForm& observed_form,
                       bool ssl_valid);
   virtual ~PasswordFormManager();
 
@@ -49,9 +49,15 @@ class PasswordFormManager : public PasswordStoreConsumer {
     IGNORE_OTHER_POSSIBLE_USERNAMES
   };
 
+  enum PasswordAction {
+    DO_NOTHING,
+    SAVE,
+    BLACKLIST
+  };
+
   // Compare basic data of observed_form_ with argument. Only check the action
   // URL when action match is required.
-  bool DoesManage(const content::PasswordForm& form,
+  bool DoesManage(const autofill::PasswordForm& form,
                   ActionMatch action_match) const;
 
   // Retrieves potential matching logins from the database.
@@ -70,6 +76,14 @@ class PasswordFormManager : public PasswordStoreConsumer {
   // in a loop and wait for matching to complete; you're (supposed to be) on
   // the same thread!
   bool HasCompletedMatching();
+
+  // Called when navigation occurs or the tab is closed. Takes the necessary
+  // action with the form's login based on the desired |password_action_|.
+  void ApplyChange();
+
+  void set_password_action(PasswordAction password_action) {
+    password_action_ = password_action;
+  }
 
   // Determines if the user opted to 'never remember' passwords for this form.
   bool IsBlacklisted();
@@ -94,17 +108,18 @@ class PasswordFormManager : public PasswordStoreConsumer {
   void SetHasGeneratedPassword();
 
   // Determines if we need to autofill given the results of the query.
-  void OnRequestDone(const std::vector<content::PasswordForm*>& result);
+  void OnRequestDone(const std::vector<autofill::PasswordForm*>& result);
 
   // PasswordStoreConsumer implementation.
   virtual void OnPasswordStoreRequestDone(
       CancelableRequestProvider::Handle handle,
-      const std::vector<content::PasswordForm*>& result) OVERRIDE;
+      const std::vector<autofill::PasswordForm*>& result) OVERRIDE;
   virtual void OnGetPasswordStoreResults(
-      const std::vector<content::PasswordForm*>& results) OVERRIDE;
+      const std::vector<autofill::PasswordForm*>& results) OVERRIDE;
 
   // A user opted to 'never remember' passwords for this form.
   // Blacklist it so that from now on when it is seen we ignore it.
+  // TODO: Make this private once we switch to the new UI.
   void PermanentlyBlacklist();
 
   // If the user has submitted observed_form_, provisionally hold on to
@@ -114,12 +129,13 @@ class PasswordFormManager : public PasswordStoreConsumer {
   // treat a possible usernames match as a sign that our original heuristics
   // were wrong and that the user selected the correct username from the
   // Autofill UI.
-  void ProvisionallySave(const content::PasswordForm& credentials,
+  void ProvisionallySave(const autofill::PasswordForm& credentials,
                          OtherPossibleUsernamesAction action);
 
   // Handles save-as-new or update of the form managed by this manager.
   // Note the basic data of updated_credentials must match that of
   // observed_form_ (e.g DoesManage(pending_credentials_) == true).
+  // TODO: Make this private once we switch to the new UI.
   void Save();
 
   // Call these if/when we know the form submission worked or failed.
@@ -158,11 +174,13 @@ class PasswordFormManager : public PasswordStoreConsumer {
   // does nothing (either by accepting what the password manager did, or
   // by simply (not typing anything at all), you get None. If there were
   // multiple choices and the user selects one other than the default,
-  // you get Choose, and if the user types in a new value, you get
-  // Override.
+  // you get Choose, if user selects an entry from matching against the Public
+  // Suffix List you get ChoosePslMatch, and if the user types in a new value,
+  // you get Override.
   enum UserAction {
     kUserActionNone = 0,
     kUserActionChoose,
+    kUserActionChoosePslMatch,
     kUserActionOverride,
     kUserActionMax
   };
@@ -182,7 +200,7 @@ class PasswordFormManager : public PasswordStoreConsumer {
 
   // Helper for OnPasswordStoreRequestDone to determine whether or not
   // the given result form is worth scoring.
-  bool IgnoreResult(const content::PasswordForm& form) const;
+  bool IgnoreResult(const autofill::PasswordForm& form) const;
 
   // Helper for Save in the case that best_matches.size() == 0, meaning
   // we have no prior record of this form/username/password and the user
@@ -192,7 +210,7 @@ class PasswordFormManager : public PasswordStoreConsumer {
 
   // Helper for OnPasswordStoreRequestDone to score an individual result
   // against the observed_form_.
-  int ScoreResult(const content::PasswordForm& form) const;
+  int ScoreResult(const autofill::PasswordForm& form) const;
 
   // Helper for Save in the case that best_matches.size() > 0, meaning
   // we have at least one match for this form/username/password. This
@@ -200,6 +218,12 @@ class PasswordFormManager : public PasswordStoreConsumer {
   // that now need to have preferred bit changed, since updated_credentials
   // is now implicitly 'preferred'.
   void UpdateLogin();
+
+  // Check to see if |pending| corresponds to an account creation form. If we
+  // think that it does, we label it as such and upload this state to the
+  // Autofill server, so that we will trigger password generation in the future.
+  void CheckForAccountCreationForm(const autofill::PasswordForm& pending,
+                                   const autofill::PasswordForm& observed);
 
   // Update all login matches to reflect new preferred state - preferred flag
   // will be reset on all matched logins that different than the current
@@ -223,18 +247,18 @@ class PasswordFormManager : public PasswordStoreConsumer {
 
   // Remove possible_usernames that may contains sensitive information and
   // duplicates.
-  void SanitizePossibleUsernames(content::PasswordForm* form);
+  void SanitizePossibleUsernames(autofill::PasswordForm* form);
 
   // Set of PasswordForms from the DB that best match the form
   // being managed by this. Use a map instead of vector, because we most
   // frequently require lookups by username value in IsNewLogin.
-  content::PasswordFormMap best_matches_;
+  autofill::PasswordFormMap best_matches_;
 
   // Cleans up when best_matches_ goes out of scope.
-  STLValueDeleter<content::PasswordFormMap> best_matches_deleter_;
+  STLValueDeleter<autofill::PasswordFormMap> best_matches_deleter_;
 
   // The PasswordForm from the page or dialog managed by this.
-  content::PasswordForm observed_form_;
+  autofill::PasswordForm observed_form_;
 
   // The origin url path of observed_form_ tokenized, for convenience when
   // scoring.
@@ -242,7 +266,7 @@ class PasswordFormManager : public PasswordStoreConsumer {
 
   // Stores updated credentials when the form was submitted but success is
   // still unknown.
-  content::PasswordForm pending_credentials_;
+  autofill::PasswordForm pending_credentials_;
 
   // Whether pending_credentials_ stores a new login or is an update
   // to an existing one.
@@ -262,7 +286,7 @@ class PasswordFormManager : public PasswordStoreConsumer {
   // as preferred. This is only allowed to be null if there are no best matches
   // at all, since there will always be one preferred login when there are
   // multiple matches (when first saved, a login is marked preferred).
-  const content::PasswordForm* preferred_match_;
+  const autofill::PasswordForm* preferred_match_;
 
   typedef enum {
     PRE_MATCHING_PHASE,      // Have not yet invoked a GetLogins query to find
@@ -291,6 +315,10 @@ class PasswordFormManager : public PasswordStoreConsumer {
   ManagerAction manager_action_;
   UserAction user_action_;
   SubmitResult submit_result_;
+
+  // Whether we should save, blacklist, or do nothing with this form's login
+  // on the next navigation or when the tab is closed.
+  PasswordAction password_action_;
 
   DISALLOW_COPY_AND_ASSIGN(PasswordFormManager);
 };

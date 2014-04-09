@@ -28,6 +28,7 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
       const std::string& gpu_blacklist_json,
       const gpu::GPUInfo& gpu_info);
   bool IsFeatureBlacklisted(int feature) const;
+  bool IsDriverBugWorkaroundActive(int feature) const;
   gpu::GPUInfo GetGPUInfo() const;
   void GetGpuProcessHandles(
       const GpuDataManager::GetGpuProcessHandlesCallback& callback) const;
@@ -245,6 +246,9 @@ class CONTENT_EXPORT GpuDataManagerImplPrivate {
   bool gpu_process_accessible_;
 
   bool use_software_compositor_;
+
+  // True if all future Initialize calls should be ignored.
+  bool finalized_;
 
   DISALLOW_COPY_AND_ASSIGN(GpuDataManagerImplPrivate);
 };

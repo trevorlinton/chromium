@@ -22,7 +22,6 @@ class Rect;
 }
 
 namespace content {
-class RenderViewHost;
 class WebContents;
 }
 
@@ -47,8 +46,9 @@ class AutofillExternalDelegate
   virtual ~AutofillExternalDelegate();
 
   // AutofillPopupDelegate implementation.
-  virtual void OnPopupShown(content::KeyboardListener* listener) OVERRIDE;
-  virtual void OnPopupHidden(content::KeyboardListener* listener) OVERRIDE;
+  virtual void OnPopupShown() OVERRIDE;
+  virtual void OnPopupHidden() OVERRIDE;
+  virtual bool ShouldRepostEvent(const ui::MouseEvent& event) OVERRIDE;
   virtual void DidSelectSuggestion(int identifier) OVERRIDE;
   virtual void DidAcceptSuggestion(const base::string16& value,
                                    int identifier) OVERRIDE;
@@ -166,10 +166,6 @@ class AutofillExternalDelegate
   // Have we already shown Autofill suggestions for the field the user is
   // currently editing?  Used to keep track of state for metrics logging.
   bool has_shown_autofill_popup_for_current_edit_;
-
-  // The RenderViewHost that this object has been registered with as a
-  // keyboard listener.
-  content::RenderViewHost* registered_keyboard_listener_with_;
 
   // The current data list values.
   std::vector<base::string16> data_list_values_;

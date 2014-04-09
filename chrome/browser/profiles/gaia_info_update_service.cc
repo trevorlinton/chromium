@@ -67,9 +67,9 @@ bool GAIAInfoUpdateService::ShouldUseGAIAProfileInfo(Profile* profile) {
   if (!profile->GetOriginalProfile()->IsSyncAccessible())
     return false;
 
-  // To enable this feature for testing pass "--gaia-profile-info".
+  // To enable this feature for testing pass "--google-profile-info".
   if (CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kGaiaProfileInfo)) {
+      switches::kGoogleProfileInfo)) {
     return true;
   }
 
@@ -106,6 +106,7 @@ void GAIAInfoUpdateService::OnProfileDownloadSuccess(
   ScheduleNextUpdate();
 
   string16 full_name = downloader->GetProfileFullName();
+  string16 given_name = downloader->GetProfileGivenName();
   SkBitmap bitmap = downloader->GetProfilePicture();
   ProfileDownloader::PictureStatus picture_status =
       downloader->GetProfilePictureStatus();
@@ -118,6 +119,8 @@ void GAIAInfoUpdateService::OnProfileDownloadSuccess(
     return;
 
   cache.SetGAIANameOfProfileAtIndex(profile_index, full_name);
+  cache.SetGAIAGivenNameOfProfileAtIndex(profile_index, given_name);
+
   // The profile index may have changed.
   profile_index = cache.GetIndexOfProfileWithPath(profile_->GetPath());
   if (profile_index == std::string::npos)

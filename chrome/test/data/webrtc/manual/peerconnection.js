@@ -4,6 +4,32 @@
  * found in the LICENSE file.
  */
 
+/**
+ * Used as a shortcut. Moved to the top of the page due to race conditions.
+ * @param {string} id is a case-sensitive string representing the unique ID of
+ *     the element being sought.
+ * @return {object} id returns the element object specified as a parameter
+ */
+$ = function(id) {
+  return document.getElementById(id);
+};
+
+/**
+ * Sets the global variable gUseRtpDataChannel in message_handling.js
+ * based on the check box element 'data-channel-type-rtp' checked status on
+ * peerconnection.html. Also prints a help text to inform the user.
+ */
+function setPcDataChannelType() {
+  var useRtpDataChannels = $('data-channel-type-rtp').checked;
+  useRtpDataChannelsForNewPeerConnections(useRtpDataChannels);
+  if (useRtpDataChannels) {
+    debug('Make sure to tick the RTP check box on both the calling and ' +
+          'answering side to ensure a data channel can be setup properly as ' +
+          'it has to use the same transport protocol (RTP to RTP and SCTP to ' +
+          'SCTP).');
+  }
+}
+
 // The *Here functions are called from peerconnection.html and will make calls
 // into our underlying JavaScript library with the values from the page
 // (have to be named differently to avoid name clashes with existing functions).
@@ -11,7 +37,7 @@
 function getUserMediaFromHere() {
   var constraints = $('getusermedia-constraints').value;
   try {
-    getUserMedia(constraints);
+    doGetUserMedia(constraints);
   } catch (exception) {
     print_('getUserMedia says: ' + exception);
   }
@@ -107,10 +133,10 @@ function insertDtmfFromHere() {
   insertDtmfOnSender(tones, duration, gap);
 }
 
-function forceOpusChanged() {
-  var forceOpus = $('force-opus').checked;
-  if (forceOpus) {
-    forceOpus_();
+function forceIsacChanged() {
+  var forceIsac = $('force-isac').checked;
+  if (forceIsac) {
+    forceIsac_();
   } else {
     dontTouchSdp_();
   }
@@ -119,15 +145,38 @@ function forceOpusChanged() {
 /**
  * Updates the constraints in the getusermedia-constraints text box with a
  * MediaStreamConstraints string. This string is created based on the status of
- * the checkboxes for audio and video. Fetches the screen size using "screen"
- * in Chrome as we need to pass a max resolution else it defaults to 640x480 in
- * the constraints for screen capturing.
+ * the checkboxes for audio and video. If device enumeration is supported and
+ * device source id's are not null they will be added to the constraints string.
+ * Fetches the screen size using "screen" in Chrome as we need to pass a max
+ * resolution else it defaults to 640x480 in the constraints for screen
+ * capturing.
  */
 function updateGetUserMediaConstraints() {
+  var audio_selected = $('audiosrc');
+  var video_selected = $('videosrc');
   var constraints = {
     audio: $('audio').checked,
     video: $('video').checked
   };
+  if (audio_selected.disabled == false && video_selected.disabled == false) {
+    var devices = getSourcesFromField(audio_selected, video_selected);
+    if ($('audio').checked == true) {
+      if (devices.audio_id != null) {
+        constraints.audio = {optional: [{sourceId: devices.audio_id}]};
+      }
+      else {
+        constraints.audio = true;
+      }
+    }
+    if ($('video').checked == true) {
+      if (devices.video_id != null) {
+        constraints.video = {optional: [{sourceId: devices.video_id}]};
+      }
+      else {
+        constraints.video = true;
+      }
+    }
+  }
   if ($('screencapture').checked) {
     var constraints = {
       audio: $('audio').checked,
@@ -136,7 +185,7 @@ function updateGetUserMediaConstraints() {
                           maxHeight: screen.height}}
     };
     if ($('audio').checked == true)
-      debug('Audio for screencapture is not implemented as of M28, please ' +
+      debug('Audio for screencapture is not implemented yet, please ' +
             'try to set audio = false prior requesting screencapture');
   }
   $('getusermedia-constraints').value =
@@ -166,7 +215,8 @@ function clearLog() {
 
 /**
  * Prepopulate constraints from JS to the UI and setup callbacks in the scripts
- * shared with PyAuto tests.
+ * shared with browser tests or automated tests. Enumerates devices available
+ * via getUserMedia.
  */
 window.onload = function() {
   $('pc-createoffer-constraints').value = JSON.stringify(
@@ -175,18 +225,40 @@ window.onload = function() {
     gCreateAnswerConstraints, null, ' ');
   replaceReturnCallback(print_);
   replaceDebugCallback(debug_);
-  updateGetUserMediaConstraints();
   doNotAutoAddLocalStreamWhenCalled();
   hookupDataChannelCallbacks_();
   hookupDtmfSenderCallback_();
   displayVideoSize_($('local-view'));
   displayVideoSize_($('remote-view'));
+  getDevices();
+  setPcDataChannelType();
 };
+
+/**
+ * Checks if the 'audiosrc' and 'videosrc' drop down menu elements has had all
+ * of its children appended in order to provide device ID's to the function
+ * 'updateGetUserMediaConstraints()', used in turn to populate the getUserMedia
+ * constraints text box when the page has loaded. If not the user is informed
+ * and instructions on how to populate the field is provided.
+ */
+function checkIfDeviceDropdownsArePopulated() {
+  if (document.addEventListener) {
+    $('audiosrc').addEventListener('DOMNodeInserted',
+         updateGetUserMediaConstraints, false);
+    $('videosrc').addEventListener('DOMNodeInserted',
+         updateGetUserMediaConstraints, false);
+  }
+  else {
+    debug('addEventListener is not supported by your browser, cannot update ' +
+          'device source ID\'s automatically. Select a device from the audio ' +
+          'or video source drop down menu to update device source id\'s');
+  }
+}
 
 /**
  * Disconnect before the tab is closed.
  */
-window.onunload = function() {
+window.onbeforeunload = function() {
   if (!isDisconnected())
     disconnect();
 };
@@ -199,8 +271,9 @@ window.onunload = function() {
  * @private
  */
 function ensureHasPeerConnection_() {
-  if (getReadyState() == 'no-peer-connection')
+  if (getReadyState() == 'no-peer-connection') {
     preparePeerConnection();
+  }
 }
 
 /**
@@ -278,12 +351,13 @@ function preferOpus_() {
 }
 
 /** @private */
-function forceOpus_() {
+function forceIsac_() {
   setOutgoingSdpTransform(function(sdp) {
     // Remove all other codecs (not the video codecs though).
     sdp = sdp.replace(/m=audio (\d+) RTP\/SAVPF.*\r\n/g,
-                      'm=audio $1 RTP/SAVPF 111\r\n');
-    sdp = sdp.replace(/a=rtpmap:(?!111)\d{1,3} (?!VP8|red|ulpfec).*\r\n/g, '');
+                      'm=audio $1 RTP/SAVPF 104\r\n');
+    sdp = sdp.replace('a=fmtp:111 minptime=10', 'a=fmtp:104 minptime=10');
+    sdp = sdp.replace(/a=rtpmap:(?!104)\d{1,3} (?!VP8|red|ulpfec).*\r\n/g, '');
     return sdp;
   });
 }
@@ -313,7 +387,3 @@ function hookupDtmfSenderCallback_() {
       tone.tone + '\n' + $('dtmf-tones-sent').value;
   });
 }
-
-$ = function(id) {
-  return document.getElementById(id);
-};

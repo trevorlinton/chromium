@@ -11,8 +11,10 @@
 #include "chrome/browser/ui/omnibox/omnibox_popup_view.h"
 #include "chrome/browser/ui/toolbar/toolbar_model_delegate.h"
 #include "chrome/browser/ui/toolbar/toolbar_model_impl.h"
+#include "chrome/test/base/testing_profile.h"
 #include "testing/platform_test.h"
 #include "ui/gfx/image/image.h"
+#include "ui/gfx/rect.h"
 
 namespace {
 
@@ -78,27 +80,26 @@ class TestingToolbarModelDelegate : public ToolbarModelDelegate {
 
 class TestingOmniboxEditController : public OmniboxEditController {
  public:
-  TestingOmniboxEditController() {}
+  explicit TestingOmniboxEditController(ToolbarModel* toolbar_model)
+      : OmniboxEditController(NULL),
+        toolbar_model_(toolbar_model) {
+  }
   virtual ~TestingOmniboxEditController() {}
 
   // Overridden from OmniboxEditController:
-  virtual void OnAutocompleteAccept(const GURL& url,
-                                    WindowOpenDisposition disposition,
-                                    content::PageTransition transition,
-                                    const GURL& alternate_nav_url) OVERRIDE {}
+  virtual void Update(const content::WebContents* contents) OVERRIDE {}
   virtual void OnChanged() OVERRIDE {}
-  virtual void OnSelectionBoundsChanged() OVERRIDE {}
-  virtual void OnInputInProgress(bool in_progress) OVERRIDE {}
-  virtual void OnKillFocus() OVERRIDE {}
   virtual void OnSetFocus() OVERRIDE {}
-  virtual gfx::Image GetFavicon() const OVERRIDE { return gfx::Image(); }
-  virtual string16 GetTitle() const OVERRIDE { return string16(); }
   virtual InstantController* GetInstant() OVERRIDE { return NULL; }
-  virtual content::WebContents* GetWebContents() const OVERRIDE {
-    return NULL;
+  virtual content::WebContents* GetWebContents() OVERRIDE { return NULL; }
+  virtual ToolbarModel* GetToolbarModel() OVERRIDE { return toolbar_model_; }
+  virtual const ToolbarModel* GetToolbarModel() const OVERRIDE {
+    return toolbar_model_;
   }
 
  private:
+  ToolbarModel* toolbar_model_;
+
   DISALLOW_COPY_AND_ASSIGN(TestingOmniboxEditController);
 };
 
@@ -117,7 +118,7 @@ TEST_F(OmniboxViewMacTest, GetFieldFont) {
 
 TEST_F(OmniboxViewMacTest, TabToAutocomplete) {
   chrome::EnableInstantExtendedAPIForTesting();
-  OmniboxViewMac view(NULL, NULL, profile(), NULL, NULL);
+  OmniboxViewMac view(NULL, profile(), NULL, NULL);
 
   // This is deleted by the omnibox view.
   MockOmniboxEditModel* model =
@@ -149,9 +150,9 @@ TEST_F(OmniboxViewMacTest, SetGrayTextAutocompletion) {
 
   TestingToolbarModelDelegate delegate;
   ToolbarModelImpl toolbar_model(&delegate);
-  OmniboxViewMac view(NULL, &toolbar_model, profile(), NULL, field.get());
+  TestingOmniboxEditController controller(&toolbar_model);
+  OmniboxViewMac view(&controller, profile(), NULL, field.get());
 
-  TestingOmniboxEditController controller;
   // This is deleted by the omnibox view.
   MockOmniboxEditModel* model =
       new MockOmniboxEditModel(&view, &controller, profile());
@@ -172,7 +173,7 @@ TEST_F(OmniboxViewMacTest, SetGrayTextAutocompletion) {
 }
 
 TEST_F(OmniboxViewMacTest, UpDownArrow) {
-  OmniboxViewMac view(NULL, NULL, profile(), NULL, NULL);
+  OmniboxViewMac view(NULL, profile(), NULL, NULL);
 
   // This is deleted by the omnibox view.
   MockOmniboxEditModel* model =

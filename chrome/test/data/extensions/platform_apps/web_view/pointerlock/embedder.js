@@ -4,6 +4,8 @@
 
 var embedder = {};
 embedder.test = {};
+embedder.triggerNavUrl =
+    'data:text/html,<html><body>trigger navigation<body></html>';
 
 window.runTest = function(testName) {
   if (!embedder.test.testList[testName]) {
@@ -33,11 +35,11 @@ embedder.setUpGuest_ = function(partitionName) {
 
 embedder.test = {};
 embedder.test.succeed = function() {
-  chrome.test.sendMessage('DonePointerLockTest.PASSED');
+  chrome.test.sendMessage('TEST_PASSED');
 };
 
 embedder.test.fail = function() {
-  chrome.test.sendMessage('DonePointerLockTest.FAILED');
+  chrome.test.sendMessage('TEST_FAILED');
 };
 
 embedder.test.assertEq = function(a, b) {
@@ -64,7 +66,6 @@ embedder.test.assertFalse = function(condition) {
 // Tests begin.
 // This test verifies that a webview loses pointer lock when it loses focus.
 function testPointerLockLostWithFocus() {
-  var guestUrl = 'data:text/html, guest';
   var webview1 = document.createElement('webview');
   var webview2 = document.createElement('webview');
 

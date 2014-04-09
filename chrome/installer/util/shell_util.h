@@ -127,7 +127,7 @@ class ShellUtil {
     }
 
     // Forces the shortcut's name to |shortcut_name_in|.
-    // Default: the current distribution's GetAppShortcutName().
+    // Default: the current distribution's GetShortcutName(SHORTCUT_CHROME).
     // The ".lnk" extension will automatically be added to this name.
     void set_shortcut_name(const string16& shortcut_name_in) {
       shortcut_name = shortcut_name_in;
@@ -227,12 +227,6 @@ class ShellUtil {
   // that it can be launched from Start->Run just by name (chrome.exe).
   static const wchar_t* kAppPathsRegistryKey;
   static const wchar_t* kAppPathsRegistryPathName;
-
-  // Name that we give to Chrome file association handler ProgId.
-  static const wchar_t* kChromeHTMLProgId;
-
-  // Description of Chrome file association handler ProgId.
-  static const wchar_t* kChromeHTMLProgIdDesc;
 
   // Registry path that stores url associations on Vista.
   static const wchar_t* kRegVistaUrlPrefs;
@@ -525,11 +519,13 @@ class ShellUtil {
                               ShellChange level,
                               const base::FilePath& target_exe);
 
-  // Applies the updates in |shortcut_properties| to all shortcuts in |location|
-  // that target |target_exe|.
-  // Returns true if all shortcuts pointing to |target_exe| are successfully
-  // updated, including the case where no such shortcuts are found.
-  static bool UpdateShortcuts(
+  // Applies the updates in |properties| to all matching shortcuts in
+  // |location|, i.e.:
+  // - the shortcut's original target is |target_exe|,
+  // - the original arguments are non-empty.
+  // Returns true if all updates to matching shortcuts are successful, including
+  // the vacuous case where no matching shortcuts are found.
+  static bool UpdateShortcutsWithArgs(
       ShellUtil::ShortcutLocation location,
       BrowserDistribution* dist,
       ShellChange level,

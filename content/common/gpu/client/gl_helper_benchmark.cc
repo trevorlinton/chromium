@@ -66,7 +66,8 @@ class GLHelperTest : public testing::Test {
         CreateOffscreenContext(attributes);
     context_->makeContextCurrent();
 
-    helper_.reset(new content::GLHelper(context_.get()));
+    helper_.reset(
+        new content::GLHelper(context_.get(), context_->GetContextSupport()));
     helper_scaling_.reset(new content::GLHelperScaling(
         context_.get(),
         helper_.get()));
@@ -82,8 +83,7 @@ class GLHelperTest : public testing::Test {
   void LoadPngFileToSkBitmap(const base::FilePath& filename,
                              SkBitmap* bitmap) {
     std::string compressed;
-    file_util::ReadFileToString(base::MakeAbsoluteFilePath(filename),
-                                &compressed);
+    base::ReadFileToString(base::MakeAbsoluteFilePath(filename), &compressed);
     ASSERT_TRUE(compressed.size());
     ASSERT_TRUE(gfx::PNGCodec::Decode(
         reinterpret_cast<const unsigned char*>(compressed.data()),
@@ -109,7 +109,8 @@ class GLHelperTest : public testing::Test {
     file_util::CloseFile(f);
   }
 
-  scoped_ptr<WebKit::WebGraphicsContext3D> context_;
+  scoped_ptr<webkit::gpu::WebGraphicsContext3DInProcessCommandBufferImpl>
+      context_;
   scoped_ptr<content::GLHelper> helper_;
   scoped_ptr<content::GLHelperScaling> helper_scaling_;
   std::deque<GLHelperScaling::ScaleOp> x_ops_, y_ops_;

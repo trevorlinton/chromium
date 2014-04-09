@@ -15,6 +15,7 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/signin/chrome_signin_manager_delegate.h"
+#include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/signin/token_service.h"
 #include "chrome/browser/signin/token_service_unittest.h"
 #include "chrome/common/pref_names.h"
@@ -45,22 +46,33 @@ const char kGetTokenPairValidResponse[] =
     "  \"token_type\": \"Bearer\""
     "}";
 
-const char kUberAuthTokenURLFormat[] = "%s?source=%s&issueuberauth=1";
+const char kUberAuthTokenURLFormat[] = "?source=%s&issueuberauth=1";
+
+BrowserContextKeyedService* SigninManagerBuild(
+    content::BrowserContext* context) {
+  SigninManager* service = NULL;
+  Profile* profile = static_cast<Profile*>(context);
+  service = new SigninManager(
+      scoped_ptr<SigninManagerDelegate>(
+          new ChromeSigninManagerDelegate(profile)));
+  return service;
+}
 
 }  // namespace
 
 
 class SigninManagerTest : public TokenServiceTestHarness {
  public:
+   SigninManagerTest() : manager_(NULL) {}
+   virtual ~SigninManagerTest() {}
+
   virtual void SetUp() OVERRIDE {
+    manager_ = NULL;
     prefs_.reset(new TestingPrefServiceSimple);
     chrome::RegisterLocalState(prefs_->registry());
     TestingBrowserProcess::GetGlobal()->SetLocalState(
         prefs_.get());
     TokenServiceTestHarness::SetUp();
-    manager_.reset(new SigninManager(
-        scoped_ptr<SigninManagerDelegate>(
-            new ChromeSigninManagerDelegate(profile()))));
     google_login_success_.ListenFor(
         chrome::NOTIFICATION_GOOGLE_SIGNIN_SUCCESSFUL,
         content::Source<Profile>(profile()));
@@ -71,14 +83,36 @@ class SigninManagerTest : public TokenServiceTestHarness {
   virtual void TearDown() OVERRIDE {
     // Destroy the SigninManager here, because it relies on profile() which is
     // freed in the base class.
-    manager_->Shutdown();
-    manager_.reset(NULL);
+    if (naked_manager_) {
+      naked_manager_->Shutdown();
+      naked_manager_.reset(NULL);
+    }
     TestingBrowserProcess::GetGlobal()->SetLocalState(NULL);
     prefs_.reset(NULL);
     TokenServiceTestHarness::TearDown();
   }
 
-  void SetupFetcherAndComplete(const std::string& url,
+  // Create a signin manager as a service if other code will try to get it as
+  // a PKS.
+  void CreateSigninManagerAsService() {
+    DCHECK(!manager_);
+    DCHECK(!naked_manager_);
+    manager_ = static_cast<SigninManager*>(
+        SigninManagerFactory::GetInstance()->SetTestingFactoryAndUse(
+            profile(), SigninManagerBuild));
+  }
+
+  // Create a naked signin manager if integration with PKSs is not needed.
+  void CreateNakedSigninManager() {
+    DCHECK(!manager_);
+    naked_manager_.reset(new SigninManager(
+        scoped_ptr<SigninManagerDelegate>(
+            new ChromeSigninManagerDelegate(profile()))));
+
+    manager_ = naked_manager_.get();
+  }
+
+  void SetupFetcherAndComplete(const GURL& url,
                                int response_code,
                                const net::ResponseCookies& cookies,
                                const std::string& response_string) {
@@ -87,7 +121,7 @@ class SigninManagerTest : public TokenServiceTestHarness {
     DCHECK(fetcher->delegate());
 
     cookies_.insert(cookies_.end(), cookies.begin(), cookies.end());
-    fetcher->set_url(GURL(url));
+    fetcher->set_url(url);
     fetcher->set_status(net::URLRequestStatus());
     fetcher->set_response_code(response_code);
     fetcher->SetResponseString(response_string);
@@ -134,10 +168,9 @@ class SigninManagerTest : public TokenServiceTestHarness {
   void SimulateValidUberToken() {
     SetupFetcherAndComplete(GaiaUrls::GetInstance()->oauth2_token_url(), 200,
                             net::ResponseCookies(), kGetTokenPairValidResponse);
-    std::string  uberauth_token_gurl = base::StringPrintf(
-        kUberAuthTokenURLFormat,
-        GaiaUrls::GetInstance()->oauth1_login_url().c_str(),
-        "source");
+    const GURL uberauth_token_gurl =
+        GaiaUrls::GetInstance()->oauth1_login_url().Resolve(
+            base::StringPrintf(kUberAuthTokenURLFormat, "source"));
     SetupFetcherAndComplete(uberauth_token_gurl, 200,
                             net::ResponseCookies(), "ut1");
 
@@ -161,14 +194,6 @@ class SigninManagerTest : public TokenServiceTestHarness {
     // Should go into token service and stop.
     EXPECT_EQ(1U, google_login_success_.size());
     EXPECT_EQ(0U, google_login_failure_.size());
-
-    // Should persist across resets.
-    manager_->Shutdown();
-    manager_.reset(new SigninManager(
-        scoped_ptr<SigninManagerDelegate>(
-            new ChromeSigninManagerDelegate(profile()))));
-    manager_->Initialize(profile(), NULL);
-    EXPECT_EQ("user@gmail.com", manager_->GetAuthenticatedUsername());
   }
 
   // Helper method that wraps the logic when signin with credentials
@@ -201,7 +226,8 @@ class SigninManagerTest : public TokenServiceTestHarness {
   }
 
   net::TestURLFetcherFactory factory_;
-  scoped_ptr<SigninManager> manager_;
+  scoped_ptr<SigninManager> naked_manager_;
+  SigninManager* manager_;
   content::TestNotificationTracker google_login_success_;
   content::TestNotificationTracker google_login_failure_;
   std::vector<std::string> oauth_tokens_fetched_;
@@ -209,41 +235,8 @@ class SigninManagerTest : public TokenServiceTestHarness {
   std::vector<std::string> cookies_;
 };
 
-// NOTE: ClientLogin's "StartSignin" is called after collecting credentials
-//       from the user.
-TEST_F(SigninManagerTest, SignInClientLogin) {
-  manager_->Initialize(profile(), NULL);
-  EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
-
-  manager_->StartSignIn(
-      "user@gmail.com", "password", std::string(), std::string());
-  EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
-
-  SimulateValidResponseClientLogin(true);
-  EXPECT_FALSE(manager_->GetAuthenticatedUsername().empty());
-
-  // Should go into token service and stop.
-  EXPECT_EQ(1U, google_login_success_.size());
-  EXPECT_EQ(0U, google_login_failure_.size());
-
-  service()->OnIssueAuthTokenSuccess(
-      GaiaConstants::kGaiaOAuth2LoginRefreshToken,
-      "oauth2Token");
-  SimulateValidUberToken();
-  // Check that the login cookie has been sent.
-  ASSERT_NE(std::find(cookies_.begin(), cookies_.end(), "checkCookie = true"),
-            cookies_.end());
-
-  // Should persist across resets.
-  manager_->Shutdown();
-  manager_.reset(new SigninManager(
-      scoped_ptr<SigninManagerDelegate>(
-          new ChromeSigninManagerDelegate(profile()))));
-  manager_->Initialize(profile(), NULL);
-  EXPECT_EQ("user@gmail.com", manager_->GetAuthenticatedUsername());
-}
-
 TEST_F(SigninManagerTest, SignInWithCredentials) {
+  CreateSigninManagerAsService();
   manager_->Initialize(profile(), NULL);
   EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
 
@@ -254,9 +247,17 @@ TEST_F(SigninManagerTest, SignInWithCredentials) {
       SigninManager::OAuthTokenFetchedCallback());
 
   ExpectSignInWithCredentialsSuccess();
+
+  // Should persist across resets.
+  manager_->Shutdown();
+  manager_ = NULL;
+  CreateNakedSigninManager();
+  manager_->Initialize(profile(), NULL);
+  EXPECT_EQ("user@gmail.com", manager_->GetAuthenticatedUsername());
 }
 
 TEST_F(SigninManagerTest, SignInWithCredentialsNonCanonicalEmail) {
+  CreateSigninManagerAsService();
   manager_->Initialize(profile(), NULL);
   EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
 
@@ -270,6 +271,7 @@ TEST_F(SigninManagerTest, SignInWithCredentialsNonCanonicalEmail) {
 }
 
 TEST_F(SigninManagerTest, SignInWithCredentialsWrongEmail) {
+  CreateSigninManagerAsService();
   manager_->Initialize(profile(), NULL);
   EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
 
@@ -285,6 +287,7 @@ TEST_F(SigninManagerTest, SignInWithCredentialsWrongEmail) {
 }
 
 TEST_F(SigninManagerTest, SignInWithCredentialsEmptyPasswordValidCookie) {
+  CreateSigninManagerAsService();
   manager_->Initialize(profile(), NULL);
   EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
 
@@ -312,6 +315,7 @@ TEST_F(SigninManagerTest, SignInWithCredentialsEmptyPasswordValidCookie) {
 }
 
 TEST_F(SigninManagerTest, SignInWithCredentialsEmptyPasswordNoValidCookie) {
+  CreateSigninManagerAsService();
   manager_->Initialize(profile(), NULL);
   EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
 
@@ -330,6 +334,7 @@ TEST_F(SigninManagerTest, SignInWithCredentialsEmptyPasswordNoValidCookie) {
 }
 
 TEST_F(SigninManagerTest, SignInWithCredentialsEmptyPasswordInValidCookie) {
+  CreateSigninManagerAsService();
   manager_->Initialize(profile(), NULL);
   EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
 
@@ -358,6 +363,7 @@ TEST_F(SigninManagerTest, SignInWithCredentialsEmptyPasswordInValidCookie) {
 }
 
 TEST_F(SigninManagerTest, SignInWithCredentialsCallbackComplete) {
+  CreateSigninManagerAsService();
   manager_->Initialize(profile(), NULL);
   EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
 
@@ -377,6 +383,7 @@ TEST_F(SigninManagerTest, SignInWithCredentialsCallbackComplete) {
 }
 
 TEST_F(SigninManagerTest, SignInWithCredentialsCallbackCancel) {
+  CreateSigninManagerAsService();
   manager_->Initialize(profile(), NULL);
   EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
 
@@ -396,143 +403,31 @@ TEST_F(SigninManagerTest, SignInWithCredentialsCallbackCancel) {
   EXPECT_EQ(oauth_tokens_fetched_[0], "rt1");
 }
 
-TEST_F(SigninManagerTest, SignInClientLoginNoGPlus) {
+TEST_F(SigninManagerTest, SignOut) {
+  CreateSigninManagerAsService();
   manager_->Initialize(profile(), NULL);
-  EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
+  SigninManager::OAuthTokenFetchedCallback dummy;
+  manager_->StartSignInWithCredentials("0", "user@gmail.com", "password",
+                                       dummy);
+  ExpectSignInWithCredentialsSuccess();
 
-  manager_->StartSignIn("username", "password", std::string(), std::string());
-  EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
-
-  SimulateValidResponseClientLogin(false);
-  EXPECT_FALSE(manager_->GetAuthenticatedUsername().empty());
-}
-
-TEST_F(SigninManagerTest, ClearTransientSigninData) {
-  manager_->Initialize(profile(), NULL);
-  EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
-
-  manager_->StartSignIn("username", "password", std::string(), std::string());
-  EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
-
-  SimulateValidResponseClientLogin(false);
-
-  // Should go into token service and stop.
-  EXPECT_EQ(1U, google_login_success_.size());
-  EXPECT_EQ(0U, google_login_failure_.size());
-
-  EXPECT_EQ("user@gmail.com", manager_->GetAuthenticatedUsername());
-
-  // Now clear the in memory data.
-  manager_->ClearTransientSigninData();
-  EXPECT_TRUE(manager_->last_result_.data.empty());
-  EXPECT_FALSE(manager_->GetAuthenticatedUsername().empty());
-
-  // Ensure preferences are not modified.
-  EXPECT_FALSE(
-     profile()->GetPrefs()->GetString(prefs::kGoogleServicesUsername).empty());
-
-  // On reset it should be regenerated.
-  manager_->Shutdown();
-  manager_.reset(new SigninManager(
-      scoped_ptr<SigninManagerDelegate>(
-          new ChromeSigninManagerDelegate(profile()))));
-  manager_->Initialize(profile(), NULL);
-
-  // Now make sure we have the right user name.
-  EXPECT_EQ("user@gmail.com", manager_->GetAuthenticatedUsername());
-}
-
-TEST_F(SigninManagerTest, SignOutClientLogin) {
-  manager_->Initialize(profile(), NULL);
-  manager_->StartSignIn("username", "password", std::string(), std::string());
-  SimulateValidResponseClientLogin(false);
-  manager_->OnClientLoginSuccess(credentials());
-
-  EXPECT_EQ("user@gmail.com", manager_->GetAuthenticatedUsername());
   manager_->SignOut();
   EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
   // Should not be persisted anymore
   manager_->Shutdown();
-  manager_.reset(new SigninManager(
-      scoped_ptr<SigninManagerDelegate>(
-          new ChromeSigninManagerDelegate(profile()))));
+  manager_ = NULL;
+  CreateNakedSigninManager();
   manager_->Initialize(profile(), NULL);
-  EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
-}
-
-TEST_F(SigninManagerTest, SignInFailureClientLogin) {
-  manager_->Initialize(profile(), NULL);
-  manager_->StartSignIn("username", "password", std::string(), std::string());
-  GoogleServiceAuthError error(GoogleServiceAuthError::REQUEST_CANCELED);
-  manager_->OnClientLoginFailure(error);
-
-  EXPECT_EQ(0U, google_login_success_.size());
-  EXPECT_EQ(1U, google_login_failure_.size());
-
-  EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
-
-  // Should not be persisted
-  manager_->Shutdown();
-  manager_.reset(new SigninManager(
-      scoped_ptr<SigninManagerDelegate>(
-          new ChromeSigninManagerDelegate(profile()))));
-  manager_->Initialize(profile(), NULL);
-  EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
-}
-
-TEST_F(SigninManagerTest, ProvideSecondFactorSuccess) {
-  manager_->Initialize(profile(), NULL);
-  manager_->StartSignIn("username", "password", std::string(), std::string());
-  GoogleServiceAuthError error(GoogleServiceAuthError::TWO_FACTOR);
-  manager_->OnClientLoginFailure(error);
-
-  EXPECT_EQ(0U, google_login_success_.size());
-  EXPECT_EQ(1U, google_login_failure_.size());
-
-  EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
-  EXPECT_FALSE(manager_->possibly_invalid_username_.empty());
-
-  manager_->ProvideSecondFactorAccessCode("access");
-  SimulateValidResponseClientLogin(false);
-
-  EXPECT_EQ(1U, google_login_success_.size());
-  EXPECT_EQ(1U, google_login_failure_.size());
-}
-
-TEST_F(SigninManagerTest, ProvideSecondFactorFailure) {
-  manager_->Initialize(profile(), NULL);
-  manager_->StartSignIn("username", "password", std::string(), std::string());
-  GoogleServiceAuthError error1(GoogleServiceAuthError::TWO_FACTOR);
-  manager_->OnClientLoginFailure(error1);
-
-  EXPECT_EQ(0U, google_login_success_.size());
-  EXPECT_EQ(1U, google_login_failure_.size());
-
-  EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
-  EXPECT_FALSE(manager_->possibly_invalid_username_.empty());
-
-  manager_->ProvideSecondFactorAccessCode("badaccess");
-  GoogleServiceAuthError error2(
-      GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS);
-  manager_->OnClientLoginFailure(error2);
-
-  EXPECT_EQ(0U, google_login_success_.size());
-  EXPECT_EQ(2U, google_login_failure_.size());
-  EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
-
-  manager_->ProvideSecondFactorAccessCode("badaccess");
-  GoogleServiceAuthError error3(GoogleServiceAuthError::CONNECTION_FAILED);
-  manager_->OnClientLoginFailure(error3);
-
-  EXPECT_EQ(0U, google_login_success_.size());
-  EXPECT_EQ(3U, google_login_failure_.size());
   EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
 }
 
 TEST_F(SigninManagerTest, SignOutMidConnect) {
+  CreateSigninManagerAsService();
   manager_->Initialize(profile(), NULL);
-  manager_->StartSignIn("username", "password", std::string(), std::string());
-  EXPECT_EQ("username", manager_->GetUsernameForAuthInProgress());
+  SigninManager::OAuthTokenFetchedCallback dummy;
+  manager_->StartSignInWithCredentials("0", "user@gmail.com", "password",
+                                       dummy);
+
   manager_->SignOut();
   EXPECT_EQ(0U, google_login_success_.size());
   EXPECT_EQ(1U, google_login_failure_.size());
@@ -542,6 +437,7 @@ TEST_F(SigninManagerTest, SignOutMidConnect) {
 }
 
 TEST_F(SigninManagerTest, SignOutWhileProhibited) {
+  CreateSigninManagerAsService();
   manager_->Initialize(profile(), NULL);
   EXPECT_TRUE(manager_->GetAuthenticatedUsername().empty());
 
@@ -574,6 +470,7 @@ TEST_F(SigninManagerTest, TestIsWebBasedSigninFlowURL) {
 TEST_F(SigninManagerTest, Prohibited) {
   g_browser_process->local_state()->SetString(
       prefs::kGoogleServicesUsernamePattern, ".*@google.com");
+  CreateNakedSigninManager();
   manager_->Initialize(profile(), g_browser_process->local_state());
   EXPECT_TRUE(manager_->IsAllowedUsername("test@google.com"));
   EXPECT_TRUE(manager_->IsAllowedUsername("happy@google.com"));
@@ -587,6 +484,7 @@ TEST_F(SigninManagerTest, TestAlternateWildcard) {
   // the admin entered ".*@google.com").
   g_browser_process->local_state()->SetString(
       prefs::kGoogleServicesUsernamePattern, "*@google.com");
+  CreateNakedSigninManager();
   manager_->Initialize(profile(), g_browser_process->local_state());
   EXPECT_TRUE(manager_->IsAllowedUsername("test@google.com"));
   EXPECT_TRUE(manager_->IsAllowedUsername("happy@google.com"));
@@ -600,6 +498,7 @@ TEST_F(SigninManagerTest, ProhibitedAtStartup) {
                                    "monkey@invalid.com");
   g_browser_process->local_state()->SetString(
       prefs::kGoogleServicesUsernamePattern, ".*@google.com");
+  CreateNakedSigninManager();
   manager_->Initialize(profile(), g_browser_process->local_state());
   // Currently signed in user is prohibited by policy, so should be signed out.
   EXPECT_EQ("", manager_->GetAuthenticatedUsername());
@@ -608,6 +507,7 @@ TEST_F(SigninManagerTest, ProhibitedAtStartup) {
 TEST_F(SigninManagerTest, ProhibitedAfterStartup) {
   std::string user("monkey@invalid.com");
   profile()->GetPrefs()->SetString(prefs::kGoogleServicesUsername, user);
+  CreateNakedSigninManager();
   manager_->Initialize(profile(), g_browser_process->local_state());
   EXPECT_EQ(user, manager_->GetAuthenticatedUsername());
   // Update the profile - user should be signed out.
@@ -617,6 +517,7 @@ TEST_F(SigninManagerTest, ProhibitedAfterStartup) {
 }
 
 TEST_F(SigninManagerTest, ExternalSignIn) {
+  CreateNakedSigninManager();
   manager_->Initialize(profile(), g_browser_process->local_state());
   EXPECT_EQ("",
             profile()->GetPrefs()->GetString(prefs::kGoogleServicesUsername));

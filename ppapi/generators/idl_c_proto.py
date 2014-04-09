@@ -125,6 +125,13 @@ class CGen(object):
       'return': '%s',
       'store': '%s'
     },
+    'mem_ptr_t': {
+      'in': 'const %s',
+      'inout': '%s',
+      'out': '%s',
+      'return': '%s',
+      'store': '%s'
+    },
     'str_t': {
       'in': 'const %s',
       'inout': '%s',
@@ -161,6 +168,7 @@ class CGen(object):
   'double_t': 'double',
   'handle_t': 'int',
   'mem_t': 'void*',
+  'mem_ptr_t': 'void**',
   'str_t': 'char*',
   'cstr_t': 'const char*',
   'interface_t' : 'const void*'
@@ -606,8 +614,14 @@ class CGen(object):
     for line in data.split('\n'):
       # Add indentation
       line = tab + line
-      if len(line) <= 80:
+      space_break = line.rfind(' ', 0, 80)
+      if len(line) <= 80 or 'http' in line:
+        # Ignore normal line and URLs permitted by the style guide.
         lines.append(line.rstrip())
+      elif not '(' in line and space_break >= 0:
+        # Break long typedefs on nearest space.
+        lines.append(line[0:space_break])
+        lines.append('    ' + line[space_break + 1:])
       else:
         left = line.rfind('(') + 1
         args = line[left:].split(',')

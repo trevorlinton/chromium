@@ -25,7 +25,9 @@
 #include "content/child/webmessageportchannel_impl.h"
 #include "content/common/file_utilities_messages.h"
 #include "content/common/gpu/client/context_provider_command_buffer.h"
+#include "content/common/gpu/client/gpu_channel_host.h"
 #include "content/common/gpu/client/webgraphicscontext3d_command_buffer_impl.h"
+#include "content/common/gpu/gpu_process_launch_causes.h"
 #include "content/common/mime_registry_messages.h"
 #include "content/common/view_messages.h"
 #include "content/public/common/content_switches.h"
@@ -44,8 +46,7 @@
 #include "content/renderer/render_thread_impl.h"
 #include "content/renderer/renderer_clipboard_client.h"
 #include "content/renderer/webclipboard_impl.h"
-#include "content/renderer/webcrypto_impl.h"
-#include "content/renderer/websharedworkerrepository_impl.h"
+#include "content/renderer/webcrypto/webcrypto_impl.h"
 #include "gpu/config/gpu_info.h"
 #include "ipc/ipc_sync_message_filter.h"
 #include "media/audio/audio_output_device.h"
@@ -128,16 +129,14 @@ base::LazyInstance<WebGamepads>::Leaky g_test_gamepads =
     LAZY_INSTANCE_INITIALIZER;
 base::LazyInstance<WebKit::WebDeviceMotionData>::Leaky
     g_test_device_motion_data = LAZY_INSTANCE_INITIALIZER;
+base::LazyInstance<WebKit::WebDeviceOrientationData>::Leaky
+    g_test_device_orientation_data = LAZY_INSTANCE_INITIALIZER;
 
 //------------------------------------------------------------------------------
 
 class RendererWebKitPlatformSupportImpl::MimeRegistry
     : public webkit_glue::SimpleWebMimeRegistryImpl {
  public:
-  // TODO(ddorwin): Remove after http://webk.it/82983 lands.
-  virtual WebKit::WebMimeRegistry::SupportsType supportsMediaMIMEType(
-      const WebKit::WebString& mime_type,
-      const WebKit::WebString& codecs);
   virtual WebKit::WebMimeRegistry::SupportsType supportsMediaMIMEType(
       const WebKit::WebString& mime_type,
       const WebKit::WebString& codecs,
@@ -148,8 +147,6 @@ class RendererWebKitPlatformSupportImpl::MimeRegistry
       const WebKit::WebString& file_extension);
   virtual WebKit::WebString mimeTypeFromFile(
       const WebKit::WebString& file_path);
-  virtual WebKit::WebString preferredExtensionForMIMEType(
-      const WebKit::WebString& mime_type);
 };
 
 class RendererWebKitPlatformSupportImpl::FileUtilities
@@ -207,7 +204,6 @@ RendererWebKitPlatformSupportImpl::RendererWebKitPlatformSupportImpl()
       mime_registry_(new RendererWebKitPlatformSupportImpl::MimeRegistry),
       sudden_termination_disables_(0),
       plugin_refresh_allowed_(true),
-      shared_worker_repository_(new WebSharedWorkerRepositoryImpl),
       child_thread_loop_(base::MessageLoopProxy::current()) {
   if (g_sandbox_enabled && sandboxEnabled()) {
     sandbox_support_.reset(
@@ -221,10 +217,12 @@ RendererWebKitPlatformSupportImpl::RendererWebKitPlatformSupportImpl()
     sync_message_filter_ = ChildThread::current()->sync_message_filter();
     thread_safe_sender_ = ChildThread::current()->thread_safe_sender();
     quota_message_filter_ = ChildThread::current()->quota_message_filter();
+    blob_registry_.reset(new WebBlobRegistryImpl(thread_safe_sender_));
   }
 }
 
 RendererWebKitPlatformSupportImpl::~RendererWebKitPlatformSupportImpl() {
+  WebFileSystemImpl::DeleteThreadSpecificInstance();
 }
 
 //------------------------------------------------------------------------------
@@ -374,19 +372,10 @@ WebIDBFactory* RendererWebKitPlatformSupportImpl::idbFactory() {
 //------------------------------------------------------------------------------
 
 WebFileSystem* RendererWebKitPlatformSupportImpl::fileSystem() {
-  if (!web_file_system_)
-    web_file_system_.reset(new WebFileSystemImpl(child_thread_loop_.get()));
-  return web_file_system_.get();
+  return WebFileSystemImpl::ThreadSpecificInstance(child_thread_loop_.get());
 }
 
 //------------------------------------------------------------------------------
-
-WebMimeRegistry::SupportsType
-RendererWebKitPlatformSupportImpl::MimeRegistry::supportsMediaMIMEType(
-    const WebString& mime_type,
-    const WebString& codecs) {
-  return supportsMediaMIMEType(mime_type, codecs, WebString());
-}
 
 WebMimeRegistry::SupportsType
 RendererWebKitPlatformSupportImpl::MimeRegistry::supportsMediaMIMEType(
@@ -400,10 +389,6 @@ RendererWebKitPlatformSupportImpl::MimeRegistry::supportsMediaMIMEType(
 
   if (!key_system.isEmpty()) {
     // Check whether the key system is supported with the mime_type and codecs.
-
-    // Not supporting the key system is a flat-out no.
-    if (!IsSupportedKeySystem(key_system))
-      return IsNotSupported;
 
     std::vector<std::string> strict_codecs;
     bool strip_suffix = !net::IsStrictMediaMimeType(mime_type_ascii);
@@ -449,7 +434,7 @@ RendererWebKitPlatformSupportImpl::MimeRegistry::supportsMediaSourceMIMEType(
   const std::string mime_type_ascii = ToASCIIOrEmpty(mime_type);
   std::vector<std::string> parsed_codec_ids;
   net::ParseCodecString(ToASCIIOrEmpty(codecs), &parsed_codec_ids, false);
-  if (mime_type_ascii.empty() || parsed_codec_ids.size() == 0)
+  if (mime_type_ascii.empty())
     return false;
   return media::StreamParserFactory::IsTypeSupported(
       mime_type_ascii, parsed_codec_ids);
@@ -482,21 +467,6 @@ WebString RendererWebKitPlatformSupportImpl::MimeRegistry::mimeTypeFromFile(
       base::FilePath::FromUTF16Unsafe(file_path),
       &mime_type));
   return ASCIIToUTF16(mime_type);
-}
-
-WebString
-RendererWebKitPlatformSupportImpl::MimeRegistry::preferredExtensionForMIMEType(
-    const WebString& mime_type) {
-  if (IsPluginProcess())
-    return SimpleWebMimeRegistryImpl::preferredExtensionForMIMEType(mime_type);
-
-  // The sandbox restricts our access to the registry, so we need to proxy
-  // these calls over to the browser process.
-  base::FilePath::StringType file_extension;
-  RenderThread::Get()->Send(
-      new MimeRegistryMsg_GetPreferredExtensionForMimeType(
-          UTF16ToASCII(mime_type), &file_extension));
-  return base::FilePath(file_extension).AsUTF16Unsafe();
 }
 
 //------------------------------------------------------------------------------
@@ -633,16 +603,6 @@ long long RendererWebKitPlatformSupportImpl::databaseGetSpaceAvailableForOrigin(
     const WebString& origin_identifier) {
   return DatabaseUtil::DatabaseGetSpaceAvailable(origin_identifier,
                                                  sync_message_filter_.get());
-}
-
-WebKit::WebSharedWorkerRepository*
-RendererWebKitPlatformSupportImpl::sharedWorkerRepository() {
-  if (!CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kDisableSharedWorkers)) {
-    return shared_worker_repository_.get();
-  } else {
-    return NULL;
-  }
 }
 
 bool RendererWebKitPlatformSupportImpl::canAccelerate2dCanvas() {
@@ -867,9 +827,7 @@ void RendererWebKitPlatformSupportImpl::screenColorProfile(
 //------------------------------------------------------------------------------
 
 WebBlobRegistry* RendererWebKitPlatformSupportImpl::blobRegistry() {
-  // thread_safe_sender_ can be NULL when running some tests.
-  if (!blob_registry_.get() && thread_safe_sender_.get())
-    blob_registry_.reset(new WebBlobRegistryImpl(thread_safe_sender_.get()));
+  // blob_registry_ can be NULL when running some tests.
   return blob_registry_.get();
 }
 
@@ -961,8 +919,14 @@ bool RendererWebKitPlatformSupportImpl::processMemorySizesInBytes(
 WebKit::WebGraphicsContext3D*
 RendererWebKitPlatformSupportImpl::createOffscreenGraphicsContext3D(
     const WebKit::WebGraphicsContext3D::Attributes& attributes) {
+  if (!RenderThreadImpl::current())
+    return NULL;
+
+  scoped_refptr<GpuChannelHost> gpu_channel_host(
+      RenderThreadImpl::current()->EstablishGpuChannelSync(
+          CAUSE_FOR_GPU_LAUNCH_WEBGRAPHICSCONTEXT3DCOMMANDBUFFERIMPL_INITIALIZE));
   return WebGraphicsContext3DCommandBufferImpl::CreateOffscreenContext(
-      RenderThreadImpl::current(),
+      gpu_channel_host.get(),
       attributes,
       GURL(attributes.topDocumentURL));
 }
@@ -971,15 +935,11 @@ RendererWebKitPlatformSupportImpl::createOffscreenGraphicsContext3D(
 
 WebKit::WebGraphicsContext3DProvider* RendererWebKitPlatformSupportImpl::
     createSharedOffscreenGraphicsContext3DProvider() {
-  if (!shared_offscreen_context_.get() ||
-      shared_offscreen_context_->DestroyedOnMainThread()) {
-    shared_offscreen_context_ =
-        RenderThreadImpl::current()->OffscreenContextProviderForMainThread();
-  }
-  if (!shared_offscreen_context_.get())
+  scoped_refptr<cc::ContextProvider> provider =
+      RenderThreadImpl::current()->SharedMainThreadContextProvider();
+  if (!provider)
     return NULL;
-  return new webkit::gpu::WebGraphicsContext3DProviderImpl(
-      shared_offscreen_context_);
+  return new webkit::gpu::WebGraphicsContext3DProviderImpl(provider);
 }
 
 //------------------------------------------------------------------------------
@@ -1027,22 +987,32 @@ void RendererWebKitPlatformSupportImpl::SetMockDeviceMotionDataForTesting(
 
 void RendererWebKitPlatformSupportImpl::setDeviceOrientationListener(
     WebKit::WebDeviceOrientationListener* listener) {
-  if (!device_orientation_event_pump_) {
-    device_orientation_event_pump_.reset(new DeviceOrientationEventPump);
-    device_orientation_event_pump_->Attach(RenderThreadImpl::current());
+  if (g_test_device_orientation_data == 0) {
+    if (!device_orientation_event_pump_) {
+      device_orientation_event_pump_.reset(new DeviceOrientationEventPump);
+      device_orientation_event_pump_->Attach(RenderThreadImpl::current());
+    }
+    device_orientation_event_pump_->SetListener(listener);
+  } else if (listener) {
+    // Testing mode: just echo the test data to the listener.
+    base::MessageLoopProxy::current()->PostTask(
+        FROM_HERE,
+        base::Bind(
+            &WebKit::WebDeviceOrientationListener::didChangeDeviceOrientation,
+            base::Unretained(listener),
+            g_test_device_orientation_data.Get()));
   }
-  device_orientation_event_pump_->SetListener(listener);
+}
+
+// static
+void RendererWebKitPlatformSupportImpl::SetMockDeviceOrientationDataForTesting(
+    const WebKit::WebDeviceOrientationData& data) {
+  g_test_device_orientation_data.Get() = data;
 }
 
 //------------------------------------------------------------------------------
 
 WebKit::WebCrypto* RendererWebKitPlatformSupportImpl::crypto() {
-  // Use a mock implementation for testing in-progress work.
-  WebKit::WebCrypto* crypto =
-      GetContentClient()->renderer()->OverrideWebCrypto();
-  if (crypto)
-    return crypto;
-
   if (!web_crypto_)
     web_crypto_.reset(new WebCryptoImpl());
   return web_crypto_.get();

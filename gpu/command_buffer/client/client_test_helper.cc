@@ -109,11 +109,6 @@ void MockCommandBufferBase::SetContextLostReason(
   state_.context_lost_reason = reason;
 }
 
-uint32 MockCommandBufferBase::InsertSyncPoint() {
-  GPU_NOTREACHED();
-  return 0;
-}
-
 // GCC requires these declarations, but MSVC requires they not be present
 #ifndef _MSC_VER
 const int32 MockCommandBufferBase::kTransferBufferBaseId;
@@ -149,6 +144,12 @@ void MockClientCommandBufferMockFlush::DelegateToFake() {
   ON_CALL(*this, Flush(_))
       .WillByDefault(Invoke(
           this, &MockCommandBufferBase::FlushHelper));
+}
+
+MockClientGpuControl::MockClientGpuControl() {
+}
+
+MockClientGpuControl::~MockClientGpuControl() {
 }
 
 }  // namespace gpu

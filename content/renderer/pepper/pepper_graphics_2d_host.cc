@@ -8,6 +8,8 @@
 #include "base/debug/trace_event.h"
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
+#include "cc/resources/texture_mailbox.h"
+#include "content/public/renderer/render_thread.h"
 #include "content/public/renderer/renderer_ppapi_host.h"
 #include "content/renderer/pepper/common.h"
 #include "content/renderer/pepper/gfx_conversion.h"
@@ -186,9 +188,8 @@ PepperGraphics2DHost::PepperGraphics2DHost(RendererPpapiHost* host,
       offscreen_flush_pending_(false),
       is_always_opaque_(false),
       scale_(1.0f),
-      weak_ptr_factory_(this),
-      is_running_in_process_(host->IsRunningInProcess()) {
-}
+      is_running_in_process_(host->IsRunningInProcess()),
+      texture_mailbox_modified_(true) {}
 
 PepperGraphics2DHost::~PepperGraphics2DHost() {
   // Unbind from the instance when destroyed if we're still bound.
@@ -312,6 +313,8 @@ bool PepperGraphics2DHost::BindToInstance(
     new_instance->InvalidateRect(gfx::Rect());
   }
 
+  texture_mailbox_modified_ = true;
+
   bound_instance_ = new_instance;
   return true;
 }
@@ -382,9 +385,6 @@ void PepperGraphics2DHost::Paint(WebKit::WebCanvas* canvas,
     canvas->scale(scale_, scale_);
   }
   canvas->drawBitmap(image, pixel_origin.x(), pixel_origin.y(), &paint);
-}
-
-void PepperGraphics2DHost::ViewWillInitiatePaint() {
 }
 
 void PepperGraphics2DHost::ViewInitiatedPaint() {
@@ -551,6 +551,37 @@ int32_t PepperGraphics2DHost::OnHostMsgReadImageData(
   return ReadImageData(image, &top_left) ? PP_OK : PP_ERROR_FAILED;
 }
 
+void ReleaseCallback(scoped_ptr<base::SharedMemory> memory,
+                     unsigned sync_point,
+                     bool lost_resource) {}
+
+bool PepperGraphics2DHost::PrepareTextureMailbox(
+    cc::TextureMailbox* mailbox,
+    scoped_ptr<cc::SingleReleaseCallback>* release_callback) {
+  if (!texture_mailbox_modified_)
+    return false;
+  // TODO(jbauman): Send image_data_ through mailbox to avoid copy.
+  gfx::Size pixel_image_size(image_data_->width(), image_data_->height());
+  int buffer_size = pixel_image_size.GetArea() * 4;
+  scoped_ptr<base::SharedMemory> memory =
+      RenderThread::Get()->HostAllocateSharedMemoryBuffer(buffer_size);
+  if (!memory || !memory->Map(buffer_size))
+    return false;
+  void* src = image_data_->Map();
+  memcpy(memory->memory(), src, buffer_size);
+  image_data_->Unmap();
+
+  *mailbox = cc::TextureMailbox(memory.get(), pixel_image_size);
+  *release_callback = cc::SingleReleaseCallback::Create(
+      base::Bind(&ReleaseCallback, base::Passed(&memory)));
+  texture_mailbox_modified_ = false;
+  return true;
+}
+
+void PepperGraphics2DHost::AttachedToNewLayer() {
+  texture_mailbox_modified_ = true;
+}
+
 int32_t PepperGraphics2DHost::Flush(PP_Resource* old_image_data) {
   bool done_replace_contents = false;
   bool no_update_visible = true;
@@ -586,9 +617,9 @@ int32_t PepperGraphics2DHost::Flush(PP_Resource* old_image_data) {
     // For correctness with accelerated compositing, we must issue an invalidate
     // on the full op_rect even if it is partially or completely off-screen.
     // However, if we issue an invalidate for a clipped-out region, WebKit will
-    // do nothing and we won't get any ViewWillInitiatePaint/ViewFlushedPaint
-    // calls, leaving our callback stranded. So we still need to check whether
-    // the repainted area is visible to determine how to deal with the callback.
+    // do nothing and we won't get any ViewFlushedPaint calls, leaving our
+    // callback stranded. So we still need to check whether the repainted area
+    // is visible to determine how to deal with the callback.
     if (bound_instance_ && !op_rect.IsEmpty()) {
       gfx::Point scroll_delta(operation.scroll_dx, operation.scroll_dy);
       if (!ConvertToLogicalPixels(scale_,
@@ -616,6 +647,7 @@ int32_t PepperGraphics2DHost::Flush(PP_Resource* old_image_data) {
       } else {
         bound_instance_->InvalidateRect(op_rect);
       }
+      texture_mailbox_modified_ = true;
     }
   }
   queued_operations_.clear();
@@ -726,7 +758,7 @@ void PepperGraphics2DHost::ScheduleOffscreenFlushAck() {
   base::MessageLoop::current()->PostDelayedTask(
       FROM_HERE,
       base::Bind(&PepperGraphics2DHost::SendOffscreenFlushAck,
-                 weak_ptr_factory_.GetWeakPtr()),
+                 AsWeakPtr()),
       base::TimeDelta::FromMilliseconds(kOffscreenCallbackDelayMs));
 }
 

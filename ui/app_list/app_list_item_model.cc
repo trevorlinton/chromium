@@ -9,8 +9,9 @@
 
 namespace app_list {
 
-AppListItemModel::AppListItemModel()
-    : highlighted_(false),
+AppListItemModel::AppListItemModel(const std::string& id)
+    : id_(id),
+      highlighted_(false),
       is_installing_(false),
       percent_downloaded_(-1) {
 }
@@ -24,11 +25,13 @@ void AppListItemModel::SetIcon(const gfx::ImageSkia& icon, bool has_shadow) {
   FOR_EACH_OBSERVER(AppListItemModelObserver, observers_, ItemIconChanged());
 }
 
-void AppListItemModel::SetTitle(const std::string& title) {
-  if (title_ == title)
+void AppListItemModel::SetTitleAndFullName(const std::string& title,
+                                           const std::string& full_name) {
+  if (title_ == title && full_name_ == full_name)
     return;
 
   title_ = title;
+  full_name_ = full_name;
   FOR_EACH_OBSERVER(AppListItemModelObserver, observers_, ItemTitleChanged());
 }
 
@@ -68,6 +71,14 @@ void AppListItemModel::AddObserver(AppListItemModelObserver* observer) {
 
 void AppListItemModel::RemoveObserver(AppListItemModelObserver* observer) {
   observers_.RemoveObserver(observer);
+}
+
+void AppListItemModel::Activate(int event_flags) {
+}
+
+const char* AppListItemModel::GetAppType() const {
+  static const char* app_type = "";
+  return app_type;
 }
 
 ui::MenuModel* AppListItemModel::GetContextMenuModel() {

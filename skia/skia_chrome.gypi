@@ -20,10 +20,6 @@
     ],
   },
 
-  'include_dirs': [
-    '..',
-  ],
-
   'sources': [
     'ext/analysis_canvas.cc',
     'ext/analysis_canvas.h',
@@ -48,7 +44,6 @@
     'ext/lazy_pixel_ref.h',
     'ext/lazy_pixel_ref_utils.cc',
     'ext/lazy_pixel_ref_utils.h',
-    'ext/SkThread_chrome.cc',
     'ext/opacity_draw_filter.cc',
     'ext/opacity_draw_filter.h',
     'ext/paint_simplifier.cc',
@@ -63,6 +58,8 @@
     'ext/recursive_gaussian_convolution.cc',
     'ext/recursive_gaussian_convolution.h',
     'ext/refptr.h',
+    'ext/SkDiscardableMemory_chrome.h',
+    'ext/SkDiscardableMemory_chrome.cc',
     'ext/SkMemory_new_handler.cpp',
     'ext/skia_trace_shim.h',
     'ext/skia_utils_base.cc',
@@ -80,18 +77,10 @@
     'ext/vector_platform_device_skia.cc',
     'ext/vector_platform_device_skia.h',
   ],
-  
   'conditions': [
-    # For POSIX platforms, prefer the Mutex implementation provided by Skia
-    # since it does not generate static initializers.
-    # TODO: should check if SK_USE_POSIX_THREADS is defined instead
-    [ 'OS == "android" or OS == "linux" or OS == "mac" or OS == "ios"', {
-      'sources!': [
-        'ext/SkThread_chrome.cc',
-      ],
-    }],
     [ 'OS == "android" and enable_printing == 0', {
       'sources!': [
+        'ext/skia_utils_base.cc',
         'ext/vector_platform_device_skia.cc',
       ],
     }],
@@ -101,11 +90,6 @@
       ],
       'dependencies!': [
         'skia_chrome_opts',
-      ],
-    }],
-    [ 'OS == "win"', {
-      'sources!': [
-        'ext/SkThread_chrome.cc',
       ],
     }],
     # TODO(scottmg): http://crbug.com/177306

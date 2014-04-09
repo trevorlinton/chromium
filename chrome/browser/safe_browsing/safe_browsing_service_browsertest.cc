@@ -23,6 +23,8 @@
 #include "chrome/browser/prerender/prerender_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/profiles/startup_task_runner_service.h"
+#include "chrome/browser/profiles/startup_task_runner_service_factory.h"
 #include "chrome/browser/safe_browsing/client_side_detection_service.h"
 #include "chrome/browser/safe_browsing/database_manager.h"
 #include "chrome/browser/safe_browsing/protocol_manager.h"
@@ -124,6 +126,9 @@ class TestSafeBrowsingDatabase :  public SafeBrowsingDatabase {
   virtual bool ContainsSideEffectFreeWhitelistUrl(const GURL& url) OVERRIDE {
     return true;
   }
+  virtual bool ContainsMalwareIP(const std::string& ip_address) OVERRIDE {
+    return true;
+  }
   virtual bool UpdateStarted(std::vector<SBListChunkRanges>* lists) OVERRIDE {
     ADD_FAILURE() << "Not implemented.";
     return false;
@@ -213,7 +218,8 @@ class TestSafeBrowsingDatabaseFactory : public SafeBrowsingDatabaseFactory {
       bool enable_client_side_whitelist,
       bool enable_download_whitelist,
       bool enable_extension_blacklist,
-      bool enable_side_effect_free_whitelist) OVERRIDE {
+      bool enable_side_effect_free_whitelist,
+      bool enable_ip_blacklist) OVERRIDE {
     db_ = new TestSafeBrowsingDatabase();
     return db_;
   }
@@ -463,7 +469,6 @@ namespace {
 
 const char kEmptyPage[] = "files/empty.html";
 const char kMalwareFile[] = "files/downloads/dangerous/dangerous.exe";
-const char kMalwareIframe[] = "files/safe_browsing/malware_iframe.html";
 const char kMalwarePage[] = "files/safe_browsing/malware.html";
 
 // This test goes through DownloadResourceHandler.
@@ -769,6 +774,8 @@ IN_PROC_BROWSER_TEST_F(SafeBrowsingServiceTest, StartAndStop) {
   scoped_ptr<Profile> profile2(Profile::CreateProfile(
       temp_profile_dir_.path(), NULL, Profile::CREATE_MODE_SYNCHRONOUS));
   ASSERT_TRUE(profile2.get() != NULL);
+  StartupTaskRunnerServiceFactory::GetForProfile(profile2.get())->
+              StartDeferredTaskRunners();
   PrefService* pref_service2 = profile2->GetPrefs();
   EXPECT_TRUE(pref_service2->GetBoolean(prefs::kSafeBrowsingEnabled));
   // We don't expect the state to have changed, but if it did, wait for it.

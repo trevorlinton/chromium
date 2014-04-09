@@ -14,10 +14,6 @@
 #include "content/public/browser/resource_controller.h"
 #include "net/url_request/url_request.h"
 
-namespace net {
-class ClientCertStore;
-}
-
 namespace content {
 class ResourceDispatcherHostLoginDelegate;
 class ResourceLoaderDelegate;
@@ -43,8 +39,7 @@ class CONTENT_EXPORT ResourceLoader : public net::URLRequest::Delegate,
 
   bool is_transferring() const { return is_transferring_; }
   void MarkAsTransferring(const GURL& target_url);
-  void WillCompleteTransfer();
-  void CompleteTransfer(scoped_ptr<ResourceHandler> new_handler);
+  void CompleteTransfer();
 
   net::URLRequest* request() { return request_.get(); }
   ResourceRequestInfoImpl* GetRequestInfo();
@@ -57,17 +52,7 @@ class CONTENT_EXPORT ResourceLoader : public net::URLRequest::Delegate,
 
  private:
   FRIEND_TEST_ALL_PREFIXES(ResourceLoaderTest, ClientCertStoreLookup);
-
-  ResourceLoader(scoped_ptr<net::URLRequest> request,
-                 scoped_ptr<ResourceHandler> handler,
-                 ResourceLoaderDelegate* delegate,
-                 scoped_ptr<net::ClientCertStore> client_cert_store);
-
-  // Initialization logic shared between the public and private constructor.
-  void Init(scoped_ptr<net::URLRequest> request,
-            scoped_ptr<ResourceHandler> handler,
-            ResourceLoaderDelegate* delegate,
-            scoped_ptr<net::ClientCertStore> client_cert_store);
+  FRIEND_TEST_ALL_PREFIXES(ResourceLoaderTest, ClientCertStoreNull);
 
   // net::URLRequest::Delegate implementation:
   virtual void OnReceivedRedirect(net::URLRequest* request,
@@ -105,8 +90,20 @@ class CONTENT_EXPORT ResourceLoader : public net::URLRequest::Delegate,
   void CompleteRead(int bytes_read);
   void ResponseCompleted();
   void CallDidFinishLoading();
+  void RecordHistograms();
 
   bool is_deferred() const { return deferred_stage_ != DEFERRED_NONE; }
+
+  // Used for categorizing loading of prefetches for reporting in histograms.
+  // NOTE: This enumeration is used in histograms, so please do not add entries
+  // in the middle.
+  enum PrefetchStatus {
+    STATUS_UNDEFINED,
+    STATUS_SUCCESS_FROM_CACHE,
+    STATUS_SUCCESS_FROM_NETWORK,
+    STATUS_CANCELED,
+    STATUS_MAX,
+  };
 
   enum DeferredStage {
     DEFERRED_NONE,
@@ -133,8 +130,6 @@ class CONTENT_EXPORT ResourceLoader : public net::URLRequest::Delegate,
   // consumer.  We are waiting for a notification to complete the transfer, at
   // which point we'll receive a new ResourceHandler.
   bool is_transferring_;
-
-  scoped_ptr<net::ClientCertStore> client_cert_store_;
 
   base::WeakPtrFactory<ResourceLoader> weak_ptr_factory_;
 

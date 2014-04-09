@@ -80,10 +80,10 @@ class MonitorFinder : public base::RefCountedThreadSafe<MonitorFinder> {
       return;
     gfx::NativeView native_view = view->GetNativeView();
 #if defined(USE_AURA)
-    aura::RootWindow* root = native_view->GetRootWindow();
-    if (!root)
+    aura::WindowEventDispatcher* dispatcher = native_view->GetDispatcher();
+    if (!dispatcher)
       return;
-    HWND window = root->GetAcceleratedWidget();
+    HWND window = dispatcher->GetAcceleratedWidget();
 #else
     HWND window = native_view;
 #endif
@@ -171,9 +171,13 @@ int32_t PepperFlashDRMHost::OnHostMsgGetHmonitor(
 
 void PepperFlashDRMHost::GotDeviceID(
     ppapi::host::ReplyMessageContext reply_context,
-    const std::string& id) {
-  reply_context.params.set_result(
-      id.empty() ? PP_ERROR_FAILED : PP_OK);
+    const std::string& id,
+    int32_t result) {
+  if (id.empty() && result == PP_OK) {
+    NOTREACHED();
+    result = PP_ERROR_FAILED;
+  }
+  reply_context.params.set_result(result);
   host()->SendReply(reply_context,
                     PpapiPluginMsg_FlashDRM_GetDeviceIDReply(id));
 }

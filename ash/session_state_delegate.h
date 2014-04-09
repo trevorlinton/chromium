@@ -11,6 +11,10 @@
 #include "ash/ash_export.h"
 #include "base/strings/string16.h"
 
+namespace aura {
+class Window;
+}  // namespace aura
+
 namespace gfx {
 class ImageSkia;
 }  // namespace gfx
@@ -50,6 +54,10 @@ class ASH_EXPORT SessionStateDelegate {
   // Returns true if the screen is currently locked.
   virtual bool IsScreenLocked() const = 0;
 
+  // Returns true if the screen should be locked when the system is about to
+  // suspend.
+  virtual bool ShouldLockScreenBeforeSuspending() const = 0;
+
   // Locks the screen. The locking happens asynchronously.
   virtual void LockScreen() = 0;
 
@@ -66,9 +74,16 @@ class ASH_EXPORT SessionStateDelegate {
   virtual const base::string16 GetUserDisplayName(
       MultiProfileIndex index) const = 0;
 
-  // Gets the email address for the user with the given |index|.
+  // Gets the display email address for the user with the given |index|.
+  // The display email address might contains some periods in the email name
+  // as well as capitalized letters. For example: "Foo.Bar@mock.com".
   // Note that |index| can at maximum be |NumberOfLoggedInUsers() - 1|.
   virtual const std::string GetUserEmail(MultiProfileIndex index) const = 0;
+
+  // Gets the user id (sanitized email address) for the user with the given
+  // |index|. The function would return something like "foobar@mock.com".
+  // Note that |index| can at maximum be |NumberOfLoggedInUsers() - 1|.
+  virtual const std::string GetUserID(MultiProfileIndex index) const = 0;
 
   // Gets the avatar image for the user with the given |index|.
   // Note that |index| can at maximum be |NumberOfLoggedInUsers() - 1|.
@@ -77,12 +92,24 @@ class ASH_EXPORT SessionStateDelegate {
   // Returns a list of all logged in users.
   virtual void GetLoggedInUsers(UserIdList* users) = 0;
 
-  // Switches to another active user (if that user has already signed in).
+  // Switches to another active user with |user_id|
+  // (if that user has already signed in).
   virtual void SwitchActiveUser(const std::string& user_id) = 0;
+
+  // Switches the active user to the next user, with the same ordering as
+  // GetLoggedInUsers.
+  virtual void SwitchActiveUserToNext() = 0;
 
   // Adds or removes sessions state observer.
   virtual void AddSessionStateObserver(SessionStateObserver* observer) = 0;
   virtual void RemoveSessionStateObserver(SessionStateObserver* observer) = 0;
+
+  // Transfers the visibility of a window to another user. Returns true when
+  // transfer was done. This could fail if the |window| belongs to no one and
+  // is therefore shown on the desktop of every user.
+  virtual bool TransferWindowToDesktopOfUser(
+      aura::Window* window,
+      ash::MultiProfileIndex index) = 0;
 };
 
 }  // namespace ash

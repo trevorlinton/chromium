@@ -7,6 +7,7 @@
 #include <list>
 
 #include "base/bind.h"
+#include "base/logging.h"
 #include "base/memory/singleton.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
@@ -15,11 +16,13 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_shutdown.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/extensions/error_console/error_console.h"
 #include "chrome/browser/extensions/event_router.h"
 #include "chrome/browser/extensions/extension_process_manager.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
+#include "chrome/browser/extensions/extension_web_contents_observer.h"
 #include "chrome/browser/extensions/window_controller.h"
 #include "chrome/browser/file_select_helper.h"
 #include "chrome/browser/media/media_capture_devices_dispatcher.h"
@@ -44,16 +47,19 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
+#include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
+#include "extensions/browser/extension_error.h"
 #include "extensions/browser/view_type_utils.h"
+#include "extensions/common/extension_urls.h"
 #include "grit/browser_resources.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
-#include "ui/base/keycodes/keyboard_codes.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/events/keycodes/keyboard_codes.h"
 
 #if !defined(OS_ANDROID)
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
@@ -150,6 +156,7 @@ ExtensionHost::ExtensionHost(const Extension* extension,
   host_contents_->SetDelegate(this);
   SetViewType(host_contents_.get(), host_type);
 
+  ExtensionWebContentsObserver::CreateForWebContents(host_contents());
   PrefsTabHelper::CreateForWebContents(host_contents());
 
   render_view_host_ = host_contents_->GetRenderViewHost();
@@ -251,6 +258,10 @@ WindowController* ExtensionHost::GetExtensionWindowController() const {
       view()->browser()->extension_window_controller() : NULL;
 }
 
+content::BrowserContext* ExtensionHost::browser_context() {
+  return profile_;
+}
+
 const GURL& ExtensionHost::GetURL() const {
   return host_contents()->GetURL();
 }
@@ -271,7 +282,7 @@ void ExtensionHost::LoadInitialURL() {
     web_modal::WebContentsModalDialogManager::CreateForWebContents(
         host_contents_.get());
     web_modal::WebContentsModalDialogManager::FromWebContents(
-        host_contents_.get())->set_delegate(this);
+        host_contents_.get())->SetDelegate(this);
   }
 #endif
 
@@ -286,6 +297,40 @@ void ExtensionHost::Close() {
       content::Source<Profile>(profile_),
       content::Details<ExtensionHost>(this));
 }
+
+#if !defined(OS_ANDROID)
+web_modal::WebContentsModalDialogHost*
+ExtensionHost::GetWebContentsModalDialogHost() {
+  return this;
+}
+
+gfx::NativeView ExtensionHost::GetHostView() const {
+  return view_ ? view_->native_view() : NULL;
+}
+
+gfx::Point ExtensionHost::GetDialogPosition(const gfx::Size& size) {
+  if (!GetVisibleWebContents())
+    return gfx::Point();
+  gfx::Rect bounds = GetVisibleWebContents()->GetView()->GetViewBounds();
+  return gfx::Point(
+      std::max(0, (bounds.width() - size.width()) / 2),
+      std::max(0, (bounds.height() - size.height()) / 2));
+}
+
+gfx::Size ExtensionHost::GetMaximumDialogSize() {
+  if (!GetVisibleWebContents())
+    return gfx::Size();
+  return GetVisibleWebContents()->GetView()->GetViewBounds().size();
+}
+
+void ExtensionHost::AddObserver(
+    web_modal::ModalDialogHostObserver* observer) {
+}
+
+void ExtensionHost::RemoveObserver(
+    web_modal::ModalDialogHostObserver* observer) {
+}
+#endif
 
 void ExtensionHost::Observe(int type,
                             const content::NotificationSource& source,
@@ -510,6 +555,8 @@ bool ExtensionHost::OnMessageReceived(const IPC::Message& message) {
                         OnIncrementLazyKeepaliveCount)
     IPC_MESSAGE_HANDLER(ExtensionHostMsg_DecrementLazyKeepaliveCount,
                         OnDecrementLazyKeepaliveCount)
+    IPC_MESSAGE_HANDLER(ChromeViewHostMsg_DetailedConsoleMessageAdded,
+                        OnDetailedConsoleMessageAdded)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
@@ -537,6 +584,32 @@ void ExtensionHost::OnDecrementLazyKeepaliveCount() {
       ExtensionSystem::Get(profile_)->process_manager();
   if (pm)
     pm->DecrementLazyKeepaliveCount(extension());
+}
+
+void ExtensionHost::OnDetailedConsoleMessageAdded(
+    const base::string16& message,
+    const base::string16& source,
+    const StackTrace& stack_trace,
+    int32 severity_level) {
+  if (IsSourceFromAnExtension(source)) {
+    GURL context_url;
+    if (associated_web_contents_)
+      context_url = associated_web_contents_->GetLastCommittedURL();
+    else if (host_contents_.get())
+      context_url = host_contents_->GetLastCommittedURL();
+
+    ErrorConsole::Get(profile_)->ReportError(
+        scoped_ptr<ExtensionError>(new RuntimeError(
+            extension_id_,
+            profile_->IsOffTheRecord(),
+            source,
+            message,
+            stack_trace,
+            context_url,
+            static_cast<logging::LogSeverity>(severity_level),
+            render_view_host_->GetRoutingID(),
+            render_view_host_->GetProcess()->GetID())));
+  }
 }
 
 void ExtensionHost::UnhandledKeyboardEvent(

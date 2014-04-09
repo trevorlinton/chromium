@@ -16,18 +16,22 @@
 
 namespace content {
 
+class NavigationEntry;
 class RenderViewHost;
 class WebContents;
 class WebContentsImpl;
 struct FaviconURL;
 struct FrameNavigateParams;
 struct LoadCommittedDetails;
+struct LoadFromMemoryCacheDetails;
 struct Referrer;
+struct ResourceRedirectDetails;
+struct ResourceRequestDetails;
 
 // An observer API implemented by classes which are interested in various page
 // load events from WebContents.  They also get a chance to filter IPC messages.
 //
-// Since a WebContents can be a delegate to almost arbitrarly many
+// Since a WebContents can be a delegate to almost arbitrarily many
 // RenderViewHosts, it is important to check in those WebContentsObserver
 // methods which take a RenderViewHost that the event came from the
 // RenderViewHost the observer cares about.
@@ -63,6 +67,13 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   // invoked.
   virtual void RenderProcessGone(base::TerminationStatus status) {}
 
+  // This method is invoked when a WebContents swaps its render view host with
+  // another one, possibly changing processes. The RenderViewHost that has
+  // been replaced is in |old_render_view_host|, which is NULL if the old RVH
+  // was shut down.
+  virtual void RenderViewHostChanged(RenderViewHost* old_host,
+                                     RenderViewHost* new_host) {}
+
   // This method is invoked after the WebContents decided which RenderViewHost
   // to use for the next navigation, but before the navigation starts.
   virtual void AboutToNavigateRenderView(
@@ -97,14 +108,13 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   // This method is invoked right after the DidStartProvisionalLoadForFrame if
   // the provisional load affects the main frame, or if the provisional load
   // was redirected. The latter use case is DEPRECATED. You should listen to
-  // the ResourceDispatcherHost's RESOURCE_RECEIVED_REDIRECT notification
-  // instead.
+  // WebContentsObserver::DidGetRedirectForResourceRequest instead.
   virtual void ProvisionalChangeToMainFrameUrl(
       const GURL& url,
       RenderViewHost* render_view_host) {}
 
   // This method is invoked when the provisional load was successfully
-  // commited. The |render_view_host| is now the current RenderViewHost of the
+  // committed. The |render_view_host| is now the current RenderViewHost of the
   // WebContents.
   //
   // If the navigation only changed the reference fragment, or was triggered
@@ -112,6 +122,7 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   // this signal without a prior DidStartProvisionalLoadForFrame signal.
   virtual void DidCommitProvisionalLoadForFrame(
       int64 frame_id,
+      const string16& frame_unique_name,
       bool is_main_frame,
       const GURL& url,
       PageTransition transition_type,
@@ -119,6 +130,7 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
 
   // This method is invoked when the provisional load failed.
   virtual void DidFailProvisionalLoad(int64 frame_id,
+                                      const string16& frame_unique_name,
                                       bool is_main_frame,
                                       const GURL& validated_url,
                                       int error_code,
@@ -137,8 +149,13 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
       const LoadCommittedDetails& details,
       const FrameNavigateParams& params) {}
 
-  // This method is invoked once the window.document object was created.
+  // This method is invoked once the window.document object of the main frame
+  // was created.
   virtual void DocumentAvailableInMainFrame() {}
+
+  // This method is invoked once the onload handler of the main frame has
+  // completed.
+  virtual void DocumentOnLoadCompletedInMainFrame(int32 page_id) {}
 
   // This method is invoked when the document in the given frame finished
   // loading. At this point, scripts marked as defer were executed, and
@@ -166,6 +183,20 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
                            const string16& error_description,
                            RenderViewHost* render_view_host) {}
 
+  // This method is invoked when content was loaded from an in-memory cache.
+  virtual void DidLoadResourceFromMemoryCache(
+      const LoadFromMemoryCacheDetails& details) {}
+
+  // This method is invoked when a response has been received for a resource
+  // request.
+  virtual void DidGetResourceResponseStart(
+      const ResourceRequestDetails& details) {}
+
+  // This method is invoked when a redirect was received while requesting a
+  // resource.
+  virtual void DidGetRedirectForResourceRequest(
+      const ResourceRedirectDetails& details) {}
+
   // This method is invoked when a new non-pending navigation entry is created.
   // This corresponds to one NavigationController entry being created
   // (in the case of new navigations) or renavigated to (for back/forward
@@ -192,10 +223,10 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   virtual void DidStartLoading(RenderViewHost* render_view_host) {}
   virtual void DidStopLoading(RenderViewHost* render_view_host) {}
 
-  // This method is invoked when the navigation from the browser process. If
-  // there are ongoing navigations, the respective failure methods will also be
-  // invoked.
-  virtual void StopNavigation() {}
+  // When WebContents::Stop() is called, the WebContents stops loading and then
+  // invokes this method. If there are ongoing navigations, their respective
+  // failure methods will also be invoked.
+  virtual void NavigationStopped() {}
 
   // This indicates that the next navigation was triggered by a user gesture.
   virtual void DidGetUserGesture() {}
@@ -204,8 +235,14 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   // configured to ignore UI events, and an UI event took place.
   virtual void DidGetIgnoredUIEvent() {}
 
-  // This method is invoked every time the WebContents becomes visible.
+  // These methods are invoked every time the WebContents changes visibility.
   virtual void WasShown() {}
+  virtual void WasHidden() {}
+
+  // This methods is invoked when the title of the WebContents is set. If the
+  // title was explicitly set, |explicit_set| is true, otherwise the title was
+  // synthesized and |explicit_set| is false.
+  virtual void TitleWasSet(NavigationEntry* entry, bool explicit_set) {}
 
   virtual void AppCacheAccessed(const GURL& manifest_url,
                                 bool blocked_by_policy) {}
@@ -218,7 +255,7 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener,
   virtual void PluginCrashed(const base::FilePath& plugin_path,
                              base::ProcessId plugin_pid) {}
 
-  // Notication that the given plugin has hung or become unhung. This
+  // Notification that the given plugin has hung or become unhung. This
   // notification is only for Pepper plugins.
   //
   // The plugin_child_id is the unique child process ID from the plugin. Note

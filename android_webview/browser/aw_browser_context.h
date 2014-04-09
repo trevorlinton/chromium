@@ -21,13 +21,17 @@
 
 class GURL;
 
-namespace visitedlink {
-class VisitedLinkMaster;
-}
-
 namespace content {
 class ResourceContext;
 class WebContents;
+}
+
+namespace net {
+class CookieStore;
+}
+
+namespace visitedlink {
+class VisitedLinkMaster;
 }
 
 namespace android_webview {
@@ -52,9 +56,6 @@ class AwBrowserContext : public content::BrowserContext,
   // given WebContents.
   static AwBrowserContext* FromWebContents(
       content::WebContents* web_contents);
-
-  // Called before BrowserThreads are created.
-  void InitializeBeforeThreadCreation();
 
   // Maps to BrowserMainParts::PreMainMessageLoopRun.
   void PreMainMessageLoopRun();
@@ -89,8 +90,14 @@ class AwBrowserContext : public content::BrowserContext,
   virtual void RequestMIDISysExPermission(
       int render_process_id,
       int render_view_id,
+      int bridge_id,
       const GURL& requesting_frame,
       const MIDISysExPermissionCallback& callback) OVERRIDE;
+  virtual void CancelMIDISysExPermissionRequest(
+        int render_process_id,
+        int render_view_id,
+        int bridge_id,
+        const GURL& requesting_frame) OVERRIDE;
   virtual content::ResourceContext* GetResourceContext() OVERRIDE;
   virtual content::DownloadManagerDelegate*
       GetDownloadManagerDelegate() OVERRIDE;
@@ -107,10 +114,11 @@ class AwBrowserContext : public content::BrowserContext,
   base::FilePath context_storage_path_;
 
   JniDependencyFactory* native_factory_;
+  scoped_refptr<net::CookieStore> cookie_store_;
   scoped_refptr<AwURLRequestContextGetter> url_request_context_getter_;
   scoped_refptr<content::GeolocationPermissionContext>
       geolocation_permission_context_;
-  scoped_ptr<AwQuotaManagerBridge> quota_manager_bridge_;
+  scoped_refptr<AwQuotaManagerBridge> quota_manager_bridge_;
   scoped_ptr<AwFormDatabaseService> form_database_service_;
 
   AwDownloadManagerDelegate download_manager_delegate_;

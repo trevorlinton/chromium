@@ -18,6 +18,7 @@ class URLRequest;
 
 namespace content {
 class ResourceBuffer;
+class ResourceContext;
 class ResourceDispatcherHostImpl;
 class ResourceMessageFilter;
 class SharedIOBuffer;
@@ -27,9 +28,7 @@ class SharedIOBuffer;
 class AsyncResourceHandler : public ResourceHandler,
                              public ResourceMessageDelegate {
  public:
-  AsyncResourceHandler(ResourceMessageFilter* filter,
-                       int routing_id,
-                       net::URLRequest* request,
+  AsyncResourceHandler(net::URLRequest* request,
                        ResourceDispatcherHostImpl* rdh);
   virtual ~AsyncResourceHandler();
 
@@ -51,7 +50,7 @@ class AsyncResourceHandler : public ResourceHandler,
                            const GURL& url,
                            bool* defer) OVERRIDE;
   virtual bool OnWillRead(int request_id,
-                          net::IOBuffer** buf,
+                          scoped_refptr<net::IOBuffer>* buf,
                           int* buf_size,
                           int min_size) OVERRIDE;
   virtual bool OnReadCompleted(int request_id,
@@ -74,9 +73,6 @@ class AsyncResourceHandler : public ResourceHandler,
   void ResumeIfDeferred();
 
   scoped_refptr<ResourceBuffer> buffer_;
-  scoped_refptr<ResourceMessageFilter> filter_;
-  int routing_id_;
-  net::URLRequest* request_;
   ResourceDispatcherHostImpl* rdh_;
 
   // Number of messages we've sent to the renderer that we haven't gotten an

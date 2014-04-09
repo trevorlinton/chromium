@@ -20,14 +20,12 @@ struct WebScreenInfo;
 namespace content {
 
 struct RendererPreferences;
-typedef base::RefCountedData<int> SharedRenderViewCounter;
 
 // Container for all parameters passed to RenderViewImpl's constructor.
 struct CONTENT_EXPORT RenderViewImplParams {
   RenderViewImplParams(int32 opener_id,
                        const RendererPreferences& renderer_prefs,
                        const WebPreferences& webkit_prefs,
-                       SharedRenderViewCounter* counter,
                        int32 routing_id,
                        int32 main_frame_routing_id,
                        int32 surface_id,
@@ -35,16 +33,17 @@ struct CONTENT_EXPORT RenderViewImplParams {
                        const string16& frame_name,
                        bool is_renderer_created,
                        bool swapped_out,
+                       bool hidden,
                        int32 next_page_id,
                        const WebKit::WebScreenInfo& screen_info,
                        AccessibilityMode accessibility_mode,
-                       bool allow_partial_swap);
+                       bool allow_partial_swap,
+                       int nw_win_id);
   ~RenderViewImplParams();
 
   int32 opener_id;
   const RendererPreferences& renderer_prefs;
   const WebPreferences& webkit_prefs;
-  SharedRenderViewCounter* counter;
   int32 routing_id;
   int32 main_frame_routing_id;
   int32 surface_id;
@@ -52,10 +51,12 @@ struct CONTENT_EXPORT RenderViewImplParams {
   const string16& frame_name;
   bool is_renderer_created;
   bool swapped_out;
+  bool hidden;
   int32 next_page_id;
   const WebKit::WebScreenInfo& screen_info;
   AccessibilityMode accessibility_mode;
   bool allow_partial_swap;
+  int nw_win_id;
 };
 
 }  // namespace content

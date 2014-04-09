@@ -57,12 +57,6 @@ public class WebContentsDelegateAndroid {
     }
 
     @CalledByNative
-    public boolean addNewContents(int nativeSourceWebContents, int nativeWebContents,
-            int disposition, Rect initialPosition, boolean userGesture) {
-        return false;
-    }
-
-    @CalledByNative
     public void activateContents() {
     }
 
@@ -154,14 +148,5 @@ public class WebContentsDelegateAndroid {
     @CalledByNative
     public boolean isFullscreenForTabOrPending() {
         return false;
-    }
-
-    /**
-     * Called from WebKit to request that the top controls be shown or hidden.
-     * The implementation should call ContentViewCore.showTopControls to actually
-     * show or hide the top controls.
-     */
-    @CalledByNative
-    public void didProgrammaticallyScroll(int scrollX, int scrollY) {
     }
 }

@@ -303,7 +303,7 @@ void BookmarkChangeProcessor::BookmarkNodeChanged(BookmarkModel* model,
         error_handler()->OnSingleDatatypeUnrecoverableError(FROM_HERE,
             "Could not InitByIdLookup on BookmarkNodeChanged, good() failed");
         LOG(ERROR) << "Bad entry.";
-      } else if (sync_node.GetEntry()->Get(syncer::syncable::IS_DEL)) {
+      } else if (sync_node.GetEntry()->GetIsDel()) {
         error_handler()->OnSingleDatatypeUnrecoverableError(FROM_HERE,
             "Could not InitByIdLookup on BookmarkNodeChanged, is_del true");
         LOG(ERROR) << "Deleted entry.";
@@ -311,7 +311,7 @@ void BookmarkChangeProcessor::BookmarkNodeChanged(BookmarkModel* model,
         syncer::Cryptographer* crypto = trans.GetCryptographer();
         syncer::ModelTypeSet encrypted_types(trans.GetEncryptedTypes());
         const sync_pb::EntitySpecifics& specifics =
-            sync_node.GetEntry()->Get(syncer::syncable::SPECIFICS);
+            sync_node.GetEntry()->GetSpecifics();
         CHECK(specifics.has_encrypted());
         const bool can_decrypt = crypto->CanDecrypt(specifics.encrypted());
         const bool agreement = encrypted_types.Has(syncer::BOOKMARKS);
@@ -507,6 +507,12 @@ void BookmarkChangeProcessor::ApplyChangesFromSyncModel(
   // changes.
   model->RemoveObserver(this);
 
+  // Notify UI intensive observers of BookmarkModel that we are about to make
+  // potentially significant changes to it, so the updates may be batched. For
+  // example, on Mac, the bookmarks bar displays animations when bookmark items
+  // are added or deleted.
+  model->BeginExtensiveChanges();
+
   // A parent to hold nodes temporarily orphaned by parent deletion.  It is
   // created only if it is needed.
   const BookmarkNode* foster_parent = NULL;
@@ -660,6 +666,12 @@ void BookmarkChangeProcessor::ApplyChangesFromSyncModel(
 
   // The visibility of the mobile node may need to change.
   model_associator_->UpdatePermanentNodeVisibility();
+
+  // Notify UI intensive observers of BookmarkModel that all updates have been
+  // applied, and that they may now be consumed. This prevents issues like the
+  // one described in crbug.com/281562, where old and new items on the bookmarks
+  // bar would overlap.
+  model->EndExtensiveChanges();
 
   // We are now ready to hear about bookmarks changes again.
   model->AddObserver(this);

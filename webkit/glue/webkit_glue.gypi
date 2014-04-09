@@ -9,6 +9,9 @@
      'cflags+': ['-Wno-narrowing'],
      'cflags_cc+': ['-Wno-narrowing'],
   },
+  'variables': {
+    'chromium_code': 1,
+  },
   'targets': [
     {
       'target_name': 'glue_child',
@@ -25,6 +28,7 @@
         '<(DEPTH)/net/net.gyp:net',
         '<(DEPTH)/skia/skia.gyp:skia',
         '<(DEPTH)/third_party/WebKit/public/blink.gyp:blink',
+        '<(DEPTH)/ui/gfx/gfx.gyp:gfx',
         '<(DEPTH)/ui/native_theme/native_theme.gyp:native_theme',
         '<(DEPTH)/ui/ui.gyp:ui',
         '<(DEPTH)/url/url.gyp:url_lib',
@@ -134,9 +138,8 @@
         '<(DEPTH)/third_party/icu/icu.gyp:icui18n',
         '<(DEPTH)/third_party/icu/icu.gyp:icuuc',
         '<(DEPTH)/third_party/npapi/npapi.gyp:npapi',
+        '<(DEPTH)/ui/gfx/gfx.gyp:gfx',
         '<(DEPTH)/ui/gl/gl.gyp:gl',
-        '<(DEPTH)/ui/ui.gyp:ui',
-        '<(DEPTH)/ui/ui.gyp:ui_resources',
         '<(DEPTH)/url/url.gyp:url_lib',
         '<(DEPTH)/v8/tools/gyp/v8.gyp:v8',
         '<(DEPTH)/webkit/common/user_agent/webkit_user_agent.gyp:user_agent',

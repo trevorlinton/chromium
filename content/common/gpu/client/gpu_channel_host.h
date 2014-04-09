@@ -23,6 +23,8 @@
 #include "ipc/ipc_channel_proxy.h"
 #include "ipc/ipc_sync_channel.h"
 #include "media/video/video_decode_accelerator.h"
+#include "media/video/video_encode_accelerator.h"
+#include "ui/gfx/gpu_memory_buffer.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/size.h"
 #include "ui/gl/gpu_preference.h"
@@ -70,12 +72,15 @@ class CONTENT_EXPORT GpuChannelHostFactory {
   virtual scoped_ptr<base::SharedMemory> AllocateSharedMemory(size_t size) = 0;
   virtual int32 CreateViewCommandBuffer(
       int32 surface_id, const GPUCreateCommandBufferConfig& init_params) = 0;
-  virtual GpuChannelHost* EstablishGpuChannelSync(CauseForGpuLaunch) = 0;
   virtual void CreateImage(
       gfx::PluginWindowHandle window,
       int32 image_id,
       const CreateImageCallback& callback) = 0;
   virtual void DeleteImage(int32 image_id, int32 sync_point) = 0;
+  virtual scoped_ptr<gfx::GpuMemoryBuffer> AllocateGpuMemoryBuffer(
+      size_t width,
+      size_t height,
+      unsigned internalformat) = 0;
 };
 
 // Encapsulates an IPC channel between the client and one GPU process.
@@ -93,6 +98,10 @@ class GpuChannelHost : public IPC::Sender,
       const gpu::GPUInfo& gpu_info,
       const IPC::ChannelHandle& channel_handle);
 
+  // Returns true if |handle| is a valid GpuMemoryBuffer handle that
+  // can be shared to the GPU process.
+  static bool IsValidGpuMemoryBuffer(gfx::GpuMemoryBufferHandle handle);
+
   bool IsLost() const {
     DCHECK(channel_filter_.get());
     return channel_filter_->IsLost();
@@ -108,7 +117,6 @@ class GpuChannelHost : public IPC::Sender,
   CommandBufferProxyImpl* CreateViewCommandBuffer(
       int32 surface_id,
       CommandBufferProxyImpl* share_group,
-      const std::string& allowed_extensions,
       const std::vector<int32>& attribs,
       const GURL& active_url,
       gfx::GpuPreference gpu_preference);
@@ -117,7 +125,6 @@ class GpuChannelHost : public IPC::Sender,
   CommandBufferProxyImpl* CreateOffscreenCommandBuffer(
       const gfx::Size& size,
       CommandBufferProxyImpl* share_group,
-      const std::string& allowed_extensions,
       const std::vector<int32>& attribs,
       const GURL& active_url,
       gfx::GpuPreference gpu_preference);
@@ -127,6 +134,10 @@ class GpuChannelHost : public IPC::Sender,
       int command_buffer_route_id,
       media::VideoCodecProfile profile,
       media::VideoDecodeAccelerator::Client* client);
+
+  // Creates a video encoder in the GPU process.
+  scoped_ptr<media::VideoEncodeAccelerator> CreateVideoEncoder(
+      media::VideoEncodeAccelerator::Client* client);
 
   // Destroy a command buffer created by this channel.
   void DestroyCommandBuffer(CommandBufferProxyImpl* command_buffer);
@@ -158,6 +169,15 @@ class GpuChannelHost : public IPC::Sender,
 
   // Reserve one unused transfer buffer ID.
   int32 ReserveTransferBufferId();
+
+  // Returns a GPU memory buffer handle to the buffer that can be sent via
+  // IPC to the GPU process. The caller is responsible for ensuring it is
+  // closed. Returns an invalid handle on failure.
+  gfx::GpuMemoryBufferHandle ShareGpuMemoryBufferToGpuProcess(
+      gfx::GpuMemoryBufferHandle source_handle);
+
+  // Reserve one unused gpu memory buffer ID.
+  int32 ReserveGpuMemoryBufferId();
 
  private:
   friend class base::RefCountedThreadSafe<GpuChannelHost>;
@@ -225,6 +245,7 @@ class GpuChannelHost : public IPC::Sender,
   // Threading notes: all fields are constant during the lifetime of |this|
   // except:
   // - |next_transfer_buffer_id_|, atomic type
+  // - |next_gpu_memory_buffer_id_|, atomic type
   // - |proxies_|, protected by |context_lock_|
   GpuChannelHostFactory* const factory_;
   const int client_id_;
@@ -240,6 +261,9 @@ class GpuChannelHost : public IPC::Sender,
 
   // Transfer buffer IDs are allocated in sequence.
   base::AtomicSequenceNumber next_transfer_buffer_id_;
+
+  // Gpu memory buffer IDs are allocated in sequence.
+  base::AtomicSequenceNumber next_gpu_memory_buffer_id_;
 
   // Protects proxies_.
   mutable base::Lock context_lock_;

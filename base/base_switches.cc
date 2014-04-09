@@ -15,6 +15,11 @@ const char kDebugOnStart[]                  = "debug-on-start";
 // Disables the crash reporting.
 const char kDisableBreakpad[]               = "disable-breakpad";
 
+// Indicates that crash reporting should be enabled. On platforms where helper
+// processes cannot access to files needed to make this decision, this flag is
+// generated internally.
+const char kEnableCrashReporter[]           = "enable-crash-reporter";
+
 // Enable DCHECKs in release mode.
 const char kEnableDCHECK[]                  = "enable-dcheck";
 
@@ -50,11 +55,10 @@ const char kWaitForDebugger[]               = "wait-for-debugger";
 const char kTraceToConsole[]                = "trace-to-console";
 
 #if defined(OS_POSIX)
-// A flag, generated internally for renderer and other helper process command
-// lines on Linux and Mac. It tells the helper process to enable crash dumping
-// and reporting, because helpers cannot access the files needed to make this
-// decision.
-const char kEnableCrashReporter[]           = "enable-crash-reporter";
+// Used for turning on Breakpad crash reporting in a debug environment where
+// crash reporting is typically compiled but disabled.
+const char kEnableCrashReporterForTesting[] =
+    "enable-crash-reporter-for-testing";
 #endif
 
 }  // namespace switches

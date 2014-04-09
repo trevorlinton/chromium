@@ -18,6 +18,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/field_trial.h"
 #include "base/process/kill.h"
+#include "base/time/time.h"
 #include "chrome/browser/metrics/metrics_log.h"
 #include "chrome/browser/metrics/tracking_synchronizer_observer.h"
 #include "chrome/common/metrics/metrics_service_base.h"
@@ -73,6 +74,17 @@ class MetricsService
       public net::URLFetcherDelegate,
       public MetricsServiceBase {
  public:
+  // The execution phase of the browser.
+  enum ExecutionPhase {
+    CLEAN_SHUTDOWN = 0,
+    START_METRICS_RECORDING = 100,
+    CREATE_PROFILE = 200,
+    STARTUP_TIMEBOMB_ARM = 300,
+    THREAD_WATCHER_START = 400,
+    MAIN_MESSAGE_LOOP_RUN = 500,
+    SHUTDOWN_TIMEBOMB_ARM = 600,
+  };
+
   MetricsService();
   virtual ~MetricsService();
 
@@ -163,6 +175,9 @@ class MetricsService
   static void LogNeedForCleanShutdown();
 #endif  // defined(OS_ANDROID) || defined(OS_IOS)
 
+  static void SetExecutionPhase(ExecutionPhase execution_phase) {
+    execution_phase_ = execution_phase;
+  }
   // Saves in the preferences if the crash report registration was successful.
   // This count is eventually send via UMA logs.
   void RecordBreakpadRegistration(bool success);
@@ -170,6 +185,12 @@ class MetricsService
   // Saves in the preferences if the browser is running under a debugger.
   // This count is eventually send via UMA logs.
   void RecordBreakpadHasDebugger(bool has_debugger);
+
+#if defined(OS_WIN)
+  // Counts (and removes) the browser crash dump attempt signals left behind by
+  // any previous browser processes which generated a crash dump.
+  void CountBrowserCrashDumpAttempts();
+#endif  // OS_WIN
 
   // Save any unsent logs into a persistent store in a pref.  We always do this
   // at shutdown, but we can do it as we reduce the list as well.
@@ -253,6 +274,10 @@ class MetricsService
       int process_type) OVERRIDE;
   // Callback that moves the state to INIT_TASK_DONE.
   virtual void FinishedReceivingProfilerData() OVERRIDE;
+
+  // Get the amount of uptime since this function was last called.
+  // This updates the cumulative uptime metric for uninstall as a side effect.
+  base::TimeDelta GetIncrementalUptime(PrefService* pref);
 
   // Returns the low entropy source for this client. This is a random value
   // that is non-identifying amongst browser clients. This method will
@@ -470,6 +495,9 @@ class MetricsService
   // This is used only for debugging.
   bool waiting_for_asynchronous_reporting_step_;
 
+  // Number of async histogram fetch requests in progress.
+  int num_async_histogram_fetches_in_progress_;
+
 #if defined(OS_CHROMEOS)
   // The external metric service is used to log ChromeOS UMA events.
   scoped_refptr<chromeos::ExternalMetrics> external_metrics_;
@@ -477,6 +505,12 @@ class MetricsService
 
   // The last entropy source returned by this service, used for testing.
   EntropySourceReturned entropy_source_returned_;
+
+  // Stores the time of the last call to |GetIncrementalUptime()|.
+  base::TimeTicks last_updated_time_;
+
+  // Execution phase the browser is in.
+  static ExecutionPhase execution_phase_;
 
   // Reduntant marker to check that we completed our shutdown, and set the
   // exited-cleanly bit in the prefs.

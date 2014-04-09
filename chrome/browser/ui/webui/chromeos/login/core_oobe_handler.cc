@@ -13,6 +13,7 @@
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/chromeos/policy/device_cloud_policy_manager_chromeos.h"
 #include "chrome/browser/chromeos/system/input_device_settings.h"
+#include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/policy/browser_policy_connector.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "chrome/common/chrome_constants.h"
@@ -90,6 +91,14 @@ void CoreOobeHandler::DeclareLocalizedValues(LocalizedValuesBuilder* builder) {
                IDS_ENTERPRISE_DEVICE_REQUISITION_PROMPT_OK);
   builder->Add("deviceRequisitionPromptText",
                IDS_ENTERPRISE_DEVICE_REQUISITION_PROMPT_TEXT);
+  builder->Add("deviceRequisitionRemoraPromptCancel",
+               IDS_CONFIRM_MESSAGEBOX_NO_BUTTON_LABEL);
+  builder->Add("deviceRequisitionRemoraPromptOk",
+               IDS_CONFIRM_MESSAGEBOX_YES_BUTTON_LABEL);
+  builder->Add("deviceRequisitionRemoraPromptTitle",
+               IDS_ENTERPRISE_DEVICE_REQUISITION_REMORA_PROMPT_TITLE);
+  builder->Add("deviceRequisitionRemoraPromptText",
+               IDS_ENTERPRISE_DEVICE_REQUISITION_REMORA_PROMPT_TEXT);
 }
 
 void CoreOobeHandler::Initialize() {
@@ -222,6 +231,8 @@ void CoreOobeHandler::HandleSetDeviceRequisition(
     const std::string& requisition) {
   g_browser_process->browser_policy_connector()->GetDeviceCloudPolicyManager()->
       SetDeviceRequisition(requisition);
+  // Exit Chrome to force the restart as soon as a new requisition is set.
+  chrome::ExitCleanly();
 }
 
 void CoreOobeHandler::HandleSkipToLoginForTesting() {

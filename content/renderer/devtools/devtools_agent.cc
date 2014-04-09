@@ -22,6 +22,7 @@
 #include "third_party/WebKit/public/web/WebConsoleMessage.h"
 #include "third_party/WebKit/public/web/WebDevToolsAgent.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
+#include "third_party/WebKit/public/web/WebSettings.h"
 #include "third_party/WebKit/public/web/WebView.h"
 
 #if defined(USE_TCMALLOC)
@@ -41,6 +42,8 @@ using WebKit::WebView;
 using base::debug::TraceLog;
 
 namespace content {
+
+base::subtle::AtomicWord DevToolsAgent::event_callback_;
 
 namespace {
 
@@ -134,7 +137,9 @@ void DevToolsAgent::clearBrowserCookies() {
 
 void DevToolsAgent::setTraceEventCallback(TraceEventCallback cb) {
   TraceLog* trace_log = TraceLog::GetInstance();
-  trace_log->SetEventCallback(cb);
+  trace_log->SetEventCallback(cb ? TraceEventCallbackWrapper : 0);
+  base::subtle::NoBarrier_Store(&event_callback_,
+                                reinterpret_cast<base::subtle::AtomicWord>(cb));
   if (!!cb) {
     trace_log->SetEnabled(base::debug::CategoryFilter(
         base::debug::CategoryFilter::kDefaultCategoryFilterString),
@@ -142,6 +147,43 @@ void DevToolsAgent::setTraceEventCallback(TraceEventCallback cb) {
   } else {
     trace_log->SetDisabled();
   }
+}
+
+void DevToolsAgent::TraceEventCallbackWrapper(
+    base::TimeTicks timestamp,
+    char phase,
+    const unsigned char* category_group_enabled,
+    const char* name,
+    unsigned long long id,
+    int num_args,
+    const char* const arg_names[],
+    const unsigned char arg_types[],
+    const unsigned long long arg_values[],
+    unsigned char flags) {
+  TraceEventCallback callback =
+      reinterpret_cast<TraceEventCallback>(
+          base::subtle::NoBarrier_Load(&event_callback_));
+  if (callback) {
+    double timestamp_seconds = (timestamp - base::TimeTicks()).InSecondsF();
+    callback(phase, category_group_enabled, name, id, num_args,
+             arg_names, arg_types, arg_values, flags, timestamp_seconds);
+  }
+}
+
+void DevToolsAgent::enableDeviceEmulation(
+    const WebKit::WebSize& device_size,
+    const WebKit::WebRect& view_rect,
+    float device_scale_factor,
+    bool fit_to_view) {
+  RenderViewImpl* impl = static_cast<RenderViewImpl*>(render_view());
+  impl->webview()->settings()->setForceCompositingMode(true);
+  impl->EnableScreenMetricsEmulation(gfx::Size(device_size),
+      gfx::Rect(view_rect), device_scale_factor, fit_to_view);
+}
+
+void DevToolsAgent::disableDeviceEmulation() {
+  RenderViewImpl* impl = static_cast<RenderViewImpl*>(render_view());
+  impl->DisableScreenMetricsEmulation();
 }
 
 #if defined(USE_TCMALLOC) && !defined(OS_WIN)
@@ -192,6 +234,7 @@ void DevToolsAgent::OnDetach() {
 }
 
 void DevToolsAgent::OnDispatchOnInspectorBackend(const std::string& message) {
+  TRACE_EVENT0("devtools", "DevToolsAgent::OnDispatchOnInspectorBackend");
   WebDevToolsAgent* web_agent = GetWebAgent();
   if (web_agent)
     web_agent->dispatchOnInspectorBackend(WebString::fromUTF8(message));

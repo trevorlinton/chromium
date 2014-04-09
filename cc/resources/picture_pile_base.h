@@ -47,27 +47,39 @@ class CC_EXPORT PicturePileBase : public base::RefCounted<PicturePileBase> {
   scoped_ptr<base::Value> AsValue() const;
 
  protected:
+  struct CC_EXPORT PictureInfo {
+    PictureInfo();
+    ~PictureInfo();
+
+    bool Invalidate();
+    PictureInfo CloneForThread(int thread_index) const;
+
+    scoped_refptr<Picture> picture;
+  };
+
+  typedef std::pair<int, int> PictureMapKey;
+  typedef base::hash_map<PictureMapKey, PictureInfo> PictureMap;
+
   virtual ~PicturePileBase();
 
   int num_raster_threads() { return num_raster_threads_; }
   int buffer_pixels() const { return tiling_.border_texels(); }
   void Clear();
 
-  typedef std::pair<int, int> PictureListMapKey;
-  typedef std::list<scoped_refptr<Picture> > PictureList;
-  typedef base::hash_map<PictureListMapKey, PictureList> PictureListMap;
+  gfx::Rect PaddedRect(const PictureMapKey& key);
 
-  // A picture pile is a tiled set of picture lists.  The picture list map
-  // is a map of tile indices to picture lists.
-  PictureListMap picture_list_map_;
+  // A picture pile is a tiled set of pictures. The picture map is a map of tile
+  // indices to picture infos.
+  PictureMap picture_map_;
   TilingData tiling_;
   Region recorded_region_;
   float min_contents_scale_;
   SkTileGridPicture::TileGridInfo tile_grid_info_;
   SkColor background_color_;
-  bool contents_opaque_;
   int slow_down_raster_scale_factor_for_debug_;
+  bool contents_opaque_;
   bool show_debug_picture_borders_;
+  bool clear_canvas_with_debug_color_;
   int num_raster_threads_;
 
  private:

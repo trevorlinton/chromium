@@ -169,27 +169,29 @@ def AddClosedSourceActions(actions):
   Arguments
     actions: set of actions to add to.
   """
-  actions.add('PDF.PrintPage')
   actions.add('PDF.FitToHeightButton')
   actions.add('PDF.FitToWidthButton')
   actions.add('PDF.LoadFailure')
   actions.add('PDF.LoadSuccess')
   actions.add('PDF.PreviewDocumentLoadFailure')
+  actions.add('PDF.PrintButton')
+  actions.add('PDF.PrintPage')
+  actions.add('PDF.SaveButton')
   actions.add('PDF.ZoomFromBrowser')
-  actions.add('PDF.ZoomOutButton')
   actions.add('PDF.ZoomInButton')
-  actions.add('PDF_Unsupported_Rights_Management')
-  actions.add('PDF_Unsupported_XFA')
+  actions.add('PDF.ZoomOutButton')
   actions.add('PDF_Unsupported_3D')
-  actions.add('PDF_Unsupported_Movie')
-  actions.add('PDF_Unsupported_Sound')
-  actions.add('PDF_Unsupported_Screen')
-  actions.add('PDF_Unsupported_Portfolios_Packages')
   actions.add('PDF_Unsupported_Attachment')
-  actions.add('PDF_Unsupported_Digital_Signature')
-  actions.add('PDF_Unsupported_Shared_Review')
-  actions.add('PDF_Unsupported_Shared_Form')
   actions.add('PDF_Unsupported_Bookmarks')
+  actions.add('PDF_Unsupported_Digital_Signature')
+  actions.add('PDF_Unsupported_Movie')
+  actions.add('PDF_Unsupported_Portfolios_Packages')
+  actions.add('PDF_Unsupported_Rights_Management')
+  actions.add('PDF_Unsupported_Screen')
+  actions.add('PDF_Unsupported_Shared_Form')
+  actions.add('PDF_Unsupported_Shared_Review')
+  actions.add('PDF_Unsupported_Sound')
+  actions.add('PDF_Unsupported_XFA')
 
 def AddAndroidActions(actions):
   """Add actions that are used by Chrome on Android.
@@ -197,6 +199,16 @@ def AddAndroidActions(actions):
   Arguments
     actions: set of actions to add to.
   """
+  actions.add('Cast_Sender_CastEnterFullscreen');
+  actions.add('Cast_Sender_CastDeviceSelected');
+  actions.add('Cast_Sender_YouTubeDeviceSelected');
+  actions.add('Cast_Sender_CastPlayRequested');
+  actions.add('DataReductionProxy_PromoDisplayed');
+  actions.add('DataReductionProxy_PromoLearnMore');
+  actions.add('DataReductionProxy_TurnedOn');
+  actions.add('DataReductionProxy_TurnedOnFromPromo');
+  actions.add('DataReductionProxy_TurnedOff');
+  actions.add('MobileActionBarShown')
   actions.add('MobileBeamCallbackSuccess')
   actions.add('MobileBeamInvalidAppState')
   actions.add('MobileBreakpadUploadAttempt')
@@ -216,6 +228,9 @@ def AddAndroidActions(actions):
   actions.add('MobileContextMenuShareLink')
   actions.add('MobileContextMenuText')
   actions.add('MobileContextMenuViewImage')
+  actions.add('MobileFocusedFakeboxOnNtp')
+  actions.add('MobileFocusedOmniboxNotOnNtp')
+  actions.add('MobileFocusedOmniboxOnNtp')
   actions.add('MobileFreAttemptSignIn')
   actions.add('MobileFreSignInSuccessful')
   actions.add('MobileFreSkipSignIn')
@@ -239,6 +254,7 @@ def AddAndroidActions(actions):
   actions.add('MobileNTPBookmark')
   actions.add('MobileNTPForeignSession')
   actions.add('MobileNTPMostVisited')
+  actions.add('MobileNTPRecentlyClosed')
   actions.add('MobileNTPSwitchToBookmarks')
   actions.add('MobileNTPSwitchToIncognito')
   actions.add('MobileNTPSwitchToMostVisited')
@@ -246,6 +262,7 @@ def AddAndroidActions(actions):
   actions.add('MobileNewTabOpened')
   actions.add('MobileOmniboxSearch')
   actions.add('MobileOmniboxVoiceSearch')
+  actions.add('MobileOmniboxRefineSuggestion')
   actions.add('MobilePageLoaded')
   actions.add('MobilePageLoadedDesktopUserAgent')
   actions.add('MobilePageLoadedWithKeyboard')
@@ -352,14 +369,12 @@ def AddExtensionActions(actions):
   actions.add('FileBrowser.CreateNewFolder')
   actions.add('FileBrowser.PhotoEditor.Edit')
   actions.add('FileBrowser.PhotoEditor.View')
+  actions.add('FileBrowser.SuggestApps.ShowDialog')
 
   # Actions sent by Google Now client.
   actions.add('GoogleNow.MessageClicked')
   actions.add('GoogleNow.ButtonClicked0')
   actions.add('GoogleNow.ButtonClicked1')
-  actions.add('GoogleNow.WelcomeToastClickedYes')
-  actions.add('GoogleNow.WelcomeToastClickedNo')
-  actions.add('GoogleNow.WelcomeToastDismissed')
   actions.add('GoogleNow.Dismissed')
 
 def GrepForActions(path, actions):
@@ -472,11 +487,16 @@ def GrepForRendererActions(path, actions):
   # We look for the ViewHostMsg_UserMetricsRecordAction constructor.
   # This should be on one line.
   action_re = re.compile(
-      r'[^a-zA-Z]RenderThread::RecordUserMetrics\("([^"]*)')
-  line_number = 0
+      r'[^a-zA-Z]RenderThread::Get\(\)->RecordUserMetrics\("([^"]*)')
+  action_re2 = re.compile(
+      r'[^a-zA-Z]RenderThreadImpl::current\(\)->RecordUserMetrics\("([^"]*)')
   for line in open(path):
     match = action_re.search(line)
-    if match:  # Plain call to RecordAction
+    if match:  # Call to RecordUserMetrics through Content API
+      actions.add(match.group(1))
+      continue
+    match = action_re2.search(line)
+    if match:  # Call to RecordUserMetrics inside Content
       actions.add(match.group(1))
 
 def AddLiteralActions(actions):
@@ -579,11 +599,11 @@ def main(argv):
   # print "Scanned {0} number of files".format(number_of_files_total)
   # print "Found {0} entries".format(len(actions))
 
-  AddClosedSourceActions(actions)
-  AddChromeOSActions(actions)
-  AddExtensionActions(actions)
   AddAndroidActions(actions)
   AddBookmarkManagerActions(actions)
+  AddChromeOSActions(actions)
+  AddClosedSourceActions(actions)
+  AddExtensionActions(actions)
   AddHistoryPageActions(actions)
 
   if hash_output:

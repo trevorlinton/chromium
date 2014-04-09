@@ -37,6 +37,16 @@ ChromeMockRenderThread::ChromeMockRenderThread()
 ChromeMockRenderThread::~ChromeMockRenderThread() {
 }
 
+scoped_refptr<base::MessageLoopProxy>
+ChromeMockRenderThread::GetIOMessageLoopProxy() {
+  return io_message_loop_proxy_;
+}
+
+void ChromeMockRenderThread::set_io_message_loop_proxy(
+    const scoped_refptr<base::MessageLoopProxy>& proxy) {
+  io_message_loop_proxy_ = proxy;
+}
+
 bool ChromeMockRenderThread::OnMessageReceived(const IPC::Message& msg) {
   if (content::MockRenderThread::OnMessageReceived(msg))
     return true;
@@ -78,6 +88,7 @@ void ChromeMockRenderThread::OnOpenChannelToExtension(
     int routing_id,
     const ExtensionMsg_ExternalConnectionInfo& info,
     const std::string& channel_name,
+    bool include_tls_channel_id,
     int* port_id) {
   *port_id = 0;
 }

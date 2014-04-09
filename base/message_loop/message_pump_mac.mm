@@ -2,15 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #import "base/message_loop/message_pump_mac.h"
 
 #import <Foundation/Foundation.h>
 
-#include <limits>
 #include <stdio.h>
 
+#include <limits>
+#include <stack>
+
+#include "base/format_macros.h"
+#include "base/logging.h"
+#include "base/mac/scoped_cftyperef.h"
+#include "base/metrics/histogram.h"
 #include "base/command_line.h"
 #include "base/run_loop.h"
+#include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "v8/include/v8.h"
 
@@ -21,6 +29,9 @@
 #include <sys/types.h>
 #include <sys/event.h>
 #include <sys/time.h>
+
+#include "third_party/node/src/node.h"
+#include "third_party/node/src/node_internals.h"
 
 namespace {
 
@@ -58,6 +69,228 @@ class MessagePumpScopedAutoreleasePool {
  private:
   NSAutoreleasePool* pool_;
   DISALLOW_COPY_AND_ASSIGN(MessagePumpScopedAutoreleasePool);
+};
+
+// This class is used to instrument the MessagePump to gather various timing
+// data about when the underlying run loop is entered, when it is waiting, and
+// when it is servicing its delegate.
+//
+// The metrics are gathered as UMA-tracked histograms. To gather the data over
+// time, sampling is used, such that a new histogram is created for each metric
+// every |sampling_interval| for |sampling_duration|. After sampling is
+// complete, this class deletes itself.
+class MessagePumpInstrumentation {
+ public:
+  // Creates an instrument for the MessagePump on the current thread. Every
+  // |sampling_interval|, a new histogram will be created to track the metrics
+  // over time. After |sampling_duration|, this will delete itself, causing the
+  // WeakPtr to go NULL.
+  static WeakPtr<MessagePumpInstrumentation> Create(
+      const TimeDelta& sampling_interval,
+      const TimeDelta& sampling_duration) {
+    MessagePumpInstrumentation* instrument =
+        new MessagePumpInstrumentation(sampling_interval, sampling_duration);
+    return instrument->weak_ptr_factory_.GetWeakPtr();
+  }
+
+  // Starts the timer that runs the sampling instrumentation. Can be called
+  // multiple times as a noop.
+  void StartIfNeeded() {
+    if (timer_)
+      return;
+
+    sampling_start_time_ = generation_start_time_ = TimeTicks::Now();
+
+    CFRunLoopTimerContext timer_context = { .info = this };
+    timer_.reset(CFRunLoopTimerCreate(
+        NULL,  // allocator
+        (Time::Now() + sampling_interval_).ToCFAbsoluteTime(),
+        sampling_interval_.InSecondsF(),
+        0,  // flags
+        0,  // order
+        &MessagePumpInstrumentation::TimerFired,
+        &timer_context));
+    CFRunLoopAddTimer(CFRunLoopGetCurrent(),
+                      timer_,
+                      kCFRunLoopCommonModes);
+  }
+
+  // Used to track kCFRunLoopEntry.
+  void LoopEntered() {
+    loop_run_times_.push(TimeTicks::Now());
+  }
+
+  // Used to track kCFRunLoopExit.
+  void LoopExited() {
+    TimeDelta duration = TimeTicks::Now() - loop_run_times_.top();
+    loop_run_times_.pop();
+    GetHistogram(LOOP_CYCLE)->AddTime(duration);
+  }
+
+  // Used to track kCFRunLoopBeforeWaiting.
+  void WaitingStarted() {
+    loop_wait_times_.push(TimeTicks::Now());
+  }
+
+  // Used to track kCFRunLoopAfterWaiting.
+  void WaitingFinished() {
+    TimeDelta duration = TimeTicks::Now() - loop_wait_times_.top();
+    loop_wait_times_.pop();
+    GetHistogram(LOOP_WAIT)->AddTime(duration);
+  }
+
+  // Used to track when the MessagePump will invoke its |delegate|.
+  void WorkSourceEntered(MessagePump::Delegate* delegate) {
+    work_source_times_.push(TimeTicks::Now());
+    if (delegate) {
+      size_t queue_size;
+      TimeDelta queuing_delay;
+      delegate->GetQueueingInformation(&queue_size, &queuing_delay);
+      GetHistogram(QUEUE_SIZE)->Add(queue_size);
+      GetHistogram(QUEUE_DELAY)->AddTime(queuing_delay);
+    }
+  }
+
+  // Used to track the completion of servicing the MessagePump::Delegate.
+  void WorkSourceExited() {
+    TimeDelta duration = TimeTicks::Now() - work_source_times_.top();
+    work_source_times_.pop();
+    GetHistogram(WORK_SOURCE)->AddTime(duration);
+  }
+
+ private:
+  enum HistogramEvent {
+    // Time-based histograms:
+    LOOP_CYCLE,  // LoopEntered/LoopExited
+    LOOP_WAIT,  // WaitingStarted/WaitingEnded
+    WORK_SOURCE,  // WorkSourceExited
+    QUEUE_DELAY,  // WorkSourceEntered
+
+    // Value-based histograms:
+    // NOTE: Do not add value-based histograms before this event, only after.
+    QUEUE_SIZE,  // WorkSourceEntered
+
+    HISTOGRAM_EVENT_MAX,
+  };
+
+  MessagePumpInstrumentation(const TimeDelta& sampling_interval,
+                             const TimeDelta& sampling_duration)
+      : weak_ptr_factory_(this),
+        sampling_interval_(sampling_interval),
+        sampling_duration_(sampling_duration),
+        sample_generation_(0) {
+    // Create all the histogram objects that will be used for sampling.
+    const char kHistogramName[] = "MessagePumpMac.%s.SampleMs.%" PRId64;
+    for (TimeDelta i; i < sampling_duration_; i += sampling_interval_) {
+      int64 sample = i.InMilliseconds();
+
+      // Generate the time-based histograms.
+      for (int j = LOOP_CYCLE; j < QUEUE_SIZE; ++j) {
+        std::string name = StringPrintf(kHistogramName,
+            NameForEnum(static_cast<HistogramEvent>(j)), sample);
+        histograms_[j].push_back(
+            Histogram::FactoryTimeGet(name, TimeDelta::FromMilliseconds(1),
+                sampling_interval_, 50,
+                HistogramBase::kUmaTargetedHistogramFlag));
+      }
+
+      // Generate the value-based histograms.
+      for (int j = QUEUE_SIZE; j < HISTOGRAM_EVENT_MAX; ++j) {
+        std::string name = StringPrintf(kHistogramName,
+            NameForEnum(static_cast<HistogramEvent>(j)), sample);
+        histograms_[j].push_back(
+            Histogram::FactoryGet(name, 1, 10000, 50,
+                HistogramBase::kUmaTargetedHistogramFlag));
+      }
+    }
+  }
+
+  ~MessagePumpInstrumentation() {
+    if (timer_)
+      CFRunLoopTimerInvalidate(timer_);
+  }
+
+  const char* NameForEnum(HistogramEvent event) {
+    switch (event) {
+      case LOOP_CYCLE: return "LoopCycle";
+      case LOOP_WAIT: return "Waiting";
+      case WORK_SOURCE: return "WorkSource";
+      case QUEUE_DELAY: return "QueueingDelay";
+      case QUEUE_SIZE: return "QueueSize";
+      default:
+        NOTREACHED();
+        return NULL;
+    }
+  }
+
+  static void TimerFired(CFRunLoopTimerRef timer, void* context) {
+    static_cast<MessagePumpInstrumentation*>(context)->TimerFired();
+  }
+
+  // Called by the run loop when the sampling_interval_ has elapsed. Advances
+  // the sample_generation_, which controls into which histogram data is
+  // recorded, while recording and accounting for timer skew. Will delete this
+  // object after |sampling_duration_| has elapsed.
+  void TimerFired() {
+    TimeTicks now = TimeTicks::Now();
+    TimeDelta delta = now - generation_start_time_;
+
+    // The timer fired, so advance the generation by at least one.
+    ++sample_generation_;
+
+    // To account for large timer skew/drift, advance the generation by any
+    // more completed intervals.
+    for (TimeDelta skew_advance = delta - sampling_interval_;
+         skew_advance >= sampling_interval_;
+         skew_advance -= sampling_interval_) {
+      ++sample_generation_;
+    }
+
+    generation_start_time_ = now;
+    if (now >= sampling_start_time_ + sampling_duration_)
+      delete this;
+  }
+
+  HistogramBase* GetHistogram(HistogramEvent event) {
+    DCHECK_LT(sample_generation_, histograms_[event].size());
+    return histograms_[event][sample_generation_];
+  }
+
+  // Vends the pointer to the Create()or.
+  WeakPtrFactory<MessagePumpInstrumentation> weak_ptr_factory_;
+
+  // The interval and duration of the sampling.
+  TimeDelta sampling_interval_;
+  TimeDelta sampling_duration_;
+
+  // The time at which sampling started.
+  TimeTicks sampling_start_time_;
+
+  // The timer that advances the sample_generation_ and sets the
+  // generation_start_time_ for the current sample interval.
+  base::ScopedCFTypeRef<CFRunLoopTimerRef> timer_;
+
+  // The two-dimensional array of histograms. The first dimension is the
+  // HistogramEvent type. The second is for the sampling intervals.
+  std::vector<HistogramBase*> histograms_[HISTOGRAM_EVENT_MAX];
+
+  // The index in the second dimension of histograms_, which controls in which
+  // sampled histogram events are recorded.
+  size_t sample_generation_;
+
+  // The last time at which the timer fired. This is used to track timer skew
+  // (i.e. it did not fire on time) and properly account for it when advancing
+  // samle_generation_.
+  TimeTicks generation_start_time_;
+
+  // MessagePump activations can be nested. Use a stack for each of the
+  // possibly reentrant HistogramEvent types to properly balance and calculate
+  // the timing information.
+  std::stack<TimeTicks> loop_run_times_;
+  std::stack<TimeTicks> loop_wait_times_;
+  std::stack<TimeTicks> work_source_times_;
+
+  DISALLOW_COPY_AND_ASSIGN(MessagePumpInstrumentation);
 };
 
 // Must be called on the run loop thread.
@@ -110,10 +343,11 @@ MessagePumpCFRunLoopBase::MessagePumpCFRunLoopBase()
   CFRunLoopObserverContext observer_context = CFRunLoopObserverContext();
   observer_context.info = this;
   pre_wait_observer_ = CFRunLoopObserverCreate(NULL,  // allocator
-                                               kCFRunLoopBeforeWaiting,
+                                               kCFRunLoopBeforeWaiting |
+                                                  kCFRunLoopAfterWaiting,
                                                true,  // repeat
                                                0,     // priority
-                                               PreWaitObserver,
+                                               StartOrEndWaitObserver,
                                                &observer_context);
   CFRunLoopAddObserver(run_loop_, pre_wait_observer_, kCFRunLoopCommonModes);
 
@@ -202,6 +436,11 @@ void MessagePumpCFRunLoopBase::SetDelegate(Delegate* delegate) {
   }
 }
 
+void MessagePumpCFRunLoopBase::EnableInstrumentation() {
+  instrumentation_ = MessagePumpInstrumentation::Create(
+      TimeDelta::FromSeconds(1), TimeDelta::FromSeconds(15));
+}
+
 // May be called on any thread.
 void MessagePumpCFRunLoopBase::ScheduleWork() {
   CFRunLoopSourceSignal(work_source_);
@@ -249,6 +488,9 @@ bool MessagePumpCFRunLoopBase::RunWork() {
     return false;
   }
 
+  if (instrumentation_)
+    instrumentation_->WorkSourceEntered(delegate_);
+
   // The NSApplication-based run loop only drains the autorelease pool at each
   // UI event (NSEvent).  The autorelease pool is not drained for each
   // CFRunLoopSource target that's run.  Use a local pool for any autoreleased
@@ -282,11 +524,35 @@ bool MessagePumpCFRunLoopBase::RunWork() {
         resignal_work_source = true;
       }
     }
+  } else {
+      // call tick callback after done work in V8,
+      // in the same way node upstream handle this in MakeCallBack,
+      // or the tick callback is blocked in some cases
+    if (node::g_env)
+      node::CallTickCallback(node::g_env, v8::Undefined());
   }
 
   if (resignal_work_source) {
     CFRunLoopSourceSignal(work_source_);
+  }else{
+    // callbacks in Blink can result in uv status change, so
+    // a run through is needed. This should remove the need for
+    // the 500ms failsafe poll
+
+    [NSApp postEvent:[NSEvent otherEventWithType:NSApplicationDefined
+                                      location:NSZeroPoint
+                                 modifierFlags:0
+                                     timestamp:0
+                                  windowNumber:0
+                                       context:NULL
+                                       subtype:0
+                                         data1:0
+                                         data2:0]
+           atStart:NO];
   }
+
+  if (instrumentation_)
+    instrumentation_->WorkSourceExited();
 
   return resignal_work_source;
 }
@@ -319,7 +585,21 @@ bool MessagePumpCFRunLoopBase::RunIdleWork() {
   // again as long as the loop is still running.
   bool did_work = delegate_->DoIdleWork();
   if (did_work) {
+    if (node::g_env)
+      node::CallTickCallback(node::g_env, v8::Undefined());
     CFRunLoopSourceSignal(idle_work_source_);
+    // callbacks in Blink can result in uv status change, so
+    // a run through is needed
+    [NSApp postEvent:[NSEvent otherEventWithType:NSApplicationDefined
+                                      location:NSZeroPoint
+                                 modifierFlags:0
+                                     timestamp:0
+                                  windowNumber:0
+                                       context:NULL
+                                       subtype:0
+                                         data1:0
+                                         data2:0]
+           atStart:NO];
   }
 
   return did_work;
@@ -372,10 +652,17 @@ void MessagePumpCFRunLoopBase::MaybeScheduleNestingDeferredWork() {
 
 // Called from the run loop.
 // static
-void MessagePumpCFRunLoopBase::PreWaitObserver(CFRunLoopObserverRef observer,
-                                               CFRunLoopActivity activity,
-                                               void* info) {
+void MessagePumpCFRunLoopBase::StartOrEndWaitObserver(
+    CFRunLoopObserverRef observer,
+    CFRunLoopActivity activity,
+    void* info) {
   MessagePumpCFRunLoopBase* self = static_cast<MessagePumpCFRunLoopBase*>(info);
+
+  if (activity == kCFRunLoopAfterWaiting) {
+    if (self->instrumentation_)
+      self->instrumentation_->WaitingFinished();
+    return;
+  }
 
   // Attempt to do some idle work before going to sleep.
   self->RunIdleWork();
@@ -385,6 +672,9 @@ void MessagePumpCFRunLoopBase::PreWaitObserver(CFRunLoopObserverRef observer,
   // nesting-deferred work may have accumulated.  Schedule it for processing
   // if appropriate.
   self->MaybeScheduleNestingDeferredWork();
+
+  if (self->instrumentation_)
+    self->instrumentation_->WaitingStarted();
 }
 
 // Called from the run loop.
@@ -411,6 +701,9 @@ void MessagePumpCFRunLoopBase::EnterExitObserver(CFRunLoopObserverRef observer,
 
   switch (activity) {
     case kCFRunLoopEntry:
+      if (self->instrumentation_)
+        self->instrumentation_->LoopEntered();
+
       ++self->nesting_level_;
       if (self->nesting_level_ > self->deepest_nesting_level_) {
         self->deepest_nesting_level_ = self->nesting_level_;
@@ -424,9 +717,9 @@ void MessagePumpCFRunLoopBase::EnterExitObserver(CFRunLoopObserverRef observer,
       // handling sources to exiting without any sleep.  This most commonly
       // occurs when CFRunLoopRunInMode is passed a timeout of 0, causing it
       // to make a single pass through the loop and exit without sleep.  Some
-      // native loops use CFRunLoop in this way.  Because PreWaitObserver will
-      // not be called in these case, MaybeScheduleNestingDeferredWork needs
-      // to be called here, as the run loop exits.
+      // native loops use CFRunLoop in this way.  Because StartOrEndWaitObserver
+      // will not be called in these case, MaybeScheduleNestingDeferredWork
+      // needs to be called here, as the run loop exits.
       //
       // MaybeScheduleNestingDeferredWork consults self->nesting_level_
       // to determine whether to schedule nesting-deferred work.  It expects
@@ -436,6 +729,9 @@ void MessagePumpCFRunLoopBase::EnterExitObserver(CFRunLoopObserverRef observer,
       // loop.
       self->MaybeScheduleNestingDeferredWork();
       --self->nesting_level_;
+
+      if (self->instrumentation_)
+        self->instrumentation_->LoopExited();
       break;
 
     default:
@@ -567,6 +863,7 @@ MessagePumpNSApplication::MessagePumpNSApplication(bool for_node)
       running_own_loop_(false),
       pause_uv_(false),
       for_node_(for_node) {
+  EnableInstrumentation();
   if (for_node_) {
     // Add dummy handle for libuv, otherwise libuv would quit when there is
     // nothing to do.
@@ -589,6 +886,8 @@ MessagePumpNSApplication::~MessagePumpNSApplication() {
 }
 
 void MessagePumpNSApplication::DoRun(Delegate* delegate) {
+  if (instrumentation_)
+    instrumentation_->StartIfNeeded();
   v8::HandleScope scope;
 
   // Pause uv in nested loop.
@@ -615,6 +914,9 @@ void MessagePumpNSApplication::DoRun(Delegate* delegate) {
     while (keep_running_) {
       MessagePumpScopedAutoreleasePool autorelease_pool(this);
 
+      // In this call CFRunLoop will deal with sources then block
+      // on mach port. So additionall run through of libuv is needed
+      // in source callback
       NSEvent* event = [NSApp nextEventMatchingMask:NSAnyEventMask
                                           untilDate:[NSDate distantFuture]
                                              inMode:NSDefaultRunLoopMode
@@ -625,11 +927,23 @@ void MessagePumpNSApplication::DoRun(Delegate* delegate) {
 
       if (for_node_ && nesting_level() == 0) {
         // Deal with uv events.
-        if (!uv_run(uv_default_loop(), UV_RUN_NOWAIT)) {
-          VLOG(1) << "Quit from uv";
-          keep_running_ = false; // Quit from uv.
+	if (!uv_run(uv_default_loop(), UV_RUN_NOWAIT)) {
+	  VLOG(1) << "Quit from uv";
+	  keep_running_ = false; // Quit from uv.
+          break;
+	}
+        if(0 == uv_backend_timeout(uv_default_loop())) {
+           [NSApp postEvent:[NSEvent otherEventWithType:NSApplicationDefined
+                                      location:NSZeroPoint
+                                 modifierFlags:0
+                                     timestamp:0
+                                  windowNumber:0
+                                       context:NULL
+                                       subtype:0
+                                         data1:0
+                                         data2:0]
+              atStart:NO];
         }
-
         // Tell the worker thread to continue polling.
         uv_sem_post(&embed_sem_);
       }
@@ -677,9 +991,14 @@ void MessagePumpNSApplication::EmbedThreadRunner(void *arg) {
     uv_loop_t* loop = uv_default_loop();
 
     // We should at leat poll every 500ms.
+    // theoratically it's not needed, but act as a fail-safe
+    // for unknown corner cases
+
     int timeout = uv_backend_timeout(loop);
+#if 1
     if (timeout > 500 || timeout < 0)
       timeout = 500;
+#endif
 
     // Wait for new libuv events.
     int fd = uv_backend_fd(loop);
@@ -688,7 +1007,7 @@ void MessagePumpNSApplication::EmbedThreadRunner(void *arg) {
       struct timespec ts;
       ts.tv_sec = timeout / 1000;
       ts.tv_nsec = (timeout % 1000) * 1000000;
-      r = kevent(fd, NULL, 0, errors, 1, &ts);
+      r = kevent(fd, NULL, 0, errors, 1, timeout < 0 ? NULL : &ts);
     } while (r == -1 && errno == EINTR);
 
     // Don't wake up main loop if in a nested loop, so we'll keep waiting for

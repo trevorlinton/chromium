@@ -5,8 +5,12 @@
   'variables': {
     'chromium_code': 1,
   },
-  'includes': [
-    'android_webview_tests.gypi',
+  'conditions': [
+    ['android_webview_build==0', {
+      'includes': [
+        'android_webview_tests.gypi',
+      ],
+    }],
   ],
   'targets': [
     {
@@ -17,6 +21,11 @@
         'android_webview_common',
       ],
       'conditions': [
+        # Avoid clashes between the versions of this library built with
+        # android_webview_build==1 by using a different name prefix.
+        [ 'android_webview_build==0', {
+          'product_prefix': 'libstandalone',
+        }],
         # The general approach is to allow the executable target to choose
         # the allocator, but as in the WebView case we are building a library
         # only, put the dependency on the allocator here
@@ -88,11 +97,11 @@
         '../components/components.gyp:visitedlink_renderer',
         '../components/components.gyp:web_contents_delegate_android',
         '../content/content.gyp:content_app_both',
-        '../skia/skia.gyp:skia',
         '../gpu/gpu.gyp:command_buffer_service',
         '../gpu/gpu.gyp:gles2_implementation',
+        '../skia/skia.gyp:skia',
         '../ui/gl/gl.gyp:gl',
-        '../ui/ui.gyp:shell_dialogs',
+        '../ui/shell_dialogs/shell_dialogs.gyp:shell_dialogs',
         '../webkit/common/gpu/webkit_gpu.gyp:webkit_gpu',
         'android_webview_pak',
       ],
@@ -113,8 +122,6 @@
         'browser/aw_contents_io_thread_client.h',
         'browser/aw_cookie_access_policy.cc',
         'browser/aw_cookie_access_policy.h',
-        'browser/aw_devtools_delegate.cc',
-        'browser/aw_devtools_delegate.h',
         'browser/aw_download_manager_delegate.cc',
         'browser/aw_download_manager_delegate.h',
         'browser/aw_form_database_service.cc',
@@ -127,15 +134,17 @@
         'browser/aw_javascript_dialog_manager.h',
         'browser/aw_login_delegate.cc',
         'browser/aw_login_delegate.h',
+        'browser/aw_pref_store.cc',
+        'browser/aw_pref_store.h',
         'browser/aw_quota_manager_bridge.cc',
         'browser/aw_quota_manager_bridge.h',
         'browser/aw_quota_permission_context.cc',
         'browser/aw_quota_permission_context.h',
-        'browser/aw_pref_store.cc',
-        'browser/aw_pref_store.h',
         'browser/aw_request_interceptor.cc',
         'browser/aw_request_interceptor.h',
         'browser/aw_result_codes.h',
+        'browser/aw_web_preferences_populater.cc',
+        'browser/aw_web_preferences_populater.h',
         'browser/browser_view_renderer.h',
         'browser/find_helper.cc',
         'browser/find_helper.h',

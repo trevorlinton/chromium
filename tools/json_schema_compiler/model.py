@@ -73,6 +73,7 @@ class Namespace(object):
     self.properties = _GetProperties(self, json, self, toplevel_origin)
     self.compiler_options = (json.get('compiler_options', {})
         if include_compiler_options else {})
+    self.documentation_options = json.get('documentation_options', {})
 
 class Origin(object):
   """Stores the possible origin of model object as a pair of bools. These are:
@@ -140,7 +141,7 @@ class Type(object):
       self.ref_type = json['$ref']
     elif 'enum' in json and json_type == 'string':
       self.property_type = PropertyType.ENUM
-      self.enum_values = [value for value in json['enum']]
+      self.enum_values = [EnumValue(value) for value in json['enum']]
     elif json_type == 'any':
       self.property_type = PropertyType.ANY
     elif json_type == 'binary':
@@ -173,6 +174,7 @@ class Type(object):
           for i, choice in enumerate(json['choices'])]
     elif json_type == 'object':
       if not (
+          'isInstanceOf' in json or
           'properties' in json or
           'additionalProperties' in json or
           'functions' in json or
@@ -206,6 +208,7 @@ class Function(object):
                 available to
   - |params| a list of parameters to the function (order matters). A separate
              parameter is used for each choice of a 'choices' parameter
+  - |deprecated| a reason and possible alternative for a deprecated function
   - |description| a description of the function (if provided)
   - |callback| the callback parameter to the function. There should be exactly
                one
@@ -226,6 +229,7 @@ class Function(object):
     self.platforms = _GetPlatforms(json)
     self.params = []
     self.description = json.get('description')
+    self.deprecated = json.get('deprecated')
     self.callback = None
     self.optional = json.get('optional', False)
     self.parent = parent
@@ -235,6 +239,7 @@ class Function(object):
     self.actions = options.get('actions', [])
     self.supports_listeners = options.get('supportsListeners', True)
     self.supports_rules = options.get('supportsRules', False)
+    self.supports_dom = options.get('supportsDom', False)
 
     def GeneratePropertyFromParam(p):
       return Property(self, p['name'], p, namespace, origin)
@@ -337,6 +342,20 @@ class Property(object):
     self._unix_name = unix_name
 
   unix_name = property(GetUnixName, SetUnixName)
+
+class EnumValue(object):
+  """A single value from an enum.
+  Properties:
+  - |name| name of the property as in the json.
+  - |description| a description of the property (if provided)
+  """
+  def __init__(self, json):
+    if isinstance(json, dict):
+      self.name = json['name']
+      self.description = json.get('description')
+    else:
+      self.name = json
+      self.description = None
 
 class _Enum(object):
   """Superclass for enum types with a "name" field, setting up repr/eq/ne.
@@ -481,8 +500,11 @@ class Platforms(object):
   WIN = _PlatformInfo("win")
 
 def _GetPlatforms(json):
-  if 'platforms' not in json:
+  if 'platforms' not in json or json['platforms'] == None:
     return None
+  # Sanity check: platforms should not be an empty list.
+  if not json['platforms']:
+    raise ValueError('"platforms" cannot be an empty list')
   platforms = []
   for platform_name in json['platforms']:
     for platform_enum in _Enum.GetAll(Platforms):

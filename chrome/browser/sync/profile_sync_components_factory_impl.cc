@@ -9,6 +9,7 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/api/storage/settings_frontend.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/extension_sync_service.h"
 #include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_system_factory.h"
 #include "chrome/browser/history/history_service.h"
@@ -62,11 +63,10 @@
 
 #if defined(ENABLE_MANAGED_USERS)
 #include "chrome/browser/managed_mode/managed_user_service.h"
+#include "chrome/browser/managed_mode/managed_user_settings_service.h"
+#include "chrome/browser/managed_mode/managed_user_settings_service_factory.h"
 #include "chrome/browser/managed_mode/managed_user_sync_service.h"
 #include "chrome/browser/managed_mode/managed_user_sync_service_factory.h"
-#include "chrome/browser/policy/managed_mode_policy_provider.h"
-#include "chrome/browser/policy/profile_policy_connector.h"
-#include "chrome/browser/policy/profile_policy_connector_factory.h"
 #endif
 
 #if !defined(OS_ANDROID)
@@ -196,6 +196,11 @@ void ProfileSyncComponentsFactoryImpl::RegisterCommonDataTypes(
   if (!command_line_->HasSwitch(switches::kDisableSyncPasswords)) {
     pss->RegisterDataTypeController(
         new PasswordDataTypeController(this, profile_, pss));
+  }
+  // Article sync is disabled by default.  Register only if explicitly enabled.
+  if (command_line_->HasSwitch(switches::kEnableSyncArticles)) {
+    pss->RegisterDataTypeController(
+        new UIDataTypeController(syncer::ARTICLES, this, profile_, pss));
   }
 }
 
@@ -349,7 +354,7 @@ base::WeakPtr<syncer::SyncableService> ProfileSyncComponentsFactoryImpl::
     }
     case syncer::APPS:
     case syncer::EXTENSIONS:
-      return extension_system_->extension_service()->AsWeakPtr();
+      return ExtensionSyncService::Get(profile_)->AsWeakPtr();
     case syncer::SEARCH_ENGINES:
       return TemplateURLServiceFactory::GetForProfile(profile_)->AsWeakPtr();
     case syncer::APP_SETTINGS:
@@ -378,7 +383,7 @@ base::WeakPtr<syncer::SyncableService> ProfileSyncComponentsFactoryImpl::
 #endif
 #if defined(ENABLE_SPELLCHECK)
     case syncer::DICTIONARY:
-      return SpellcheckServiceFactory::GetForProfile(profile_)->
+      return SpellcheckServiceFactory::GetForContext(profile_)->
           GetCustomDictionary()->AsWeakPtr();
 #endif
     case syncer::FAVICON_IMAGES:
@@ -392,12 +397,15 @@ base::WeakPtr<syncer::SyncableService> ProfileSyncComponentsFactoryImpl::
     }
 #if defined(ENABLE_MANAGED_USERS)
     case syncer::MANAGED_USER_SETTINGS:
-      return policy::ProfilePolicyConnectorFactory::GetForProfile(profile_)->
-          managed_mode_policy_provider()->AsWeakPtr();
+      return ManagedUserSettingsServiceFactory::GetForProfile(profile_)->
+          AsWeakPtr();
     case syncer::MANAGED_USERS:
       return ManagedUserSyncServiceFactory::GetForProfile(profile_)->
           AsWeakPtr();
 #endif
+    case syncer::ARTICLES:
+      // TODO(nyquist) Hook up real syncer::SyncableService API here.
+      return base::WeakPtr<syncer::SyncableService>();
     default:
       // The following datatypes still need to be transitioned to the
       // syncer::SyncableService API:

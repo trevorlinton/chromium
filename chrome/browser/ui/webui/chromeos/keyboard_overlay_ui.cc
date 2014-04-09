@@ -54,6 +54,7 @@ struct ModifierToLabel {
   {chromeos::input_method::kAltKey, "alt"},
   {chromeos::input_method::kVoidKey, "disabled"},
   {chromeos::input_method::kCapsLockKey, "caps lock"},
+  {chromeos::input_method::kEscapeKey, "esc"},
 };
 
 struct I18nContentToMessage {
@@ -178,6 +179,8 @@ struct I18nContentToMessage {
   { "keyboardOverlayOpenAddressInNewTab",
     IDS_KEYBOARD_OVERLAY_OPEN_ADDRESS_IN_NEW_TAB },
   { "keyboardOverlayOpenFileManager", IDS_KEYBOARD_OVERLAY_OPEN_FILE_MANAGER },
+  { "keyboardOverlayOpenGoogleCloudPrint",
+    IDS_KEYBOARD_OVERLAY_OPEN_GOOGLE_CLOUD_PRINT },
   { "keyboardOverlayPageDown", IDS_KEYBOARD_OVERLAY_PAGE_DOWN },
   { "keyboardOverlayPageUp", IDS_KEYBOARD_OVERLAY_PAGE_UP },
   { "keyboardOverlayPaste", IDS_KEYBOARD_OVERLAY_PASTE },
@@ -218,12 +221,12 @@ struct I18nContentToMessage {
   { "keyboardOverlayToggleBookmarkBar",
     IDS_KEYBOARD_OVERLAY_TOGGLE_BOOKMARK_BAR },
   { "keyboardOverlayToggleCapsLock", IDS_KEYBOARD_OVERLAY_TOGGLE_CAPS_LOCK },
+  { "keyboardOverlayToggleProjectionTouchHud",
+    IDS_KEYBOARD_OVERLAY_TOGGLE_PROJECTION_TOUCH_HUD },
   { "keyboardOverlayToggleSpeechInput",
     IDS_KEYBOARD_OVERLAY_TOGGLE_SPEECH_INPUT },
   { "keyboardOverlayToggleSpokenFeedback",
     IDS_KEYBOARD_OVERLAY_TOGGLE_SPOKEN_FEEDBACK },
-  { "keyboardOverlayToggleTouchHudProjection",
-    IDS_KEYBOARD_OVERLAY_TOGGLE_TOUCH_HUD_PROJECTION },
   { "keyboardOverlayUndo", IDS_KEYBOARD_OVERLAY_UNDO },
   { "keyboardOverlayViewKeyboardOverlay",
     IDS_KEYBOARD_OVERLAY_VIEW_KEYBOARD_OVERLAY },
@@ -259,8 +262,6 @@ content::WebUIDataSource* CreateKeyboardOverlayUIHTMLSource() {
                          chromeos::switches::kHasChromeOSDiamondKey));
   ash::Shell* shell = ash::Shell::GetInstance();
   ash::internal::DisplayManager* display_manager = shell->display_manager();
-  source->AddBoolean("keyboardOverlayIsDisplayRotationEnabled",
-                     display_manager->IsDisplayRotationEnabled());
   source->AddBoolean("keyboardOverlayIsDisplayUIScalingEnabled",
                      display_manager->IsDisplayUIScalingEnabled());
   source->SetJsonPath("strings.js");

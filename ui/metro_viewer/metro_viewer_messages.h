@@ -8,7 +8,7 @@
 
 #include "base/basictypes.h"
 #include "ipc/ipc_message_macros.h"
-#include "ui/base/events/event_constants.h"
+#include "ui/events/event_constants.h"
 #include "ui/gfx/native_widget_types.h"
 
 #define IPC_MESSAGE_START MetroViewerMsgStart
@@ -50,9 +50,8 @@ IPC_MESSAGE_CONTROL4(MetroViewerHostMsg_Character,
                      uint32,       /* repeat count */
                      uint32,       /* scan code */
                      uint32        /* key state */);
-// Informs the browser that the visibiliy of the viewer has changed.
-IPC_MESSAGE_CONTROL1(MetroViewerHostMsg_VisibilityChanged,
-                     bool          /* visible */);
+// Informs the browser that the Metro window has been activated.
+IPC_MESSAGE_CONTROL0(MetroViewerHostMsg_WindowActivated);
 
 IPC_MESSAGE_CONTROL4(MetroViewerHostMsg_TouchDown,
                      int32,           /* x-coordinate */
@@ -90,7 +89,21 @@ IPC_MESSAGE_CONTROL2(MetroViewerHostMsg_SelectFolderDone,
                      bool,           /* success */
                      base::FilePath) /* filepath*/
 
+// Informs the browser of the result of a activate desktop (shellexecute)
+// operation.
+IPC_MESSAGE_CONTROL0(MetroViewerHostMsg_ActivateDesktopDone)
+
 // Messages sent from the browser to the viewer:
+
+// Requests the viewer to activate desktop mode.
+IPC_MESSAGE_CONTROL2(MetroViewerHostMsg_ActivateDesktop,
+                     base::FilePath /* shortcut */,
+                     bool           /* ash exit */);
+
+// Requests the viewer to open a URL in desktop mode.
+IPC_MESSAGE_CONTROL2(MetroViewerHostMsg_OpenURLOnDesktop,
+                     base::FilePath,  /* shortcut */
+                     string16         /* url */);
 
 // Requests the viewer to change the pointer to a new cursor.
 IPC_MESSAGE_CONTROL1(MetroViewerHostMsg_SetCursor,
@@ -131,11 +144,6 @@ IPC_MESSAGE_CONTROL4(MetroViewerHostMsg_DisplayFileOpen,
 // Requests the viewer to display the select folder dialog.
 IPC_MESSAGE_CONTROL1(MetroViewerHostMsg_DisplaySelectFolder,
                      string16)   /* title */
-
-// Informs the browser about the viewer activation state, i.e. active, lost
-// activation etc.
-IPC_MESSAGE_CONTROL1(MetroViewerHostMsg_WindowActivated,
-                     bool) /* active */
 
 // Sent to the viewer process to set the cursor position.
 IPC_MESSAGE_CONTROL2(MetroViewerHostMsg_SetCursorPos,

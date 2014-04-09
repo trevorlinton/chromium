@@ -9,12 +9,13 @@
 #include "base/memory/scoped_ptr.h"
 #include "chrome/browser/ui/views/frame/browser_non_client_frame_view.h"
 #include "chrome/browser/ui/views/tab_icon_view_model.h"
-#include "ui/views/controls/button/button.h"  // ButtonListener
 
 class TabIconView;
 
 namespace ash {
-class FramePainter;
+class FrameBorderHitTestController;
+class FrameCaptionButtonContainerView;
+class HeaderPainter;
 }
 namespace views {
 class ImageButton;
@@ -23,7 +24,6 @@ class ToggleImageButton;
 
 class BrowserNonClientFrameViewAsh
     : public BrowserNonClientFrameView,
-      public views::ButtonListener,
       public chrome::TabIconViewModel {
  public:
   static const char kViewClassName[];
@@ -59,10 +59,6 @@ class BrowserNonClientFrameViewAsh
   virtual gfx::Size GetMinimumSize() OVERRIDE;
   virtual void OnThemeChanged() OVERRIDE;
 
-  // views::ButtonListener overrides:
-  virtual void ButtonPressed(views::Button* sender,
-                             const ui::Event& event) OVERRIDE;
-
   // Overridden from chrome::TabIconViewModel:
   virtual bool ShouldTabIconViewAnimate() const OVERRIDE;
   virtual gfx::ImageSkia GetFaviconForTabIconView() OVERRIDE;
@@ -75,7 +71,7 @@ class BrowserNonClientFrameViewAsh
                            ImmersiveFullscreen);
 
   // Distance between top of window and client area.
-  int NonClientTopBorderHeight(bool force_restored) const;
+  int NonClientTopBorderHeight() const;
 
   // Returns true if we should use a short header, such as for popup windows.
   bool UseShortHeader() const;
@@ -111,20 +107,18 @@ class BrowserNonClientFrameViewAsh
   // Returns 0 if no overlay image should be used.
   int GetThemeFrameOverlayImageId() const;
 
-  // Window controls. The |size_button_| either toggles maximized or toggles
-  // minimized. The exact behavior is determined by |size_button_minimizes_|.
-  views::ImageButton* size_button_;
-  views::ImageButton* close_button_;
+  // View which contains the window controls.
+  ash::FrameCaptionButtonContainerView* caption_button_container_;
 
   // For popups, the window icon.
   TabIconView* window_icon_;
 
-  // Painter for the frame header.
-  scoped_ptr<ash::FramePainter> frame_painter_;
+  // Helper class for painting the header.
+  scoped_ptr<ash::HeaderPainter> header_painter_;
 
-  // If true the |size_button_| minimizes, otherwise it toggles between
-  // maximized and restored.
-  bool size_button_minimizes_;
+  // Updates the hittest bounds overrides based on the window show type.
+  scoped_ptr<ash::FrameBorderHitTestController>
+      frame_border_hit_test_controller_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserNonClientFrameViewAsh);
 };

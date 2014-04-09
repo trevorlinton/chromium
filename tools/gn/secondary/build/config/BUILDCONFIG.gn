@@ -1,3 +1,7 @@
+# Copyright (c) 2013 The Chromium Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
 # =============================================================================
 # BUILD FLAGS
 # =============================================================================
@@ -13,14 +17,127 @@
 # Use "is_*" names for intrinsic platform descriptions and build modes, and
 # "use_*" names for optional features libraries, and configurations.
 declare_args() {
-  is_android = 0
-  is_component_build = 1
-  is_chromeos = 0
-  is_debug = 1
-  is_ios = 0
-  use_ash = 0
-  use_aura = 0
-  use_ozone = 0
+  # How many symbols to include in the build. This affects the performance of
+  # the build since the symbols are large and dealing with them is slow.
+  #   2 means regular build with symbols.
+  #   1 means minimal symbols, usually enough for backtraces only.
+  #   0 means no symbols.
+  symbol_level = 2
+
+  # Component build.
+  is_component_build = false
+  # Debug build.
+  is_debug = true
+
+  # Set to true when compiling with the Clang compiler. Typically this is used
+  # to configure warnings.
+  is_clang = false
+
+  # ASH is enabled.
+  # TODO(brettw) this should be moved out of the main build config file.
+  use_ash = false
+  # Aura is enabled.
+  # TODO(brettw) this should be moved out of the main build config file.
+  use_aura = false
+  # Ozone is enabled.
+  # TODO(brettw) this should be moved out of the main build config file.
+  use_ozone = false
+}
+
+# =============================================================================
+# OS DEFINITIONS
+# =============================================================================
+#
+# We set these various is_FOO booleans for convenience in writing OS-based
+# conditions.
+#
+# - is_android, is_chromeos, is_ios, and is_win should be obvious.
+# - is_mac is set only for desktop Mac. It is not set on iOS.
+# - is_posix is true for mac and any Unix-like system (basically everything
+#   except Windows).
+# - is_linux is true for any Linux variant including Android and ChromeOS.
+#
+# Do not add more is_* variants here for random lesser-used Unix systems like
+# aix or one of the BSDs. If you need to check these, just check the os value
+# directly.
+
+if (os == "win") {
+  is_android = false
+  is_chromeos = false
+  is_ios = false
+  is_linux = false
+  is_mac = false
+  is_nacl = false
+  is_posix = false
+  is_win = true
+} else if (os == "mac") {
+  is_android = false
+  is_chromeos = false
+  is_ios = false
+  is_linux = false
+  is_mac = true
+  is_nacl = false
+  is_posix = true
+  is_win = false
+  is_clang = true  # Always use clang on Mac.
+} else if (os == "android") {
+  is_android = false
+  is_chromeos = false
+  is_ios = false
+  is_linux = true
+  is_mac = false
+  is_nacl = false
+  is_posix = true
+  is_win = false
+} else if (os == "chromeos") {
+  is_android = false
+  is_chromeos = true
+  is_ios = false
+  is_linux = true
+  is_mac = false
+  is_nacl = false
+  is_posix = true
+  is_win = false
+} else if (os == "nacl") {
+  # os == "nacl" will be passed by the nacl toolchain definition. It is not
+  # set by default or on the command line. We treat is as a Posix variant.
+  is_android = false
+  is_chromeos = false
+  is_ios = false
+  is_linux = false
+  is_mac = false
+  is_nacl = true
+  is_posix = true
+  is_win = false
+} else if (os == "ios") {
+  is_android = false
+  is_chromeos = false
+  is_ios = true
+  is_linux = false
+  is_mac = false
+  is_nacl = false
+  is_posix = true
+  is_win = false
+} else if (os == "linux") {
+  is_android = false
+  is_chromeos = false
+  is_ios = false
+  is_linux = true
+  is_mac = false
+  is_nacl = false
+  is_posix = true
+  is_win = false
+}
+
+# =============================================================================
+# CPU ARCHITECTURE
+# =============================================================================
+
+if (is_win) {
+  # Always use 32-bit on Windows, even when compiling on a 64-bit host OS.
+  # TODO(brettw) when we support 64-bit cross-compiles, we probably need to
+  # set a build arg in the toolchain to disable this override.
+  cpu_arch = "ia32"
 }
 
 # =============================================================================
@@ -81,6 +198,8 @@ linux_sources_filters = [
   "*_linux_unittest.h",
   "*_linux_unittest.cc",
   "*\blinux/*",
+  "*_x11.cc",
+  "*_x11.h",
 ]
 android_sources_filters = [
   "*_android.h",
@@ -124,12 +243,6 @@ if (!is_android) {
 set_sources_assignment_filter(sources_assignment_filter)
 
 # =============================================================================
-# SYSTEM CONFIG
-# =============================================================================
-
-is_nacl = 0
-
-# =============================================================================
 # BUILD OPTIONS
 # =============================================================================
 
@@ -138,6 +251,8 @@ if (is_component_build) {
 } else {
   component_mode = "static_library"
 }
+
+toolkit_uses_gtk = is_linux
 
 # =============================================================================
 # TARGET DEFAULTS
@@ -160,23 +275,68 @@ native_compiler_configs = [
   "//build/config/compiler:runtime_library",
 ]
 if (is_win) {
-  native_compiler_configs += "//build/config/win:sdk"
-} else if (is_mac) {
-  # TODO(brettw) this should be in an if (is_clang) block instead but I haven't
-  # written an is_clang flag yet.
+  native_compiler_configs += [
+    "//build/config/win:sdk",
+  ]
+} else if (is_clang) {
   native_compiler_configs += "//build/config/clang:find_bad_constructs"
 }
 
+# Optimizations and debug checking.
 if (is_debug) {
   native_compiler_configs += "//build/config:debug"
+  default_optimization_config = "//build/config/compiler:no_optimize"
 } else {
   native_compiler_configs += "//build/config:release"
+  default_optimization_config = "//build/config/compiler:optimize"
+}
+native_compiler_configs += default_optimization_config
+
+# Symbol setup.
+if (is_clang && (is_linux || is_android)) {
+  # Clang creates chubby debug information, which makes linking very slow.
+  # For now, don't create debug information with clang.
+  # See http://crbug.com/70000
+  # TODO(brettw) This just copies GYP. Why not do this on Mac as well?
+  default_symbols_config = "//build/config/compiler:no_symbols"
+} else if (symbol_level == 2) {
+  default_symbols_config = "//build/config/compiler:symbols"
+} else if (symbol_level == 1) {
+  default_symbols_config = "//build/config/compiler:minimal_symbols"
+} else if (symbol_level == 0) {
+  default_symbols_config = "//build/config/compiler:no_symbols"
+} else {
+  assert(false, "Bad value for symbol_level.")
+}
+native_compiler_configs += default_symbols_config
+
+# Windows linker setup for EXEs and DLLs.
+if (is_win) {
+  if (is_debug) {
+    default_incremental_linking_config =
+      "//build/config/win:incremental_linking"
+  } else {
+    default_incremental_linking_config =
+      "//build/config/win:no_incremental_linking"
+  }
+  windows_linker_configs = [
+    default_incremental_linking_config,
+    "//build/config/win:sdk_link",
+    "//build/config/win:common_linker_setup",
+    # Default to console-mode apps. Most of our targets are tests and such
+    # that shouldn't use the windows subsystem.
+    "//build/config/win:console",
+  ]
 }
 
 set_defaults("executable") {
   configs = native_compiler_configs
-  if (is_mac) {
+  if (is_win) {
+    configs += windows_linker_configs
+  } else if (is_mac) {
     configs += "//build/config/mac:mac_dynamic_flags"
+  } else if (is_linux) {
+    configs += "//build/config/linux:executable_ldconfig"
   }
 }
 
@@ -186,17 +346,39 @@ set_defaults("static_library") {
 
 set_defaults("shared_library") {
   configs = native_compiler_configs
-  if (is_mac) {
+  if (is_win) {
+    configs += windows_linker_configs
+  } else if (is_mac) {
     configs += "//build/config/mac:mac_dynamic_flags"
   }
+}
+
+set_defaults("source_set") {
+  configs = native_compiler_configs
 }
 
 # ==============================================================================
 # TOOLCHAIN SETUP
 # ==============================================================================
+#
+# Here we set the default toolchain, as well as the variable host_toolchain
+# which will identify the toolchain corresponding to the local system when
+# doing cross-compiles. When not cross-compiling, this will be the same as the
+# default toolchain.
 
 if (is_win) {
-  set_default_toolchain("//build/config/win:32")
+  host_toolchain = "//build/toolchain/win:32"
+  set_default_toolchain(host_toolchain)
+} else if (is_linux) {
+  host_toolchain = "//build/toolchain/linux:host"
+  if (cpu_arch == "arm" && build_cpu_arch != "arm") {
+    # Special toolchain for ARM cross-compiling.
+    set_default_toolchain("//build/toolchain/linux:arm-cross-compile")
+  } else {
+    # Use whatever GCC is on the current platform.
+    set_default_toolchain(host_toolchain)
+  }
 } else if (is_mac) {
-  set_default_toolchain("//build/config/mac:clang")
+  host_toolchain = "//build/toolchain/mac:clang"
+  set_default_toolchain(host_toolchain)
 }

@@ -21,6 +21,7 @@ class SkCanvas;
 
 namespace WebKit {
 class WebDeviceMotionData;
+class WebDeviceOrientationData;
 struct WebRect;
 }
 
@@ -53,6 +54,8 @@ class WebKitTestRunner : public RenderViewObserver,
                               const std::string& value);
   virtual void setGamepadData(const WebKit::WebGamepads& gamepads);
   virtual void setDeviceMotionData(const WebKit::WebDeviceMotionData& data);
+  virtual void setDeviceOrientationData(
+      const WebKit::WebDeviceOrientationData& data);
   virtual void printMessage(const std::string& message);
   virtual void postTask(::WebTestRunner::WebTask* task);
   virtual void postDelayedTask(::WebTestRunner::WebTask* task,
@@ -67,7 +70,7 @@ class WebKitTestRunner : public RenderViewObserver,
   virtual ::WebTestRunner::WebPreferences* preferences();
   virtual void applyPreferences();
   virtual std::string makeURLErrorDescription(const WebKit::WebURLError& error);
-  virtual void setClientWindowRect(const WebKit::WebRect& rect);
+  virtual void useUnfortunateSynchronousResizeMode(bool enable);
   virtual void enableAutoResizeMode(const WebKit::WebSize& min_size,
                                     const WebKit::WebSize& max_size);
   virtual void disableAutoResizeMode(const WebKit::WebSize& new_size);

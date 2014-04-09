@@ -20,6 +20,8 @@
 #include "content/renderer/media/media_stream_client.h"
 #include "content/renderer/media/media_stream_dispatcher_eventhandler.h"
 #include "third_party/WebKit/public/platform/WebMediaStream.h"
+#include "third_party/WebKit/public/platform/WebMediaStreamSource.h"
+#include "third_party/WebKit/public/platform/WebVector.h"
 #include "third_party/WebKit/public/web/WebUserMediaClient.h"
 #include "third_party/WebKit/public/web/WebUserMediaRequest.h"
 #include "third_party/libjingle/source/talk/app/webrtc/mediastreaminterface.h"
@@ -28,6 +30,7 @@ namespace content {
 class MediaStreamAudioRenderer;
 class MediaStreamDependencyFactory;
 class MediaStreamDispatcher;
+class MediaStreamSourceExtraData;
 class WebRtcAudioRenderer;
 class WebRtcLocalAudioRenderer;
 
@@ -89,8 +92,8 @@ class CONTENT_EXPORT MediaStreamImpl
   virtual void FrameWillClose(WebKit::WebFrame* frame) OVERRIDE;
 
  protected:
-  // Stops a local MediaStream by notifying the MediaStreamDispatcher that the
-  // stream no longer may be used.
+  void OnLocalSourceStop(const WebKit::WebMediaStreamSource& source);
+
   void OnLocalMediaStreamStop(const std::string& label);
 
   // Callback function triggered when all native (libjingle) versions of the
@@ -118,22 +121,43 @@ class CONTENT_EXPORT MediaStreamImpl
   // Structure for storing information about a WebKit request to create a
   // MediaStream.
   struct UserMediaRequestInfo {
-    UserMediaRequestInfo();
     UserMediaRequestInfo(int request_id,
                          WebKit::WebFrame* frame,
-                         const WebKit::WebUserMediaRequest& request);
+                         const WebKit::WebUserMediaRequest& request,
+                         bool enable_automatic_output_device_selection);
     ~UserMediaRequestInfo();
     int request_id;
     // True if MediaStreamDispatcher has generated the stream, see
     // OnStreamGenerated.
     bool generated;
+    const bool enable_automatic_output_device_selection;
     WebKit::WebFrame* frame;  // WebFrame that requested the MediaStream.
     WebKit::WebMediaStream web_stream;
     WebKit::WebUserMediaRequest request;
-    WebKit::WebVector<WebKit::WebMediaStreamSource> audio_sources;
-    WebKit::WebVector<WebKit::WebMediaStreamSource> video_sources;
+    std::vector<WebKit::WebMediaStreamSource> sources;
   };
   typedef ScopedVector<UserMediaRequestInfo> UserMediaRequests;
+
+  struct LocalStreamSource {
+    LocalStreamSource(WebKit::WebFrame* frame,
+                      const WebKit::WebMediaStreamSource& source)
+        : frame(frame), source(source) {
+    }
+    // |frame| is the WebFrame that requested |source|. NULL in unit tests.
+    // TODO(perkj): Change so that |frame| is not NULL in unit tests.
+    WebKit::WebFrame* frame;
+    WebKit::WebMediaStreamSource source;
+  };
+  typedef std::vector<LocalStreamSource> LocalStreamSources;
+
+  // Creates a WebKit representation of stream sources based on
+  // |devices| from the MediaStreamDispatcher.
+  void CreateWebKitSourceVector(
+      const std::string& label,
+      const StreamDeviceInfoArray& devices,
+      WebKit::WebMediaStreamSource::Type type,
+      WebKit::WebFrame* frame,
+      WebKit::WebVector<WebKit::WebMediaStreamSource>& webkit_sources);
 
   UserMediaRequestInfo* FindUserMediaRequestInfo(int request_id);
   UserMediaRequestInfo* FindUserMediaRequestInfo(
@@ -142,6 +166,20 @@ class CONTENT_EXPORT MediaStreamImpl
       const WebKit::WebUserMediaRequest& request);
   UserMediaRequestInfo* FindUserMediaRequestInfo(const std::string& label);
   void DeleteUserMediaRequestInfo(UserMediaRequestInfo* request);
+
+  // Returns the source that use a device with |device.session_id|
+  // and |device.device.id|. NULL if such source doesn't exist.
+  const WebKit::WebMediaStreamSource* FindLocalSource(
+      const StreamDeviceInfo& device) const;
+
+  // Returns true if |source| exists in |user_media_requests_|
+  bool FindSourceInRequests(const WebKit::WebMediaStreamSource& source) const;
+
+  void StopLocalSource(const WebKit::WebMediaStreamSource& source,
+                       bool notify_dispatcher);
+  // Stops all local sources that don't exist in exist in
+  // |user_media_requests_|.
+  void StopUnreferencedSources(bool notify_dispatcher);
 
   scoped_refptr<VideoFrameProvider>
   CreateVideoFrameProvider(
@@ -153,7 +191,15 @@ class CONTENT_EXPORT MediaStreamImpl
   scoped_refptr<WebRtcLocalAudioRenderer> CreateLocalAudioRenderer(
       webrtc::MediaStreamInterface* stream);
 
-  void StopLocalAudioTrack(const WebKit::WebMediaStream& web_stream);
+  // Returns a valid session id if a single capture device is currently open
+  // (and then the matching session_id), otherwise -1.
+  // This is used to pass on a session id to a webrtc audio renderer (either
+  // local or remote), so that audio will be rendered to a matching output
+  // device, should one exist.
+  // Note that if there are more than one open capture devices the function
+  // will not be able to pick an appropriate device and return false.
+  bool GetAuthorizedDeviceInfoForAudioRenderer(
+      int* session_id, int* output_sample_rate, int* output_buffer_size);
 
   // Weak ref to a MediaStreamDependencyFactory, owned by the RenderThread.
   // It's valid for the lifetime of RenderThread.
@@ -164,6 +210,8 @@ class CONTENT_EXPORT MediaStreamImpl
   MediaStreamDispatcher* media_stream_dispatcher_;
 
   UserMediaRequests user_media_requests_;
+
+  LocalStreamSources local_sources_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaStreamImpl);
 };

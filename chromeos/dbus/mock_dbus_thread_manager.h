@@ -25,15 +25,19 @@ class FakeBluetoothAgentManagerClient;
 class FakeBluetoothDeviceClient;
 class FakeBluetoothInputClient;
 class FakeBluetoothProfileManagerClient;
+class FakeGsmSMSClient;
+class FakeNfcAdapterClient;
+class FakeNfcDeviceClient;
+class FakeNfcManagerClient;
+class FakeNfcTagClient;
+class FakeShillDeviceClient;
+class FakeShillIPConfigClient;
 class MockCryptohomeClient;
-class MockShillDeviceClient;
-class MockShillIPConfigClient;
+class MockPowerManagerClient;
+class MockSessionManagerClient;
 class MockShillManagerClient;
 class MockShillProfileClient;
 class MockShillServiceClient;
-class MockGsmSMSClient;
-class MockPowerManagerClient;
-class MockSessionManagerClient;
 
 // This class provides a mock DBusThreadManager with mock clients
 // installed. You can customize the behaviors of mock clients with
@@ -71,6 +75,10 @@ class MockDBusThreadManager : public DBusThreadManager {
   MOCK_METHOD0(GetImageBurnerClient, ImageBurnerClient*(void));
   MOCK_METHOD0(GetIntrospectableClient, IntrospectableClient*(void));
   MOCK_METHOD0(GetModemMessagingClient, ModemMessagingClient*(void));
+  MOCK_METHOD0(GetNfcAdapterClient, NfcAdapterClient*(void));
+  MOCK_METHOD0(GetNfcDeviceClient, NfcDeviceClient*(void));
+  MOCK_METHOD0(GetNfcManagerClient, NfcManagerClient*(void));
+  MOCK_METHOD0(GetNfcTagClient, NfcTagClient*(void));
   MOCK_METHOD0(GetPermissionBrokerClient, PermissionBrokerClient*(void));
   MOCK_METHOD0(GetPowerManagerClient, PowerManagerClient*(void));
   MOCK_METHOD0(GetPowerPolicyController, PowerPolicyController*(void));
@@ -79,14 +87,11 @@ class MockDBusThreadManager : public DBusThreadManager {
   MOCK_METHOD0(GetSystemClockClient, SystemClockClient*(void));
   MOCK_METHOD0(GetUpdateEngineClient, UpdateEngineClient*(void));
   MOCK_METHOD0(GetIBusClient, IBusClient*(void));
-  MOCK_METHOD0(GetIBusConfigClient, IBusConfigClient*(void));
-  MOCK_METHOD0(GetIBusInputContextClient, IBusInputContextClient*(void));
   MOCK_METHOD0(GetIBusEngineFactoryService, IBusEngineFactoryService*(void));
   MOCK_METHOD1(GetIBusEngineService,
                IBusEngineService*(const dbus::ObjectPath& object_path));
   MOCK_METHOD1(RemoveIBusEngineService,
                void(const dbus::ObjectPath& object_path));
-  MOCK_METHOD0(GetIBusPanelService, IBusPanelService*(void));
 
   FakeBluetoothAdapterClient* fake_bluetooth_adapter_client() {
     return fake_bluetooth_adapter_client_.get();
@@ -103,14 +108,29 @@ class MockDBusThreadManager : public DBusThreadManager {
   FakeBluetoothProfileManagerClient* fake_bluetooth_profile_manager_client() {
     return fake_bluetooth_profile_manager_client_.get();
   }
+  FakeGsmSMSClient* fake_gsm_sms_client() {
+    return fake_gsm_sms_client_.get();
+  }
+  FakeNfcAdapterClient* fake_nfc_adapter_client() {
+    return fake_nfc_adapter_client_.get();
+  }
+  FakeNfcDeviceClient* fake_nfc_device_client() {
+    return fake_nfc_device_client_.get();
+  }
+  FakeNfcManagerClient* fake_nfc_manager_client() {
+    return fake_nfc_manager_client_.get();
+  }
+  FakeNfcTagClient* fake_nfc_tag_client() {
+    return fake_nfc_tag_client_.get();
+  }
+  FakeShillDeviceClient* fake_shill_device_client() {
+    return fake_shill_device_client_.get();
+  }
+  FakeShillIPConfigClient* fake_shill_ipconfig_client() {
+    return fake_shill_ipconfig_client_.get();
+  }
   MockCryptohomeClient* mock_cryptohome_client() {
     return mock_cryptohome_client_.get();
-  }
-  MockShillDeviceClient* mock_shill_device_client() {
-    return mock_shill_device_client_.get();
-  }
-  MockShillIPConfigClient* mock_shill_ipconfig_client() {
-    return mock_shill_ipconfig_client_.get();
   }
   MockShillManagerClient* mock_shill_manager_client() {
     return mock_shill_manager_client_.get();
@@ -120,9 +140,6 @@ class MockDBusThreadManager : public DBusThreadManager {
   }
   MockShillServiceClient* mock_shill_service_client() {
     return mock_shill_service_client_.get();
-  }
-  MockGsmSMSClient* mock_gsm_sms_client() {
-    return mock_gsm_sms_client_.get();
   }
   MockSessionManagerClient* mock_session_manager_client() {
     return mock_session_manager_client_.get();
@@ -140,13 +157,17 @@ class MockDBusThreadManager : public DBusThreadManager {
   scoped_ptr<FakeBluetoothInputClient> fake_bluetooth_input_client_;
   scoped_ptr<FakeBluetoothProfileManagerClient>
       fake_bluetooth_profile_manager_client_;
+  scoped_ptr<FakeGsmSMSClient> fake_gsm_sms_client_;
+  scoped_ptr<FakeNfcAdapterClient> fake_nfc_adapter_client_;
+  scoped_ptr<FakeNfcDeviceClient> fake_nfc_device_client_;
+  scoped_ptr<FakeNfcManagerClient> fake_nfc_manager_client_;
+  scoped_ptr<FakeNfcTagClient> fake_nfc_tag_client_;
+  scoped_ptr<FakeShillDeviceClient> fake_shill_device_client_;
+  scoped_ptr<FakeShillIPConfigClient> fake_shill_ipconfig_client_;
   scoped_ptr<MockCryptohomeClient> mock_cryptohome_client_;
-  scoped_ptr<MockShillDeviceClient> mock_shill_device_client_;
-  scoped_ptr<MockShillIPConfigClient> mock_shill_ipconfig_client_;
   scoped_ptr<MockShillManagerClient> mock_shill_manager_client_;
   scoped_ptr<MockShillProfileClient> mock_shill_profile_client_;
   scoped_ptr<MockShillServiceClient> mock_shill_service_client_;
-  scoped_ptr<MockGsmSMSClient> mock_gsm_sms_client_;
   scoped_ptr<MockSessionManagerClient> mock_session_manager_client_;
 
   DISALLOW_COPY_AND_ASSIGN(MockDBusThreadManager);

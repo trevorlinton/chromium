@@ -8,6 +8,7 @@
 #include "base/command_line.h"
 #include "base/debug/trace_event.h"
 #include "base/strings/string_number_conversions.h"
+#include "components/tracing/tracing_messages.h"
 #include "content/browser/tracing/trace_message_filter.h"
 #include "content/browser/tracing/trace_subscriber_stdio.h"
 #include "content/common/child_process_messages.h"
@@ -26,9 +27,11 @@ base::LazyInstance<TraceControllerImpl>::Leaky g_controller =
 class AutoStopTraceSubscriberStdio : public TraceSubscriberStdio {
  public:
   AutoStopTraceSubscriberStdio(const base::FilePath& file_path)
-      : TraceSubscriberStdio(file_path) {}
+      : TraceSubscriberStdio(file_path,
+                             FILE_TYPE_PROPERTY_LIST,
+                             false) {}
 
-  static void EndStartupTrace(TraceSubscriberStdio* subscriber) {
+  static void EndStartupTrace(AutoStopTraceSubscriberStdio* subscriber) {
     if (!TraceControllerImpl::GetInstance()->EndTracingAsync(subscriber))
       delete subscriber;
     // else, the tracing will end asynchronously in OnEndTracingComplete().
@@ -54,6 +57,7 @@ TraceControllerImpl::TraceControllerImpl() :
     pending_bpf_ack_count_(0),
     maximum_bpf_(0.0f),
     is_tracing_(false),
+    is_tracing_startup_(false),
     is_get_category_groups_(false),
     category_filter_(
         base::debug::CategoryFilter::kDefaultCategoryFilterString) {
@@ -99,6 +103,7 @@ void TraceControllerImpl::InitStartupTracing(const CommandLine& command_line) {
     delay_secs = 5;
   }
 
+  is_tracing_startup_ = true;
   OnTracingBegan(subscriber.get());
   BrowserThread::PostDelayedTask(
       BrowserThread::UI,
@@ -131,6 +136,11 @@ bool TraceControllerImpl::BeginTracing(TraceSubscriber* subscriber,
   if (!can_begin_tracing(subscriber))
     return false;
 
+#if defined(OS_ANDROID)
+  if (!is_get_category_groups_)
+    TraceLog::GetInstance()->AddClockSyncMetadataEvent();
+#endif
+
   // Enable tracing
   TraceLog::GetInstance()->SetEnabled(
       base::debug::CategoryFilter(category_patterns), options);
@@ -145,6 +155,16 @@ bool TraceControllerImpl::EndTracingAsync(TraceSubscriber* subscriber) {
 
   if (!can_end_tracing() || subscriber != subscriber_)
     return false;
+
+  // Disable local trace early to avoid traces during end-tracing process from
+  // interfering with the process.
+  TraceLog::GetInstance()->SetDisabled();
+  is_tracing_startup_ = false;
+
+#if defined(OS_ANDROID)
+  if (!is_get_category_groups_)
+    TraceLog::GetInstance()->AddClockSyncMetadataEvent();
+#endif
 
   // There could be a case where there are no child processes and filters_
   // is empty. In that case we can immediately tell the subscriber that tracing
@@ -252,7 +272,7 @@ void TraceControllerImpl::AddFilter(TraceMessageFilter* filter) {
   filters_.insert(filter);
   if (is_tracing_enabled()) {
     std::string cf_str = category_filter_.ToString();
-    filter->SendBeginTracing(cf_str, trace_options_);
+    filter->SendBeginTracing(cf_str, trace_options_, is_tracing_startup_);
     if (!watch_category_.empty())
       filter->SendSetWatchEvent(watch_category_, watch_name_);
   }
@@ -279,7 +299,8 @@ void TraceControllerImpl::OnTracingBegan(TraceSubscriber* subscriber) {
 
   // Notify all child processes.
   for (FilterMap::iterator it = filters_.begin(); it != filters_.end(); ++it) {
-    it->get()->SendBeginTracing(category_filter_.ToString(), trace_options_);
+    it->get()->SendBeginTracing(category_filter_.ToString(), trace_options_,
+                                is_tracing_startup_);
   }
 }
 
@@ -299,20 +320,20 @@ void TraceControllerImpl::OnEndTracingAck(
   if (pending_end_ack_count_ == 0)
     return;
 
-  if (--pending_end_ack_count_ == 0) {
-    // All acks have been received.
-    is_tracing_ = false;
 
-    // Disable local trace.
-    TraceLog::GetInstance()->SetDisabled();
-
-    // During this call, our OnTraceDataCollected will be
-    // called with the last of the local trace data. Since we are on the UI
-    // thread, the call to OnTraceDataCollected will be synchronous, so we can
-    // immediately call OnEndTracingComplete below.
+  if (--pending_end_ack_count_ == 1) {
+    // All acks from subprocesses have been received. Now flush the local trace.
+    // During or after this call, our OnLocalTraceDataCollected will be
+    // called with the last of the local trace data.
     TraceLog::GetInstance()->Flush(
-        base::Bind(&TraceControllerImpl::OnTraceDataCollected,
+        base::Bind(&TraceControllerImpl::OnLocalTraceDataCollected,
                    base::Unretained(this)));
+  }
+
+  if (pending_end_ack_count_ == 0) {
+    // All acks (including from the subprocesses and the local trace) have been
+    // received.
+    is_tracing_ = false;
 
     // Trigger callback if one is set.
     if (subscriber_) {
@@ -325,16 +346,6 @@ void TraceControllerImpl::OnEndTracingAck(
     }
 
     is_get_category_groups_ = false;
-  }
-
-  if (pending_end_ack_count_ == 1) {
-    // The last ack represents local trace, so we need to ack it now. Note that
-    // this code only executes if there were child processes.
-    std::vector<std::string> category_groups;
-    TraceLog::GetInstance()->GetKnownCategoryGroups(&category_groups);
-    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-        base::Bind(&TraceControllerImpl::OnEndTracingAck,
-                   base::Unretained(this), category_groups));
   }
 }
 
@@ -352,6 +363,20 @@ void TraceControllerImpl::OnTraceDataCollected(
   // Drop trace events if we are just getting categories.
   if (subscriber_ && !is_get_category_groups_)
     subscriber_->OnTraceDataCollected(events_str_ptr);
+}
+
+void TraceControllerImpl::OnLocalTraceDataCollected(
+    const scoped_refptr<base::RefCountedString>& events_str_ptr,
+    bool has_more_events) {
+  if (events_str_ptr->data().size())
+    OnTraceDataCollected(events_str_ptr);
+
+  if (!has_more_events) {
+    // Simulate an EndTrackingAck for the local trace.
+    std::vector<std::string> category_groups;
+    TraceLog::GetInstance()->GetKnownCategoryGroups(&category_groups);
+    OnEndTracingAck(category_groups);
+  }
 }
 
 void TraceControllerImpl::OnTraceNotification(int notification) {

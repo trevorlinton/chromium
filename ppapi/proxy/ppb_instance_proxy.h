@@ -114,10 +114,9 @@ class PPB_Instance_Proxy : public InterfaceProxy,
   virtual PP_Var GetPluginInstanceURL(
       PP_Instance instance,
       PP_URLComponents_Dev* components) OVERRIDE;
-  virtual void NeedKey(PP_Instance instance,
-                       PP_Var key_system,
-                       PP_Var session_id,
-                       PP_Var init_data) OVERRIDE;
+  virtual PP_Var GetPluginReferrerURL(
+      PP_Instance instance,
+      PP_URLComponents_Dev* components) OVERRIDE;
   virtual void KeyAdded(PP_Instance instance,
                         PP_Var key_system,
                         PP_Var session_id) OVERRIDE;
@@ -147,9 +146,10 @@ class PPB_Instance_Proxy : public InterfaceProxy,
   virtual void DeliverFrame(PP_Instance instance,
                             PP_Resource decrypted_frame,
                             const PP_DecryptedFrameInfo* frame_info) OVERRIDE;
-  virtual void DeliverSamples(PP_Instance instance,
-                              PP_Resource audio_frames,
-                              const PP_DecryptedBlockInfo* block_info) OVERRIDE;
+  virtual void DeliverSamples(
+      PP_Instance instance,
+      PP_Resource audio_frames,
+      const PP_DecryptedSampleInfo* sample_info) OVERRIDE;
 #endif  // !defined(OS_NACL)
 
   static const ApiID kApiID = API_ID_PPB_INSTANCE;
@@ -218,10 +218,8 @@ class PPB_Instance_Proxy : public InterfaceProxy,
                                           PP_Bool* result);
   void OnHostMsgGetPluginInstanceURL(PP_Instance instance,
                                      SerializedVarReturnValue result);
-  virtual void OnHostMsgNeedKey(PP_Instance instance,
-                                SerializedVarReceiveInput key_system,
-                                SerializedVarReceiveInput session_id,
-                                SerializedVarReceiveInput init_data);
+  void OnHostMsgGetPluginReferrerURL(PP_Instance instance,
+                                     SerializedVarReturnValue result);
   virtual void OnHostMsgKeyAdded(PP_Instance instance,
                                  SerializedVarReceiveInput key_system,
                                  SerializedVarReceiveInput session_id);
@@ -256,7 +254,7 @@ class PPB_Instance_Proxy : public InterfaceProxy,
   virtual void OnHostMsgDeliverSamples(
       PP_Instance instance,
       PP_Resource audio_frames,
-      const std::string& serialized_block_info);
+      const std::string& serialized_sample_info);
 #endif  // !defined(OS_NACL)
 
   // Host -> Plugin message handlers.

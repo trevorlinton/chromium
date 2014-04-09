@@ -21,11 +21,12 @@ namespace {
 
 class TestingOmniboxView : public OmniboxView {
  public:
-  explicit TestingOmniboxView(ToolbarModel* model)
-      : OmniboxView(NULL, NULL, model, NULL) {}
+  explicit TestingOmniboxView(OmniboxEditController* controller)
+      : OmniboxView(NULL, controller, NULL) {}
 
   virtual void SaveStateToTab(WebContents* tab) OVERRIDE {}
-  virtual void Update(const WebContents* tab_for_state_restoring) OVERRIDE {}
+  virtual void OnTabChanged(const WebContents* web_contents) OVERRIDE {}
+  virtual void Update() OVERRIDE {}
   virtual void OpenMatch(const AutocompleteMatch& match,
                          WindowOpenDisposition disposition,
                          const GURL& alternate_nav_url,
@@ -88,24 +89,23 @@ class TestingOmniboxView : public OmniboxView {
 
 class TestingOmniboxEditController : public OmniboxEditController {
  public:
-  TestingOmniboxEditController() {}
-  virtual void OnAutocompleteAccept(const GURL& url,
-                                    WindowOpenDisposition disposition,
-                                    content::PageTransition transition,
-                                    const GURL& alternate_nav_url) OVERRIDE {}
+  explicit TestingOmniboxEditController(ToolbarModel* toolbar_model)
+      : OmniboxEditController(NULL),
+        toolbar_model_(toolbar_model) {
+  }
+  virtual void Update(const content::WebContents* contents) OVERRIDE {}
   virtual void OnChanged() OVERRIDE {}
-  virtual void OnSelectionBoundsChanged() OVERRIDE {}
-  virtual void OnInputInProgress(bool in_progress) OVERRIDE {}
-  virtual void OnKillFocus() OVERRIDE {}
   virtual void OnSetFocus() OVERRIDE {}
-  virtual gfx::Image GetFavicon() const OVERRIDE { return gfx::Image(); }
-  virtual string16 GetTitle() const OVERRIDE { return string16(); }
   virtual InstantController* GetInstant() OVERRIDE { return NULL; }
-  virtual WebContents* GetWebContents() const OVERRIDE {
-    return NULL;
+  virtual WebContents* GetWebContents() OVERRIDE { return NULL; }
+  virtual ToolbarModel* GetToolbarModel() OVERRIDE { return toolbar_model_; }
+  virtual const ToolbarModel* GetToolbarModel() const OVERRIDE {
+    return toolbar_model_;
   }
 
  private:
+  ToolbarModel* toolbar_model_;
+
   DISALLOW_COPY_AND_ASSIGN(TestingOmniboxEditController);
 };
 
@@ -173,8 +173,8 @@ TEST_F(AutocompleteEditTest, AdjustTextForCopy) {
     { "www.google.com/webhp?", 0, true, "hello world", "hello world", false,
       "", true },
   };
-  TestingOmniboxView view(toolbar_model());
-  TestingOmniboxEditController controller;
+  TestingOmniboxEditController controller(toolbar_model());
+  TestingOmniboxView view(&controller);
   TestingProfile profile;
   // NOTE: The TemplateURLService must be created before the
   // AutocompleteClassifier so that the SearchProvider gets a non-NULL
@@ -186,7 +186,8 @@ TEST_F(AutocompleteEditTest, AdjustTextForCopy) {
   OmniboxEditModel model(&view, &controller, &profile);
 
   for (size_t i = 0; i < ARRAYSIZE_UNSAFE(input); ++i) {
-    model.UpdatePermanentText(ASCIIToUTF16(input[i].perm_text));
+    toolbar_model()->set_text(ASCIIToUTF16(input[i].perm_text));
+    model.UpdatePermanentText();
 
     toolbar_model()->set_replace_search_url_with_search_terms(
         input[i].extracted_search_terms);

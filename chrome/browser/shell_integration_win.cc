@@ -192,7 +192,9 @@ ShellIntegration::DefaultWebClientState
 
 ShellIntegration::DefaultWebClientSetPermission
     ShellIntegration::CanSetAsDefaultBrowser() {
-  if (!BrowserDistribution::GetDistribution()->CanSetAsDefault())
+  BrowserDistribution* distribution = BrowserDistribution::GetDistribution();
+  if (distribution->GetDefaultBrowserControlPolicy() !=
+          BrowserDistribution::DEFAULT_BROWSER_FULL_CONTROL)
     return SET_DEFAULT_NOT_ALLOWED;
 
   if (ShellUtil::CanMakeChromeDefaultUnattended())
@@ -361,20 +363,6 @@ string16 ShellIntegration::GetAppListAppModelIdForProfile(
       GetAppListAppName(), profile_path);
 }
 
-string16 ShellIntegration::GetChromiumIconLocation() {
-  // Determine the path to chrome.exe. If we can't determine what that is,
-  // we have bigger fish to fry...
-  base::FilePath chrome_exe;
-  if (!PathService::Get(base::FILE_EXE, &chrome_exe)) {
-    NOTREACHED();
-    return string16();
-  }
-
-  return ShellUtil::FormatIconLocation(
-      chrome_exe.value(),
-      BrowserDistribution::GetDistribution()->GetIconIndex());
-}
-
 void ShellIntegration::MigrateChromiumShortcuts() {
   if (base::win::GetVersion() < base::win::VERSION_WIN7)
     return;
@@ -515,7 +503,8 @@ base::FilePath ShellIntegration::GetStartMenuShortcut(
     base::DIR_START_MENU,
   };
   BrowserDistribution* dist = BrowserDistribution::GetDistribution();
-  string16 shortcut_name(dist->GetAppShortCutName());
+  string16 shortcut_name(
+      dist->GetShortcutName(BrowserDistribution::SHORTCUT_CHROME));
   base::FilePath shortcut;
 
   // Check both the common and the per-user Start Menu folders for system-level

@@ -4,6 +4,8 @@
 
 #include "android_webview/native/aw_contents.h"
 
+#include <limits>
+
 #include "android_webview/browser/aw_browser_context.h"
 #include "android_webview/browser/aw_browser_main_parts.h"
 #include "android_webview/browser/gpu_memory_buffer_factory_impl.h"
@@ -51,7 +53,9 @@
 #include "third_party/skia/include/core/SkPicture.h"
 #include "ui/base/l10n/l10n_util_android.h"
 #include "ui/gfx/android/java_bitmap.h"
+#include "ui/gfx/font_render_params_linux.h"
 #include "ui/gfx/image/image.h"
+#include "ui/gfx/size.h"
 
 struct AwDrawSWFunctionTable;
 struct AwDrawGLFunctionTable;
@@ -87,6 +91,8 @@ namespace android_webview {
 
 namespace {
 
+bool g_should_download_favicons = false;
+
 JavaBrowserViewRendererHelper* java_renderer_helper() {
   return JavaBrowserViewRendererHelper::GetInstance();
 }
@@ -110,6 +116,46 @@ class AwContentsUserData : public base::SupportsUserData::Data {
 };
 
 base::subtle::Atomic32 g_instance_count = 0;
+
+// TODO(boliu): Deduplicate with chrome/ code.
+content::RendererPreferencesHintingEnum GetRendererPreferencesHintingEnum(
+    gfx::FontRenderParams::Hinting hinting) {
+  switch (hinting) {
+    case gfx::FontRenderParams::HINTING_NONE:
+      return content::RENDERER_PREFERENCES_HINTING_NONE;
+    case gfx::FontRenderParams::HINTING_SLIGHT:
+      return content::RENDERER_PREFERENCES_HINTING_SLIGHT;
+    case gfx::FontRenderParams::HINTING_MEDIUM:
+      return content::RENDERER_PREFERENCES_HINTING_MEDIUM;
+    case gfx::FontRenderParams::HINTING_FULL:
+      return content::RENDERER_PREFERENCES_HINTING_FULL;
+    default:
+      NOTREACHED() << "Unhandled hinting style " << hinting;
+      return content::RENDERER_PREFERENCES_HINTING_SYSTEM_DEFAULT;
+  }
+}
+
+// TODO(boliu): Deduplicate with chrome/ code.
+content::RendererPreferencesSubpixelRenderingEnum
+GetRendererPreferencesSubpixelRenderingEnum(
+    gfx::FontRenderParams::SubpixelRendering subpixel_rendering) {
+  switch (subpixel_rendering) {
+    case gfx::FontRenderParams::SUBPIXEL_RENDERING_NONE:
+      return content::RENDERER_PREFERENCES_SUBPIXEL_RENDERING_NONE;
+    case gfx::FontRenderParams::SUBPIXEL_RENDERING_RGB:
+      return content::RENDERER_PREFERENCES_SUBPIXEL_RENDERING_RGB;
+    case gfx::FontRenderParams::SUBPIXEL_RENDERING_BGR:
+      return content::RENDERER_PREFERENCES_SUBPIXEL_RENDERING_BGR;
+    case gfx::FontRenderParams::SUBPIXEL_RENDERING_VRGB:
+      return content::RENDERER_PREFERENCES_SUBPIXEL_RENDERING_VRGB;
+    case gfx::FontRenderParams::SUBPIXEL_RENDERING_VBGR:
+      return content::RENDERER_PREFERENCES_SUBPIXEL_RENDERING_VBGR;
+    default:
+      NOTREACHED() << "Unhandled subpixel rendering style "
+                   << subpixel_rendering;
+      return content::RENDERER_PREFERENCES_SUBPIXEL_RENDERING_SYSTEM_DEFAULT;
+  }
+}
 
 }  // namespace
 
@@ -142,6 +188,7 @@ AwContents::AwContents(scoped_ptr<WebContents> web_contents)
                              new AwContentsUserData(this));
   render_view_host_ext_.reset(
       new AwRenderViewHostExt(this, web_contents_.get()));
+  AwContentsIoThreadClientImpl::RegisterPendingContents(web_contents_.get());
 
   AwAutofillManagerDelegate* autofill_manager_delegate =
       AwAutofillManagerDelegate::FromWebContents(web_contents_.get());
@@ -217,10 +264,19 @@ void AwContents::InitAutofillIfNecessary(bool enabled) {
 void AwContents::SetAndroidWebViewRendererPrefs() {
   content::RendererPreferences* prefs =
       web_contents_->GetMutableRendererPrefs();
-  prefs->hinting = content::RENDERER_PREFERENCES_HINTING_SLIGHT;
   prefs->tap_multiple_targets_strategy =
       content::TAP_MULTIPLE_TARGETS_STRATEGY_NONE;
-  prefs->use_subpixel_positioning = true;
+
+  // TODO(boliu): Deduplicate with chrome/ code.
+  const gfx::FontRenderParams& params = gfx::GetDefaultWebKitFontRenderParams();
+  prefs->should_antialias_text = params.antialiasing;
+  prefs->use_subpixel_positioning = params.subpixel_positioning;
+  prefs->hinting = GetRendererPreferencesHintingEnum(params.hinting);
+  prefs->use_autohinter = params.autohinter;
+  prefs->use_bitmaps = params.use_bitmaps;
+  prefs->subpixel_rendering =
+      GetRendererPreferencesSubpixelRenderingEnum(params.subpixel_rendering);
+
   content::RenderViewHost* host = web_contents_->GetRenderViewHost();
   if (host)
     host->SyncRendererPrefs();
@@ -326,9 +382,10 @@ void AwContents::GenerateMHTML(JNIEnv* env, jobject obj,
                                jstring jpath, jobject callback) {
   ScopedJavaGlobalRef<jobject>* j_callback = new ScopedJavaGlobalRef<jobject>();
   j_callback->Reset(env, callback);
+  base::FilePath target_path(ConvertJavaStringToUTF8(env, jpath));
   web_contents_->GenerateMHTML(
-      base::FilePath(ConvertJavaStringToUTF8(env, jpath)),
-      base::Bind(&GenerateMHTMLCallback, base::Owned(j_callback)));
+      target_path,
+      base::Bind(&GenerateMHTMLCallback, base::Owned(j_callback), target_path));
 }
 
 bool AwContents::OnReceivedHttpAuthRequest(const JavaRef<jobject>& handler,
@@ -498,6 +555,10 @@ void AwContents::OnFindResultReceived(int active_ordinal,
       env, obj.obj(), active_ordinal, match_count, finished);
 }
 
+bool AwContents::ShouldDownloadFavicon(const GURL& icon_url) {
+  return g_should_download_favicons;
+}
+
 void AwContents::OnReceivedIcon(const GURL& icon_url, const SkBitmap& bitmap) {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
@@ -631,6 +692,12 @@ void AwContents::SetWindowVisibility(JNIEnv* env, jobject obj, bool visible) {
 
 void AwContents::SetIsPaused(JNIEnv* env, jobject obj, bool paused) {
   browser_view_renderer_->SetIsPaused(paused);
+  if (paused) {
+    ContentViewCore* cvc =
+        ContentViewCore::FromWebContents(web_contents_.get());
+    if (cvc)
+      cvc->PauseVideo();
+  }
 }
 
 void AwContents::OnAttachedToWindow(JNIEnv* env, jobject obj, int w, int h) {
@@ -739,6 +806,15 @@ gfx::Point AwContents::GetLocationOnScreen() {
   return gfx::Point(location[0], location[1]);
 }
 
+void AwContents::SetMaxContainerViewScrollOffset(gfx::Vector2d new_value) {
+  JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
+  if (obj.is_null())
+    return;
+  Java_AwContents_setMaxContainerViewScrollOffset(
+      env, obj.obj(), new_value.x(), new_value.y());
+}
+
 void AwContents::ScrollContainerViewTo(gfx::Vector2d new_value) {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
@@ -748,6 +824,30 @@ void AwContents::ScrollContainerViewTo(gfx::Vector2d new_value) {
       env, obj.obj(), new_value.x(), new_value.y());
 }
 
+bool AwContents::IsFlingActive() const {
+  JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
+  if (obj.is_null())
+    return false;
+  return Java_AwContents_isFlingActive(env, obj.obj());
+}
+
+void AwContents::SetPageScaleFactor(float page_scale_factor) {
+  JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
+  if (obj.is_null())
+    return;
+  Java_AwContents_setPageScaleFactor(env, obj.obj(), page_scale_factor);
+}
+
+void AwContents::SetContentsSize(gfx::SizeF contents_size_dip) {
+  JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
+  if (obj.is_null())
+    return;
+  Java_AwContents_setContentsSize(
+      env, obj.obj(), contents_size_dip.width(), contents_size_dip.height());
+}
 
 void AwContents::DidOverscroll(gfx::Vector2d overscroll_delta) {
   JNIEnv* env = AttachCurrentThread();
@@ -758,18 +858,19 @@ void AwContents::DidOverscroll(gfx::Vector2d overscroll_delta) {
       env, obj.obj(), overscroll_delta.x(), overscroll_delta.y());
 }
 
-void AwContents::SetDipScale(JNIEnv* env, jobject obj, jfloat dipScale) {
-  browser_view_renderer_->SetDipScale(dipScale);
+void AwContents::SetDipScale(JNIEnv* env, jobject obj, jfloat dip_scale) {
+  browser_view_renderer_->SetDipScale(dip_scale);
 }
 
-void AwContents::SetDisplayedPageScaleFactor(JNIEnv* env,
-                                             jobject obj,
-                                             jfloat pageScaleFactor) {
-  browser_view_renderer_->SetPageScaleFactor(pageScaleFactor);
+void AwContents::SetFixedLayoutSize(JNIEnv* env,
+                                    jobject obj,
+                                    jint width_dip,
+                                    jint height_dip) {
+  render_view_host_ext_->SetFixedLayoutSize(gfx::Size(width_dip, height_dip));
 }
 
-void AwContents::ScrollTo(JNIEnv* env, jobject obj, jint xPix, jint yPix) {
-  browser_view_renderer_->ScrollTo(gfx::Vector2d(xPix, yPix));
+void AwContents::ScrollTo(JNIEnv* env, jobject obj, jint x, jint y) {
+  browser_view_renderer_->ScrollTo(gfx::Vector2d(x, y));
 }
 
 void AwContents::OnWebLayoutPageScaleFactorChanged(float page_scale_factor) {
@@ -779,6 +880,16 @@ void AwContents::OnWebLayoutPageScaleFactorChanged(float page_scale_factor) {
     return;
   Java_AwContents_onWebLayoutPageScaleFactorChanged(env, obj.obj(),
                                                          page_scale_factor);
+}
+
+void AwContents::OnWebLayoutContentsSizeChanged(
+    const gfx::Size& contents_size) {
+  JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
+  if (obj.is_null())
+    return;
+  Java_AwContents_onWebLayoutContentsSizeChanged(
+      env, obj.obj(), contents_size.width(), contents_size.height());
 }
 
 jint AwContents::CapturePicture(JNIEnv* env,
@@ -799,6 +910,14 @@ void AwContents::SetJsOnlineProperty(JNIEnv* env,
                                      jobject obj,
                                      jboolean network_up) {
   render_view_host_ext_->SetJsOnlineProperty(network_up);
+}
+
+void AwContents::TrimMemory(JNIEnv* env, jobject obj, jint level) {
+  browser_view_renderer_->TrimMemory(level);
+}
+
+void SetShouldDownloadFavicons(JNIEnv* env, jclass jclazz) {
+  g_should_download_favicons = true;
 }
 
 }  // namespace android_webview

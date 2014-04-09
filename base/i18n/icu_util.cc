@@ -51,11 +51,10 @@
 #endif
 #endif
 
-using base::FilePath;
+namespace base {
+namespace i18n {
 
-namespace icu_util {
-
-bool Initialize() {
+bool InitializeICU() {
 #ifndef NDEBUG
   // Assert that we are not called more than once.  Even though calling this
   // function isn't harmful (ICU can handle it), being called twice probably
@@ -138,4 +137,5 @@ bool Initialize() {
 #endif
 }
 
-}  // namespace icu_util
+}  // namespace i18n
+}  // namespace base

@@ -79,16 +79,27 @@ class SearchProvider : public AutocompleteProvider,
   // command-line-specified query params.
   static AutocompleteMatch CreateSearchSuggestion(
       AutocompleteProvider* autocomplete_provider,
+      const AutocompleteInput& input,
+      const string16& input_text,
       int relevance,
       AutocompleteMatch::Type type,
+      bool is_keyword,
+      const string16& match_contents,
+      const string16& annotation,
       const TemplateURL* template_url,
       const string16& query_string,
-      const string16& input_text,
-      const AutocompleteInput& input,
-      bool is_keyword,
+      const std::string& suggest_query_params,
       int accepted_suggestion,
       int omnibox_start_margin,
       bool append_extra_query_params);
+
+  // Returns whether the SearchProvider previously flagged |match| as a query
+  // that should be prefetched.
+  static bool ShouldPrefetch(const AutocompleteMatch& match);
+
+  // Extracts the suggest response metadata which SearchProvider previously
+  // stored for |match|.
+  static std::string GetSuggestMetadata(const AutocompleteMatch& match);
 
   // AutocompleteProvider:
   virtual void AddProviderInfo(ProvidersInfo* provider_info) const OVERRIDE;
@@ -109,6 +120,8 @@ class SearchProvider : public AutocompleteProvider,
   FRIEND_TEST_ALL_PREFIXES(SearchProviderTest, RemoveStaleResultsTest);
   FRIEND_TEST_ALL_PREFIXES(SearchProviderTest, SuggestRelevanceExperiment);
   FRIEND_TEST_ALL_PREFIXES(AutocompleteProviderTest, GetDestinationURL);
+  FRIEND_TEST_ALL_PREFIXES(InstantExtendedPrefetchTest, ClearPrefetchedResults);
+  FRIEND_TEST_ALL_PREFIXES(InstantExtendedPrefetchTest, SetPrefetchQuery);
 
   // Manages the providers (TemplateURLs) used by SearchProvider. Two providers
   // may be used:
@@ -211,12 +224,22 @@ class SearchProvider : public AutocompleteProvider,
   class SuggestResult : public Result {
    public:
     SuggestResult(const string16& suggestion,
+                  const string16& match_contents,
+                  const string16& annotation,
+                  const std::string& suggest_query_params,
                   bool from_keyword_provider,
                   int relevance,
-                  bool relevance_from_server);
+                  bool relevance_from_server,
+                  bool should_prefetch);
     virtual ~SuggestResult();
 
     const string16& suggestion() const { return suggestion_; }
+    const string16& match_contents() const { return match_contents_; }
+    const string16& annotation() const { return annotation_; }
+    const std::string& suggest_query_params() const {
+      return suggest_query_params_;
+    }
+    bool should_prefetch() const { return should_prefetch_; }
 
     // Result:
     virtual bool IsInlineable(const string16& input) const OVERRIDE;
@@ -225,8 +248,22 @@ class SearchProvider : public AutocompleteProvider,
         bool keyword_provider_requested) const OVERRIDE;
 
    private:
-    // The search suggestion string.
+    // The search terms to be used for this suggestion.
     string16 suggestion_;
+
+    // The contents to be displayed in the autocomplete match.
+    string16 match_contents_;
+
+    // Optional annotation for the |match_contents_| for disambiguation.
+    // This may be displayed in the autocomplete match contents, but is defined
+    // separately to facilitate different formatting.
+    string16 annotation_;
+
+    // Optional additional parameters to be added to the search URL.
+    std::string suggest_query_params_;
+
+    // Should this result be prefetched?
+    bool should_prefetch_;
   };
 
   class NavigationResult : public Result {
@@ -268,7 +305,8 @@ class SearchProvider : public AutocompleteProvider,
   typedef std::vector<SuggestResult> SuggestResults;
   typedef std::vector<NavigationResult> NavigationResults;
   typedef std::vector<history::KeywordSearchTermVisit> HistoryResults;
-  typedef std::map<string16, AutocompleteMatch> MatchMap;
+  typedef std::pair<string16, std::string> MatchKey;
+  typedef std::map<MatchKey, AutocompleteMatch> MatchMap;
 
   // A simple structure bundling most of the information (including
   // both SuggestResults and NavigationResults) returned by a call to
@@ -297,6 +335,9 @@ class SearchProvider : public AutocompleteProvider,
     // indicate that there is no suggested score; a value of 0
     // suppresses the verbatim result.
     int verbatim_relevance;
+
+    // The JSON metadata associated with this server response.
+    std::string metadata;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(Results);
@@ -404,7 +445,9 @@ class SearchProvider : public AutocompleteProvider,
                                      bool is_keyword);
 
   // Adds matches for |results| to |map|.
-  void AddSuggestResultsToMap(const SuggestResults& results, MatchMap* map);
+  void AddSuggestResultsToMap(const SuggestResults& results,
+                              const std::string& metadata,
+                              MatchMap* map);
 
   // Gets the relevance score for the verbatim result.  This value may be
   // provided by the suggest server or calculated locally; if
@@ -445,13 +488,18 @@ class SearchProvider : public AutocompleteProvider,
   // Creates an AutocompleteMatch for "Search <engine> for |query_string|" with
   // the supplied relevance.  Adds this match to |map|; if such a match already
   // exists, whichever one has lower relevance is eliminated.
-  void AddMatchToMap(const string16& query_string,
-                     const string16& input_text,
+  void AddMatchToMap(const string16& input_text,
                      int relevance,
                      bool relevance_from_server,
+                     bool should_prefetch,
+                     const std::string& metadata,
                      AutocompleteMatch::Type type,
-                     int accepted_suggestion,
                      bool is_keyword,
+                     const string16& match_contents,
+                     const string16& annotation,
+                     const string16& query_string,
+                     int accepted_suggestion,
+                     const std::string& suggest_query_params,
                      MatchMap* map);
 
   // Returns an AutocompleteMatch for a navigational suggestion.
@@ -474,10 +522,20 @@ class SearchProvider : public AutocompleteProvider,
   // previous one.  Non-const because some unittests modify this value.
   static int kMinimumTimeBetweenSuggestQueriesMs;
 
+  // The following keys are used to record additional information on matches.
+
   // We annotate our AutocompleteMatches with whether their relevance scores
   // were server-provided using this key in the |additional_info| field.
   static const char kRelevanceFromServerKey[];
-  // These are the values we record with the above key.
+
+  // Indicates whether the server said a match should be prefetched.
+  static const char kShouldPrefetchKey[];
+
+  // Used to store metadata from the server response, which is needed for
+  // prefetching.
+  static const char kSuggestMetadataKey[];
+
+  // These are the values for the above keys.
   static const char kTrue[];
   static const char kFalse[];
 

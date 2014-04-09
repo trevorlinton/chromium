@@ -6,6 +6,7 @@
 #include "base/bind_helpers.h"
 #include "base/memory/ref_counted.h"
 #include "base/prefs/pref_service.h"
+#include "base/prefs/scoped_user_pref_update.h"
 #include "base/stl_util.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
@@ -16,7 +17,6 @@
 #include "chrome/browser/extensions/external_policy_loader.h"
 #include "chrome/browser/extensions/updater/extension_downloader.h"
 #include "chrome/browser/extensions/updater/extension_updater.h"
-#include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/pref_names.h"
@@ -273,9 +273,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementTest, MAYBE_AutoUpdate) {
   ASSERT_EQ("ogjcoiohnmldgjemafoockdghcjciccf", extension->id());
   ASSERT_EQ("1.0", extension->VersionString());
 
-  // We don't want autoupdate blacklist checks.
   extensions::ExtensionUpdater::CheckParams params;
-  params.check_blacklist = false;
   params.callback =
       base::Bind(&NotificationListener::OnFinished,
                  base::Unretained(&notification_listener));
@@ -361,9 +359,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementTest,
   ASSERT_EQ("ogjcoiohnmldgjemafoockdghcjciccf", extension->id());
   ASSERT_EQ("1.0", extension->VersionString());
 
-  // We don't want autoupdate blacklist checks.
   extensions::ExtensionUpdater::CheckParams params;
-  params.check_blacklist = false;
   params.callback =
       base::Bind(&NotificationListener::OnFinished,
                  base::Unretained(&notification_listener));
@@ -405,9 +401,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementTest, MAYBE_ExternalUrlUpdate) {
   ExtensionService* service = extensions::ExtensionSystem::Get(
       browser()->profile())->extension_service();
   const char* kExtensionId = "ogjcoiohnmldgjemafoockdghcjciccf";
-  // We don't want autoupdate blacklist checks.
   extensions::ExtensionUpdater::CheckParams params;
-  params.check_blacklist = false;
 
   base::FilePath basedir = test_data_dir_.AppendASCII("autoupdate");
 
@@ -434,7 +428,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementTest, MAYBE_ExternalUrlUpdate) {
 
   EXPECT_TRUE(pending_extension_manager->AddFromExternalUpdateUrl(
       kExtensionId, GURL("http://localhost/autoupdate/manifest"),
-      Manifest::EXTERNAL_PREF_DOWNLOAD));
+      Manifest::EXTERNAL_PREF_DOWNLOAD, Extension::NO_FLAGS, false));
 
   // Run autoupdate and make sure version 2 of the extension was installed.
   service->updater()->CheckNow(params);
@@ -457,7 +451,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementTest, MAYBE_ExternalUrlUpdate) {
   // because of the killbit.
   EXPECT_FALSE(pending_extension_manager->AddFromExternalUpdateUrl(
       kExtensionId, GURL("http://localhost/autoupdate/manifest"),
-      Manifest::EXTERNAL_PREF_DOWNLOAD));
+      Manifest::EXTERNAL_PREF_DOWNLOAD, Extension::NO_FLAGS, false));
   EXPECT_FALSE(pending_extension_manager->IsIdPending(kExtensionId))
       << "External reinstall of a killed extension shouldn't work.";
   EXPECT_TRUE(extension_prefs->IsExternalExtensionUninstalled(kExtensionId))
@@ -491,9 +485,6 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementTest, ExternalPolicyRefresh) {
   ExtensionService* service = extensions::ExtensionSystem::Get(
       browser()->profile())->extension_service();
   const char* kExtensionId = "ogjcoiohnmldgjemafoockdghcjciccf";
-  // We don't want autoupdate blacklist checks.
-  extensions::ExtensionUpdater::CheckParams params;
-  params.check_blacklist = false;
 
   base::FilePath basedir = test_data_dir_.AppendASCII("autoupdate");
 
@@ -566,7 +557,6 @@ IN_PROC_BROWSER_TEST_F(ExtensionManagementTest,
       browser()->profile())->extension_service();
   const char* kExtensionId = "ogjcoiohnmldgjemafoockdghcjciccf";
   extensions::ExtensionUpdater::CheckParams params;
-  params.check_blacklist = false;
   service->updater()->set_default_check_params(params);
   const size_t size_before = service->extensions()->size();
   base::FilePath basedir = test_data_dir_.AppendASCII("autoupdate");

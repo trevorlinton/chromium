@@ -20,9 +20,10 @@
 #include "grit/generated_resources.h"
 #include "net/base/escape.h"
 #include "net/base/net_errors.h"
+#include "net/base/net_util.h"
 #include "third_party/WebKit/public/platform/WebURLError.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/webui/web_ui_util.h"
+#include "ui/base/webui/web_ui_util.h"
 #include "url/gurl.h"
 #include "webkit/glue/webkit_glue.h"
 
@@ -475,13 +476,28 @@ base::DictionaryValue* GetStandardMenuItemsText() {
   return standard_menu_items_text;
 }
 
+// Gets the icon class for a given |error_domain| and |error_code|.
+const char* GetIconClassForError(const std::string& error_domain,
+                                 int error_code) {
+  if ((error_code == net::ERR_INTERNET_DISCONNECTED &&
+       error_domain == net::kErrorDomain) ||
+      (error_code == chrome_common_net::DNS_PROBE_FINISHED_NO_INTERNET &&
+       error_domain == chrome_common_net::kDnsProbeErrorDomain))
+    return "icon-offline";
+
+  return "icon-generic";
+}
+
 }  // namespace
 
 const char LocalizedError::kHttpErrorDomain[] = "http";
 
-void LocalizedError::GetStrings(const WebKit::WebURLError& error,
+void LocalizedError::GetStrings(int error_code,
+                                const std::string& error_domain,
+                                const GURL& failed_url,
                                 bool is_post,
                                 const std::string& locale,
+                                const std::string& accept_languages,
                                 base::DictionaryValue* error_strings) {
   bool rtl = LocaleIsRTL();
   error_strings->SetString("textdirection", rtl ? "rtl" : "ltr");
@@ -497,14 +513,10 @@ void LocalizedError::GetStrings(const WebKit::WebURLError& error,
     SUGGEST_NONE,
   };
 
-  const std::string error_domain = error.domain.utf8();
-  int error_code = error.reason;
   const LocalizedErrorMap* error_map = LookupErrorMap(error_domain, error_code,
                                                       is_post);
   if (error_map)
     options = *error_map;
-
-  const GURL failed_url = error.unreachableURL;
 
   // If we got "access denied" but the url was a file URL, then we say it was a
   // file instead of just using the "not available" default message. Just adding
@@ -520,7 +532,9 @@ void LocalizedError::GetStrings(const WebKit::WebURLError& error,
     options.suggestions = SUGGEST_NONE;
   }
 
-  string16 failed_url_string(UTF8ToUTF16(failed_url.spec()));
+  string16 failed_url_string(net::FormatUrl(
+      failed_url, accept_languages, net::kFormatUrlOmitNothing,
+      net::UnescapeRule::NORMAL, NULL, NULL, NULL));
   // URLs are always LTR.
   if (rtl)
     base::i18n::WrapStringWithLTRFormatting(&failed_url_string);
@@ -529,19 +543,15 @@ void LocalizedError::GetStrings(const WebKit::WebURLError& error,
   error_strings->SetString("heading",
       l10n_util::GetStringUTF16(options.heading_resource_id));
 
-  std::string icon_class = (error_code == net::ERR_INTERNET_DISCONNECTED &&
-                            error_domain == net::kErrorDomain)
-                               ? "icon-offline"
-                               : "icon-generic";
+  std::string icon_class = GetIconClassForError(error_domain, error_code);
   error_strings->SetString("iconClass", icon_class);
 
   base::DictionaryValue* summary = new base::DictionaryValue;
   summary->SetString("msg",
       l10n_util::GetStringUTF16(options.summary_resource_id));
-  // TODO(tc): We want the unicode url and host here since they're being
-  //           displayed.
   summary->SetString("failedUrl", failed_url_string);
-  summary->SetString("hostName", failed_url.host());
+  summary->SetString("hostName", net::IDNToUnicode(failed_url.host(),
+                                                   accept_languages));
   summary->SetString("productName",
                      l10n_util::GetStringUTF16(IDS_PRODUCT_NAME));
 
@@ -779,7 +789,6 @@ bool LocalizedError::HasStrings(const std::string& error_domain,
 }
 
 void LocalizedError::GetAppErrorStrings(
-    const WebURLError& error,
     const GURL& display_url,
     const extensions::Extension* app,
     base::DictionaryValue* error_strings) {

@@ -100,9 +100,6 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
     // Invoked when the backend has finished loading the db.
     virtual void DBLoaded(int backend_id) = 0;
 
-    // Tell TopSites to start reading thumbnails from the ThumbnailsDB.
-    virtual void StartTopSitesMigration(int backend_id) = 0;
-
     virtual void NotifyVisitDBObserversOnAddVisit(
         const history::BriefVisitInfo& info) = 0;
   };
@@ -237,28 +234,6 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
   bool GetMostRecentRedirectsTo(const GURL& url,
                                 history::RedirectList* redirects);
 
-  // Thumbnails ----------------------------------------------------------------
-
-  void SetPageThumbnail(const GURL& url,
-                        const gfx::Image* thumbnail,
-                        const ThumbnailScore& score);
-
-  // Retrieves a thumbnail, passing it across thread boundaries
-  // via. the included callback.
-  void GetPageThumbnail(scoped_refptr<GetPageThumbnailRequest> request,
-                        const GURL& page_url);
-
-  // Backend implementation of GetPageThumbnail. Unlike
-  // GetPageThumbnail(), this method has way to transport data across
-  // thread boundaries.
-  //
-  // Exposed for testing reasons.
-  void GetPageThumbnailDirectly(
-      const GURL& page_url,
-      scoped_refptr<base::RefCountedBytes>* data);
-
-  void MigrateThumbnailsDatabase();
-
   // Favicon -------------------------------------------------------------------
 
   void GetFavicons(const std::vector<GURL>& icon_urls,
@@ -266,6 +241,12 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
                     int desired_size_in_dip,
                     const std::vector<ui::ScaleFactor>& desired_scale_factors,
                     std::vector<chrome::FaviconBitmapResult>* bitmap_results);
+
+  void GetLargestFaviconForURL(
+      const GURL& page_url,
+      const std::vector<int>& icon_types,
+      int minimum_size_in_pixels,
+      chrome::FaviconBitmapResult* bitmap_result);
 
   void GetFaviconsForURL(
       const GURL& page_url,
@@ -343,6 +324,8 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
       TemplateURLID keyword_id,
       const string16& prefix,
       int max_count);
+
+  void DeleteKeywordSearchTermForURL(const GURL& url);
 
 #if defined(OS_ANDROID)
   // Android Provider ---------------------------------------------------------
@@ -529,7 +512,6 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
   FRIEND_TEST_ALL_PREFIXES(HistoryBackendTest, RemoveVisitsSource);
   FRIEND_TEST_ALL_PREFIXES(HistoryBackendTest, RemoveVisitsTransitions);
   FRIEND_TEST_ALL_PREFIXES(HistoryBackendTest, MigrationVisitSource);
-  FRIEND_TEST_ALL_PREFIXES(HistoryBackendTest, MigrationIconMapping);
   FRIEND_TEST_ALL_PREFIXES(HistoryBackendTest,
                            SetFaviconMappingsForPageAndRedirects);
   FRIEND_TEST_ALL_PREFIXES(HistoryBackendTest,
@@ -569,13 +551,12 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
   friend class ::TestingProfile;
 
   // Computes the name of the specified database on disk.
+  base::FilePath GetArchivedFileName() const;
   base::FilePath GetThumbnailFileName() const;
 
   // Returns the name of the Favicons database. This is the new name
   // of the Thumbnails database.
-  // See ThumbnailDatabase::RenameAndDropThumbnails.
   base::FilePath GetFaviconsFileName() const;
-  base::FilePath GetArchivedFileName() const;
 
 #if defined(OS_ANDROID)
   // Returns the name of android cache database.
@@ -634,16 +615,6 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
 
   // Update the visit_duration information in visits table.
   void UpdateVisitDuration(VisitID visit_id, const base::Time end_ts);
-
-  // Thumbnail Helpers ---------------------------------------------------------
-
-  // When a simple GetMostRecentRedirectsFrom() fails, this method is
-  // called which searches the last N visit sessions instead of just
-  // the current one. Returns true and puts thumbnail data in |data|
-  // if a proper thumbnail was found. Returns false otherwise. Assumes
-  // that this HistoryBackend object has been Init()ed successfully.
-  bool GetThumbnailFromOlderRedirect(
-      const GURL& page_url, std::vector<unsigned char>* data);
 
   // Querying ------------------------------------------------------------------
 
@@ -830,9 +801,8 @@ class HistoryBackend : public base::RefCountedThreadSafe<HistoryBackend>,
 
   // Given a vector of all URLs that we will keep, removes all thumbnails
   // referenced by any URL, and also all favicons that aren't used by those
-  // URLs. The favicon IDs will change, so this will update the url rows in the
-  // vector to reference the new IDs.
-  bool ClearAllThumbnailHistory(URLRows* kept_urls);
+  // URLs.
+  bool ClearAllThumbnailHistory(const URLRows& kept_urls);
 
   // Deletes all information in the history database, except for the supplied
   // set of URLs in the URL table (these should correspond to the bookmarked

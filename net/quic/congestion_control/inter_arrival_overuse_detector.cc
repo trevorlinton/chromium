@@ -7,6 +7,8 @@
 #include <math.h>
 #include <stdlib.h>
 
+#include <algorithm>
+
 // Initial noise variance, equal to a standard deviation of 1 millisecond.
 static const float kInitialVarianceNoise = 1000000.0;
 
@@ -15,10 +17,6 @@ static const int kMinVarianceDelta = 10000;
 
 // Threshold for accumulated delta.
 static const int kThresholdAccumulatedDeltasUs = 1000;
-
-// The higher the beta parameter, the lower is the effect of the input and the
-// more damping of the noise. And the longer time for a detection.
-static const float kBeta = 0.98f;
 
 // Same as above, described as numerator and denominator.
 static const int kBetaNumerator = 49;

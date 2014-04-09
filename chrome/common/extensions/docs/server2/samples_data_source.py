@@ -5,10 +5,11 @@
 import hashlib
 import json
 import logging
+import posixpath
 import re
+import traceback
 
 from compiled_file_system import CompiledFileSystem
-from file_system import FileNotFoundError
 import third_party.json_schema_compiler.json_comment_eater as json_comment_eater
 import third_party.json_schema_compiler.model as model
 import url_constants
@@ -24,9 +25,8 @@ class SamplesDataSource(object):
     '''
     def __init__(self,
                  host_file_system,
-                 compiled_host_fs_factory,
                  app_samples_file_system,
-                 compiled_app_samples_fs_factory,
+                 compiled_fs_factory,
                  ref_resolver_factory,
                  extension_samples_path,
                  base_path):
@@ -35,11 +35,13 @@ class SamplesDataSource(object):
       self._ref_resolver = ref_resolver_factory.Create()
       self._extension_samples_path = extension_samples_path
       self._base_path = base_path
-      self._extensions_cache = compiled_host_fs_factory.Create(
+      self._extensions_cache = compiled_fs_factory.Create(
+          host_file_system,
           self._MakeSamplesList,
           SamplesDataSource,
           category='extensions')
-      self._apps_cache = compiled_app_samples_fs_factory.Create(
+      self._apps_cache = compiled_fs_factory.Create(
+          app_samples_file_system,
           lambda *args: self._MakeSamplesList(*args, is_apps=True),
           SamplesDataSource,
           category='apps')
@@ -54,18 +56,23 @@ class SamplesDataSource(object):
                                request)
 
     def _GetAPIItems(self, js_file):
-      chrome_regex = '(chrome\.[a-zA-Z0-9\.]+)'
-      calls = set(re.findall(chrome_regex, js_file))
-      # Find APIs that have been assigned into variables.
-      assigned_vars = dict(re.findall('var\s*([^\s]+)\s*=\s*%s;' % chrome_regex,
-                                      js_file))
-      # Replace the variable name with the full API name.
-      for var_name, value in assigned_vars.iteritems():
-        js_file = js_file.replace(var_name, value)
-      return calls.union(re.findall(chrome_regex, js_file))
+      chrome_pattern = r'chrome[\w.]+'
+      # Add API calls that appear normally, like "chrome.runtime.connect".
+      calls = set(re.findall(chrome_pattern, js_file))
+      # Add API calls that have been assigned into variables, like
+      # "var storageArea = chrome.storage.sync; storageArea.get", which should
+      # be expanded like "chrome.storage.sync.get".
+      for match in re.finditer(r'var\s+(\w+)\s*=\s*(%s);' % chrome_pattern,
+                               js_file):
+        var_name, api_prefix = match.groups()
+        for var_match in re.finditer(r'\b%s\.([\w.]+)\b' % re.escape(var_name),
+                                     js_file):
+          api_suffix, = var_match.groups()
+          calls.add('%s.%s' % (api_prefix, api_suffix))
+      return calls
 
     def _GetDataFromManifest(self, path, file_system):
-      manifest = file_system.ReadSingle(path + '/manifest.json')
+      manifest = file_system.ReadSingle(path + '/manifest.json').Get()
       try:
         manifest_json = json.loads(json_comment_eater.Nom(manifest))
       except ValueError as e:
@@ -81,7 +88,7 @@ class SamplesDataSource(object):
       if not l10n_data['default_locale']:
         return l10n_data
       locales_path = path + '/_locales/'
-      locales_dir = file_system.ReadSingle(locales_path)
+      locales_dir = file_system.ReadSingle(locales_path).Get()
       if locales_dir:
         locales_files = file_system.Read(
             [locales_path + f + 'messages.json' for f in locales_dir]).Get()
@@ -128,6 +135,12 @@ class SamplesDataSource(object):
           if item.startswith('chrome.'):
             item = item[len('chrome.'):]
           ref_data = self._ref_resolver.GetLink(item)
+          # TODO(kalman): What about references like chrome.storage.sync.get?
+          # That should link to either chrome.storage.sync or
+          # chrome.storage.StorageArea.get (or probably both).
+          # TODO(kalman): Filter out API-only references? This can happen when
+          # the API namespace is assigned to a variable, but it's very hard to
+          # to disambiguate.
           if ref_data is None:
             continue
           api_calls.append({
@@ -147,12 +160,12 @@ class SamplesDataSource(object):
 
         manifest_data = self._GetDataFromManifest(sample_path, file_system)
         if manifest_data['icon'] is None:
-          icon_path = '%s/static/%s' % (self._base_path, DEFAULT_ICON_PATH)
+          icon_path = posixpath.join(
+              self._base_path, 'static', DEFAULT_ICON_PATH)
         else:
           icon_path = '%s/%s' % (icon_base, manifest_data['icon'])
         manifest_data.update({
           'icon': icon_path,
-          'id': hashlib.md5(url).hexdigest(),
           'download_url': download_url,
           'url': url,
           'files': [f.replace(sample_path + '/', '') for f in sample_files],
@@ -174,6 +187,9 @@ class SamplesDataSource(object):
     self._base_path = base_path
     self._request = request
 
+  def _GetSampleId(self, sample_name):
+    return sample_name.lower().replace(' ', '-')
+
   def _GetAcceptedLanguages(self):
     accept_language = self._request.headers.get('Accept-Language', None)
     if accept_language is None:
@@ -186,28 +202,16 @@ class SamplesDataSource(object):
     only the samples that use the API |api_name|. |key| is either 'apps' or
     'extensions'.
     '''
-    api_search = api_name + '_'
-    samples_list = []
-    try:
-      for sample in self.get(key):
-        api_calls_unix = [model.UnixName(call['name'])
-                          for call in sample['api_calls']]
-        for call in api_calls_unix:
-          if call.startswith(api_search):
-            samples_list.append(sample)
-            break
-    except NotImplementedError:
-      # If we're testing, the GithubFileSystem can't fetch samples.
-      # Bug: http://crbug.com/141910
-      return []
-    return samples_list
+    return [sample for sample in self.get(key) if any(
+        call['name'].startswith(api_name + '.')
+        for call in sample['api_calls'])]
 
   def _CreateSamplesDict(self, key):
     if key == 'apps':
-      samples_list = self._apps_cache.GetFromFileListing('/')
+      samples_list = self._apps_cache.GetFromFileListing('/').Get()
     else:
       samples_list = self._extensions_cache.GetFromFileListing(
-          self._extension_samples_path + '/')
+          self._extension_samples_path + '/').Get()
     return_list = []
     for dict_ in samples_list:
       name = dict_['name']
@@ -228,12 +232,14 @@ class SamplesDataSource(object):
           locale_data = sample_data['locales'][locale]
           sample_data['name'] = locale_data[name_key]['message']
           sample_data['description'] = locale_data[description_key]['message']
+          sample_data['id'] = self._GetSampleId(sample_data['name'])
         except Exception as e:
-          logging.error(e)
+          logging.error(traceback.format_exc())
           # Revert the sample to the original dict.
           sample_data = dict_
         return_list.append(sample_data)
       else:
+        dict_['id'] = self._GetSampleId(name)
         return_list.append(dict_)
     return return_list
 

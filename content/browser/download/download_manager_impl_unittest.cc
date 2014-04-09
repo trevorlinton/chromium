@@ -404,11 +404,17 @@ class MockBrowserContext : public BrowserContext {
   MOCK_METHOD2(GetMediaRequestContextForStoragePartition,
                net::URLRequestContextGetter*(
                    const base::FilePath& partition_path, bool in_memory));
-  MOCK_METHOD4(RequestMIDISysExPermission,
+  MOCK_METHOD5(RequestMIDISysExPermission,
                void(int render_process_id,
                     int render_view_id,
+                    int bridge_id,
                     const GURL& requesting_frame,
                     const MIDISysExPermissionCallback& callback));
+  MOCK_METHOD4(CancelMIDISysExPermissionRequest,
+               void(int render_process_id,
+                    int render_view_id,
+                    int bridge_id,
+                    const GURL& requesting_frame));
   MOCK_METHOD0(GetResourceContext, ResourceContext*());
   MOCK_METHOD0(GetDownloadManagerDelegate, DownloadManagerDelegate*());
   MOCK_METHOD0(GetGeolocationPermissionContext,
@@ -435,7 +441,8 @@ class DownloadManagerTest : public testing::Test {
   static const size_t kTestDataLen;
 
   DownloadManagerTest()
-      : ui_thread_(BrowserThread::UI, &message_loop_),
+      : callback_called_(false),
+        ui_thread_(BrowserThread::UI, &message_loop_),
         file_thread_(BrowserThread::FILE, &message_loop_),
         next_download_id_(0) {
   }

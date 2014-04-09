@@ -43,9 +43,6 @@ static const size_t kMaxMessageLength = 4096;
 // over unix sockets just fine, so a receiver that would (incorrectly) look at
 // O_CLOEXEC instead of FD_CLOEXEC may be tricked in thinking that the file
 // descriptor will or won't be closed on execve().
-// Since we have to account for buggy userland (see crbug.com/237283), we will
-// open(2) the file with O_CLOEXEC in the broker process if necessary, in
-// addition to calling recvmsg(2) with MSG_CMSG_CLOEXEC.
 static const int kCurrentProcessOpenFlagsMask = O_CLOEXEC;
 
 // Check whether |requested_filename| is in |allowed_file_names|.
@@ -81,7 +78,7 @@ bool GetFileNameInWhitelist(const std::vector<std::string>& allowed_file_names,
 // we're ok to allow in the broker.
 // I.e. here is where we wouldn't add O_RESET_FILE_SYSTEM.
 bool IsAllowedOpenFlags(int flags) {
-  // First, check the access mode
+  // First, check the access mode.
   const int access_mode = flags & O_ACCMODE;
   if (access_mode != O_RDONLY && access_mode != O_WRONLY &&
       access_mode != O_RDWR) {
@@ -95,13 +92,8 @@ bool IsAllowedOpenFlags(int flags) {
 
   // Some flags affect the behavior of the current process. We don't support
   // them and don't allow them for now.
-  if (flags & kCurrentProcessOpenFlagsMask) {
-    // We make an exception for O_CLOEXEC. Buggy userland could check for
-    // O_CLOEXEC and the only way to set it is to originally open with this
-    // flag. See the comment around kCurrentProcessOpenFlagsMask.
-    if (!(flags & O_CLOEXEC))
-      return false;
-  }
+  if (flags & kCurrentProcessOpenFlagsMask)
+    return false;
 
   // Now check that all the flags are known to us.
   const int creation_and_status_flags = flags & ~O_ACCMODE;
@@ -120,11 +112,13 @@ bool IsAllowedOpenFlags(int flags) {
 
 namespace sandbox {
 
-BrokerProcess::BrokerProcess(const std::vector<std::string>& allowed_r_files,
+BrokerProcess::BrokerProcess(int denied_errno,
+                             const std::vector<std::string>& allowed_r_files,
                              const std::vector<std::string>& allowed_w_files,
                              bool fast_check_in_client,
                              bool quiet_failures_for_tests)
-    : initialized_(false),
+    : denied_errno_(denied_errno),
+      initialized_(false),
       is_child_(false),
       fast_check_in_client_(fast_check_in_client),
       quiet_failures_for_tests_(quiet_failures_for_tests),
@@ -217,6 +211,7 @@ int BrokerProcess::PathAndFlagsSyscall(enum IPCCommands syscall_type,
     // this code if other flags are added.
     RAW_CHECK(kCurrentProcessOpenFlagsMask == O_CLOEXEC);
     recvmsg_flags |= MSG_CMSG_CLOEXEC;
+    flags &= ~O_CLOEXEC;
   }
 
   // There is no point in forwarding a request that we know will be denied.
@@ -225,11 +220,11 @@ int BrokerProcess::PathAndFlagsSyscall(enum IPCCommands syscall_type,
   if (fast_check_in_client_) {
     if (syscall_type == kCommandOpen &&
         !GetFileNameIfAllowedToOpen(pathname, flags, NULL)) {
-      return -EPERM;
+      return -denied_errno_;
     }
     if (syscall_type == kCommandAccess &&
         !GetFileNameIfAllowedToAccess(pathname, flags, NULL)) {
-      return -EPERM;
+      return -denied_errno_;
     }
   }
 
@@ -285,7 +280,7 @@ int BrokerProcess::PathAndFlagsSyscall(enum IPCCommands syscall_type,
   } else {
     RAW_LOG(ERROR, "Could not read pickle");
     NOTREACHED();
-    return -EPERM;
+    return -ENOMEM;
   }
 }
 
@@ -407,7 +402,7 @@ void BrokerProcess::AccessFileForIPC(const std::string& requested_filename,
     else
       write_pickle->WriteInt(-access_errno);
   } else {
-    write_pickle->WriteInt(-EPERM);
+    write_pickle->WriteInt(-denied_errno_);
   }
 }
 
@@ -436,7 +431,7 @@ void BrokerProcess::OpenFileForIPC(const std::string& requested_filename,
       write_pickle->WriteInt(0);
     }
   } else {
-    write_pickle->WriteInt(-EPERM);
+    write_pickle->WriteInt(-denied_errno_);
   }
 }
 

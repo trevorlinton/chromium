@@ -40,6 +40,8 @@ class ProfileInfoInterface {
 
   virtual string16 GetGAIANameOfProfileAtIndex(size_t index) const = 0;
 
+  virtual string16 GetGAIAGivenNameOfProfileAtIndex(size_t index) const = 0;
+
   // Checks if the GAIA name should be used as the profile's name.
   virtual bool IsUsingGAIANameOfProfileAtIndex(size_t index) const = 0;
 
@@ -55,6 +57,9 @@ class ProfileInfoInterface {
 
   // This profile is associated with an account but has been signed-out.
   virtual bool ProfileIsSigninRequiredAtIndex(size_t index) const = 0;
+
+  // Profile is known to be ephemeral and should be deleted when closed.
+  virtual bool ProfileIsEphemeralAtIndex(size_t index) const = 0;
 
  protected:
   virtual ~ProfileInfoInterface() {}

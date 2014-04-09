@@ -70,8 +70,8 @@ bool HasWebRequestScheme(const GURL& url) {
           url.SchemeIs(chrome::kFileScheme) ||
           url.SchemeIs(chrome::kFileSystemScheme) ||
           url.SchemeIs(chrome::kFtpScheme) ||
-          url.SchemeIs(chrome::kHttpScheme) ||
-          url.SchemeIs(chrome::kHttpsScheme) ||
+          url.SchemeIs(content::kHttpScheme) ||
+          url.SchemeIs(content::kHttpsScheme) ||
           url.SchemeIs(extensions::kExtensionScheme));
 }
 

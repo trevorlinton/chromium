@@ -24,9 +24,7 @@
 #include "chrome/browser/policy/policy_types.h"
 #include "chrome/browser/policy/proto/cloud/chrome_extension_policy.pb.h"
 #include "chrome/browser/policy/proto/cloud/device_management_backend.pb.h"
-#include "chrome/common/policy/policy_schema.h"
-#include "content/public/browser/browser_thread.h"
-#include "content/public/test/test_browser_thread.h"
+#include "components/policy/core/common/schema.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request_context.h"
@@ -44,7 +42,6 @@ namespace {
 
 const char kTestExtension[] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const char kTestExtension2[] = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-const char kTestExtension3[] = "cccccccccccccccccccccccccccccccc";
 const char kTestDownload[] = "http://example.com/getpolicy?id=123";
 const char kTestDownload2[] = "http://example.com/getpolicy?id=456";
 
@@ -61,7 +58,6 @@ const char kTestPolicy[] =
 
 const char kTestSchema[] =
     "{"
-    "  \"$schema\": \"http://json-schema.org/draft-03/schema#\","
     "  \"type\": \"object\","
     "  \"properties\": {"
     "    \"Name\": { \"type\": \"string\" },"
@@ -101,15 +97,17 @@ class TestURLRequestContextGetter : public net::URLRequestContextGetter {
 
 class ComponentCloudPolicyServiceTest : public testing::Test {
  protected:
-  ComponentCloudPolicyServiceTest()
-      : ui_thread_(content::BrowserThread::UI, &loop_),
-        file_thread_(content::BrowserThread::FILE, &loop_) {}
+  ComponentCloudPolicyServiceTest() {}
 
   virtual void SetUp() OVERRIDE {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-    cache_ = new ResourceCache(temp_dir_.path());
+    cache_ = new ResourceCache(temp_dir_.path(), loop_.message_loop_proxy());
     service_.reset(new ComponentCloudPolicyService(
-        &delegate_, &store_, make_scoped_ptr(cache_)));
+        &delegate_,
+        &store_,
+        make_scoped_ptr(cache_),
+        loop_.message_loop_proxy(),
+        loop_.message_loop_proxy()));
 
     builder_.policy_data().set_policy_type(
         dm_protocol::kChromeExtensionPolicyType);
@@ -190,16 +188,14 @@ class ComponentCloudPolicyServiceTest : public testing::Test {
     return builder_.GetBlob();
   }
 
-  scoped_ptr<PolicySchema> CreateTestSchema() {
+  scoped_ptr<SchemaOwner> CreateTestSchema() {
     std::string error;
-    scoped_ptr<PolicySchema> schema = PolicySchema::Parse(kTestSchema, &error);
+    scoped_ptr<SchemaOwner> schema = SchemaOwner::Parse(kTestSchema, &error);
     EXPECT_TRUE(schema) << error;
     return schema.Pass();
   }
 
   base::MessageLoop loop_;
-  content::TestBrowserThread ui_thread_;
-  content::TestBrowserThread file_thread_;
   base::ScopedTempDir temp_dir_;
   scoped_refptr<TestURLRequestContextGetter> request_context_;
   net::TestURLFetcherFactory fetcher_factory_;

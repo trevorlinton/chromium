@@ -6,7 +6,7 @@
       "scripts/configs/experimentalFeatures.js"
     ]
   },
-  "content_security_policy": "default-src 'self'; connect-src blob: chrome-extension:; style-src 'self' 'unsafe-inline' chrome-extension:; img-src 'self' blob: data:; frame-src chrome-extension:; script-src 'self'",
+  "content_security_policy": "default-src 'self'; connect-src https://www.google-analytics.com/ blob: chrome-extension:; style-src 'self' 'unsafe-inline' chrome-extension:; img-src 'self' blob: data:; frame-src chrome-extension:; script-src 'self'",
   "default_locale": "en",
   "description": "Quickoffice (Beta)",
   "file_browser_handlers": [
@@ -58,10 +58,14 @@
   "name": "Quickoffice (Beta)",
   "offline_enabled": true,
   "permissions": [
+    "clipboardRead",
+    "clipboardWrite",
     "fileBrowserHandler",
     "fileSystem",
     "fileSystem.write",
+    "https://www.google-analytics.com/",
     "metricsPrivate",
+    "storage",
     "streamsPrivate",
     "unlimitedStorage"
   ],
@@ -79,7 +83,7 @@
       "sub_package_path": "_platform_specific/arm/"
     }
   ],
-  "version": "31.89.1353",
+  "version": "32.93.1611.29",
   "web_accessible_resources": [
     "views/qowt.html"
   ]

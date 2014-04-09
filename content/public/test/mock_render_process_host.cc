@@ -14,6 +14,7 @@
 #include "content/common/child_process_host_impl.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
+#include "content/public/browser/render_widget_host_iterator.h"
 #include "content/public/browser/storage_partition.h"
 
 namespace content {
@@ -25,6 +26,7 @@ MockRenderProcessHost::MockRenderProcessHost(
           factory_(NULL),
           id_(ChildProcessHostImpl::GenerateChildProcessUniqueId()),
           browser_context_(browser_context),
+          prev_routing_id_(0),
           fast_shutdown_started_(false) {
   // Child process security operations can't be unit tested unless we add
   // ourselves as an existing child process.
@@ -50,8 +52,7 @@ bool MockRenderProcessHost::Init() {
 }
 
 int MockRenderProcessHost::GetNextRoutingID() {
-  static int prev_routing_id = 0;
-  return ++prev_routing_id;
+  return ++prev_routing_id_;
 }
 
 void MockRenderProcessHost::AddRoute(
@@ -204,12 +205,16 @@ IPC::ChannelProxy* MockRenderProcessHost::GetChannel() {
   return NULL;
 }
 
+void MockRenderProcessHost::AddFilter(BrowserMessageFilter* filter) {
+}
+
 int MockRenderProcessHost::GetActiveViewCount() {
   int num_active_views = 0;
-  RenderWidgetHost::List widgets = RenderWidgetHost::GetRenderWidgetHosts();
-  for (size_t i = 0; i < widgets.size(); ++i) {
+  scoped_ptr<RenderWidgetHostIterator> widgets(
+      RenderWidgetHost::GetRenderWidgetHosts());
+  while (RenderWidgetHost* widget = widgets->GetNextHost()) {
     // Count only RenderWidgetHosts in this process.
-    if (widgets[i]->GetProcess()->GetID() == GetID())
+    if (widget->GetProcess()->GetID() == GetID())
       num_active_views++;
   }
   return num_active_views;

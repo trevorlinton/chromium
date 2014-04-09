@@ -18,7 +18,7 @@
         '<(DEPTH)/gpu/command_buffer/command_buffer.gyp:gles2_utils',
         '<(DEPTH)/skia/skia.gyp:skia',
         '<(DEPTH)/third_party/mesa/mesa.gyp:mesa_headers',
-        '<(DEPTH)/ui/ui.gyp:ui',
+        '<(DEPTH)/ui/gfx/gfx.gyp:gfx',
       ],
       'variables': {
         'gl_binding_output_dir': '<(SHARED_INTERMEDIATE_DIR)/ui/gl',
@@ -44,8 +44,8 @@
         'android/gl_jni_registrar.h',
         'android/scoped_java_surface.cc',
         'android/scoped_java_surface.h',
-        'android/surface_texture_bridge.cc',
-        'android/surface_texture_bridge.h',
+        'android/surface_texture.cc',
+        'android/surface_texture.h',
         'android/surface_texture_listener.cc',
         'android/surface_texture_listener.h',
         'gl_bindings.h',
@@ -133,7 +133,8 @@
           'action_name': 'generate_gl_bindings',
           'variables': {
             'generator_path': 'generate_bindings.py',
-            'header_paths': '../../third_party/mesa/src/include:../../third_party/khronos',
+            # Prefer khronos EGL/GLES headers by listing that path first.
+            'header_paths': '../../third_party/khronos:../../third_party/mesa/src/include',
           },
           'inputs': [
             '<(generator_path)',
@@ -233,6 +234,21 @@
             '<(gl_binding_output_dir)/gl_bindings_autogen_wgl.cc',
             '<(gl_binding_output_dir)/gl_bindings_autogen_wgl.h',
           ],
+          'msvs_settings': {
+            'VCLinkerTool': {
+              'DelayLoadDLLs': [
+                'dwmapi.dll',
+              ],
+              'AdditionalDependencies': [
+                'dwmapi.lib',
+              ],
+            },
+          },
+          'link_settings': {
+            'libraries': [
+              '-ldwmapi.lib',
+            ],
+          },
         }],
         ['OS=="mac"', {
           'sources': [
@@ -279,6 +295,11 @@
         }],
         ['OS!="android"', {
           'sources/': [ ['exclude', '^android/'] ],
+        }],
+        ['use_ozone==1', {
+          'dependencies': [
+            '../ozone/ozone.gyp:ozone',
+          ],
         }],
       ],
     },
@@ -328,7 +349,7 @@
             'surface_jni_headers',
           ],
           'sources': [
-            '../android/java/src/org/chromium/ui/gfx/SurfaceTextureBridge.java',
+            '../android/java/src/org/chromium/ui/gfx/SurfaceTexturePlatformWrapper.java',
             '../android/java/src/org/chromium/ui/gfx/SurfaceTextureListener.java',
           ],
           'variables': {

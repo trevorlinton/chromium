@@ -723,10 +723,14 @@ void Pipeline::StopTask(const base::Closure& stop_cb) {
     return;
   }
 
-  SetState(kStopping);
-  pending_callbacks_.reset();
   stop_cb_ = stop_cb;
 
+  // We may already be stopping due to a runtime error.
+  if (state_ == kStopping)
+    return;
+
+  SetState(kStopping);
+  pending_callbacks_.reset();
   DoStop(base::Bind(&Pipeline::OnStopCompleted, base::Unretained(this)));
 }
 
@@ -756,8 +760,6 @@ void Pipeline::PlaybackRateChangedTask(float playback_rate) {
     clock_->SetPlaybackRate(playback_rate);
   }
 
-  if (demuxer_)
-    demuxer_->SetPlaybackRate(playback_rate);
   if (audio_renderer_)
     audio_renderer_->SetPlaybackRate(playback_rate_);
   if (video_renderer_)

@@ -11,11 +11,13 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/autocomplete/autocomplete_match.h"
+#include "chrome/browser/ui/omnibox/omnibox_edit_controller.h"
+#include "chrome/browser/ui/toolbar/toolbar_model.h"
 #include "ui/base/clipboard/clipboard.h"
 
 // static
 string16 OmniboxView::StripJavascriptSchemas(const string16& text) {
-  const string16 kJsPrefix(ASCIIToUTF16(chrome::kJavaScriptScheme) +
+  const string16 kJsPrefix(ASCIIToUTF16(content::kJavaScriptScheme) +
                            ASCIIToUTF16(":"));
   string16 out(text);
   while (StartsWith(out, kJsPrefix, false))
@@ -48,9 +50,9 @@ string16 OmniboxView::GetClipboardText() {
   // Try text format.
   ui::Clipboard* clipboard = ui::Clipboard::GetForCurrentThread();
   if (clipboard->IsFormatAvailable(ui::Clipboard::GetPlainTextWFormatType(),
-                                   ui::Clipboard::BUFFER_STANDARD)) {
+                                   ui::CLIPBOARD_TYPE_COPY_PASTE)) {
     string16 text;
-    clipboard->ReadText(ui::Clipboard::BUFFER_STANDARD, &text);
+    clipboard->ReadText(ui::CLIPBOARD_TYPE_COPY_PASTE, &text);
     return SanitizeTextForPaste(text);
   }
 
@@ -62,7 +64,7 @@ string16 OmniboxView::GetClipboardText() {
   // cannonicalized, which is not what the user expects.  By pasting in this
   // order, we are sure to paste what the user copied.
   if (clipboard->IsFormatAvailable(ui::Clipboard::GetUrlWFormatType(),
-                                   ui::Clipboard::BUFFER_STANDARD)) {
+                                   ui::CLIPBOARD_TYPE_COPY_PASTE)) {
     std::string url_str;
     clipboard->ReadBookmark(NULL, &url_str);
     // pass resulting url string through GURL to normalize
@@ -94,13 +96,10 @@ bool OmniboxView::IsEditingOrEmpty() const {
 }
 
 int OmniboxView::GetIcon() const {
-  if (IsEditingOrEmpty()) {
-    return AutocompleteMatch::TypeToLocationBarIcon(model_.get() ?
-          model_->CurrentTextType() :
-              AutocompleteMatchType::URL_WHAT_YOU_TYPED);
-  } else {
-    return toolbar_model_->GetIcon();
-  }
+  if (!IsEditingOrEmpty())
+    return controller_->GetToolbarModel()->GetIcon();
+  return AutocompleteMatch::TypeToLocationBarIcon(model_.get() ?
+      model_->CurrentTextType() : AutocompleteMatchType::URL_WHAT_YOU_TYPED);
 }
 
 void OmniboxView::SetUserText(const string16& text) {
@@ -117,6 +116,11 @@ void OmniboxView::SetUserText(const string16& text,
 }
 
 void OmniboxView::RevertAll() {
+  controller_->GetToolbarModel()->set_search_term_replacement_enabled(true);
+  RevertWithoutResettingSearchTermReplacement();
+}
+
+void OmniboxView::RevertWithoutResettingSearchTermReplacement() {
   CloseOmniboxPopup();
   if (model_.get())
     model_->Revert();
@@ -143,10 +147,8 @@ bool OmniboxView::IsIndicatingQueryRefinement() const {
 
 OmniboxView::OmniboxView(Profile* profile,
                          OmniboxEditController* controller,
-                         ToolbarModel* toolbar_model,
                          CommandUpdater* command_updater)
     : controller_(controller),
-      toolbar_model_(toolbar_model),
       command_updater_(command_updater) {
   // |profile| can be NULL in tests.
   if (profile)
@@ -157,4 +159,11 @@ void OmniboxView::TextChanged() {
   EmphasizeURLComponents();
   if (model_.get())
     model_->OnChanged();
+}
+
+void OmniboxView::ShowURL() {
+  controller_->GetToolbarModel()->set_search_term_replacement_enabled(false);
+  model_->UpdatePermanentText();
+  RevertWithoutResettingSearchTermReplacement();
+  SelectAll(true);
 }

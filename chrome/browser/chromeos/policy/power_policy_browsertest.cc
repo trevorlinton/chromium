@@ -43,9 +43,10 @@
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/chromeos_paths.h"
 #include "chromeos/chromeos_switches.h"
+#include "chromeos/dbus/cryptohome_client.h"
+#include "chromeos/dbus/fake_dbus_thread_manager.h"
 #include "chromeos/dbus/fake_power_manager_client.h"
 #include "chromeos/dbus/fake_session_manager_client.h"
-#include "chromeos/dbus/mock_dbus_thread_manager_without_gmock.h"
 #include "chromeos/dbus/power_manager/policy.pb.h"
 #include "chromeos/dbus/power_policy_controller.h"
 #include "content/public/browser/notification_details.h"
@@ -157,7 +158,7 @@ void PowerPolicyBrowserTestBase::SetUpInProcessBrowserTestFixture() {
   MarkAsEnterpriseOwned();
 
   power_manager_client_ =
-      mock_dbus_thread_manager()->fake_power_manager_client();
+      fake_dbus_thread_manager()->fake_power_manager_client();
 }
 
 void PowerPolicyBrowserTestBase::SetUpOnMainThread() {
@@ -171,8 +172,11 @@ void PowerPolicyBrowserTestBase::SetUpOnMainThread() {
 void PowerPolicyBrowserTestBase::InstallUserKey() {
   base::FilePath user_keys_dir;
   ASSERT_TRUE(PathService::Get(chromeos::DIR_USER_POLICY_KEYS, &user_keys_dir));
+  std::string sanitized_username =
+      chromeos::CryptohomeClient::GetStubSanitizedUsername(
+          chromeos::UserManager::kStubUser);
   base::FilePath user_key_file =
-      user_keys_dir.AppendASCII(chromeos::UserManager::kStubUser)
+      user_keys_dir.AppendASCII(sanitized_username)
                    .AppendASCII("policy.pub");
   std::vector<uint8> user_key_bits;
   ASSERT_TRUE(user_policy_.GetSigningKey()->ExportPublicKey(&user_key_bits));
@@ -345,6 +349,7 @@ IN_PROC_BROWSER_TEST_F(PowerPolicyInSessionBrowserTest, SetUserPolicy) {
       pm::PowerManagementPolicy::STOP_SESSION);
   power_management_policy.set_presentation_screen_dim_delay_factor(3.0);
   power_management_policy.set_user_activity_screen_dim_delay_factor(3.0);
+  power_management_policy.set_wait_for_initial_user_activity(true);
 
   user_policy_.payload().mutable_screendimdelayac()->set_value(5000);
   user_policy_.payload().mutable_screenlockdelayac()->set_value(6000);
@@ -370,6 +375,7 @@ IN_PROC_BROWSER_TEST_F(PowerPolicyInSessionBrowserTest, SetUserPolicy) {
       300);
   user_policy_.payload().mutable_useractivityscreendimdelayscale()->set_value(
       300);
+  user_policy_.payload().mutable_waitforinitialuseractivity()->set_value(true);
   StoreAndReloadUserPolicy();
   EXPECT_EQ(GetDebugString(power_management_policy),
             GetDebugString(power_manager_client_->get_policy()));

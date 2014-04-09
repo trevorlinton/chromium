@@ -27,7 +27,7 @@ const char kSampleInfoResponse[] = "{"
     "       \"type\": ["
     "               \"printer\""
     "       ],"
-    "       \"id\": \"11111111-2222-3333-4444-555555555555\","
+    "       \"id\": \"\","
     "       \"device_state\": \"idle\","
     "       \"connection_state\": \"online\","
     "       \"manufacturer\": \"Google\","
@@ -45,6 +45,34 @@ const char kSampleInfoResponse[] = "{"
     "               \"/privet/printer/submitdoc\","
     "       ]"
     "}";
+
+const char kSampleInfoResponseRegistered[] = "{"
+    "       \"version\": \"1.0\","
+    "       \"name\": \"Common printer\","
+    "       \"description\": \"Printer connected through Chrome connector\","
+    "       \"url\": \"https://www.google.com/cloudprint\","
+    "       \"type\": ["
+    "               \"printer\""
+    "       ],"
+    "       \"id\": \"MyDeviceID\","
+    "       \"device_state\": \"idle\","
+    "       \"connection_state\": \"online\","
+    "       \"manufacturer\": \"Google\","
+    "       \"model\": \"Google Chrome\","
+    "       \"serial_number\": \"1111-22222-33333-4444\","
+    "       \"firmware\": \"24.0.1312.52\","
+    "       \"uptime\": 600,"
+    "       \"setup_url\": \"http://support.google.com/\","
+    "       \"support_url\": \"http://support.google.com/cloudprint/?hl=en\","
+    "       \"update_url\": \"http://support.google.com/cloudprint/?hl=en\","
+    "       \"x-privet-token\": \"SampleTokenForTesting\","
+    "       \"api\": ["
+    "               \"/privet/accesstoken\","
+    "               \"/privet/capabilities\","
+    "               \"/privet/printer/submitdoc\","
+    "       ]"
+    "}";
+
 
 const char kSampleRegisterStartResponse[] = "{"
     "\"user\": \"example@google.com\","
@@ -75,6 +103,38 @@ const char kSampleRegisterErrorPermanent[] =
 
 const char kSampleInfoResponseBadJson[] = "{";
 
+const char kSampleRegisterCancelResponse[] = "{"
+    "\"user\": \"example@google.com\","
+    "\"action\": \"cancel\""
+    "}";
+
+const char kSampleLocalPrintResponse[] = "{"
+    "\"job_id\": \"123\","
+    "\"expires_in\": 500,"
+    "\"job_type\": \"application/pdf\","
+    "\"job_size\": 16,"
+    "\"job_name\": \"Sample job name\","
+    "}";
+
+const char kSampleCapabilitiesResponse[] = "{"
+    "\"version\" : \"1.0\","
+    "\"printer\" : {"
+    "  \"supported_content_type\" : ["
+    "   { \"content_type\" : \"application/pdf\" },"
+    "   { \"content_type\" : \"image/pwg-raster\" }"
+    "  ]"
+    "}"
+    "}";
+
+const char kSampleCapabilitiesResponsePWGOnly[] = "{"
+    "\"version\" : \"1.0\","
+    "\"printer\" : {"
+    "  \"supported_content_type\" : ["
+    "   { \"content_type\" : \"image/pwg-raster\" }"
+    "  ]"
+    "}"
+    "}";
+
 class MockTestURLFetcherFactoryDelegate
     : public net::TestURLFetcher::DelegateForTests {
  public:
@@ -95,11 +155,41 @@ class PrivetHTTPTest : public ::testing::Test {
     request_context_= new net::TestURLRequestContextGetter(
         base::MessageLoopProxy::current());
     privet_client_.reset(new PrivetHTTPClientImpl(
+        "sampleDevice._privet._tcp.local",
         net::HostPortPair("10.0.0.8", 6006),
         request_context_.get()));
     fetcher_factory_.SetDelegateForTests(&fetcher_delegate_);
   }
+
   virtual ~PrivetHTTPTest() {
+  }
+
+  bool SuccessfulResponseToURL(const GURL& url,
+                               const std::string& response) {
+    return SuccessfulResponseToURLAndData(url, "", response);
+  }
+
+  bool SuccessfulResponseToURLAndData(const GURL& url,
+                                      const std::string& data,
+                                      const std::string& response) {
+    net::TestURLFetcher* fetcher = fetcher_factory_.GetFetcherByID(0);
+    EXPECT_TRUE(fetcher);
+    EXPECT_EQ(url, fetcher->GetOriginalURL());
+
+    if (!data.empty()) {
+      EXPECT_EQ(data, fetcher->upload_data());
+    }
+
+    if (!fetcher || url != fetcher->GetOriginalURL() ||
+        (!data.empty() && data != fetcher->upload_data()))
+      return false;
+
+    fetcher->SetResponseString(response);
+    fetcher->set_status(net::URLRequestStatus(net::URLRequestStatus::SUCCESS,
+                                              net::OK));
+    fetcher->set_response_code(200);
+    fetcher->delegate()->OnURLFetchComplete(fetcher);
+    return true;
   }
 
  protected:
@@ -115,7 +205,8 @@ class MockInfoDelegate : public PrivetInfoOperation::Delegate {
   MockInfoDelegate() {}
   ~MockInfoDelegate() {}
 
-  virtual void OnPrivetInfoDone(int response_code,
+  virtual void OnPrivetInfoDone(PrivetInfoOperation* operation,
+                                int response_code,
                                 const base::DictionaryValue* value) OVERRIDE {
     if (!value) {
       value_.reset();
@@ -133,6 +224,31 @@ class MockInfoDelegate : public PrivetInfoOperation::Delegate {
   scoped_ptr<base::DictionaryValue> value_;
 };
 
+class MockCapabilitiesDelegate : public PrivetCapabilitiesOperation::Delegate {
+ public:
+  MockCapabilitiesDelegate() {}
+  ~MockCapabilitiesDelegate() {}
+
+  virtual void OnPrivetCapabilities(
+      PrivetCapabilitiesOperation* operation,
+      int response_code,
+      const base::DictionaryValue* value) OVERRIDE {
+    if (!value) {
+      value_.reset();
+    } else {
+      value_.reset(value->DeepCopy());
+    }
+
+    OnPrivetCapabilitiesDoneInternal(response_code);
+  }
+
+  MOCK_METHOD1(OnPrivetCapabilitiesDoneInternal, void(int response_code));
+
+  const base::DictionaryValue* value() { return value_.get(); }
+ protected:
+  scoped_ptr<base::DictionaryValue> value_;
+};
+
 class MockRegisterDelegate : public PrivetRegisterOperation::Delegate {
  public:
   MockRegisterDelegate() {
@@ -140,10 +256,19 @@ class MockRegisterDelegate : public PrivetRegisterOperation::Delegate {
   ~MockRegisterDelegate() {
   }
 
-  MOCK_METHOD2(OnPrivetRegisterClaimToken, void(const std::string& token,
-                                                const GURL& url));
+  virtual void OnPrivetRegisterClaimToken(
+      PrivetRegisterOperation* operation,
+      const std::string& token,
+      const GURL& url) OVERRIDE {
+    OnPrivetRegisterClaimTokenInternal(token, url);
+  }
+
+  MOCK_METHOD2(OnPrivetRegisterClaimTokenInternal, void(
+      const std::string& token,
+      const GURL& url));
 
   virtual void OnPrivetRegisterError(
+      PrivetRegisterOperation* operation,
       const std::string& action,
       PrivetRegisterOperation::FailureReason reason,
       int printer_http_code,
@@ -157,7 +282,48 @@ class MockRegisterDelegate : public PrivetRegisterOperation::Delegate {
                     PrivetRegisterOperation::FailureReason reason,
                     int printer_http_code));
 
-  MOCK_METHOD1(OnPrivetRegisterDone, void(const std::string& device_id));
+  virtual void OnPrivetRegisterDone(
+      PrivetRegisterOperation* operation,
+      const std::string& device_id) OVERRIDE {
+    OnPrivetRegisterDoneInternal(device_id);
+  }
+
+  MOCK_METHOD1(OnPrivetRegisterDoneInternal,
+               void(const std::string& device_id));
+};
+
+class MockLocalPrintDelegate : public PrivetLocalPrintOperation::Delegate {
+ public:
+  MockLocalPrintDelegate() {}
+  ~MockLocalPrintDelegate() {}
+
+  virtual void OnPrivetPrintingRequestPDF(
+      const PrivetLocalPrintOperation* print_operation) {
+    OnPrivetPrintingRequestPDFInternal();
+  }
+
+  MOCK_METHOD0(OnPrivetPrintingRequestPDFInternal, void());
+
+  virtual void OnPrivetPrintingRequestPWGRaster(
+      const PrivetLocalPrintOperation* print_operation) {
+    OnPrivetPrintingRequestPWGRasterInternal();
+  }
+
+  MOCK_METHOD0(OnPrivetPrintingRequestPWGRasterInternal, void());
+
+  virtual void OnPrivetPrintingDone(
+      const PrivetLocalPrintOperation* print_operation) {
+    OnPrivetPrintingDoneInternal();
+  }
+
+  MOCK_METHOD0(OnPrivetPrintingDoneInternal, void());
+
+  virtual void OnPrivetPrintingError(
+      const PrivetLocalPrintOperation* print_operation, int http_code) {
+    OnPrivetPrintingErrorInternal(http_code);
+  }
+
+  MOCK_METHOD1(OnPrivetPrintingErrorInternal, void(int http_code));
 };
 
 class PrivetInfoTest : public PrivetHTTPTest {
@@ -266,8 +432,10 @@ class PrivetRegisterTest : public PrivetHTTPTest {
 
  protected:
   bool SuccessfulResponseToURL(const GURL& url,
-                                         const std::string& response) {
+                               const std::string& response) {
     net::TestURLFetcher* fetcher = fetcher_factory_.GetFetcherByID(0);
+    EXPECT_TRUE(fetcher);
+    EXPECT_EQ(url, fetcher->GetOriginalURL());
     if (!fetcher || url != fetcher->GetOriginalURL())
       return false;
 
@@ -311,27 +479,31 @@ TEST_F(PrivetRegisterTest, RegisterSuccessSimple) {
 
   EXPECT_TRUE(SuccessfulResponseToURL(
       GURL("http://10.0.0.8:6006/privet/register?"
-           "action=start&user=example@google.com"),
+           "action=start&user=example%40google.com"),
       kSampleRegisterStartResponse));
 
-  EXPECT_CALL(register_delegate_, OnPrivetRegisterClaimToken(
+  EXPECT_CALL(register_delegate_, OnPrivetRegisterClaimTokenInternal(
       "MySampleToken",
       GURL("https://domain.com/SoMeUrL")));
 
   EXPECT_TRUE(SuccessfulResponseToURL(
       GURL("http://10.0.0.8:6006/privet/register?"
-           "action=getClaimToken&user=example@google.com"),
+           "action=getClaimToken&user=example%40google.com"),
       kSampleRegisterGetClaimTokenResponse));
 
   register_operation_->CompleteRegistration();
 
-  EXPECT_CALL(register_delegate_, OnPrivetRegisterDone(
+  EXPECT_TRUE(SuccessfulResponseToURL(
+      GURL("http://10.0.0.8:6006/privet/register?"
+           "action=complete&user=example%40google.com"),
+      kSampleRegisterCompleteResponse));
+
+  EXPECT_CALL(register_delegate_, OnPrivetRegisterDoneInternal(
       "MyDeviceID"));
 
   EXPECT_TRUE(SuccessfulResponseToURL(
-      GURL("http://10.0.0.8:6006/privet/register?"
-           "action=complete&user=example@google.com"),
-      kSampleRegisterCompleteResponse));
+      GURL("http://10.0.0.8:6006/privet/info"),
+      kSampleInfoResponseRegistered));
 }
 
 TEST_F(PrivetRegisterTest, RegisterNoInfoCall) {
@@ -343,7 +515,7 @@ TEST_F(PrivetRegisterTest, RegisterNoInfoCall) {
 
   EXPECT_TRUE(SuccessfulResponseToURL(
       GURL("http://10.0.0.8:6006/privet/register?"
-           "action=start&user=example@google.com"),
+           "action=start&user=example%40google.com"),
       kSampleRegisterStartResponse));
 }
 
@@ -356,24 +528,24 @@ TEST_F(PrivetRegisterTest, RegisterXSRFFailure) {
 
   EXPECT_TRUE(SuccessfulResponseToURL(
       GURL("http://10.0.0.8:6006/privet/register?"
-           "action=start&user=example@google.com"),
+           "action=start&user=example%40google.com"),
       kSampleRegisterStartResponse));
 
   EXPECT_TRUE(SuccessfulResponseToURL(
       GURL("http://10.0.0.8:6006/privet/register?"
-           "action=getClaimToken&user=example@google.com"),
+           "action=getClaimToken&user=example%40google.com"),
       kSampleXPrivetErrorResponse));
 
   EXPECT_TRUE(SuccessfulResponseToURL(
       GURL("http://10.0.0.8:6006/privet/info"),
       kSampleInfoResponse));
 
-  EXPECT_CALL(register_delegate_, OnPrivetRegisterClaimToken(
+  EXPECT_CALL(register_delegate_, OnPrivetRegisterClaimTokenInternal(
       "MySampleToken", GURL("https://domain.com/SoMeUrL")));
 
   EXPECT_TRUE(SuccessfulResponseToURL(
       GURL("http://10.0.0.8:6006/privet/register?"
-           "action=getClaimToken&user=example@google.com"),
+           "action=getClaimToken&user=example%40google.com"),
       kSampleRegisterGetClaimTokenResponse));
 }
 
@@ -386,7 +558,7 @@ TEST_F(PrivetRegisterTest, TransientFailure) {
 
   EXPECT_TRUE(SuccessfulResponseToURL(
       GURL("http://10.0.0.8:6006/privet/register?"
-           "action=start&user=example@google.com"),
+           "action=start&user=example%40google.com"),
       kSampleRegisterErrorTransient));
 
   EXPECT_CALL(fetcher_delegate_, OnRequestStart(0));
@@ -397,7 +569,7 @@ TEST_F(PrivetRegisterTest, TransientFailure) {
 
   EXPECT_TRUE(SuccessfulResponseToURL(
       GURL("http://10.0.0.8:6006/privet/register?"
-           "action=start&user=example@google.com"),
+           "action=start&user=example%40google.com"),
       kSampleRegisterStartResponse));
 }
 
@@ -410,7 +582,7 @@ TEST_F(PrivetRegisterTest, PermanentFailure) {
 
   EXPECT_TRUE(SuccessfulResponseToURL(
       GURL("http://10.0.0.8:6006/privet/register?"
-           "action=start&user=example@google.com"),
+           "action=start&user=example%40google.com"),
       kSampleRegisterStartResponse));
 
   EXPECT_CALL(register_delegate_,
@@ -421,7 +593,7 @@ TEST_F(PrivetRegisterTest, PermanentFailure) {
 
   EXPECT_TRUE(SuccessfulResponseToURL(
       GURL("http://10.0.0.8:6006/privet/register?"
-           "action=getClaimToken&user=example@google.com"),
+           "action=getClaimToken&user=example%40google.com"),
       kSampleRegisterErrorPermanent));
 }
 
@@ -430,15 +602,193 @@ TEST_F(PrivetRegisterTest, InfoFailure) {
 
   EXPECT_CALL(register_delegate_,
               OnPrivetRegisterErrorInternal(
-                  "info",
-                  PrivetRegisterOperation::FAILURE_NETWORK,
+                  "start",
+                  PrivetRegisterOperation::FAILURE_TOKEN,
                   -1));
-
 
   EXPECT_TRUE(SuccessfulResponseToURL(
       GURL("http://10.0.0.8:6006/privet/info"),
       kSampleInfoResponseBadJson));
 }
+
+TEST_F(PrivetRegisterTest, RegisterCancel) {
+  // Start with info request first to populate XSRF token.
+  info_operation_->Start();
+
+  EXPECT_TRUE(SuccessfulResponseToURL(
+      GURL("http://10.0.0.8:6006/privet/info"),
+      kSampleInfoResponse));
+
+  register_operation_->Start();
+
+  EXPECT_TRUE(SuccessfulResponseToURL(
+      GURL("http://10.0.0.8:6006/privet/register?"
+           "action=start&user=example%40google.com"),
+      kSampleRegisterStartResponse));
+
+  register_operation_->Cancel();
+
+  EXPECT_TRUE(SuccessfulResponseToURL(
+      GURL("http://10.0.0.8:6006/privet/register?"
+           "action=cancel&user=example%40google.com"),
+      kSampleRegisterCancelResponse));
+
+  // Must keep mocks alive for 3 seconds so the cancelation object can be
+  // deleted.
+  RunFor(base::TimeDelta::FromSeconds(3));
+}
+
+class PrivetCapabilitiesTest : public PrivetHTTPTest {
+ public:
+  PrivetCapabilitiesTest() {}
+
+  virtual ~PrivetCapabilitiesTest() {}
+
+  virtual void SetUp() OVERRIDE {
+    capabilities_operation_ = privet_client_->CreateCapabilitiesOperation(
+        &capabilities_delegate_);
+  }
+
+ protected:
+  scoped_ptr<PrivetCapabilitiesOperation> capabilities_operation_;
+  StrictMock<MockCapabilitiesDelegate> capabilities_delegate_;
+};
+
+TEST_F(PrivetCapabilitiesTest, SuccessfulCapabilities) {
+  capabilities_operation_->Start();
+
+  EXPECT_TRUE(SuccessfulResponseToURL(
+      GURL("http://10.0.0.8:6006/privet/info"),
+      kSampleInfoResponse));
+
+  EXPECT_CALL(capabilities_delegate_, OnPrivetCapabilitiesDoneInternal(200));
+
+  EXPECT_TRUE(SuccessfulResponseToURL(
+      GURL("http://10.0.0.8:6006/privet/capabilities"),
+      kSampleCapabilitiesResponse));
+
+  std::string version;
+  EXPECT_TRUE(capabilities_delegate_.value()->GetString("version", &version));
+  EXPECT_EQ("1.0", version);
+};
+
+TEST_F(PrivetCapabilitiesTest, CacheToken) {
+  capabilities_operation_->Start();
+
+  EXPECT_TRUE(SuccessfulResponseToURL(
+      GURL("http://10.0.0.8:6006/privet/info"),
+      kSampleInfoResponse));
+
+  EXPECT_CALL(capabilities_delegate_, OnPrivetCapabilitiesDoneInternal(200));
+
+  EXPECT_TRUE(SuccessfulResponseToURL(
+      GURL("http://10.0.0.8:6006/privet/capabilities"),
+      kSampleCapabilitiesResponse));
+
+  capabilities_operation_ = privet_client_->CreateCapabilitiesOperation(
+      &capabilities_delegate_);
+
+  capabilities_operation_->Start();
+
+  EXPECT_CALL(capabilities_delegate_, OnPrivetCapabilitiesDoneInternal(200));
+
+  EXPECT_TRUE(SuccessfulResponseToURL(
+      GURL("http://10.0.0.8:6006/privet/capabilities"),
+      kSampleCapabilitiesResponse));
+};
+
+TEST_F(PrivetCapabilitiesTest, BadToken) {
+  capabilities_operation_->Start();
+
+  EXPECT_TRUE(SuccessfulResponseToURL(
+      GURL("http://10.0.0.8:6006/privet/info"),
+      kSampleInfoResponse));
+
+  EXPECT_TRUE(SuccessfulResponseToURL(
+      GURL("http://10.0.0.8:6006/privet/capabilities"),
+      kSampleXPrivetErrorResponse));
+
+  EXPECT_TRUE(SuccessfulResponseToURL(
+      GURL("http://10.0.0.8:6006/privet/info"),
+      kSampleInfoResponse));
+
+  EXPECT_CALL(capabilities_delegate_, OnPrivetCapabilitiesDoneInternal(200));
+
+  EXPECT_TRUE(SuccessfulResponseToURL(
+      GURL("http://10.0.0.8:6006/privet/capabilities"),
+      kSampleCapabilitiesResponse));
+};
+
+class PrivetLocalPrintTest : public PrivetHTTPTest {
+ public:
+  PrivetLocalPrintTest() {}
+
+  virtual ~PrivetLocalPrintTest() {}
+
+  virtual void SetUp() OVERRIDE {
+    local_print_operation_ = privet_client_->CreateLocalPrintOperation(
+        &local_print_delegate_);
+  }
+
+ protected:
+  scoped_ptr<PrivetLocalPrintOperation> local_print_operation_;
+  StrictMock<MockLocalPrintDelegate> local_print_delegate_;
+};
+
+TEST_F(PrivetLocalPrintTest, SuccessfulLocalPrint) {
+  local_print_operation_->SetUsername("sample@gmail.com");
+  local_print_operation_->SetJobname("Sample job name");
+  local_print_operation_->Start();
+
+  EXPECT_TRUE(SuccessfulResponseToURL(
+      GURL("http://10.0.0.8:6006/privet/info"),
+      kSampleInfoResponse));
+
+  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingRequestPDFInternal());
+
+  EXPECT_TRUE(SuccessfulResponseToURL(
+      GURL("http://10.0.0.8:6006/privet/capabilities"),
+      kSampleCapabilitiesResponse));
+
+  local_print_operation_->SendData("Sample print data");
+
+  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingDoneInternal());
+
+  // TODO(noamsml): Is encoding spaces as pluses standard?
+  EXPECT_TRUE(SuccessfulResponseToURLAndData(
+      GURL("http://10.0.0.8:6006/privet/printer/submitdoc?"
+           "user=sample%40gmail.com&jobname=Sample+job+name"),
+      "Sample print data",
+      kSampleLocalPrintResponse));
+};
+
+TEST_F(PrivetLocalPrintTest, SuccessfulPWGLocalPrint) {
+  local_print_operation_->SetUsername("sample@gmail.com");
+  local_print_operation_->SetJobname("Sample job name");
+  local_print_operation_->Start();
+
+  EXPECT_TRUE(SuccessfulResponseToURL(
+      GURL("http://10.0.0.8:6006/privet/info"),
+      kSampleInfoResponse));
+
+  EXPECT_CALL(local_print_delegate_,
+              OnPrivetPrintingRequestPWGRasterInternal());
+
+  EXPECT_TRUE(SuccessfulResponseToURL(
+      GURL("http://10.0.0.8:6006/privet/capabilities"),
+      kSampleCapabilitiesResponsePWGOnly));
+
+  local_print_operation_->SendData("Sample print data");
+
+  EXPECT_CALL(local_print_delegate_, OnPrivetPrintingDoneInternal());
+
+  // TODO(noamsml): Is encoding spaces as pluses standard?
+  EXPECT_TRUE(SuccessfulResponseToURLAndData(
+      GURL("http://10.0.0.8:6006/privet/printer/submitdoc?"
+           "user=sample%40gmail.com&jobname=Sample+job+name"),
+      "Sample print data",
+      kSampleLocalPrintResponse));
+};
 
 }  // namespace
 

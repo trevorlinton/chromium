@@ -41,6 +41,15 @@ class SQL_EXPORT Recovery {
  public:
   ~Recovery();
 
+  // This module is intended to be used in concert with a virtual
+  // table module (see third_party/sqlite/src/src/recover.c).  If the
+  // build defines USE_SYSTEM_SQLITE, this module will not be present.
+  // TODO(shess): I am still debating how to handle this - perhaps it
+  // will just imply Unrecoverable().  This is exposed to allow tests
+  // to adapt to the cases, please do not rely on it in production
+  // code.
+  static bool FullRecoverySupported();
+
   // Begin the recovery process by opening a temporary database handle
   // and attach the existing database to it at "corrupt".  To prevent
   // deadlock, all transactions on |connection| are rolled back.
@@ -64,7 +73,7 @@ class SQL_EXPORT Recovery {
   // If Recovered() is not called, the destructor will call
   // Unrecoverable().
   //
-  // TODO(shess): At this time, this function an fail while leaving
+  // TODO(shess): At this time, this function can fail while leaving
   // the original database intact.  Figure out which failure cases
   // should go to RazeAndClose() instead.
   static bool Recovered(scoped_ptr<Recovery> r) WARN_UNUSED_RESULT;
@@ -72,6 +81,14 @@ class SQL_EXPORT Recovery {
   // Indicate that the database is unrecoverable.  The original
   // database is razed, and the handle poisoned.
   static void Unrecoverable(scoped_ptr<Recovery> r);
+
+  // When initially developing recovery code, sometimes the possible
+  // database states are not well-understood without further
+  // diagnostics.  Abandon recovery but do not raze the original
+  // database.
+  // NOTE(shess): Only call this when adding recovery support.  In the
+  // steady state, all databases should progress to recovered or razed.
+  static void Rollback(scoped_ptr<Recovery> r);
 
   // Handle to the temporary recovery database.
   sql::Connection* db() { return &recover_db_; }

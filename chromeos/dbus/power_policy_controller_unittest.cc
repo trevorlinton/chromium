@@ -6,8 +6,8 @@
 
 #include "base/memory/scoped_ptr.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
+#include "chromeos/dbus/fake_dbus_thread_manager.h"
 #include "chromeos/dbus/fake_power_manager_client.h"
-#include "chromeos/dbus/mock_dbus_thread_manager_without_gmock.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -22,7 +22,7 @@ class PowerPolicyControllerTest : public testing::Test {
   virtual ~PowerPolicyControllerTest() {}
 
   virtual void SetUp() OVERRIDE {
-    dbus_manager_ = new MockDBusThreadManagerWithoutGMock;
+    dbus_manager_ = new FakeDBusThreadManager;
     DBusThreadManager::InitializeForTesting(dbus_manager_);  // Takes ownership.
 
     policy_controller_.reset(
@@ -35,7 +35,7 @@ class PowerPolicyControllerTest : public testing::Test {
   }
 
  protected:
-  MockDBusThreadManagerWithoutGMock* dbus_manager_;  // Not owned.
+  FakeDBusThreadManager* dbus_manager_;  // Not owned.
   FakePowerManagerClient fake_power_client_;
   scoped_ptr<PowerPolicyController> policy_controller_;
 };
@@ -56,6 +56,7 @@ TEST_F(PowerPolicyControllerTest, Prefs) {
   prefs.enable_screen_lock = false;
   prefs.presentation_screen_dim_delay_factor = 3.0;
   prefs.user_activity_screen_dim_delay_factor = 2.0;
+  prefs.wait_for_initial_user_activity = true;
   policy_controller_->ApplyPrefs(prefs);
 
   power_manager::PowerManagementPolicy expected_policy;
@@ -79,6 +80,7 @@ TEST_F(PowerPolicyControllerTest, Prefs) {
   expected_policy.set_use_video_activity(true);
   expected_policy.set_presentation_screen_dim_delay_factor(3.0);
   expected_policy.set_user_activity_screen_dim_delay_factor(2.0);
+  expected_policy.set_wait_for_initial_user_activity(true);
   expected_policy.set_reason("Prefs");
   EXPECT_EQ(PowerPolicyController::GetPolicyDebugString(expected_policy),
             PowerPolicyController::GetPolicyDebugString(

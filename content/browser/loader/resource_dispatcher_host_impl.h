@@ -27,7 +27,6 @@
 #include "content/browser/download/download_resource_handler.h"
 #include "content/browser/loader/global_routing_id.h"
 #include "content/browser/loader/offline_policy.h"
-#include "content/browser/loader/render_view_host_tracker.h"
 #include "content/browser/loader/resource_loader.h"
 #include "content/browser/loader/resource_loader_delegate.h"
 #include "content/browser/loader/resource_scheduler.h"
@@ -161,13 +160,6 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   SaveFileManager* save_file_manager() const {
     return save_file_manager_.get();
   }
-
-  // Called when the renderer loads a resource from its internal cache.
-  void OnDidLoadResourceFromMemoryCache(const GURL& url,
-                                        const std::string& security_info,
-                                        const std::string& http_method,
-                                        const std::string& mime_type,
-                                        ResourceType::Type resource_type);
 
   // Called when a RenderViewHost is created.
   void OnRenderViewHostCreated(int child_id, int route_id);
@@ -363,6 +355,15 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   void OnSyncLoad(int request_id,
                   const ResourceHostMsg_Request& request_data,
                   IPC::Message* sync_result);
+
+  // Update the ResourceRequestInfo and internal maps when a request is
+  // transferred from one process to another.
+  void UpdateRequestForTransfer(int child_id,
+                                int route_id,
+                                int request_id,
+                                const ResourceHostMsg_Request& request_data,
+                                const linked_ptr<ResourceLoader>& loader);
+
   void BeginRequest(int request_id,
                     const ResourceHostMsg_Request& request_data,
                     IPC::Message* sync_result,  // only valid for sync
@@ -500,8 +501,6 @@ class CONTENT_EXPORT ResourceDispatcherHostImpl
   DelegateMap delegate_map_;
 
   scoped_ptr<ResourceScheduler> scheduler_;
-
-  RenderViewHostTracker tracker_;  // Lives on UI thread.
 
   typedef std::map<GlobalRoutingID, OfflinePolicy*> OfflineMap;
 

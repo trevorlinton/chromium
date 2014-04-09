@@ -5,19 +5,24 @@
 #include "chrome/browser/ui/webui/options/password_manager_handler.h"
 
 #include "base/bind.h"
+#include "base/command_line.h"
 #include "base/prefs/pref_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/password_manager/password_manager_util.h"
 #include "chrome/browser/password_manager/password_store_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "components/autofill/core/common/password_form.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
+#include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_ui.h"
-#include "content/public/common/password_form.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
 #include "net/base/net_util.h"
@@ -28,6 +33,8 @@ namespace options {
 PasswordManagerHandler::PasswordManagerHandler()
     : populater_(this),
       exception_populater_(this) {
+  require_reauthentication_ = CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kEnablePasswordManagerReauthentication);
 }
 
 PasswordManagerHandler::~PasswordManagerHandler() {
@@ -94,11 +101,8 @@ void PasswordManagerHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback("removePasswordException",
       base::Bind(&PasswordManagerHandler::RemovePasswordException,
                  base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("removeAllSavedPasswords",
-      base::Bind(&PasswordManagerHandler::RemoveAllSavedPasswords,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("removeAllPasswordExceptions",
-      base::Bind(&PasswordManagerHandler::RemoveAllPasswordExceptions,
+  web_ui()->RegisterMessageCallback("requestShowPassword",
+      base::Bind(&PasswordManagerHandler::RequestShowPassword,
                  base::Unretained(this)));
 }
 
@@ -129,8 +133,11 @@ void PasswordManagerHandler::RemoveSavedPassword(const ListValue* args) {
   std::string string_value = UTF16ToUTF8(ExtractStringValue(args));
   int index;
   if (base::StringToInt(string_value, &index) && index >= 0 &&
-      static_cast<size_t>(index) < password_list_.size())
+      static_cast<size_t>(index) < password_list_.size()) {
     store->RemoveLogin(*password_list_[index]);
+    content::RecordAction(
+        content::UserMetricsAction("PasswordManager_RemoveSavedPassword"));
+  }
 }
 
 void PasswordManagerHandler::RemovePasswordException(
@@ -141,28 +148,32 @@ void PasswordManagerHandler::RemovePasswordException(
   std::string string_value = UTF16ToUTF8(ExtractStringValue(args));
   int index;
   if (base::StringToInt(string_value, &index) && index >= 0 &&
-      static_cast<size_t>(index) < password_exception_list_.size())
+      static_cast<size_t>(index) < password_exception_list_.size()) {
     store->RemoveLogin(*password_exception_list_[index]);
+    content::RecordAction(
+        content::UserMetricsAction("PasswordManager_RemovePasswordException"));
+  }
 }
 
-void PasswordManagerHandler::RemoveAllSavedPasswords(
-    const ListValue* args) {
-  // TODO(jhawkins): This will cause a list refresh for every password in the
-  // list. Add PasswordStore::RemoveAllLogins().
-  PasswordStore* store = GetPasswordStore();
-  if (!store)
+void PasswordManagerHandler::RequestShowPassword(const ListValue* args) {
+  int index;
+  if (!ExtractIntegerValue(args, &index)) {
+    NOTREACHED();
     return;
-  for (size_t i = 0; i < password_list_.size(); ++i)
-    store->RemoveLogin(*password_list_[i]);
-}
+  }
 
-void PasswordManagerHandler::RemoveAllPasswordExceptions(
-    const ListValue* args) {
-  PasswordStore* store = GetPasswordStore();
-  if (!store)
-    return;
-  for (size_t i = 0; i < password_exception_list_.size(); ++i)
-    store->RemoveLogin(*password_exception_list_[i]);
+  if (IsAuthenticationRequired()) {
+    if (password_manager_util::AuthenticateUser())
+      last_authentication_time_ = base::TimeTicks::Now();
+    else
+      return;
+  }
+
+  // Call back the front end to reveal the password.
+  web_ui()->CallJavascriptFunction(
+      "PasswordManager.showPassword",
+      base::FundamentalValue(index),
+      StringValue(password_list_[index]->password_value));
 }
 
 void PasswordManagerHandler::SetPasswordList() {
@@ -174,15 +185,20 @@ void PasswordManagerHandler::SetPasswordList() {
     InitializeHandler();
 
   ListValue entries;
-  bool show_passwords = *show_passwords_;
-  string16 empty;
+  bool show_passwords = *show_passwords_ && !require_reauthentication_;
+  string16 placeholder(ASCIIToUTF16("        "));
   for (size_t i = 0; i < password_list_.size(); ++i) {
     ListValue* entry = new ListValue();
     entry->Append(new StringValue(net::FormatUrl(password_list_[i]->origin,
                                                  languages_)));
     entry->Append(new StringValue(password_list_[i]->username_value));
-    entry->Append(new StringValue(
-        show_passwords ? password_list_[i]->password_value : empty));
+    if (show_passwords) {
+      entry->Append(new StringValue(password_list_[i]->password_value));
+    } else {
+      // Use a placeholder value with the same length as the password.
+      entry->Append(new StringValue(
+          string16(password_list_[i]->password_value.length(), ' ')));
+    }
     entries.Append(entry);
   }
 
@@ -199,6 +215,12 @@ void PasswordManagerHandler::SetPasswordExceptionList() {
 
   web_ui()->CallJavascriptFunction("PasswordManager.setPasswordExceptionsList",
                                    entries);
+}
+
+bool PasswordManagerHandler::IsAuthenticationRequired() {
+  base::TimeDelta delta = base::TimeDelta::FromSeconds(60);
+  return require_reauthentication_ &&
+      (base::TimeTicks::Now() - last_authentication_time_) > delta;
 }
 
 PasswordManagerHandler::ListPopulater::ListPopulater(
@@ -229,7 +251,7 @@ void PasswordManagerHandler::PasswordListPopulater::Populate() {
 void PasswordManagerHandler::PasswordListPopulater::
     OnPasswordStoreRequestDone(
         CancelableRequestProvider::Handle handle,
-        const std::vector<content::PasswordForm*>& result) {
+        const std::vector<autofill::PasswordForm*>& result) {
   DCHECK_EQ(pending_login_query_, handle);
   pending_login_query_ = 0;
   page_->password_list_.clear();
@@ -239,7 +261,7 @@ void PasswordManagerHandler::PasswordListPopulater::
 }
 
 void PasswordManagerHandler::PasswordListPopulater::OnGetPasswordStoreResults(
-    const std::vector<content::PasswordForm*>& results) {
+    const std::vector<autofill::PasswordForm*>& results) {
   // TODO(kaiwang): Implement when I refactor
   // PasswordStore::GetAutofillableLogins and PasswordStore::GetBlacklistLogins.
   NOTIMPLEMENTED();
@@ -265,7 +287,7 @@ void PasswordManagerHandler::PasswordExceptionListPopulater::Populate() {
 void PasswordManagerHandler::PasswordExceptionListPopulater::
     OnPasswordStoreRequestDone(
         CancelableRequestProvider::Handle handle,
-        const std::vector<content::PasswordForm*>& result) {
+        const std::vector<autofill::PasswordForm*>& result) {
   DCHECK_EQ(pending_login_query_, handle);
   pending_login_query_ = 0;
   page_->password_exception_list_.clear();
@@ -276,7 +298,7 @@ void PasswordManagerHandler::PasswordExceptionListPopulater::
 
 void PasswordManagerHandler::PasswordExceptionListPopulater::
     OnGetPasswordStoreResults(
-        const std::vector<content::PasswordForm*>& results) {
+        const std::vector<autofill::PasswordForm*>& results) {
   // TODO(kaiwang): Implement when I refactor
   // PasswordStore::GetAutofillableLogins and PasswordStore::GetBlacklistLogins.
   NOTIMPLEMENTED();

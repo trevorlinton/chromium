@@ -36,7 +36,7 @@ std::string GetExampleOfBadInput(const std::string& input) {
   }
   TrimWhitespaceASCII(result, TRIM_ALL, &result);
 
-  const int kMaxSize = 50;
+  const size_t kMaxSize = 50;
   if (result.size() > kMaxSize) {
     trimmed = true;
     result.resize(kMaxSize);
@@ -117,9 +117,7 @@ Value ParseString(const std::string& input,
   }
 
   BuildSettings build_settings;
-  Label empty_label;
-  Toolchain toolchain(empty_label);
-  Settings settings(&build_settings, &toolchain, std::string());
+  Settings settings(&build_settings, std::string());
   Scope scope(&settings);
 
   Err nested_err;

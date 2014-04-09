@@ -17,6 +17,7 @@
 #include "content/public/browser/resource_throttle.h"
 #include "content/public/common/process_type.h"
 #include "net/base/host_port_pair.h"
+#include "net/base/request_priority.h"
 #include "net/http/http_server_properties_impl.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_test_util.h"
@@ -93,29 +94,28 @@ class FakeResourceContext : public ResourceContext {
   virtual bool AllowCameraAccess(const GURL& origin) OVERRIDE { return false; }
 };
 
-class FakeURLRequestContextSelector
-    : public ResourceMessageFilter::URLRequestContextSelector {
- private:
-  virtual net::URLRequestContext* GetRequestContext(
-      ResourceType::Type) OVERRIDE {
-    return NULL;
-  }
-};
-
 class FakeResourceMessageFilter : public ResourceMessageFilter {
  public:
   FakeResourceMessageFilter(int child_id)
-      : ResourceMessageFilter(child_id,
-                              PROCESS_TYPE_RENDERER,
-                              &context_,
-                              NULL  /* appcache_service */,
-                              NULL  /* blob_storage_context */,
-                              NULL  /* file_system_context */,
-                              new FakeURLRequestContextSelector) {
+      : ResourceMessageFilter(
+          child_id,
+          PROCESS_TYPE_RENDERER,
+          NULL  /* appcache_service */,
+          NULL  /* blob_storage_context */,
+          NULL  /* file_system_context */,
+          base::Bind(&FakeResourceMessageFilter::GetContexts,
+                     base::Unretained(this))) {
   }
 
  private:
   virtual ~FakeResourceMessageFilter() {}
+
+  void GetContexts(const ResourceHostMsg_Request& request,
+                   ResourceContext** resource_context,
+                   net::URLRequestContext** request_context) {
+    *resource_context = &context_;
+    *request_context = NULL;
+  }
 
   FakeResourceContext context_;
 };
@@ -140,8 +140,7 @@ class ResourceSchedulerTest : public testing::Test {
       net::RequestPriority priority,
       int route_id) {
     scoped_ptr<net::URLRequest> url_request(
-        context_.CreateRequest(GURL(url), NULL));
-    url_request->SetPriority(priority);
+        context_.CreateRequest(GURL(url), priority, NULL));
     ResourceRequestInfoImpl* info = new ResourceRequestInfoImpl(
         PROCESS_TYPE_RENDERER,             // process_type
         kChildId,                          // child_id
@@ -160,6 +159,7 @@ class ResourceSchedulerTest : public testing::Test {
         false,                             // has_user_gesture
         WebKit::WebReferrerPolicyDefault,  // referrer_policy
         NULL,                              // context
+        base::WeakPtr<ResourceMessageFilter>(),  // filter
         true);                             // is_async
     info->AssociateWithRequest(url_request.get());
     return url_request.Pass();
@@ -193,8 +193,7 @@ class ResourceSchedulerTest : public testing::Test {
     const ResourceRequestInfoImpl* info = ResourceRequestInfoImpl::ForRequest(
         request->url_request());
     const GlobalRequestID& id = info->GetGlobalRequestID();
-    ResourceHostMsg_DidChangePriority msg(
-        kRouteId, id.request_id, new_priority);
+    ResourceHostMsg_DidChangePriority msg(id.request_id, new_priority);
     bool ok = false;
     rdh_.OnMessageReceived(msg, filter.get(), &ok);
     EXPECT_TRUE(ok);
@@ -429,6 +428,16 @@ TEST_F(ResourceSchedulerTest, ReprioritizedRequestGoesToBackOfQueue) {
   scheduler_.OnWillInsertBody(kChildId, kRouteId);
   EXPECT_FALSE(request->started());
   EXPECT_FALSE(idle->started());
+}
+
+TEST_F(ResourceSchedulerTest, NonHTTPSchedulesImmediately) {
+  // Dummies to enforce scheduling.
+  scoped_ptr<TestRequest> high(NewRequest("http://host/high", net::HIGHEST));
+  scoped_ptr<TestRequest> low(NewRequest("http://host/high", net::LOWEST));
+
+  scoped_ptr<TestRequest> request(
+      NewRequest("chrome-extension://req", net::LOWEST));
+  EXPECT_TRUE(request->started());
 }
 
 }  // unnamed namespace

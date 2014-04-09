@@ -4,7 +4,6 @@
 
 #include "chrome/browser/chromeos/input_method/mock_ibus_controller.h"
 
-#include "chromeos/ime/input_method_config.h"
 #include "chromeos/ime/input_method_property.h"
 
 namespace chromeos {
@@ -12,9 +11,7 @@ namespace input_method {
 
 MockIBusController::MockIBusController()
     : activate_input_method_property_count_(0),
-      activate_input_method_property_return_(true),
-      set_input_method_config_internal_count_(0),
-      set_input_method_config_internal_return_(true) {
+      activate_input_method_property_return_(true) {
 }
 
 MockIBusController::~MockIBusController() {
@@ -26,13 +23,30 @@ bool MockIBusController::ActivateInputMethodProperty(const std::string& key) {
   return activate_input_method_property_return_;
 }
 
-bool MockIBusController::SetInputMethodConfigInternal(
-    const ConfigKeyType& key,
-    const InputMethodConfigValue& value) {
-  ++set_input_method_config_internal_count_;
-  set_input_method_config_internal_key_ = key;
-  set_input_method_config_internal_value_ = value;
-  return set_input_method_config_internal_return_;
+void MockIBusController::AddObserver(Observer* observer) {
+  observers_.AddObserver(observer);
+}
+
+void MockIBusController::RemoveObserver(Observer* observer) {
+  observers_.RemoveObserver(observer);
+}
+
+const InputMethodPropertyList&
+MockIBusController::GetCurrentProperties() const {
+  return current_property_list_;
+}
+
+void MockIBusController::ClearProperties() {
+  current_property_list_.clear();
+}
+
+void MockIBusController::NotifyPropertyChangedForTesting() {
+  FOR_EACH_OBSERVER(Observer, observers_, PropertyChanged());
+}
+
+void MockIBusController::SetCurrentPropertiesForTesting(
+    const InputMethodPropertyList& current_property_list) {
+  current_property_list_ = current_property_list;
 }
 
 }  // namespace input_method

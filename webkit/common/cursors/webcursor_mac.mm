@@ -9,7 +9,7 @@
 #include "base/logging.h"
 #include "base/mac/mac_util.h"
 #include "base/mac/scoped_cftyperef.h"
-#include "grit/blink_resources.h"
+#include "grit/webkit_resources.h"
 #include "skia/ext/skia_utils_mac.h"
 #include "third_party/WebKit/public/platform/WebSize.h"
 #include "third_party/WebKit/public/web/WebCursorInfo.h"
@@ -208,8 +208,12 @@ NSCursor* CreateCustomCursor(const std::vector<char>& custom_data,
   NSPoint dip_hotspot = NSPointFromCGPoint(gfx::ToFlooredPoint(
       gfx::ScalePoint(hotspot, 1 / custom_scale)).ToCGPoint());
 
+  // Both the image and its representation need to have the same size for
+  // cursors to appear in high resolution on retina displays. Note that the
+  // size of a representation is not the same as pixelsWide or pixelsHigh.
   NSImage* cursor_image = gfx::SkBitmapToNSImage(bitmap);
   [cursor_image setSize:dip_size];
+  [[[cursor_image representations] objectAtIndex:0] setSize:dip_size];
 
   NSCursor* cursor = [[NSCursor alloc] initWithImage:cursor_image
                                              hotSpot:dip_hotspot];

@@ -18,14 +18,14 @@ const char kDataScheme[] = "data";
 const char kFileScheme[] = "file";
 const char kFileSystemScheme[] = "filesystem";
 const char kFtpScheme[] = "ftp";
-const char kGuestScheme[] = "chrome-guest";
-const char kHttpScheme[] = "http";
-const char kHttpsScheme[] = "https";
-const char kJavaScriptScheme[] = "javascript";
 }  // namespace chrome
 
 namespace content {
 
+const char kGuestScheme[] = "chrome-guest";
+const char kHttpScheme[] = "http";
+const char kHttpsScheme[] = "https";
+const char kJavaScriptScheme[] = "javascript";
 const char kMailToScheme[] = "mailto";
 const char kMetadataScheme[] = "metadata";
 const char kSwappedOutScheme[] = "swappedout";

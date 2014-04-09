@@ -27,8 +27,6 @@
 #include "chrome/browser/storage_monitor/udev_util_linux.h"
 #include "device/media_transfer_protocol/media_transfer_protocol_manager.h"
 
-namespace chrome {
-
 using content::BrowserThread;
 typedef MtabWatcherLinux::MountPointDeviceMap MountPointDeviceMap;
 
@@ -334,6 +332,17 @@ void StorageMonitorLinux::SetMediaTransferProtocolManagerForTest(
 void StorageMonitorLinux::EjectDevice(
     const std::string& device_id,
     base::Callback<void(EjectStatus)> callback) {
+  StorageInfo::Type type;
+  if (!StorageInfo::CrackDeviceId(device_id, &type, NULL)) {
+    callback.Run(EJECT_FAILURE);
+    return;
+  }
+
+  if (type == StorageInfo::MTP_OR_PTP) {
+    media_transfer_protocol_device_observer_->EjectDevice(device_id, callback);
+    return;
+  }
+
   // Find the mount point for the given device ID.
   base::FilePath path;
   base::FilePath device;
@@ -508,5 +517,3 @@ StorageMonitor* StorageMonitor::Create() {
   const base::FilePath kDefaultMtabPath("/etc/mtab");
   return new StorageMonitorLinux(kDefaultMtabPath);
 }
-
-}  // namespace chrome

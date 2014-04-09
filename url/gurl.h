@@ -8,6 +8,7 @@
 #include <iosfwd>
 #include <string>
 
+#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "url/url_canon.h"
 #include "url/url_canon_stdstring.h"
@@ -52,7 +53,7 @@ class URL_EXPORT GURL {
 
   ~GURL();
 
-  GURL& operator=(const GURL& other);
+  GURL& operator=(GURL other);
 
   // Returns true when this object represents a valid parsed URL. When not
   // valid, other functions will still succeed, but you will not get canonical
@@ -119,6 +120,9 @@ class URL_EXPORT GURL {
   // Allows GURL to used as a key in STL (for example, a std::set or std::map).
   bool operator<(const GURL& other) const {
     return spec_ < other.spec_;
+  }
+  bool operator>(const GURL& other) const {
+    return spec_ > other.spec_;
   }
 
   // Resolves a URL that's possibly relative to this object's URL, and returns
@@ -203,6 +207,9 @@ class URL_EXPORT GURL {
   // object constructions are done.
   bool SchemeIs(const char* lower_ascii_scheme) const;
 
+  // Returns true if the scheme is "http" or "https".
+  bool SchemeIsHTTPOrHTTPS() const;
+
   // We often need to know if this is a file URL. File URLs are "standard", but
   // are often treated separately by some programs.
   bool SchemeIsFile() const {
@@ -219,6 +226,11 @@ class URL_EXPORT GURL {
     return SchemeIs("https") || SchemeIs("wss") ||
         (SchemeIsFileSystem() && inner_url() && inner_url()->SchemeIsSecure());
   }
+
+  // The "content" of the URL is everything after the scheme (skipping the
+  // scheme delimiting colon). It is an error to get the origin of an invalid
+  // URL. The result will be an empty string.
+  std::string GetContent() const;
 
   // Returns true if the hostname is an IP address. Note: this function isn't
   // as cheap as a simple getter because it re-parses the hostname to verify.
@@ -339,7 +351,7 @@ class URL_EXPORT GURL {
   // Returns the inner URL of a nested URL [currently only non-null for
   // filesystem: URLs].
   const GURL* inner_url() const {
-    return inner_url_;
+    return inner_url_.get();
   }
 
  private:
@@ -364,7 +376,7 @@ class URL_EXPORT GURL {
   url_parse::Parsed parsed_;
 
   // Used for nested schemes [currently only filesystem:].
-  GURL* inner_url_;
+  scoped_ptr<GURL> inner_url_;
 
   // TODO bug 684583: Add encoding for query params.
 };

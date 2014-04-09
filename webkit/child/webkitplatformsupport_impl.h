@@ -58,6 +58,7 @@ class WEBKIT_CHILD_EXPORT WebKitPlatformSupportImpl :
   virtual bool processMemorySizesInBytes(size_t* private_bytes,
                                          size_t* shared_bytes);
   virtual bool memoryAllocatorWasteInBytes(size_t* size);
+  virtual size_t maxDecodedImageBytes() OVERRIDE;
   virtual WebKit::WebURLLoader* createURLLoader();
   virtual WebKit::WebSocketStreamHandle* createSocketStreamHandle();
   virtual WebKit::WebString userAgent(const WebKit::WebURL& url);
@@ -75,7 +76,7 @@ class WEBKIT_CHILD_EXPORT WebKitPlatformSupportImpl :
   virtual const unsigned char* getTraceCategoryEnabledFlag(
       const char* category_name);
   virtual long* getTraceSamplingState(const unsigned thread_bucket);
-  virtual void addTraceEvent(
+  virtual TraceEventHandle addTraceEvent(
       char phase,
       const unsigned char* category_group_enabled,
       const char* name,
@@ -85,6 +86,7 @@ class WEBKIT_CHILD_EXPORT WebKitPlatformSupportImpl :
       const unsigned char* arg_types,
       const unsigned long long* arg_values,
       unsigned char flags);
+  virtual void updateTraceEventDuration(TraceEventHandle);
   virtual WebKit::WebData loadResource(const char* name);
   virtual WebKit::WebString queryLocalizedString(
       WebKit::WebLocalizedString::Name name);
@@ -122,7 +124,7 @@ class WEBKIT_CHILD_EXPORT WebKitPlatformSupportImpl :
   virtual ResourceLoaderBridge* CreateResourceLoader(
       const ResourceLoaderBridge::RequestInfo& request_info) = 0;
   // Creates a WebSocketStreamHandleBridge.
-  virtual WebSocketStreamHandleBridge* CreateWebSocketBridge(
+  virtual WebSocketStreamHandleBridge* CreateWebSocketStreamBridge(
       WebKit::WebSocketStreamHandle* handle,
       WebSocketStreamHandleDelegate* delegate) = 0;
 

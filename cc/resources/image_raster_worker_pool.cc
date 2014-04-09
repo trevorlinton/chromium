@@ -8,7 +8,7 @@
 #include "base/values.h"
 #include "cc/debug/traced_value.h"
 #include "cc/resources/resource.h"
-#include "third_party/skia/include/core/SkDevice.h"
+#include "third_party/skia/include/core/SkBitmapDevice.h"
 
 namespace cc {
 
@@ -34,14 +34,10 @@ class ImageWorkerPoolTaskImpl : public internal::WorkerPoolTask {
     if (!buffer_)
       return;
 
-    SkBitmap bitmap;
-    bitmap.setConfig(SkBitmap::kARGB_8888_Config,
-                     task_->resource()->size().width(),
-                     task_->resource()->size().height(),
-                     stride_);
-    bitmap.setPixels(buffer_);
-    SkDevice device(bitmap);
-    task_->RunOnWorkerThread(&device, thread_index);
+    task_->RunOnWorkerThread(thread_index,
+                             buffer_,
+                             task_->resource()->size(),
+                             stride_);
   }
   virtual void CompleteOnOriginThread() OVERRIDE {
     reply_.Run(!HasFinishedRunning());
@@ -104,6 +100,8 @@ void ImageRasterWorkerPool::ScheduleTasks(RasterTask::Queue* queue) {
   for (RasterTaskVector::const_iterator it = raster_tasks().begin();
        it != raster_tasks().end(); ++it) {
     internal::RasterWorkerPoolTask* task = it->get();
+    DCHECK(!task->HasCompleted());
+    DCHECK(!task->WasCanceled());
 
     TaskMap::iterator image_it = image_tasks_.find(task);
     if (image_it != image_tasks_.end()) {
@@ -151,9 +149,14 @@ void ImageRasterWorkerPool::ScheduleTasks(RasterTask::Queue* queue) {
   set_raster_required_for_activation_finished_task(
       new_raster_required_for_activation_finished_task);
 
-  TRACE_EVENT_ASYNC_STEP1(
+  TRACE_EVENT_ASYNC_STEP_INTO1(
       "cc", "ScheduledTasks", this, "rasterizing",
       "state", TracedValue::FromValue(StateAsValue().release()));
+}
+
+ResourceFormat ImageRasterWorkerPool::GetResourceFormat() const {
+  // Only format supported by CHROMIUM_map_image
+  return RGBA_8888;
 }
 
 void ImageRasterWorkerPool::OnRasterTasksFinished() {
@@ -166,7 +169,7 @@ void ImageRasterWorkerPool::OnRasterTasksFinished() {
 void ImageRasterWorkerPool::OnRasterTasksRequiredForActivationFinished() {
   DCHECK(raster_tasks_required_for_activation_pending_);
   raster_tasks_required_for_activation_pending_ = false;
-  TRACE_EVENT_ASYNC_STEP1(
+  TRACE_EVENT_ASYNC_STEP_INTO1(
       "cc", "ScheduledTasks", this, "rasterizing",
       "state", TracedValue::FromValue(StateAsValue().release()));
   client()->DidFinishRunningTasksRequiredForActivation();

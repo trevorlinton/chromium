@@ -128,10 +128,6 @@ void PluginGlobals::PreCacheFontForFlash(const void* logfontw) {
   plugin_proxy_delegate_->PreCacheFont(logfontw);
 }
 
-base::Lock* PluginGlobals::GetProxyLock() {
-  return &proxy_lock_;
-}
-
 void PluginGlobals::LogWithSource(PP_Instance instance,
                                   PP_LogLevel level,
                                   const std::string& source,
@@ -154,7 +150,7 @@ MessageLoopShared* PluginGlobals::GetCurrentMessageLoop() {
   return MessageLoopResource::GetCurrent();
 }
 
-base::TaskRunner* PluginGlobals::GetFileTaskRunner(PP_Instance instance) {
+base::TaskRunner* PluginGlobals::GetFileTaskRunner() {
   if (!file_thread_.get()) {
     file_thread_.reset(new base::Thread("Plugin::File"));
     base::Thread::Options options;

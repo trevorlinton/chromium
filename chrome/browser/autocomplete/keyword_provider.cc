@@ -16,6 +16,7 @@
 #include "chrome/browser/extensions/api/omnibox/omnibox_api.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_system.h"
+#include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url.h"
 #include "chrome/browser/search_engines/template_url_service.h"
@@ -158,11 +159,10 @@ const TemplateURL* KeywordProvider::GetSubstitutingTemplateURLForInput(
         !remaining_input.empty() &&
         EndsWith(input->text(), remaining_input, true)) {
       int offset = input->text().length() - input->cursor_position();
-      // The cursor should never be past the last character.
+      // The cursor should never be past the last character or before the
+      // first character.
       DCHECK_GE(offset, 0);
-      // The cursor should never be in the keyword part, which is guaranteed
-      // by OmniboxEditModel implementation (see omnibox_edit_model.cc).
-      DCHECK_LE(offset, static_cast<int>(remaining_input.length()));
+      DCHECK_LE(offset, static_cast<int>(input->text().length()));
       if (offset <= 0) {
         // Normalize the cursor to be exactly after the last character.
         cursor_position = remaining_input.length();
@@ -197,14 +197,15 @@ string16 KeywordProvider::GetKeywordForText(const string16& text) const {
     return string16();
 
   // Don't provide a keyword for inactive/disabled extension keywords.
-  if (template_url->IsExtensionKeyword()) {
+  if (template_url->GetType() == TemplateURL::OMNIBOX_API_EXTENSION) {
     ExtensionService* extension_service =
         extensions::ExtensionSystem::Get(profile_)->extension_service();
     const extensions::Extension* extension = extension_service->
         GetExtensionById(template_url->GetExtensionId(), false);
     if (!extension ||
         (profile_->IsOffTheRecord() &&
-        !extension_service->IsIncognitoEnabled(extension->id())))
+        !extension_util::IsIncognitoEnabled(extension->id(),
+                                            extension_service)))
       return string16();
   }
 
@@ -274,14 +275,16 @@ void KeywordProvider::Start(const AutocompleteInput& input,
 
     // Prune any extension keywords that are disallowed in incognito mode (if
     // we're incognito), or disabled.
-    if (profile_ && template_url->IsExtensionKeyword()) {
+    if (profile_ &&
+        (template_url->GetType() == TemplateURL::OMNIBOX_API_EXTENSION)) {
       ExtensionService* service = extensions::ExtensionSystem::Get(profile_)->
           extension_service();
       const extensions::Extension* extension =
           service->GetExtensionById(template_url->GetExtensionId(), false);
       bool enabled =
           extension && (!profile_->IsOffTheRecord() ||
-                        service->IsIncognitoEnabled(extension->id()));
+                        extension_util::IsIncognitoEnabled(extension->id(),
+                                                           service));
       if (!enabled) {
         i = matches.erase(i);
         continue;
@@ -307,7 +310,8 @@ void KeywordProvider::Start(const AutocompleteInput& input,
   // front of our vector.
   if (matches.front()->keyword() == keyword) {
     const TemplateURL* template_url = matches.front();
-    const bool is_extension_keyword = template_url->IsExtensionKeyword();
+    const bool is_extension_keyword =
+        template_url->GetType() == TemplateURL::OMNIBOX_API_EXTENSION;
 
     // Only create an exact match if |remaining_input| is empty or if
     // this is an extension keyword.  If |remaining_input| is a
@@ -390,10 +394,8 @@ bool KeywordProvider::ExtractKeywordFromInput(const AutocompleteInput& input,
       (input.type() == AutocompleteInput::FORCED_QUERY))
     return false;
 
-  string16 trimmed_input;
-  TrimWhitespace(input.text(), TRIM_TRAILING, &trimmed_input);
   *keyword = TemplateURLService::CleanUserInputKeyword(
-      SplitKeywordFromInput(trimmed_input, true, remaining_input));
+      SplitKeywordFromInput(input.text(), true, remaining_input));
   return !keyword->empty();
 }
 
@@ -475,13 +477,14 @@ void KeywordProvider::FillInURLAndContents(const string16& remaining_input,
   DCHECK(!element->short_name().empty());
   const TemplateURLRef& element_ref = element->url_ref();
   DCHECK(element_ref.IsValid());
-  int message_id = element->IsExtensionKeyword() ?
+  int message_id = (element->GetType() == TemplateURL::OMNIBOX_API_EXTENSION) ?
       IDS_EXTENSION_KEYWORD_COMMAND : IDS_KEYWORD_SEARCH;
   if (remaining_input.empty()) {
     // Allow extension keyword providers to accept empty string input. This is
     // useful to allow extensions to do something in the case where no input is
     // entered.
-    if (element_ref.SupportsReplacement() && !element->IsExtensionKeyword()) {
+    if (element_ref.SupportsReplacement() &&
+        (element->GetType() != TemplateURL::OMNIBOX_API_EXTENSION)) {
       // No query input; return a generic, no-destination placeholder.
       match->contents.assign(
           l10n_util::GetStringFUTF16(message_id,

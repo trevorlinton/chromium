@@ -10,11 +10,10 @@
 #include "ui/aura/root_window.h"
 #include "ui/aura/test/aura_test_base.h"
 #include "ui/aura/test/event_generator.h"
-#include "ui/aura/test/test_activation_client.h"
 #include "ui/aura/test/test_cursor_client.h"
 #include "ui/aura/test/test_windows.h"
-#include "ui/base/events/event.h"
-#include "ui/base/events/event_utils.h"
+#include "ui/events/event.h"
+#include "ui/events/event_utils.h"
 
 namespace {
 
@@ -48,6 +47,8 @@ class ConsumeGestureEventFilter : public ui::EventHandler {
 
 typedef aura::test::AuraTestBase CompoundEventFilterTest;
 
+#if defined(OS_CHROMEOS)
+// A keypress only hides the cursor on ChromeOS (crbug.com/304296).
 TEST_F(CompoundEventFilterTest, CursorVisibilityChange) {
   scoped_ptr<CompoundEventFilter> compound_filter(new CompoundEventFilter);
   aura::Env::GetInstance()->AddPreTargetHandler(compound_filter.get());
@@ -141,6 +142,7 @@ TEST_F(CompoundEventFilterTest, TouchHidesCursor) {
   EXPECT_FALSE(cursor_client.IsMouseEventsEnabled());
   aura::Env::GetInstance()->RemovePreTargetHandler(compound_filter.get());
 }
+#endif
 
 // Tests that if an event filter consumes a gesture, then it doesn't focus the
 // window.
@@ -187,7 +189,7 @@ TEST_F(CompoundEventFilterTest, DontHideWhenMouseDown) {
   EXPECT_TRUE(cursor_client.IsMouseEventsEnabled());
   event_generator.PressLeftButton();
   EXPECT_TRUE(cursor_client.IsMouseEventsEnabled());
-  EXPECT_TRUE(aura::Env::GetInstance()->is_mouse_button_down());
+  EXPECT_TRUE(aura::Env::GetInstance()->IsMouseButtonDown());
 
   // Do a touch event. As the mouse button is down this should not disable mouse
   // events.

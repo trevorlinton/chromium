@@ -10,12 +10,12 @@
 
 #include "base/debug/stack_trace.h"
 #include "base/message_loop/message_loop.h"
-#include "base/message_loop/message_pump_aurax11.h"
+#include "base/message_loop/message_pump_x11.h"
 #include "base/run_loop.h"
 #include "ui/aura/env.h"
 #include "ui/aura/root_window.h"
-#include "ui/base/events/event.h"
 #include "ui/base/x/x11_util.h"
+#include "ui/events/event.h"
 #include "ui/gfx/screen.h"
 
 namespace views {
@@ -50,7 +50,7 @@ aura::client::WindowMoveResult X11DesktopWindowMoveClient::RunMoveLoop(
     const gfx::Vector2d& drag_offset,
     aura::client::WindowMoveSource move_source) {
   window_offset_ = drag_offset;
-  root_window_ = source->GetRootWindow();
+  root_window_ = source->GetDispatcher();
 
   bool success = move_loop_.RunMoveLoop(source, root_window_->last_cursor());
   return success ? aura::client::MOVE_SUCCESSFUL : aura::client::MOVE_CANCELED;

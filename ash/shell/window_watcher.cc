@@ -6,9 +6,11 @@
 
 #include "ash/display/display_controller.h"
 #include "ash/launcher/launcher.h"
+#include "ash/launcher/launcher_item_delegate_manager.h"
 #include "ash/launcher/launcher_model.h"
 #include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
+#include "ash/shell/window_watcher_launcher_item_delegate.h"
 #include "ash/shell_window_ids.h"
 #include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
@@ -34,7 +36,7 @@ class WindowWatcher::WorkspaceWindowWatcher : public aura::WindowObserver {
     window->RemoveObserver(watcher_);
   }
 
-  void RootWindowAdded(aura::RootWindow* root) {
+  void RootWindowAdded(aura::Window* root) {
     aura::Window* panel_container = ash::Shell::GetContainer(
         root,
         internal::kShellWindowId_PanelContainer);
@@ -107,8 +109,9 @@ void WindowWatcher::OnWindowAdded(aura::Window* new_window) {
   ash::LauncherModel* model = Shell::GetInstance()->launcher_model();
   ash::LauncherItem item;
   item.type = new_window->type() == aura::client::WINDOW_TYPE_PANEL ?
-                                    ash::TYPE_APP_PANEL : ash::TYPE_TABBED;
-  id_to_window_[model->next_id()] = new_window;
+      ash::TYPE_APP_PANEL : ash::TYPE_PLATFORM_APP;
+  ash::LauncherID id = model->next_id();
+  id_to_window_[id] = new_window;
 
   SkBitmap icon_bitmap;
   icon_bitmap.setConfig(SkBitmap::kARGB_8888_Config, 16, 16);
@@ -118,10 +121,15 @@ void WindowWatcher::OnWindowAdded(aura::Window* new_window) {
                         image_count == 1 ? 255 : 0,
                         image_count == 2 ? 255 : 0);
   image_count = (image_count + 1) % 3;
-  item.image = gfx::ImageSkia(gfx::ImageSkiaRep(icon_bitmap,
-                                                ui::SCALE_FACTOR_100P));
+  item.image = gfx::ImageSkia(gfx::ImageSkiaRep(icon_bitmap, 1.0f));
 
   model->Add(item);
+
+  ash::LauncherItemDelegateManager* manager =
+      ash::Shell::GetInstance()->launcher_item_delegate_manager();
+  scoped_ptr<LauncherItemDelegate> delegate(
+      new WindowWatcherLauncherItemDelegate(id, this));
+  manager->SetLauncherItemDelegate(id, delegate.Pass());
 }
 
 void WindowWatcher::OnWillRemoveWindow(aura::Window* window) {
@@ -142,7 +150,7 @@ void WindowWatcher::OnDisplayBoundsChanged(const gfx::Display& display) {
 }
 
 void WindowWatcher::OnDisplayAdded(const gfx::Display& new_display) {
-  aura::RootWindow* root = Shell::GetInstance()->display_controller()->
+  aura::Window* root = Shell::GetInstance()->display_controller()->
       GetRootWindowForDisplayId(new_display.id());
   workspace_window_watcher_->RootWindowAdded(root);
 }

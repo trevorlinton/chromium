@@ -18,8 +18,6 @@ namespace chromeos {
 
 namespace {
 
-const char kDevicePath[] = "devicePath";
-
 // TODO(armansito): Add bindings for these to service_constants.h
 // (crbug.com/256889)
 const char kShillErrorFailure[] = "org.chromium.flimflam.Error.Failure";
@@ -33,11 +31,11 @@ std::string GetErrorNameForShillError(const std::string& shill_error_name) {
     return NetworkDeviceHandler::kErrorFailure;
   if (shill_error_name == kShillErrorNotSupported)
     return NetworkDeviceHandler::kErrorNotSupported;
-  if (shill_error_name == flimflam::kErrorIncorrectPinMsg)
+  if (shill_error_name == shill::kErrorIncorrectPinMsg)
     return NetworkDeviceHandler::kErrorIncorrectPin;
-  if (shill_error_name == flimflam::kErrorPinBlockedMsg)
+  if (shill_error_name == shill::kErrorPinBlockedMsg)
     return NetworkDeviceHandler::kErrorPinBlocked;
-  if (shill_error_name == flimflam::kErrorPinRequiredMsg)
+  if (shill_error_name == shill::kErrorPinRequiredMsg)
     return NetworkDeviceHandler::kErrorPinRequired;
   return NetworkDeviceHandler::kErrorUnknown;
 }
@@ -73,13 +71,13 @@ void RefreshIPConfigsCallback(
     const base::DictionaryValue& properties) {
   const ListValue* ip_configs;
   if (!properties.GetListWithoutPathExpansion(
-          flimflam::kIPConfigsProperty, &ip_configs)) {
+          shill::kIPConfigsProperty, &ip_configs)) {
     NET_LOG_ERROR("RequestRefreshIPConfigs Failed", device_path);
     network_handler::ShillErrorCallbackFunction(
         "RequestRefreshIPConfigs Failed",
         device_path,
         error_callback,
-        std::string("Missing ") + flimflam::kIPConfigsProperty, "");
+        std::string("Missing ") + shill::kIPConfigsProperty, "");
     return;
   }
 

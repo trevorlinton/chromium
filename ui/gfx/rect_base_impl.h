@@ -9,7 +9,7 @@
 
 // This file provides the implementation for RectBaese template and
 // used to instantiate the base class for Rect and RectF classes.
-#if !defined(UI_IMPLEMENTATION)
+#if !defined(GFX_IMPLEMENTATION)
 #error "This file is intended for UI implementation only"
 #endif
 
@@ -312,6 +312,22 @@ bool RectBase<Class, PointClass, SizeClass, InsetsClass, VectorClass, Type>::
              (x() == rect.right() || right() == rect.x())) ||
          (x() == rect.x() && width() == rect.width() &&
              (y() == rect.bottom() || bottom() == rect.y()));
+}
+
+template<typename Class,
+         typename PointClass,
+         typename SizeClass,
+         typename InsetsClass,
+         typename VectorClass,
+         typename Type>
+Type RectBase<Class, PointClass, SizeClass, InsetsClass, VectorClass, Type>::
+    ManhattanDistanceToPoint(const PointClass& point) const {
+  Type x_distance = std::max<Type>(0, std::max(
+      x() - point.x(), point.x() - right()));
+  Type y_distance = std::max<Type>(0, std::max(
+      y() - point.y(), point.y() - bottom()));
+
+  return x_distance + y_distance;
 }
 
 }  // namespace gfx

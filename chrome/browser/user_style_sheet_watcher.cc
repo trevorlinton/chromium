@@ -8,7 +8,6 @@
 #include "base/bind.h"
 #include "base/file_util.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/web_contents.h"
@@ -57,6 +56,10 @@ class UserStyleSheetLoader
   // base64 URL.  Posts the base64 URL back to the UI thread.
   void LoadStyleSheet(const base::FilePath& style_sheet_file);
 
+  // Register a callback to be called whenever the stylesheet gets updated.
+  scoped_ptr<base::CallbackList<void(void)>::Subscription>
+  RegisterOnStyleSheetUpdatedCallback(const base::Closure& callback);
+
   // Send out a notification if the stylesheet has already been loaded.
   void NotifyLoaded();
 
@@ -65,7 +68,7 @@ class UserStyleSheetLoader
 
  private:
   friend class base::RefCountedThreadSafe<UserStyleSheetLoader>;
-  ~UserStyleSheetLoader() {}
+  ~UserStyleSheetLoader();
 
   // Called on the UI thread after the stylesheet has loaded.
   void SetStyleSheet(const GURL& url);
@@ -76,6 +79,8 @@ class UserStyleSheetLoader
   // Whether the stylesheet has been loaded.
   bool has_loaded_;
 
+  base::CallbackList<void(void)> style_sheet_updated_callbacks_;
+
   DISALLOW_COPY_AND_ASSIGN(UserStyleSheetLoader);
 };
 
@@ -83,12 +88,18 @@ UserStyleSheetLoader::UserStyleSheetLoader()
     : has_loaded_(false) {
 }
 
+UserStyleSheetLoader::~UserStyleSheetLoader() {
+}
+
+scoped_ptr<base::CallbackList<void(void)>::Subscription>
+UserStyleSheetLoader::RegisterOnStyleSheetUpdatedCallback(
+    const base::Closure& callback) {
+  return style_sheet_updated_callbacks_.Add(callback);
+}
+
 void UserStyleSheetLoader::NotifyLoaded() {
   if (has_loaded_) {
-    content::NotificationService::current()->Notify(
-        chrome::NOTIFICATION_USER_STYLE_SHEET_UPDATED,
-        content::Source<UserStyleSheetLoader>(this),
-        content::NotificationService::NoDetails());
+    style_sheet_updated_callbacks_.Notify();
   }
 }
 
@@ -113,7 +124,7 @@ void UserStyleSheetLoader::LoadStyleSheet(
     file_util::WriteFile(style_sheet_file, "", 0);
 
   std::string css;
-  bool rv = file_util::ReadFileToString(style_sheet_file, &css);
+  bool rv = base::ReadFileToString(style_sheet_file, &css);
   GURL style_sheet_url;
   if (rv && !css.empty()) {
     std::string css_base64;
@@ -179,6 +190,12 @@ void UserStyleSheetWatcher::Init() {
 
 GURL UserStyleSheetWatcher::user_style_sheet() const {
   return loader_->user_style_sheet();
+}
+
+scoped_ptr<base::CallbackList<void(void)>::Subscription>
+UserStyleSheetWatcher::RegisterOnStyleSheetUpdatedCallback(
+    const base::Closure& callback) {
+  return loader_->RegisterOnStyleSheetUpdatedCallback(callback);
 }
 
 void UserStyleSheetWatcher::Observe(int type,

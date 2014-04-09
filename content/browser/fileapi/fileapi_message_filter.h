@@ -37,6 +37,7 @@ class FileSystemURL;
 class FileSystemContext;
 class FileSystemOperationRunner;
 struct DirectoryEntry;
+struct FileSystemInfo;
 }
 
 namespace net {
@@ -45,10 +46,12 @@ class URLRequestContextGetter;
 }  // namespace net
 
 namespace webkit_blob {
+class BlobStorageHost;
 class ShareableFileReference;
 }
 
 namespace content {
+class ChildProcessSecurityPolicyImpl;
 class ChromeBlobStorageContext;
 
 // TODO(tyoshino): Factor out code except for IPC gluing from
@@ -86,11 +89,11 @@ class CONTENT_EXPORT FileAPIMessageFilter : public BrowserMessageFilter {
  private:
   typedef fileapi::FileSystemOperationRunner::OperationID OperationID;
 
-  void OnOpen(int request_id,
-              const GURL& origin_url,
-              fileapi::FileSystemType type,
-              int64 requested_size,
-              bool create);
+  void OnOpenFileSystem(int request_id,
+                        const GURL& origin_url,
+                        fileapi::FileSystemType type);
+  void OnResolveURL(int request_id,
+                    const GURL& filesystem_url);
   void OnDeleteFileSystem(int request_id,
                           const GURL& origin_url,
                           fileapi::FileSystemType type);
@@ -111,7 +114,7 @@ class CONTENT_EXPORT FileAPIMessageFilter : public BrowserMessageFilter {
   void OnReadDirectory(int request_id, const GURL& path);
   void OnWrite(int request_id,
                const GURL& path,
-               const GURL& blob_url,
+               const std::string& blob_uuid,
                int64 offset);
   void OnTruncate(int request_id, const GURL& path, int64 length);
   void OnTouchFile(int request_id,
@@ -119,7 +122,9 @@ class CONTENT_EXPORT FileAPIMessageFilter : public BrowserMessageFilter {
                    const base::Time& last_access_time,
                    const base::Time& last_modified_time);
   void OnCancel(int request_id, int request_to_cancel);
-  void OnOpenFile(int request_id, const GURL& path, int file_flags);
+#if defined(ENABLE_PLUGINS)
+  void OnOpenPepperFile(int request_id, const GURL& path, int pp_open_flags);
+#endif  // defined(ENABLE_PLUGINS)
   void OnNotifyCloseFile(int file_open_id);
   void OnWillUpdate(const GURL& path);
   void OnDidUpdate(const GURL& path, int64 delta);
@@ -131,14 +136,19 @@ class CONTENT_EXPORT FileAPIMessageFilter : public BrowserMessageFilter {
 
   // Handlers for BlobHostMsg_ family messages.
 
-  void OnStartBuildingBlob(const GURL& url);
-  void OnAppendBlobDataItemToBlob(
-      const GURL& url, const webkit_blob::BlobData::Item& item);
-  void OnAppendSharedMemoryToBlob(
-      const GURL& url, base::SharedMemoryHandle handle, size_t buffer_size);
-  void OnFinishBuildingBlob(const GURL& url, const std::string& content_type);
-  void OnCloneBlob(const GURL& url, const GURL& src_url);
-  void OnRemoveBlob(const GURL& url);
+  void OnStartBuildingBlob(const std::string& uuid);
+  void OnAppendBlobDataItemToBlob(const std::string& uuid,
+                                  const webkit_blob::BlobData::Item& item);
+  void OnAppendSharedMemoryToBlob(const std::string& uuid,
+                                  base::SharedMemoryHandle handle,
+                                  size_t buffer_size);
+  void OnFinishBuildingBlob(const std::string& uuid,
+                             const std::string& content_type);
+  void OnCancelBuildingBlob(const std::string& uuid);
+  void OnIncrementBlobRefCount(const std::string& uuid);
+  void OnDecrementBlobRefCount(const std::string& uuid);
+  void OnRegisterPublicBlobURL(const GURL& public_url, const std::string& uuid);
+  void OnRevokePublicBlobURL(const GURL& public_url);
 
   // Handlers for StreamHostMsg_ family messages.
   //
@@ -154,6 +164,7 @@ class CONTENT_EXPORT FileAPIMessageFilter : public BrowserMessageFilter {
   void OnAppendSharedMemoryToStream(
       const GURL& url, base::SharedMemoryHandle handle, size_t buffer_size);
   void OnFinishBuildingStream(const GURL& url);
+  void OnAbortBuildingStream(const GURL& url);
   void OnCloneStream(const GURL& url, const GURL& src_url);
   void OnRemoveStream(const GURL& url);
 
@@ -178,9 +189,14 @@ class CONTENT_EXPORT FileAPIMessageFilter : public BrowserMessageFilter {
                 int64 bytes,
                 bool complete);
   void DidOpenFileSystem(int request_id,
-                         base::PlatformFileError result,
-                         const std::string& name,
-                         const GURL& root);
+                         const GURL& root,
+                         const std::string& filesystem_name,
+                         base::PlatformFileError result);
+  void DidResolveURL(int request_id,
+                     base::PlatformFileError result,
+                     const fileapi::FileSystemInfo& info,
+                     const base::FilePath& file_path,
+                     bool is_directory);
   void DidDeleteFileSystem(int request_id,
                            base::PlatformFileError result);
   void DidCreateSnapshot(
@@ -191,12 +207,12 @@ class CONTENT_EXPORT FileAPIMessageFilter : public BrowserMessageFilter {
       const base::FilePath& platform_path,
       const scoped_refptr<webkit_blob::ShareableFileReference>& file_ref);
 
-  // Checks renderer's access permissions for single file.
-  bool HasPermissionsForFile(const fileapi::FileSystemURL& url,
-                             int permissions,
-                             base::PlatformFileError* error);
+  // Sends a FileSystemMsg_DidFail and returns false if |url| is invalid.
+  bool ValidateFileSystemURL(int request_id, const fileapi::FileSystemURL& url);
 
-  // Retrieves the Stream object for |url| from |stream_context_|.
+  // Retrieves the Stream object for |url| from |stream_context_|. Returns unset
+  // scoped_refptr when there's no Stream instance for the given |url|
+  // registered with stream_context_->registry().
   scoped_refptr<Stream> GetStreamForURL(const GURL& url);
 
   fileapi::FileSystemOperationRunner* operation_runner() {
@@ -206,6 +222,7 @@ class CONTENT_EXPORT FileAPIMessageFilter : public BrowserMessageFilter {
   int process_id_;
 
   fileapi::FileSystemContext* context_;
+  ChildProcessSecurityPolicyImpl* security_policy_;
 
   // Keeps map from request_id to OperationID for ongoing operations.
   // (Primarily for Cancel operation)
@@ -222,9 +239,9 @@ class CONTENT_EXPORT FileAPIMessageFilter : public BrowserMessageFilter {
 
   scoped_ptr<fileapi::FileSystemOperationRunner> operation_runner_;
 
-  // Keep track of blob URLs registered in this process. Need to unregister
-  // all of them when the renderer process dies.
-  base::hash_set<std::string> blob_urls_;
+  // Keeps track of blobs used in this process and cleans up
+  // when the renderer process dies.
+  scoped_ptr<webkit_blob::BlobStorageHost> blob_storage_host_;
 
   // Keep track of stream URLs registered in this process. Need to unregister
   // all of them when the renderer process dies.

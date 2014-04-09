@@ -8,7 +8,7 @@
 #include "base/value_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/profiles/avatar_menu_model.h"
+#include "chrome/browser/profiles/avatar_menu.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/profiles/profile_info_cache_observer.h"
@@ -16,17 +16,19 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_window.h"
 #include "chrome/browser/profiles/profiles_state.h"
+#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/singleton_tabs.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/web_contents_view.h"
 #include "content/public/browser/web_ui.h"
 #include "grit/browser_resources.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/webui/web_ui_util.h"
 #include "ui/gfx/image/image_util.h"
-#include "ui/webui/web_ui_util.h"
 
 #if defined(ENABLE_MANAGED_USERS)
 #include "chrome/browser/managed_mode/managed_user_service.h"
@@ -46,14 +48,6 @@ const char kKeyIsOwner[] = "isOwner";
 const char kKeyIsDesktop[] = "isDesktopUser";
 const char kKeyAvatarUrl[] = "userImage";
 const char kKeyNeedsSignin[] = "needsSignin";
-const char kGAIAPictureFileNameKey[] = "gaia_picture_file_name";
-
-// Max number of users to show.
-const size_t kMaxUsers = 18;
-
-// Type of the login screen UI that is currently presented to user.
-const char kSourceGaiaSignin[] = "gaia-signin";
-const char kSourceAccountPicker[] = "account-picker";
 
 // JS API callback names.
 const char kJsApiUserManagerInitialize[] = "userManagerInitialize";
@@ -62,7 +56,7 @@ const char kJsApiUserManagerLaunchGuest[] = "launchGuest";
 const char kJsApiUserManagerLaunchUser[] = "launchUser";
 const char kJsApiUserManagerRemoveUser[] = "removeUser";
 
-const size_t kAvatarIconSize = 160;
+const size_t kAvatarIconSize = 180;
 
 void HandleAndDoNothing(const base::ListValue* args) {
 }
@@ -154,7 +148,8 @@ class UserManagerScreenHandler::ProfileUpdateObserver
 
 // UserManagerScreenHandler ---------------------------------------------------
 
-UserManagerScreenHandler::UserManagerScreenHandler() {
+UserManagerScreenHandler::UserManagerScreenHandler()
+    : desktop_type_(chrome::GetActiveDesktop()) {
   profileInfoCacheObserver_.reset(
       new UserManagerScreenHandler::ProfileUpdateObserver(
           g_browser_process->profile_manager(), this));
@@ -166,13 +161,13 @@ UserManagerScreenHandler::~UserManagerScreenHandler() {
 void UserManagerScreenHandler::HandleInitialize(const base::ListValue* args) {
   SendUserList();
   web_ui()->CallJavascriptFunction("cr.ui.Oobe.showUserManagerScreen");
+  desktop_type_ = chrome::GetHostDesktopTypeForNativeView(
+      web_ui()->GetWebContents()->GetView()->GetNativeView());
 }
 
 void UserManagerScreenHandler::HandleAddUser(const base::ListValue* args) {
-  // TODO(noms): Should redirect to a sign in page.
-  chrome::ShowSingletonTab(chrome::FindBrowserWithWebContents(
-      web_ui()->GetWebContents()),
-      GURL("chrome://settings/createProfile"));
+  profiles::CreateAndSwitchToNewProfile(desktop_type_,
+                                        base::Bind(&chrome::HideUserManager));
 }
 
 void UserManagerScreenHandler::HandleRemoveUser(const base::ListValue* args) {
@@ -193,19 +188,14 @@ void UserManagerScreenHandler::HandleRemoveUser(const base::ListValue* args) {
   if (!profiles::IsMultipleProfilesEnabled())
     return;
 
-  Browser* browser =
-      chrome::FindBrowserWithWebContents(web_ui()->GetWebContents());
-  DCHECK(browser);
-
-  chrome::HostDesktopType desktop_type = browser->host_desktop_type();
   g_browser_process->profile_manager()->ScheduleProfileForDeletion(
       profile_path,
-      base::Bind(&OpenNewWindowForProfile, desktop_type));
+      base::Bind(&OpenNewWindowForProfile, desktop_type_));
 }
 
 void UserManagerScreenHandler::HandleLaunchGuest(const base::ListValue* args) {
-  AvatarMenuModel::SwitchToGuestProfileWindow(
-      chrome::FindBrowserWithWebContents(web_ui()->GetWebContents()));
+  profiles::SwitchToGuestProfile(desktop_type_,
+                                 base::Bind(&chrome::HideUserManager));
 }
 
 void UserManagerScreenHandler::HandleLaunchUser(const base::ListValue* args) {
@@ -220,13 +210,13 @@ void UserManagerScreenHandler::HandleLaunchUser(const base::ListValue* args) {
 
   ProfileInfoCache& info_cache =
       g_browser_process->profile_manager()->GetProfileInfoCache();
-  chrome::HostDesktopType desktop_type = chrome::GetActiveDesktop();
 
   for (size_t i = 0; i < info_cache.GetNumberOfProfiles(); ++i) {
     if (info_cache.GetUserNameOfProfileAtIndex(i) == emailAddress &&
         info_cache.GetNameOfProfileAtIndex(i) == displayName) {
       base::FilePath path = info_cache.GetPathOfProfileAtIndex(i);
-      profiles::SwitchToProfile(path, desktop_type, true);
+      profiles::SwitchToProfile(path, chrome::GetActiveDesktop(), true,
+                                base::Bind(&chrome::HideUserManager));
       break;
     }
   }
@@ -261,6 +251,8 @@ void UserManagerScreenHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback("loadWallpaper", kDoNothingCallback);
   web_ui()->RegisterMessageCallback("updateCurrentScreen", kDoNothingCallback);
   web_ui()->RegisterMessageCallback("loginVisible", kDoNothingCallback);
+  // Unused callbacks from user_pod_row.js
+  web_ui()->RegisterMessageCallback("focusPod", kDoNothingCallback);
 }
 
 void UserManagerScreenHandler::GetLocalizedValues(
@@ -308,6 +300,7 @@ void UserManagerScreenHandler::GetLocalizedValues(
   localized_strings->SetString("publicAccountReminder", string16());
   localized_strings->SetString("publicAccountEnter", string16());
   localized_strings->SetString("publicAccountEnterAccessibleName", string16());
+  localized_strings->SetString("multiple-signin-banner-text", string16());
  }
 
 void UserManagerScreenHandler::SendUserList() {

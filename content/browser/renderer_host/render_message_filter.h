@@ -52,6 +52,7 @@ class TaskRunner;
 
 namespace gfx {
 class Rect;
+struct GpuMemoryBufferHandle;
 }
 
 namespace media {
@@ -225,8 +226,7 @@ class RenderMessageFilter : public BrowserMessageFilter {
       IPC::Message* reply_msg);
   void OnAsyncOpenPepperFile(int routing_id,
                              const base::FilePath& path,
-                             int pp_open_flags,
-                             int message_id);
+                             int pp_open_flags);
   void OnMediaLogEvents(const std::vector<media::MediaLogEvent>&);
 
   // Check the policy for getting cookies. Gets the cookies if allowed.
@@ -261,6 +261,9 @@ class RenderMessageFilter : public BrowserMessageFilter {
                             base::FileDescriptor pcm_output,
                             uint32_t data_size);
 #endif
+
+  void OnAllocateGpuMemoryBuffer(uint32 buffer_size,
+                                 gfx::GpuMemoryBufferHandle* handle);
 
   // Cached resource request dispatcher host and plugin service, guaranteed to
   // be non-null if Init succeeds. We do not own the objects, they are managed

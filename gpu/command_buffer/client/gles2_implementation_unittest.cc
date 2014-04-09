@@ -366,6 +366,8 @@ class GLES2ImplementationTest : public testing::Test {
     helper_.reset(new GLES2CmdHelper(command_buffer()));
     helper_->Initialize(kCommandBufferSizeBytes);
 
+    gpu_control_.reset(new StrictMock<MockClientGpuControl>());
+
     GLES2Implementation::GLStaticState state;
     GLES2Implementation::GLStaticState::IntState& int_state = state.int_state;
     int_state.max_combined_texture_image_units = kMaxCombinedTextureImageUnits;
@@ -401,11 +403,12 @@ class GLES2ImplementationTest : public testing::Test {
           NULL,
           transfer_buffer_.get(),
           bind_generates_resource,
-          NULL));
+          gpu_control_.get()));
       ASSERT_TRUE(gl_->Initialize(
           kTransferBufferSize,
           kTransferBufferSize,
-          kTransferBufferSize));
+          kTransferBufferSize,
+          GLES2Implementation::kNoLimit));
     }
 
     EXPECT_CALL(*command_buffer(), OnFlush())
@@ -473,6 +476,7 @@ class GLES2ImplementationTest : public testing::Test {
 
   Sequence sequence_;
   scoped_ptr<MockClientCommandBuffer> command_buffer_;
+  scoped_ptr<MockClientGpuControl> gpu_control_;
   scoped_ptr<GLES2CmdHelper> helper_;
   scoped_ptr<MockTransferBuffer> transfer_buffer_;
   scoped_ptr<GLES2Implementation> gl_;
@@ -1945,26 +1949,26 @@ TEST_F(GLES2ImplementationTest, GetIntegerCacheRead) {
     GLint expected;
   };
   const PNameValue pairs[] = {
-    { GL_ACTIVE_TEXTURE, GL_TEXTURE0, },
-    { GL_TEXTURE_BINDING_2D, 0, },
-    { GL_TEXTURE_BINDING_CUBE_MAP, 0, },
-    { GL_FRAMEBUFFER_BINDING, 0, },
-    { GL_RENDERBUFFER_BINDING, 0, },
-    { GL_ARRAY_BUFFER_BINDING, 0, },
-    { GL_ELEMENT_ARRAY_BUFFER_BINDING, 0, },
-    { GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, kMaxCombinedTextureImageUnits, },
-    { GL_MAX_CUBE_MAP_TEXTURE_SIZE, kMaxCubeMapTextureSize, },
-    { GL_MAX_FRAGMENT_UNIFORM_VECTORS, kMaxFragmentUniformVectors, },
-    { GL_MAX_RENDERBUFFER_SIZE, kMaxRenderbufferSize, },
-    { GL_MAX_TEXTURE_IMAGE_UNITS, kMaxTextureImageUnits, },
-    { GL_MAX_TEXTURE_SIZE, kMaxTextureSize, },
-    { GL_MAX_VARYING_VECTORS, kMaxVaryingVectors, },
-    { GL_MAX_VERTEX_ATTRIBS, kMaxVertexAttribs, },
-    { GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS, kMaxVertexTextureImageUnits, },
-    { GL_MAX_VERTEX_UNIFORM_VECTORS, kMaxVertexUniformVectors, },
-    { GL_NUM_COMPRESSED_TEXTURE_FORMATS, kNumCompressedTextureFormats, },
-    { GL_NUM_SHADER_BINARY_FORMATS, kNumShaderBinaryFormats, },
-  };
+      {GL_ACTIVE_TEXTURE, GL_TEXTURE0, },
+      {GL_TEXTURE_BINDING_2D, 0, },
+      {GL_TEXTURE_BINDING_CUBE_MAP, 0, },
+      {GL_TEXTURE_BINDING_EXTERNAL_OES, 0, },
+      {GL_FRAMEBUFFER_BINDING, 0, },
+      {GL_RENDERBUFFER_BINDING, 0, },
+      {GL_ARRAY_BUFFER_BINDING, 0, },
+      {GL_ELEMENT_ARRAY_BUFFER_BINDING, 0, },
+      {GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, kMaxCombinedTextureImageUnits, },
+      {GL_MAX_CUBE_MAP_TEXTURE_SIZE, kMaxCubeMapTextureSize, },
+      {GL_MAX_FRAGMENT_UNIFORM_VECTORS, kMaxFragmentUniformVectors, },
+      {GL_MAX_RENDERBUFFER_SIZE, kMaxRenderbufferSize, },
+      {GL_MAX_TEXTURE_IMAGE_UNITS, kMaxTextureImageUnits, },
+      {GL_MAX_TEXTURE_SIZE, kMaxTextureSize, },
+      {GL_MAX_VARYING_VECTORS, kMaxVaryingVectors, },
+      {GL_MAX_VERTEX_ATTRIBS, kMaxVertexAttribs, },
+      {GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS, kMaxVertexTextureImageUnits, },
+      {GL_MAX_VERTEX_UNIFORM_VECTORS, kMaxVertexUniformVectors, },
+      {GL_NUM_COMPRESSED_TEXTURE_FORMATS, kNumCompressedTextureFormats, },
+      {GL_NUM_SHADER_BINARY_FORMATS, kNumShaderBinaryFormats, }, };
   size_t num_pairs = sizeof(pairs) / sizeof(pairs[0]);
   for (size_t ii = 0; ii < num_pairs; ++ii) {
     const PNameValue& pv = pairs[ii];
@@ -1995,16 +1999,16 @@ TEST_F(GLES2ImplementationTest, GetIntegerCacheWrite) {
   gl_->BindRenderbuffer(GL_RENDERBUFFER, 5);
   gl_->BindTexture(GL_TEXTURE_2D, 6);
   gl_->BindTexture(GL_TEXTURE_CUBE_MAP, 7);
+  gl_->BindTexture(GL_TEXTURE_EXTERNAL_OES, 8);
 
-  const PNameValue pairs[] = {
-    { GL_ACTIVE_TEXTURE, GL_TEXTURE4, },
-    { GL_ARRAY_BUFFER_BINDING, 2, },
-    { GL_ELEMENT_ARRAY_BUFFER_BINDING, 3, },
-    { GL_FRAMEBUFFER_BINDING, 4, },
-    { GL_RENDERBUFFER_BINDING, 5, },
-    { GL_TEXTURE_BINDING_2D, 6, },
-    { GL_TEXTURE_BINDING_CUBE_MAP, 7, },
-  };
+  const PNameValue pairs[] = {{GL_ACTIVE_TEXTURE, GL_TEXTURE4, },
+                              {GL_ARRAY_BUFFER_BINDING, 2, },
+                              {GL_ELEMENT_ARRAY_BUFFER_BINDING, 3, },
+                              {GL_FRAMEBUFFER_BINDING, 4, },
+                              {GL_RENDERBUFFER_BINDING, 5, },
+                              {GL_TEXTURE_BINDING_2D, 6, },
+                              {GL_TEXTURE_BINDING_CUBE_MAP, 7, },
+                              {GL_TEXTURE_BINDING_EXTERNAL_OES, 8, }, };
   size_t num_pairs = sizeof(pairs) / sizeof(pairs[0]);
   for (size_t ii = 0; ii < num_pairs; ++ii) {
     const PNameValue& pv = pairs[ii];
@@ -2415,14 +2419,13 @@ TEST_F(GLES2ImplementationStrictSharedTest, BindsNotCached) {
     GLenum pname;
     GLint expected;
   };
-  const PNameValue pairs[] = {
-    { GL_TEXTURE_BINDING_2D, 1, },
-    { GL_TEXTURE_BINDING_CUBE_MAP, 2, },
-    { GL_FRAMEBUFFER_BINDING, 3, },
-    { GL_RENDERBUFFER_BINDING, 4, },
-    { GL_ARRAY_BUFFER_BINDING, 5, },
-    { GL_ELEMENT_ARRAY_BUFFER_BINDING, 6, },
-  };
+  const PNameValue pairs[] = {{GL_TEXTURE_BINDING_2D, 1, },
+                              {GL_TEXTURE_BINDING_CUBE_MAP, 2, },
+                              {GL_TEXTURE_BINDING_EXTERNAL_OES, 3, },
+                              {GL_FRAMEBUFFER_BINDING, 4, },
+                              {GL_RENDERBUFFER_BINDING, 5, },
+                              {GL_ARRAY_BUFFER_BINDING, 6, },
+                              {GL_ELEMENT_ARRAY_BUFFER_BINDING, 7, }, };
   size_t num_pairs = sizeof(pairs) / sizeof(pairs[0]);
   for (size_t ii = 0; ii < num_pairs; ++ii) {
     const PNameValue& pv = pairs[ii];
@@ -2476,7 +2479,8 @@ TEST_F(GLES2ImplementationTest, GetString) {
       "GL_CHROMIUM_flipy "
       "GL_CHROMIUM_map_sub "
       "GL_CHROMIUM_shallow_flush "
-      "GL_EXT_unpack_subimage";
+      "GL_EXT_unpack_subimage "
+      "GL_CHROMIUM_map_image";
   const char kBad = 0x12;
   struct Cmds {
     cmd::SetBucketSize set_bucket_size1;
@@ -2499,6 +2503,8 @@ TEST_F(GLES2ImplementationTest, GetString) {
   char buf[sizeof(kString) + 1];
   memset(buf, kBad, sizeof(buf));
 
+  EXPECT_CALL(*gpu_control_.get(), SupportsGpuMemoryBuffer())
+      .WillOnce(Return(true));
   EXPECT_CALL(*command_buffer(), OnFlush())
       .WillOnce(DoAll(SetMemory(result1.ptr, uint32(sizeof(kString))),
                       SetMemory(mem1.ptr, kString)))
@@ -2535,6 +2541,8 @@ TEST_F(GLES2ImplementationTest, PixelStoreiGLPackReverseRowOrderANGLE) {
   expected.set_bucket_size2.Init(kBucketId, 0);
   expected.pixel_store.Init(GL_PACK_REVERSE_ROW_ORDER_ANGLE, 1);
 
+  EXPECT_CALL(*gpu_control_.get(), SupportsGpuMemoryBuffer())
+      .WillOnce(Return(false));
   EXPECT_CALL(*command_buffer(), OnFlush())
       .WillOnce(DoAll(SetMemory(result1.ptr, uint32(sizeof(kString))),
                       SetMemory(mem1.ptr, kString)))

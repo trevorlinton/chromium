@@ -191,6 +191,8 @@ def _FindThirdPartyDirs():
     # third_party directories in this tree aren't actually third party, but
     # provide a way to shadow experimental buildfiles into those directories.
     os.path.join('tools', 'gn', 'secondary'),
+    # Not shipped, Chromium code
+    os.path.join('tools', 'swarming_client'),
   ]
   third_party_dirs = licenses.FindThirdPartyDirs(prune_paths, REPOSITORY_ROOT)
   return licenses.FilterDirsWithFiles(third_party_dirs, REPOSITORY_ROOT)

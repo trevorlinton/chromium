@@ -12,13 +12,11 @@
 #include "cc/test/animation_test_common.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/gfx/box_f.h"
 #include "ui/gfx/transform.h"
 
 namespace cc {
 namespace {
-
-void ExpectTranslateX(double translate_x, const gfx::Transform& matrix) {
-  EXPECT_FLOAT_EQ(translate_x, matrix.matrix().getDouble(0, 3)); }
 
 scoped_ptr<Animation> CreateAnimation(scoped_ptr<AnimationCurve> curve,
                                       int id,
@@ -94,7 +92,7 @@ TEST(LayerAnimationControllerTest, DoNotClobberStartTimes) {
                                           Animation::Opacity)->start_time());
 }
 
-TEST(LayerAnimationControllerTest, SyncPauseAndResume) {
+TEST(LayerAnimationControllerTest, SyncPause) {
   FakeLayerAnimationValueObserver dummy_impl;
   scoped_refptr<LayerAnimationController> controller_impl(
       LayerAnimationController::Create(0));
@@ -108,6 +106,7 @@ TEST(LayerAnimationControllerTest, SyncPauseAndResume) {
 
   AddOpacityTransitionToController(controller.get(), 1, 0, 1, false);
   int group_id = controller->GetAnimation(Animation::Opacity)->group();
+  int animation_id = controller->GetAnimation(Animation::Opacity)->id();
 
   controller->PushAnimationUpdatesTo(controller_impl.get());
 
@@ -130,7 +129,7 @@ TEST(LayerAnimationControllerTest, SyncPauseAndResume) {
                                      Animation::Opacity)->run_state());
 
   // Pause the main-thread animation.
-  controller->SuspendAnimations(1.0);
+  controller->PauseAnimation(animation_id, 1.0);
   EXPECT_EQ(Animation::Paused,
             controller->GetAnimation(group_id,
                                      Animation::Opacity)->run_state());
@@ -138,18 +137,6 @@ TEST(LayerAnimationControllerTest, SyncPauseAndResume) {
   // The pause run state change should make it to the impl thread controller.
   controller->PushAnimationUpdatesTo(controller_impl.get());
   EXPECT_EQ(Animation::Paused,
-            controller_impl->GetAnimation(group_id,
-                                          Animation::Opacity)->run_state());
-
-  // Resume the main-thread animation.
-  controller->ResumeAnimations(2.0);
-  EXPECT_EQ(Animation::Running,
-            controller->GetAnimation(group_id,
-                                     Animation::Opacity)->run_state());
-
-  // The pause run state change should make it to the impl thread controller.
-  controller->PushAnimationUpdatesTo(controller_impl.get());
-  EXPECT_EQ(Animation::Running,
             controller_impl->GetAnimation(group_id,
                                           Animation::Opacity)->run_state());
 }
@@ -376,6 +363,104 @@ TEST(LayerAnimationControllerTest, TrivialTransformOnImpl) {
       GetMostRecentPropertyUpdateEvent(events.get());
   EXPECT_EQ(expected_transform, end_transform_event->transform);
   EXPECT_TRUE(end_transform_event->is_impl_only);
+}
+
+TEST(LayerAnimationControllerTest, FilterTransition) {
+  scoped_ptr<AnimationEventsVector> events(
+      make_scoped_ptr(new AnimationEventsVector));
+  FakeLayerAnimationValueObserver dummy;
+  scoped_refptr<LayerAnimationController> controller(
+      LayerAnimationController::Create(0));
+  controller->AddValueObserver(&dummy);
+
+  scoped_ptr<KeyframedFilterAnimationCurve> curve(
+      KeyframedFilterAnimationCurve::Create());
+
+  FilterOperations start_filters;
+  start_filters.Append(FilterOperation::CreateBrightnessFilter(1.f));
+  curve->AddKeyframe(FilterKeyframe::Create(
+      0, start_filters, scoped_ptr<cc::TimingFunction>()));
+  FilterOperations end_filters;
+  end_filters.Append(FilterOperation::CreateBrightnessFilter(2.f));
+  curve->AddKeyframe(FilterKeyframe::Create(
+      1, end_filters, scoped_ptr<cc::TimingFunction>()));
+
+  scoped_ptr<Animation> animation(Animation::Create(
+      curve.PassAs<AnimationCurve>(), 1, 0, Animation::Filter));
+  controller->AddAnimation(animation.Pass());
+
+  controller->Animate(0.0);
+  controller->UpdateState(true, events.get());
+  EXPECT_TRUE(controller->HasActiveAnimation());
+  EXPECT_EQ(start_filters, dummy.filters());
+  // A non-impl-only animation should not generate property updates.
+  const AnimationEvent* event = GetMostRecentPropertyUpdateEvent(events.get());
+  EXPECT_FALSE(event);
+
+  controller->Animate(0.5);
+  controller->UpdateState(true, events.get());
+  EXPECT_EQ(1u, dummy.filters().size());
+  EXPECT_EQ(FilterOperation::CreateBrightnessFilter(1.5f),
+            dummy.filters().at(0));
+  event = GetMostRecentPropertyUpdateEvent(events.get());
+  EXPECT_FALSE(event);
+
+  controller->Animate(1.0);
+  controller->UpdateState(true, events.get());
+  EXPECT_EQ(end_filters, dummy.filters());
+  EXPECT_FALSE(controller->HasActiveAnimation());
+  event = GetMostRecentPropertyUpdateEvent(events.get());
+  EXPECT_FALSE(event);
+}
+
+TEST(LayerAnimationControllerTest, FilterTransitionOnImplOnly) {
+  scoped_ptr<AnimationEventsVector> events(
+      make_scoped_ptr(new AnimationEventsVector));
+  FakeLayerAnimationValueObserver dummy_impl;
+  scoped_refptr<LayerAnimationController> controller_impl(
+      LayerAnimationController::Create(0));
+  controller_impl->AddValueObserver(&dummy_impl);
+
+  scoped_ptr<KeyframedFilterAnimationCurve> curve(
+      KeyframedFilterAnimationCurve::Create());
+
+  // Create simple Filter animation.
+  FilterOperations start_filters;
+  start_filters.Append(FilterOperation::CreateBrightnessFilter(1.f));
+  curve->AddKeyframe(FilterKeyframe::Create(
+      0, start_filters, scoped_ptr<cc::TimingFunction>()));
+  FilterOperations end_filters;
+  end_filters.Append(FilterOperation::CreateBrightnessFilter(2.f));
+  curve->AddKeyframe(FilterKeyframe::Create(
+      1, end_filters, scoped_ptr<cc::TimingFunction>()));
+
+  scoped_ptr<Animation> animation(Animation::Create(
+      curve.PassAs<AnimationCurve>(), 1, 0, Animation::Filter));
+  animation->set_is_impl_only(true);
+  controller_impl->AddAnimation(animation.Pass());
+
+  // Run animation.
+  controller_impl->Animate(0.0);
+  controller_impl->UpdateState(true, events.get());
+  EXPECT_TRUE(controller_impl->HasActiveAnimation());
+  EXPECT_EQ(start_filters, dummy_impl.filters());
+  EXPECT_EQ(2u, events->size());
+  const AnimationEvent* start_filter_event =
+      GetMostRecentPropertyUpdateEvent(events.get());
+  EXPECT_TRUE(start_filter_event);
+  EXPECT_EQ(start_filters, start_filter_event->filters);
+  EXPECT_TRUE(start_filter_event->is_impl_only);
+
+  controller_impl->Animate(1.0);
+  controller_impl->UpdateState(true, events.get());
+  EXPECT_EQ(end_filters, dummy_impl.filters());
+  EXPECT_FALSE(controller_impl->HasActiveAnimation());
+  EXPECT_EQ(4u, events->size());
+  const AnimationEvent* end_filter_event =
+      GetMostRecentPropertyUpdateEvent(events.get());
+  EXPECT_TRUE(end_filter_event);
+  EXPECT_EQ(end_filters, end_filter_event->filters);
+  EXPECT_TRUE(end_filter_event->is_impl_only);
 }
 
 class FakeAnimationDelegate : public AnimationDelegate {
@@ -1115,6 +1200,75 @@ TEST(LayerAnimationControllerTest, InactiveObserverGetsTicked) {
   controller->Animate(3.5);
   EXPECT_NE(0.5f, inactive_dummy.opacity());
   EXPECT_NE(0.5f, dummy.opacity());
+}
+
+TEST(LayerAnimationControllerTest, AnimatedBounds) {
+  scoped_refptr<LayerAnimationController> controller_impl(
+      LayerAnimationController::Create(0));
+
+  scoped_ptr<KeyframedTransformAnimationCurve> curve1(
+      KeyframedTransformAnimationCurve::Create());
+
+  TransformOperations operations1;
+  curve1->AddKeyframe(TransformKeyframe::Create(
+      0.0, operations1, scoped_ptr<TimingFunction>()));
+  operations1.AppendTranslate(10.0, 15.0, 0.0);
+  curve1->AddKeyframe(TransformKeyframe::Create(
+      1.0, operations1, scoped_ptr<TimingFunction>()));
+
+  scoped_ptr<Animation> animation(Animation::Create(
+      curve1.PassAs<AnimationCurve>(), 1, 1, Animation::Transform));
+  controller_impl->AddAnimation(animation.Pass());
+
+  scoped_ptr<KeyframedTransformAnimationCurve> curve2(
+      KeyframedTransformAnimationCurve::Create());
+
+  TransformOperations operations2;
+  curve2->AddKeyframe(TransformKeyframe::Create(
+      0.0, operations2, scoped_ptr<TimingFunction>()));
+  operations2.AppendScale(2.0, 3.0, 4.0);
+  curve2->AddKeyframe(TransformKeyframe::Create(
+      1.0, operations2, scoped_ptr<TimingFunction>()));
+
+  animation = Animation::Create(
+      curve2.PassAs<AnimationCurve>(), 2, 2, Animation::Transform);
+  controller_impl->AddAnimation(animation.Pass());
+
+  gfx::BoxF box(1.f, 2.f, -1.f, 3.f, 4.f, 5.f);
+  gfx::BoxF bounds;
+
+  EXPECT_TRUE(controller_impl->AnimatedBoundsForBox(box, &bounds));
+  EXPECT_EQ(gfx::BoxF(1.f, 2.f, -4.f, 13.f, 19.f, 20.f).ToString(),
+            bounds.ToString());
+
+  controller_impl->GetAnimation(1, Animation::Transform)->SetRunState(
+      cc::Animation::Finished, 0.0);
+
+  // Only the unfinished animation should affect the animated bounds.
+  EXPECT_TRUE(controller_impl->AnimatedBoundsForBox(box, &bounds));
+  EXPECT_EQ(gfx::BoxF(1.f, 2.f, -4.f, 7.f, 16.f, 20.f).ToString(),
+            bounds.ToString());
+
+  controller_impl->GetAnimation(2, Animation::Transform)->SetRunState(
+      cc::Animation::Finished, 0.0);
+
+  // There are no longer any running animations.
+  EXPECT_TRUE(controller_impl->AnimatedBoundsForBox(box, &bounds));
+  EXPECT_EQ(gfx::BoxF().ToString(), bounds.ToString());
+
+  // Add an animation whose bounds we don't yet support computing.
+  scoped_ptr<KeyframedTransformAnimationCurve> curve3(
+      KeyframedTransformAnimationCurve::Create());
+  TransformOperations operations3;
+  curve3->AddKeyframe(TransformKeyframe::Create(
+      0.0, operations3, scoped_ptr<TimingFunction>()));
+  operations3.AppendSkew(1.0, 2.0);
+  curve3->AddKeyframe(TransformKeyframe::Create(
+      1.0, operations3, scoped_ptr<TimingFunction>()));
+  animation = Animation::Create(
+      curve3.PassAs<AnimationCurve>(), 3, 3, Animation::Transform);
+  controller_impl->AddAnimation(animation.Pass());
+  EXPECT_FALSE(controller_impl->AnimatedBoundsForBox(box, &bounds));
 }
 
 }  // namespace

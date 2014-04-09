@@ -19,9 +19,14 @@ class FakeTileManager : public TileManager {
                   ResourceProvider* resource_provider);
 
   bool HasBeenAssignedMemory(Tile* tile);
-  void AssignMemoryToTiles();
+  void AssignMemoryToTiles(
+      const GlobalStateThatImpactsTilePriority& state);
+
+  void CheckForCompletedTasks();
 
   virtual ~FakeTileManager();
+
+  virtual void Release(Tile* tile) OVERRIDE;
 
   std::vector<Tile*> tiles_for_raster;
   PrioritizedTileSet all_tiles;

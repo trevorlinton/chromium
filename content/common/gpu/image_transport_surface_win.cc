@@ -182,8 +182,7 @@ void PbufferImageTransportSurface::SetFrontbufferAllocation(bool allocation) {
 }
 
 void PbufferImageTransportSurface::DestroySurface() {
-  GpuHostMsg_AcceleratedSurfaceRelease_Params params;
-  helper_->SendAcceleratedSurfaceRelease(params);
+  helper_->SendAcceleratedSurfaceRelease();
 }
 
 std::string PbufferImageTransportSurface::GetExtensions() {
@@ -207,7 +206,12 @@ void PbufferImageTransportSurface::SendBuffersSwapped() {
 }
 
 void PbufferImageTransportSurface::OnBufferPresented(
-    const AcceleratedSurfaceMsg_BufferPresented_Params& /* params */) {
+    const AcceleratedSurfaceMsg_BufferPresented_Params& params) {
+  if (!params.vsync_timebase.is_null() &&
+      params.vsync_interval != base::TimeDelta()) {
+    helper_->SendUpdateVSyncParameters(params.vsync_timebase,
+                                       params.vsync_interval);
+  }
   is_swap_buffers_pending_ = false;
   if (did_unschedule_) {
     did_unschedule_ = false;

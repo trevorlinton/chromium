@@ -7,7 +7,7 @@
 
 #include "ash/ash_export.h"
 #include "base/memory/scoped_ptr.h"
-#include "ui/base/events/event_constants.h"
+#include "ui/events/event_constants.h"
 
 namespace ui {
 class KeyEvent;
@@ -166,6 +166,12 @@ class ASH_EXPORT StickyKeysHandler {
 
   // True if the received key event is sent by StickyKeyHandler.
   bool keyevent_from_myself_;
+
+  // True if we received the TARGET_MODIFIER_DOWN event while in the DISABLED
+  // state but before we receive the TARGET_MODIFIER_UP event. Normal
+  // shortcuts (eg. ctrl + t) during this time will prevent a transition to
+  // the ENABLED state.
+  bool preparing_to_enable_;
 
   // The modifier up key event to be sent on non modifier key on ENABLED state.
   scoped_ptr<ui::KeyEvent> modifier_up_event_;

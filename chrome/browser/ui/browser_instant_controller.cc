@@ -5,16 +5,12 @@
 #include "chrome/browser/ui/browser_instant_controller.h"
 
 #include "base/bind.h"
-#include "base/prefs/pref_service.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_web_ui.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/instant_service.h"
 #include "chrome/browser/search/instant_service_factory.h"
 #include "chrome/browser/search/search.h"
-#include "chrome/browser/search_engines/template_url.h"
-#include "chrome/browser/search_engines/template_url_service.h"
-#include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/omnibox/location_bar.h"
@@ -25,9 +21,7 @@
 #include "chrome/browser/ui/search/search_tab_helper.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/webui/ntp/app_launcher_handler.h"
-#include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
-#include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
@@ -42,16 +36,12 @@ BrowserInstantController::BrowserInstantController(Browser* browser)
     : browser_(browser),
       instant_(this),
       instant_unload_handler_(browser) {
-  profile_pref_registrar_.Init(profile()->GetPrefs());
-  profile_pref_registrar_.Add(
-      prefs::kDefaultSearchProviderID,
-      base::Bind(&BrowserInstantController::OnDefaultSearchProviderChanged,
-                 base::Unretained(this)));
   browser_->search_model()->AddObserver(this);
 
   InstantService* instant_service =
       InstantServiceFactory::GetForProfile(profile());
   instant_service->OnBrowserInstantControllerCreated();
+  instant_service->AddObserver(this);
 }
 
 BrowserInstantController::~BrowserInstantController() {
@@ -59,6 +49,7 @@ BrowserInstantController::~BrowserInstantController() {
 
   InstantService* instant_service =
       InstantServiceFactory::GetForProfile(profile());
+  instant_service->RemoveObserver(this);
   instant_service->OnBrowserInstantControllerDestroyed();
 }
 
@@ -153,45 +144,6 @@ void BrowserInstantController::ReplaceWebContentsAt(
                                                       index);
 }
 
-void BrowserInstantController::FocusOmnibox(OmniboxFocusState state) {
-  OmniboxView* omnibox_view = browser_->window()->GetLocationBar()->
-      GetLocationEntry();
-
-  // Do not add a default case in the switch block for the following reasons:
-  // (1) Explicitly handle the new states. If new states are added in the
-  // OmniboxFocusState, the compiler will warn the developer to handle the new
-  // states.
-  // (2) An attacker may control the renderer and sends the browser process a
-  // malformed IPC. This function responds to the invalid |state| values by
-  // doing nothing instead of crashing the browser process (intentional no-op).
-  switch (state) {
-    case OMNIBOX_FOCUS_VISIBLE:
-      omnibox_view->SetFocus();
-      omnibox_view->model()->SetCaretVisibility(true);
-      break;
-    case OMNIBOX_FOCUS_INVISIBLE:
-      omnibox_view->SetFocus();
-      omnibox_view->model()->SetCaretVisibility(false);
-      // If the user clicked on the fakebox, any text already in the omnibox
-      // should get cleared when they start typing. Selecting all the existing
-      // text is a convenient way to accomplish this. It also gives a slight
-      // visual cue to users who really understand selection state about what
-      // will happen if they start typing.
-      omnibox_view->SelectAll(false);
-      break;
-    case OMNIBOX_FOCUS_NONE:
-      // Remove focus only if the popup is closed. This will prevent someone
-      // from changing the omnibox value and closing the popup without user
-      // interaction.
-      if (!omnibox_view->model()->popup_model()->IsOpen()) {
-        content::WebContents* contents = GetActiveWebContents();
-        if (contents)
-          contents->GetView()->Focus();
-      }
-      break;
-  }
-}
-
 content::WebContents* BrowserInstantController::GetActiveWebContents() const {
   return browser_->tab_strip_model()->GetActiveWebContents();
 }
@@ -202,38 +154,6 @@ void BrowserInstantController::ActiveTabChanged() {
 
 void BrowserInstantController::TabDeactivated(content::WebContents* contents) {
   instant_.TabDeactivated(contents);
-}
-
-void BrowserInstantController::OpenURL(
-    const GURL& url,
-    content::PageTransition transition,
-    WindowOpenDisposition disposition) {
-  browser_->OpenURL(content::OpenURLParams(url,
-                                           content::Referrer(),
-                                           disposition,
-                                           transition,
-                                           false));
-}
-
-void BrowserInstantController::PasteIntoOmnibox(const string16& text) {
-  OmniboxView* omnibox_view = browser_->window()->GetLocationBar()->
-      GetLocationEntry();
-  // The first case is for right click to paste, where the text is retrieved
-  // from the clipboard already sanitized. The second case is needed to handle
-  // drag-and-drop value and it has to be sanitazed before setting it into the
-  // omnibox.
-  string16 text_to_paste = text.empty() ?
-      omnibox_view->GetClipboardText() :
-      omnibox_view->SanitizeTextForPaste(text);
-
-  if (!text_to_paste.empty()) {
-    if (!omnibox_view->model()->has_focus())
-      omnibox_view->SetFocus();
-    omnibox_view->OnBeforePossibleChange();
-    omnibox_view->model()->on_paste();
-    omnibox_view->SetUserText(text_to_paste);
-    omnibox_view->OnAfterPossibleChange();
-  }
 }
 
 void BrowserInstantController::SetOmniboxBounds(const gfx::Rect& bounds) {
@@ -268,25 +188,20 @@ void BrowserInstantController::ModelChanged(
     instant_.InstantSupportChanged(new_state.instant_support);
 }
 
-void BrowserInstantController::OnDefaultSearchProviderChanged(
-    const std::string& pref_name) {
-  DCHECK_EQ(pref_name, std::string(prefs::kDefaultSearchProviderID));
+////////////////////////////////////////////////////////////////////////////////
+// BrowserInstantController, InstantServiceObserver implementation:
 
-  Profile* browser_profile = profile();
-  const TemplateURL* template_url =
-      TemplateURLServiceFactory::GetForProfile(browser_profile)->
-          GetDefaultSearchProvider();
-  if (!template_url) {
-    // A NULL |template_url| could mean either this notification is sent during
-    // the browser start up operation or the user now has no default search
-    // provider. There is no way for the user to reach this state using the
-    // Chrome settings. Only explicitly poking at the DB or bugs in the Sync
-    // could cause that, neither of which we support.
-    return;
-  }
+void BrowserInstantController::DefaultSearchProviderChanged() {
+  ReloadTabsInInstantProcess();
+}
 
+void BrowserInstantController::GoogleURLUpdated() {
+  ReloadTabsInInstantProcess();
+}
+
+void BrowserInstantController::ReloadTabsInInstantProcess() {
   InstantService* instant_service =
-      InstantServiceFactory::GetForProfile(browser_profile);
+      InstantServiceFactory::GetForProfile(profile());
   if (!instant_service)
     return;
 
@@ -297,12 +212,14 @@ void BrowserInstantController::OnDefaultSearchProviderChanged(
     if (!contents)
       continue;
 
-    if (!instant_service->IsInstantProcess(
-            contents->GetRenderProcessHost()->GetID()))
-      continue;
+    // Send new search URLs to the renderer.
+    content::RenderProcessHost* rph = contents->GetRenderProcessHost();
+    instant_service->SendSearchURLsToRenderer(rph);
 
     // Reload the contents to ensure that it gets assigned to a non-priviledged
     // renderer.
+    if (!instant_service->IsInstantProcess(rph->GetID()))
+      continue;
     contents->GetController().Reload(false);
   }
 }

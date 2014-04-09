@@ -37,8 +37,10 @@ FileDescriptorSet::~FileDescriptorSet() {
 }
 
 bool FileDescriptorSet::Add(int fd) {
-  if (descriptors_.size() == kMaxDescriptorsPerMessage)
+  if (descriptors_.size() == kMaxDescriptorsPerMessage) {
+    DLOG(WARNING) << "Cannot add file descriptor. FileDescriptorSet full.";
     return false;
+  }
 
   struct base::FileDescriptor sd;
   sd.fd = fd;
@@ -48,8 +50,10 @@ bool FileDescriptorSet::Add(int fd) {
 }
 
 bool FileDescriptorSet::AddAndAutoClose(int fd) {
-  if (descriptors_.size() == kMaxDescriptorsPerMessage)
+  if (descriptors_.size() == kMaxDescriptorsPerMessage) {
+    DLOG(WARNING) << "Cannot add file descriptor. FileDescriptorSet full.";
     return false;
+  }
 
   struct base::FileDescriptor sd;
   sd.fd = fd;
@@ -117,6 +121,16 @@ void FileDescriptorSet::CommitAll() {
     if (i->auto_close)
       if (HANDLE_EINTR(close(i->fd)) < 0)
         PLOG(ERROR) << "close";
+  }
+  descriptors_.clear();
+  consumed_descriptor_highwater_ = 0;
+}
+
+void FileDescriptorSet::ReleaseFDsToClose(std::vector<int>* fds) {
+  for (std::vector<base::FileDescriptor>::iterator
+       i = descriptors_.begin(); i != descriptors_.end(); ++i) {
+    if (i->auto_close)
+      fds->push_back(i->fd);
   }
   descriptors_.clear();
   consumed_descriptor_highwater_ = 0;

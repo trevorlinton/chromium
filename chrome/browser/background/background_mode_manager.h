@@ -12,10 +12,11 @@
 #include "chrome/browser/background/background_application_list_model.h"
 #include "chrome/browser/profiles/profile_info_cache_observer.h"
 #include "chrome/browser/status_icons/status_icon.h"
+#include "chrome/browser/status_icons/status_icon_menu_model.h"
+#include "chrome/browser/ui/browser_list_observer.h"
 #include "components/browser_context_keyed_service/browser_context_keyed_service.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
-#include "ui/base/models/simple_menu_model.h"
 
 class Browser;
 class CommandLine;
@@ -45,9 +46,10 @@ class Extension;
 // background.
 class BackgroundModeManager
     : public content::NotificationObserver,
+      public chrome::BrowserListObserver,
       public BackgroundApplicationListModel::Observer,
       public ProfileInfoCacheObserver,
-      public ui::SimpleMenuModel::Delegate {
+      public StatusIconMenuModel::Delegate {
  public:
   BackgroundModeManager(CommandLine* command_line,
                         ProfileInfoCache* profile_cache);
@@ -59,6 +61,18 @@ class BackgroundModeManager
 
   static void LaunchBackgroundApplication(Profile* profile,
       const extensions::Extension* extension);
+
+  // Returns true if background mode is active.
+  virtual bool IsBackgroundModeActive();
+
+  // Suspends background mode until either ResumeBackgroundMode is called or
+  // Chrome is restarted. This has the same effect as ending background mode
+  // for the current browser session.
+  virtual void SuspendBackgroundMode();
+
+  // Resumes background mode. This ends a suspension of background mode, but
+  // will not start it if it is not enabled.
+  virtual void ResumeBackgroundMode();
 
   // For testing purposes.
   int NumberOfBackgroundModeData();
@@ -85,10 +99,12 @@ class BackgroundModeManager
                            ProfileInfoCacheStorage);
   FRIEND_TEST_ALL_PREFIXES(BackgroundModeManagerTest,
                            ProfileInfoCacheObserver);
+  FRIEND_TEST_ALL_PREFIXES(BackgroundModeManagerTest,
+                           BackgroundMenuGeneration);
   FRIEND_TEST_ALL_PREFIXES(BackgroundAppBrowserTest,
                            ReloadBackgroundApp);
 
-  class BackgroundModeData : public ui::SimpleMenuModel::Delegate {
+  class BackgroundModeData : public StatusIconMenuModel::Delegate {
    public:
     explicit BackgroundModeData(
         int command_id,
@@ -98,12 +114,7 @@ class BackgroundModeManager
     // The cached list of BackgroundApplications.
     scoped_ptr<BackgroundApplicationListModel> applications_;
 
-    // Overrides from SimpleMenuModel::Delegate implementation.
-    virtual bool IsCommandIdChecked(int command_id) const OVERRIDE;
-    virtual bool IsCommandIdEnabled(int command_id) const OVERRIDE;
-    virtual bool GetAcceleratorForCommandId(int command_id,
-                                            ui::Accelerator* accelerator)
-                                            OVERRIDE;
+    // Overrides from StatusIconMenuModel::Delegate implementation.
     virtual void ExecuteCommand(int command_id, int event_flags) OVERRIDE;
 
     // Returns a browser window, or creates one if none are open. Used by
@@ -118,8 +129,8 @@ class BackgroundModeManager
     // be a submenu in the case of multi-profiles or the main menu in the case
     // of the single profile case. If containing_menu is valid, we will add
     // menu as a submenu to it.
-    void BuildProfileMenu(ui::SimpleMenuModel* menu,
-                          ui::SimpleMenuModel* containing_menu);
+    void BuildProfileMenu(StatusIconMenuModel* menu,
+                          StatusIconMenuModel* containing_menu);
 
     // Set the name associated with this background mode data for displaying in
     // the status tray.
@@ -175,13 +186,11 @@ class BackgroundModeManager
   virtual void OnProfileNameChanged(const base::FilePath& profile_path,
                                     const string16& old_profile_name) OVERRIDE;
 
-  // Overrides from SimpleMenuModel::Delegate implementation.
-  virtual bool IsCommandIdChecked(int command_id) const OVERRIDE;
-  virtual bool IsCommandIdEnabled(int command_id) const OVERRIDE;
-  virtual bool GetAcceleratorForCommandId(int command_id,
-                                          ui::Accelerator* accelerator)
-                                          OVERRIDE;
+  // Overrides from StatusIconMenuModel::Delegate implementation.
   virtual void ExecuteCommand(int command_id, int event_flags) OVERRIDE;
+
+  // chrome::BrowserListObserver implementation.
+  virtual void OnBrowserAdded(Browser* browser) OVERRIDE;
 
   // Invoked when an extension is installed so we can ensure that
   // launch-on-startup is enabled if appropriate. |extension| can be NULL when
@@ -209,13 +218,13 @@ class BackgroundModeManager
   // and has a status bar icon.
   void StartBackgroundMode();
 
-  // Invoked to create the status icon if any profiles currently running
-  // background apps so that there is a way to exit Chrome.
-  void InitStatusTrayIcon();
-
   // Invoked to take Chrome out of KeepAlive mode - chrome stops running in
   // the background and removes its status bar icon.
   void EndBackgroundMode();
+
+  // Enables keep alive and the status tray icon if and only if background mode
+  // is active and not suspended.
+  virtual void UpdateKeepAliveAndTrayIcon();
 
   // If --no-startup-window is passed, BackgroundModeManager will manually keep
   // chrome running while waiting for apps to load. This is called when we no
@@ -256,9 +265,6 @@ class BackgroundModeManager
   // (virtual to allow overriding in tests).
   virtual bool IsBackgroundModePrefEnabled() const;
 
-  // Returns true if background mode is active. Used only by tests.
-  bool IsBackgroundModeActiveForTest();
-
   // Turns off background mode if it's currently enabled.
   void DisableBackgroundMode();
 
@@ -295,7 +301,7 @@ class BackgroundModeManager
 
   // Reference to our status icon's context menu (if any) - owned by the
   // status_icon_.
-  ui::SimpleMenuModel* context_menu_;
+  StatusIconMenuModel* context_menu_;
 
   // Set to true when we are running in background mode. Allows us to track our
   // current background state so we can take the appropriate action when the
@@ -311,6 +317,12 @@ class BackgroundModeManager
   // (used for testing background mode without having to install a background
   // app).
   bool keep_alive_for_test_;
+
+  // Set to true when background mode is suspended.
+  bool background_mode_suspended_;
+
+  // Set to true when background mode is keeping Chrome alive.
+  bool keeping_alive_;
 
   // Provides a command id for each profile as they are created.
   int current_command_id_;

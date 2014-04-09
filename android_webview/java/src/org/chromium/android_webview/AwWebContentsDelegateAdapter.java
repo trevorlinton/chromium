@@ -6,7 +6,6 @@ package org.chromium.android_webview;
 
 import android.graphics.Rect;
 import android.os.Handler;
-import android.os.Looper;
 import android.os.Message;
 import android.util.Log;
 import android.view.KeyEvent;
@@ -14,6 +13,7 @@ import android.view.View;
 import android.webkit.ConsoleMessage;
 import android.webkit.ValueCallback;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.content.browser.ContentViewCore;
 
 /**
@@ -24,27 +24,12 @@ import org.chromium.content.browser.ContentViewCore;
 class AwWebContentsDelegateAdapter extends AwWebContentsDelegate {
     private static final String TAG = "AwWebContentsDelegateAdapter";
 
-    /**
-     * Listener definition for a callback to be invoked when the preferred size of the page
-     * contents changes.
-     */
-    public interface PreferredSizeChangedListener {
-        /**
-         * Called when the preferred size of the page contents changes.
-         * @see AwWebContentsDelegate#updatePreferredSize
-         */
-        void updatePreferredSize(int width, int height);
-    }
-
     final AwContentsClient mContentsClient;
-    final PreferredSizeChangedListener mPreferredSizeChangedListener;
     final View mContainerView;
 
     public AwWebContentsDelegateAdapter(AwContentsClient contentsClient,
-            PreferredSizeChangedListener preferredSizeChangedListener,
             View containerView) {
         mContentsClient = contentsClient;
-        mPreferredSizeChangedListener = preferredSizeChangedListener;
         mContainerView = containerView;
     }
 
@@ -132,13 +117,6 @@ class AwWebContentsDelegateAdapter extends AwWebContentsDelegate {
     }
 
     @Override
-    public boolean addNewContents(int nativeSourceWebContents, int nativeWebContents,
-            int disposition, Rect initialPosition, boolean userGesture) {
-        // This is overridden native side; see the other addNewContents overload.
-        throw new RuntimeException("Impossible");
-    }
-
-    @Override
     public void closeContents() {
         mContentsClient.onCloseWindow();
     }
@@ -153,7 +131,7 @@ class AwWebContentsDelegateAdapter extends AwWebContentsDelegate {
 
         // TODO(sgurun) Remember the URL to cancel the reload behavior
         // if it is different than the most recent NavigationController entry.
-        final Handler handler = new Handler(Looper.getMainLooper()) {
+        final Handler handler = new Handler(ThreadUtils.getUiThreadLooper()) {
             @Override
             public void handleMessage(Message msg) {
                 switch(msg.what) {
@@ -208,10 +186,5 @@ class AwWebContentsDelegateAdapter extends AwWebContentsDelegate {
     @Override
     public void activateContents() {
         mContentsClient.onRequestFocus();
-    }
-
-    @Override
-    public void updatePreferredSize(int width, int height) {
-        mPreferredSizeChangedListener.updatePreferredSize(width, height);
     }
 }

@@ -32,13 +32,6 @@ class TopSitesDatabase {
   // Returns true on success. If false, no other functions should be called.
   bool Init(const base::FilePath& db_name);
 
-  // Returns true if migration of top sites from history may be needed. A value
-  // of true means either migration is definitely needed (the top sites file is
-  // old) or doesn't exist (as would happen for a new user).
-  bool may_need_history_migration() const {
-    return may_need_history_migration_;
-  }
-
   // Thumbnails ----------------------------------------------------------------
 
   // Returns a list of all URLs currently in the table.
@@ -65,7 +58,17 @@ class TopSitesDatabase {
   bool RemoveURL(const MostVisitedURL& url);
 
  private:
-  FRIEND_TEST_ALL_PREFIXES(TopSitesDatabaseTest, UpgradeToVersion2);
+  FRIEND_TEST_ALL_PREFIXES(TopSitesDatabaseTest, Version1);
+  FRIEND_TEST_ALL_PREFIXES(TopSitesDatabaseTest, Version2);
+  FRIEND_TEST_ALL_PREFIXES(TopSitesDatabaseTest, Version3);
+  FRIEND_TEST_ALL_PREFIXES(TopSitesDatabaseTest, AddRemoveEditThumbnails);
+
+  // Rank of all URLs that are forced and therefore cannot be automatically
+  // evicted.
+  static const int kRankOfForcedURL = -1;
+
+  // Rank used to indicate that a URL is not stored in the database.
+  static const int kRankOfNonExistingURL = -2;
 
   // Creates the thumbnail table, returning true if the table already exists
   // or was successfully created.
@@ -74,6 +77,10 @@ class TopSitesDatabase {
   // Upgrades the thumbnail table to version 2, returning true if the
   // upgrade was successful.
   bool UpgradeToVersion2();
+
+  // Upgrades the thumbnail table to version 3, returning true if the
+  // upgrade was successful.
+  bool UpgradeToVersion3();
 
   // Adds a new URL to the database.
   void AddPageThumbnail(const MostVisitedURL& url,
@@ -88,11 +95,8 @@ class TopSitesDatabase {
   bool UpdatePageThumbnail(const MostVisitedURL& url,
                            const Images& thumbnail);
 
-  // Returns the URL's current rank or -1 if it is not present.
+  // Returns |url|'s current rank or kRankOfNonExistingURL if not present.
   int GetURLRank(const MostVisitedURL& url);
-
-  // Returns the number of URLs (rows) in the database.
-  int GetRowCount();
 
   sql::Connection* CreateDB(const base::FilePath& db_name);
 
@@ -104,9 +108,6 @@ class TopSitesDatabase {
 
   scoped_ptr<sql::Connection> db_;
   sql::MetaTable meta_table_;
-
-  // See description above class.
-  bool may_need_history_migration_;
 
   DISALLOW_COPY_AND_ASSIGN(TopSitesDatabase);
 };

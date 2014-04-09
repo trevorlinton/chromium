@@ -8,12 +8,13 @@
 
 #include "base/strings/string_piece.h"
 #include "net/quic/crypto/crypto_handshake.h"
-#include "net/quic/crypto/crypto_server_config.h"
+#include "net/quic/crypto/quic_crypto_server_config.h"
 #include "net/quic/crypto/quic_random.h"
 #include "net/quic/quic_crypto_stream.h"
 #include "net/quic/test_tools/quic_test_utils.h"
-#include "net/tools/flip_server/epoll_server.h"
+#include "net/tools/epoll_server/epoll_server.h"
 #include "net/tools/quic/quic_time_wait_list_manager.h"
+#include "net/tools/quic/test_tools/quic_dispatcher_peer.h"
 #include "net/tools/quic/test_tools/quic_test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -22,6 +23,7 @@ using base::StringPiece;
 using net::EpollServer;
 using net::test::MockSession;
 using net::tools::test::MockConnection;
+using std::make_pair;
 using testing::_;
 using testing::DoAll;
 using testing::Invoke;
@@ -32,19 +34,6 @@ using testing::WithoutArgs;
 namespace net {
 namespace tools {
 namespace test {
-class QuicDispatcherPeer {
- public:
-  static void SetTimeWaitListManager(
-      QuicDispatcher* dispatcher,
-      QuicTimeWaitListManager* time_wait_list_manager) {
-    dispatcher->time_wait_list_manager_.reset(time_wait_list_manager);
-  }
-
-  static void SetWriteBlocked(QuicDispatcher* dispatcher) {
-    dispatcher->write_blocked_ = true;
-  }
-};
-
 namespace {
 
 class TestDispatcher : public QuicDispatcher {
@@ -52,13 +41,12 @@ class TestDispatcher : public QuicDispatcher {
   explicit TestDispatcher(const QuicConfig& config,
                           const QuicCryptoServerConfig& crypto_config,
                           EpollServer* eps)
-      : QuicDispatcher(config, crypto_config, 1, eps) {}
+      : QuicDispatcher(config, crypto_config, QuicSupportedVersions(), 1, eps) {
+  }
 
-  MOCK_METHOD4(CreateQuicSession, QuicSession*(
+  MOCK_METHOD2(CreateQuicSession, QuicSession*(
       QuicGuid guid,
-      const IPEndPoint& client_address,
-      int fd,
-      EpollServer* eps));
+      const IPEndPoint& client_address));
   using QuicDispatcher::write_blocked_list;
 };
 
@@ -76,9 +64,9 @@ class MockServerConnection : public MockConnection {
       : MockConnection(guid, address, fd, eps, true),
         dispatcher_(dispatcher) {
   }
-  void UnregisterOnConnectionClose() {
+  void UnregisterOnConnectionClosed() {
     LOG(ERROR) << "Unregistering " << guid();
-    dispatcher_->OnConnectionClose(guid(), QUIC_NO_ERROR);
+    dispatcher_->OnConnectionClosed(guid(), QUIC_NO_ERROR);
   }
  private:
   QuicDispatcher* dispatcher_;
@@ -94,7 +82,7 @@ QuicSession* CreateSession(QuicDispatcher* dispatcher,
   *session = new MockSession(connection, true);
   ON_CALL(*connection, SendConnectionClose(_)).WillByDefault(
       WithoutArgs(Invoke(
-          connection, &MockServerConnection::UnregisterOnConnectionClose)));
+          connection, &MockServerConnection::UnregisterOnConnectionClosed)));
   EXPECT_CALL(*reinterpret_cast<MockConnection*>((*session)->connection()),
               ProcessUdpPacket(_, addr, _));
 
@@ -150,12 +138,12 @@ class QuicDispatcherTest : public ::testing::Test {
 TEST_F(QuicDispatcherTest, ProcessPackets) {
   IPEndPoint addr(Loopback4(), 1);
 
-  EXPECT_CALL(dispatcher_, CreateQuicSession(1, addr, _, &eps_))
+  EXPECT_CALL(dispatcher_, CreateQuicSession(1, addr))
       .WillOnce(testing::Return(CreateSession(
           &dispatcher_, 1, addr, &session1_, &eps_)));
   ProcessPacket(addr, 1, "foo");
 
-  EXPECT_CALL(dispatcher_, CreateQuicSession(2, addr, _, &eps_))
+  EXPECT_CALL(dispatcher_, CreateQuicSession(2, addr))
       .WillOnce(testing::Return(CreateSession(
                     &dispatcher_, 2, addr, &session2_, &eps_)));
   ProcessPacket(addr, 2, "bar");
@@ -171,7 +159,7 @@ TEST_F(QuicDispatcherTest, ProcessPackets) {
 TEST_F(QuicDispatcherTest, Shutdown) {
   IPEndPoint addr(Loopback4(), 1);
 
-  EXPECT_CALL(dispatcher_, CreateQuicSession(_, addr, _, &eps_))
+  EXPECT_CALL(dispatcher_, CreateQuicSession(_, addr))
       .WillOnce(testing::Return(CreateSession(
                     &dispatcher_, 1, addr, &session1_, &eps_)));
 
@@ -187,7 +175,7 @@ class MockTimeWaitListManager : public QuicTimeWaitListManager {
  public:
   MockTimeWaitListManager(QuicPacketWriter* writer,
                           EpollServer* eps)
-      : QuicTimeWaitListManager(writer, eps) {
+      : QuicTimeWaitListManager(writer, eps, QuicSupportedVersions()) {
   }
 
   MOCK_METHOD4(ProcessPacket, void(const IPEndPoint& server_address,
@@ -198,14 +186,15 @@ class MockTimeWaitListManager : public QuicTimeWaitListManager {
 
 TEST_F(QuicDispatcherTest, TimeWaitListManager) {
   MockTimeWaitListManager* time_wait_list_manager =
-      new MockTimeWaitListManager(&dispatcher_, &eps_);
+      new MockTimeWaitListManager(
+          QuicDispatcherPeer::GetWriter(&dispatcher_), &eps_);
   // dispatcher takes the ownership of time_wait_list_manager.
   QuicDispatcherPeer::SetTimeWaitListManager(&dispatcher_,
                                              time_wait_list_manager);
   // Create a new session.
   IPEndPoint addr(Loopback4(), 1);
   QuicGuid guid = 1;
-  EXPECT_CALL(dispatcher_, CreateQuicSession(guid, addr, _, &eps_))
+  EXPECT_CALL(dispatcher_, CreateQuicSession(guid, addr))
       .WillOnce(testing::Return(CreateSession(
                     &dispatcher_, guid, addr, &session1_, &eps_)));
   ProcessPacket(addr, guid, "foo");
@@ -219,10 +208,10 @@ TEST_F(QuicDispatcherTest, TimeWaitListManager) {
   packet.nonce_proof = 132232;
   scoped_ptr<QuicEncryptedPacket> encrypted(
       QuicFramer::BuildPublicResetPacket(packet));
-  EXPECT_CALL(*session1_, ConnectionClose(QUIC_PUBLIC_RESET, true)).Times(1)
+  EXPECT_CALL(*session1_, OnConnectionClosed(QUIC_PUBLIC_RESET, true)).Times(1)
       .WillOnce(WithoutArgs(Invoke(
           reinterpret_cast<MockServerConnection*>(session1_->connection()),
-          &MockServerConnection::UnregisterOnConnectionClose)));
+          &MockServerConnection::UnregisterOnConnectionClosed)));
   EXPECT_CALL(*reinterpret_cast<MockConnection*>(session1_->connection()),
               ProcessUdpPacket(_, _, _))
       .WillOnce(Invoke(
@@ -237,17 +226,17 @@ TEST_F(QuicDispatcherTest, TimeWaitListManager) {
   ProcessPacket(addr, guid, "foo");
 }
 
-class WriteBlockedListTest : public QuicDispatcherTest {
+class QuicWriteBlockedListTest : public QuicDispatcherTest {
  public:
   virtual void SetUp() {
     IPEndPoint addr(Loopback4(), 1);
 
-    EXPECT_CALL(dispatcher_, CreateQuicSession(_, addr, _, &eps_))
+    EXPECT_CALL(dispatcher_, CreateQuicSession(_, addr))
         .WillOnce(testing::Return(CreateSession(
                       &dispatcher_, 1, addr, &session1_, &eps_)));
     ProcessPacket(addr, 1, "foo");
 
-    EXPECT_CALL(dispatcher_, CreateQuicSession(_, addr, _, &eps_))
+    EXPECT_CALL(dispatcher_, CreateQuicSession(_, addr))
         .WillOnce(testing::Return(CreateSession(
                       &dispatcher_, 2, addr, &session2_, &eps_)));
     ProcessPacket(addr, 2, "bar");
@@ -270,12 +259,12 @@ class WriteBlockedListTest : public QuicDispatcherTest {
   QuicDispatcher::WriteBlockedList* blocked_list_;
 };
 
-TEST_F(WriteBlockedListTest, BasicOnCanWrite) {
+TEST_F(QuicWriteBlockedListTest, BasicOnCanWrite) {
   // No OnCanWrite calls because no connections are blocked.
   dispatcher_.OnCanWrite();
 
   // Register connection 1 for events, and make sure it's nofitied.
-  blocked_list_->AddBlockedObject(connection1());
+  blocked_list_->insert(make_pair(connection1(), true));
   EXPECT_CALL(*connection1(), OnCanWrite());
   dispatcher_.OnCanWrite();
 
@@ -284,67 +273,67 @@ TEST_F(WriteBlockedListTest, BasicOnCanWrite) {
   EXPECT_FALSE(dispatcher_.OnCanWrite());
 }
 
-TEST_F(WriteBlockedListTest, OnCanWriteOrder) {
+TEST_F(QuicWriteBlockedListTest, OnCanWriteOrder) {
   // Make sure we handle events in order.
   InSequence s;
-  blocked_list_->AddBlockedObject(connection1());
-  blocked_list_->AddBlockedObject(connection2());
+  blocked_list_->insert(make_pair(connection1(), true));
+  blocked_list_->insert(make_pair(connection2(), true));
   EXPECT_CALL(*connection1(), OnCanWrite());
   EXPECT_CALL(*connection2(), OnCanWrite());
   dispatcher_.OnCanWrite();
 
   // Check the other ordering.
-  blocked_list_->AddBlockedObject(connection2());
-  blocked_list_->AddBlockedObject(connection1());
+  blocked_list_->insert(make_pair(connection2(), true));
+  blocked_list_->insert(make_pair(connection1(), true));
   EXPECT_CALL(*connection2(), OnCanWrite());
   EXPECT_CALL(*connection1(), OnCanWrite());
   dispatcher_.OnCanWrite();
 }
 
-TEST_F(WriteBlockedListTest, OnCanWriteRemove) {
+TEST_F(QuicWriteBlockedListTest, OnCanWriteRemove) {
   // Add and remove one connction.
-  blocked_list_->AddBlockedObject(connection1());
-  blocked_list_->RemoveBlockedObject(connection1());
+  blocked_list_->insert(make_pair(connection1(), true));
+  blocked_list_->erase(connection1());
   EXPECT_CALL(*connection1(), OnCanWrite()).Times(0);
   dispatcher_.OnCanWrite();
 
   // Add and remove one connction and make sure it doesn't affect others.
-  blocked_list_->AddBlockedObject(connection1());
-  blocked_list_->AddBlockedObject(connection2());
-  blocked_list_->RemoveBlockedObject(connection1());
+  blocked_list_->insert(make_pair(connection1(), true));
+  blocked_list_->insert(make_pair(connection2(), true));
+  blocked_list_->erase(connection1());
   EXPECT_CALL(*connection2(), OnCanWrite());
   dispatcher_.OnCanWrite();
 
   // Add it, remove it, and add it back and make sure things are OK.
-  blocked_list_->AddBlockedObject(connection1());
-  blocked_list_->RemoveBlockedObject(connection1());
-  blocked_list_->AddBlockedObject(connection1());
+  blocked_list_->insert(make_pair(connection1(), true));
+  blocked_list_->erase(connection1());
+  blocked_list_->insert(make_pair(connection1(), true));
   EXPECT_CALL(*connection1(), OnCanWrite()).Times(1);
   dispatcher_.OnCanWrite();
 }
 
-TEST_F(WriteBlockedListTest, DoubleAdd) {
+TEST_F(QuicWriteBlockedListTest, DoubleAdd) {
   // Make sure a double add does not necessitate a double remove.
-  blocked_list_->AddBlockedObject(connection1());
-  blocked_list_->AddBlockedObject(connection1());
-  blocked_list_->RemoveBlockedObject(connection1());
+  blocked_list_->insert(make_pair(connection1(), true));
+  blocked_list_->insert(make_pair(connection1(), true));
+  blocked_list_->erase(connection1());
   EXPECT_CALL(*connection1(), OnCanWrite()).Times(0);
   dispatcher_.OnCanWrite();
 
   // Make sure a double add does not result in two OnCanWrite calls.
-  blocked_list_->AddBlockedObject(connection1());
-  blocked_list_->AddBlockedObject(connection1());
+  blocked_list_->insert(make_pair(connection1(), true));
+  blocked_list_->insert(make_pair(connection1(), true));
   EXPECT_CALL(*connection1(), OnCanWrite()).Times(1);
   dispatcher_.OnCanWrite();
 }
 
-TEST_F(WriteBlockedListTest, OnCanWriteHandleBlock) {
+TEST_F(QuicWriteBlockedListTest, OnCanWriteHandleBlock) {
   // Finally make sure if we write block on a write call, we stop calling.
   InSequence s;
-  blocked_list_->AddBlockedObject(connection1());
-  blocked_list_->AddBlockedObject(connection2());
+  blocked_list_->insert(make_pair(connection1(), true));
+  blocked_list_->insert(make_pair(connection2(), true));
   EXPECT_CALL(*connection1(), OnCanWrite()).WillOnce(
-      Invoke(this, &WriteBlockedListTest::SetBlocked));
+      Invoke(this, &QuicWriteBlockedListTest::SetBlocked));
   EXPECT_CALL(*connection2(), OnCanWrite()).Times(0);
   dispatcher_.OnCanWrite();
 
@@ -353,12 +342,12 @@ TEST_F(WriteBlockedListTest, OnCanWriteHandleBlock) {
   dispatcher_.OnCanWrite();
 }
 
-TEST_F(WriteBlockedListTest, LimitedWrites) {
+TEST_F(QuicWriteBlockedListTest, LimitedWrites) {
   // Make sure we call both writers.  The first will register for more writing
   // but should not be immediately called due to limits.
   InSequence s;
-  blocked_list_->AddBlockedObject(connection1());
-  blocked_list_->AddBlockedObject(connection2());
+  blocked_list_->insert(make_pair(connection1(), true));
+  blocked_list_->insert(make_pair(connection2(), true));
   EXPECT_CALL(*connection1(), OnCanWrite()).WillOnce(Return(true));
   EXPECT_CALL(*connection2(), OnCanWrite()).WillOnce(Return(false));
   dispatcher_.OnCanWrite();
@@ -368,13 +357,13 @@ TEST_F(WriteBlockedListTest, LimitedWrites) {
   dispatcher_.OnCanWrite();
 }
 
-TEST_F(WriteBlockedListTest, TestWriteLimits) {
+TEST_F(QuicWriteBlockedListTest, TestWriteLimits) {
   // Finally make sure if we write block on a write call, we stop calling.
   InSequence s;
-  blocked_list_->AddBlockedObject(connection1());
-  blocked_list_->AddBlockedObject(connection2());
+  blocked_list_->insert(make_pair(connection1(), true));
+  blocked_list_->insert(make_pair(connection2(), true));
   EXPECT_CALL(*connection1(), OnCanWrite()).WillOnce(
-      Invoke(this, &WriteBlockedListTest::SetBlocked));
+      Invoke(this, &QuicWriteBlockedListTest::SetBlocked));
   EXPECT_CALL(*connection2(), OnCanWrite()).Times(0);
   dispatcher_.OnCanWrite();
 

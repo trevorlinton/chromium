@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.testshell;
 
+import org.chromium.chrome.browser.EmptyTabObserver;
+import org.chromium.chrome.browser.TabBase;
 import org.chromium.content.browser.ContentViewClient;
 import org.chromium.content.browser.test.util.CallbackHelper;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer;
@@ -24,14 +26,18 @@ public class TabShellTabUtils {
         return testClient;
     }
 
-    public static class TestCallbackHelperContainerForTab
-            extends TestCallbackHelperContainer implements TestShellTabObserver {
+    public static class TestCallbackHelperContainerForTab extends TestCallbackHelperContainer {
         private final OnCloseTabHelper mOnCloseTabHelper;
         public TestCallbackHelperContainerForTab(TestShellTab tab) {
             super(createTestContentViewClientForTab(tab),
                     new TestWebContentsObserver(tab.getContentView().getContentViewCore()));
             mOnCloseTabHelper = new OnCloseTabHelper();
-            tab.addObserver(this);
+            tab.addObserver(new EmptyTabObserver() {
+                @Override
+                public void onDestroyed(TabBase tab) {
+                    mOnCloseTabHelper.notifyCalled();
+                }
+            });
         }
 
         public static class OnCloseTabHelper extends CallbackHelper {
@@ -39,19 +45,6 @@ public class TabShellTabUtils {
 
         public OnCloseTabHelper getOnCloseTabHelper() {
             return mOnCloseTabHelper;
-        }
-
-        @Override
-        public void onLoadProgressChanged(TestShellTab tab, int progress) {
-        }
-
-        @Override
-        public void onUpdateUrl(TestShellTab tab, String url) {
-        }
-
-        @Override
-        public void onCloseTab(TestShellTab tab) {
-            mOnCloseTabHelper.notifyCalled();
         }
     }
 

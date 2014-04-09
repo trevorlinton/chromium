@@ -39,6 +39,7 @@
 #include "sql/statement.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/layout.h"
+#include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/favicon_size.h"
 
 using base::android::AttachCurrentThread;
@@ -676,7 +677,7 @@ class BookmarkIconFetchTask : public FaviconServiceTask {
                        url,
                        chrome::FAVICON | chrome::TOUCH_ICON,
                        gfx::kFaviconSize),
-                   ui::GetMaxScaleFactor(),
+                   ResourceBundle::GetSharedInstance().GetMaxScaleFactor(),
                    base::Bind(
                        &BookmarkIconFetchTask::OnFaviconRetrieved,
                        base::Unretained(this)),
@@ -1563,7 +1564,7 @@ ScopedJavaLocalRef<jbyteArray> ChromeBrowserProvider::GetThumbnail(
   // GetPageThumbnail is synchronous and can be called from any thread.
   scoped_refptr<base::RefCountedMemory> thumbnail;
   if (top_sites_)
-    top_sites_->GetPageThumbnail(url, &thumbnail);
+    top_sites_->GetPageThumbnail(url, false, &thumbnail);
 
   if (!thumbnail.get() || !thumbnail->front()) {
     return ScopedJavaLocalRef<jbyteArray>();

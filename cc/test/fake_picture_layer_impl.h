@@ -32,6 +32,14 @@ class FakePictureLayerImpl : public PictureLayerImpl {
   using PictureLayerImpl::CleanUpTilingsOnActiveLayer;
   using PictureLayerImpl::CanHaveTilings;
   using PictureLayerImpl::MarkVisibleResourcesAsRequired;
+  using PictureLayerImpl::DoPostCommitInitializationIfNeeded;
+
+  bool needs_post_commit_initialization() const {
+    return needs_post_commit_initialization_;
+  }
+
+  bool is_using_lcd_text() const { return is_using_lcd_text_; }
+  void force_set_lcd_text(bool enabled) { is_using_lcd_text_ = enabled; }
 
   PictureLayerTiling* HighResTiling() const;
   PictureLayerTiling* LowResTiling() const;
@@ -39,6 +47,7 @@ class FakePictureLayerImpl : public PictureLayerImpl {
 
   PictureLayerImpl* twin_layer() { return twin_layer_; }
   PictureLayerTilingSet* tilings() { return tilings_.get(); }
+  PicturePileImpl* pile() { return pile_.get(); }
   size_t append_quads_count() { return append_quads_count_; }
 
   const Region& invalidation() const { return invalidation_; }

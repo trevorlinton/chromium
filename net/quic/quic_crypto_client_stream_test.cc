@@ -21,31 +21,6 @@ namespace {
 
 const char kServerHostname[] = "example.com";
 
-class TestQuicVisitor : public NoOpFramerVisitor {
- public:
-  TestQuicVisitor()
-      : frame_valid_(false) {
-  }
-
-  // NoOpFramerVisitor
-  virtual bool OnStreamFrame(const QuicStreamFrame& frame) OVERRIDE {
-    frame_ = frame;
-    frame_valid_ = true;
-    return true;
-  }
-
-  bool frame_valid() const {
-    return frame_valid_;
-  }
-  QuicStreamFrame* frame() { return &frame_; }
-
- private:
-  QuicStreamFrame frame_;
-  bool frame_valid_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestQuicVisitor);
-};
-
 class QuicCryptoClientStreamTest : public ::testing::Test {
  public:
   QuicCryptoClientStreamTest()
@@ -78,32 +53,17 @@ class QuicCryptoClientStreamTest : public ::testing::Test {
 };
 
 TEST_F(QuicCryptoClientStreamTest, NotInitiallyConected) {
-  if (!Aes128Gcm12Encrypter::IsSupported()) {
-    LOG(INFO) << "AES GCM not supported. Test skipped.";
-    return;
-  }
-
   EXPECT_FALSE(stream_->encryption_established());
   EXPECT_FALSE(stream_->handshake_confirmed());
 }
 
 TEST_F(QuicCryptoClientStreamTest, ConnectedAfterSHLO) {
-  if (!Aes128Gcm12Encrypter::IsSupported()) {
-    LOG(INFO) << "AES GCM not supported. Test skipped.";
-    return;
-  }
-
   CompleteCryptoHandshake();
   EXPECT_TRUE(stream_->encryption_established());
   EXPECT_TRUE(stream_->handshake_confirmed());
 }
 
 TEST_F(QuicCryptoClientStreamTest, MessageAfterHandshake) {
-  if (!Aes128Gcm12Encrypter::IsSupported()) {
-    LOG(INFO) << "AES GCM not supported. Test skipped.";
-    return;
-  }
-
   CompleteCryptoHandshake();
 
   EXPECT_CALL(*connection_, SendConnectionClose(
@@ -114,11 +74,6 @@ TEST_F(QuicCryptoClientStreamTest, MessageAfterHandshake) {
 }
 
 TEST_F(QuicCryptoClientStreamTest, BadMessageType) {
-  if (!Aes128Gcm12Encrypter::IsSupported()) {
-    LOG(INFO) << "AES GCM not supported. Test skipped.";
-    return;
-  }
-
   EXPECT_TRUE(stream_->CryptoConnect());
 
   message_.set_tag(kCHLO);
@@ -130,11 +85,6 @@ TEST_F(QuicCryptoClientStreamTest, BadMessageType) {
 }
 
 TEST_F(QuicCryptoClientStreamTest, NegotiatedParameters) {
-  if (!Aes128Gcm12Encrypter::IsSupported()) {
-    LOG(INFO) << "AES GCM not supported. Test skipped.";
-    return;
-  }
-
   CompleteCryptoHandshake();
 
   const QuicConfig* config = session_->config();
@@ -152,11 +102,6 @@ TEST_F(QuicCryptoClientStreamTest, NegotiatedParameters) {
 }
 
 TEST_F(QuicCryptoClientStreamTest, InvalidHostname) {
-  if (!Aes128Gcm12Encrypter::IsSupported()) {
-    LOG(INFO) << "AES GCM not supported. Test skipped.";
-    return;
-  }
-
   stream_.reset(new QuicCryptoClientStream("invalid", session_.get(),
                                            &crypto_config_));
   session_->SetCryptoStream(stream_.get());
@@ -171,7 +116,7 @@ TEST_F(QuicCryptoClientStreamTest, ExpiredServerConfig) {
   CompleteCryptoHandshake();
 
   connection_ = new PacketSavingConnection(1, addr_, true);
-  session_.reset(new TestSession(connection_, QuicConfig(), true));
+  session_.reset(new TestSession(connection_, DefaultQuicConfig(), true));
   stream_.reset(new QuicCryptoClientStream(kServerHostname, session_.get(),
                                            &crypto_config_));
 

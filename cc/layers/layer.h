@@ -5,6 +5,7 @@
 #ifndef CC_LAYERS_LAYER_H_
 #define CC_LAYERS_LAYER_H_
 
+#include <set>
 #include <string>
 
 #include "base/callback.h"
@@ -15,6 +16,7 @@
 #include "cc/base/cc_export.h"
 #include "cc/base/region.h"
 #include "cc/base/scoped_ptr_vector.h"
+#include "cc/debug/micro_benchmark.h"
 #include "cc/layers/compositing_reasons.h"
 #include "cc/layers/draw_properties.h"
 #include "cc/layers/layer_lists.h"
@@ -26,9 +28,14 @@
 #include "skia/ext/refptr.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkImageFilter.h"
+#include "third_party/skia/include/core/SkPicture.h"
 #include "ui/gfx/rect.h"
 #include "ui/gfx/rect_f.h"
 #include "ui/gfx/transform.h"
+
+namespace gfx {
+class BoxF;
+}
 
 namespace cc {
 
@@ -38,13 +45,14 @@ struct AnimationEvent;
 class CopyOutputRequest;
 class LayerAnimationDelegate;
 class LayerAnimationEventObserver;
+class LayerClient;
 class LayerImpl;
 class LayerTreeHost;
 class LayerTreeImpl;
 class PriorityCalculator;
 class RenderingStatsInstrumentation;
 class ResourceUpdateQueue;
-class ScrollbarLayer;
+class ScrollbarLayerInterface;
 struct AnimationEvent;
 
 // Base class for composited layers. Special layer types are derived from
@@ -52,6 +60,10 @@ struct AnimationEvent;
 class CC_EXPORT Layer : public base::RefCounted<Layer>,
                         public LayerAnimationValueObserver {
  public:
+  typedef RenderSurfaceLayerList RenderSurfaceListType;
+  typedef LayerList LayerListType;
+  typedef RenderSurface RenderSurfaceType;
+
   enum LayerIdLabels {
     INVALID_ID = -1,
   };
@@ -116,9 +128,7 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
 
   void SetFilters(const FilterOperations& filters);
   const FilterOperations& filters() const { return filters_; }
-
-  void SetFilter(const skia::RefPtr<SkImageFilter>& filter);
-  skia::RefPtr<SkImageFilter> filter() const { return filter_; }
+  bool FilterIsAnimating() const;
 
   // Background filters are filters applied to what is behind this layer, when
   // they are viewed through non-opaque regions in this layer. They are used
@@ -151,10 +161,36 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   const gfx::Transform& transform() const { return transform_; }
   bool TransformIsAnimating() const;
 
-  DrawProperties<Layer, RenderSurface>& draw_properties() {
-    return draw_properties_;
+  void SetScrollParent(Layer* parent);
+
+  Layer* scroll_parent() { return scroll_parent_; }
+  const Layer* scroll_parent() const { return scroll_parent_; }
+
+  void AddScrollChild(Layer* child);
+  void RemoveScrollChild(Layer* child);
+
+  std::set<Layer*>* scroll_children() { return scroll_children_.get(); }
+  const std::set<Layer*>* scroll_children() const {
+    return scroll_children_.get();
   }
-  const DrawProperties<Layer, RenderSurface>& draw_properties() const {
+
+  void SetClipParent(Layer* ancestor);
+
+  Layer* clip_parent() { return clip_parent_; }
+  const Layer* clip_parent() const {
+    return clip_parent_;
+  }
+
+  void AddClipChild(Layer* child);
+  void RemoveClipChild(Layer* child);
+
+  std::set<Layer*>* clip_children() { return clip_children_.get(); }
+  const std::set<Layer*>* clip_children() const {
+    return clip_children_.get();
+  }
+
+  DrawProperties<Layer>& draw_properties() { return draw_properties_; }
+  const DrawProperties<Layer>& draw_properties() const {
     return draw_properties_;
   }
 
@@ -201,6 +237,9 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   RenderSurface* render_surface() const {
     return draw_properties_.render_surface.get();
   }
+  int num_unclipped_descendants() const {
+    return draw_properties_.num_unclipped_descendants;
+  }
 
   void SetScrollOffset(gfx::Vector2d scroll_offset);
   gfx::Vector2d scroll_offset() const { return scroll_offset_; }
@@ -211,6 +250,12 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
 
   void SetScrollable(bool scrollable);
   bool scrollable() const { return scrollable_; }
+
+  void SetUserScrollable(bool horizontal, bool vertical);
+  bool user_scrollable_horizontal() const {
+    return user_scrollable_horizontal_;
+  }
+  bool user_scrollable_vertical() const { return user_scrollable_vertical_; }
 
   void SetShouldScrollOnMainThread(bool should_scroll_on_main_thread);
   bool should_scroll_on_main_thread() const {
@@ -291,8 +336,12 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   virtual bool NeedMoreUpdates();
   virtual void SetIsMask(bool is_mask) {}
   virtual void ReduceMemoryUsage() {}
+  virtual void OnOutputSurfaceCreated() {}
 
-  void SetDebugName(const std::string& debug_name);
+  virtual std::string DebugName();
+
+  void SetLayerClient(LayerClient* client) { client_ = client; }
+
   void SetCompositingReasons(CompositingReasons reasons);
 
   virtual void PushPropertiesTo(LayerImpl* layer);
@@ -316,7 +365,8 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
                                       float* contents_scale_y,
                                       gfx::Size* content_bounds);
 
-  LayerTreeHost* layer_tree_host() const { return layer_tree_host_; }
+  LayerTreeHost* layer_tree_host() { return layer_tree_host_; }
+  const LayerTreeHost* layer_tree_host() const { return layer_tree_host_; }
 
   // Set the priority of all desired textures in this layer.
   virtual void SetTexturePriorities(const PriorityCalculator& priority_calc) {}
@@ -325,8 +375,9 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   void PauseAnimation(int animation_id, double time_offset);
   void RemoveAnimation(int animation_id);
 
-  void SuspendAnimations(double monotonic_time);
-  void ResumeAnimations(double monotonic_time);
+  bool AnimatedBoundsForBox(const gfx::BoxF& box, gfx::BoxF* bounds) {
+    return layer_animation_controller_->AnimatedBoundsForBox(box, bounds);
+  }
 
   LayerAnimationController* layer_animation_controller() {
     return layer_animation_controller_.get();
@@ -347,18 +398,11 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
 
   virtual Region VisibleContentOpaqueRegion() const;
 
-  virtual ScrollbarLayer* ToScrollbarLayer();
+  virtual ScrollbarLayerInterface* ToScrollbarLayer();
 
   gfx::Rect LayerRectToContentRect(const gfx::RectF& layer_rect) const;
 
-  // In impl-side painting, this returns true if this layer type is not
-  // compatible with the main thread running freely, such as a double-buffered
-  // canvas that doesn't want to be triple-buffered across all three trees.
-  virtual bool BlocksPendingCommit() const;
-  // Returns true if anything in this tree blocksPendingCommit.
-  bool BlocksPendingCommitRecursive() const;
-
-  virtual bool CanClipSelf() const;
+  virtual skia::RefPtr<SkPicture> GetPicture() const;
 
   // Constructs a LayerImpl of the correct runtime type for this Layer type.
   virtual scoped_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl);
@@ -387,6 +431,8 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
     return num_dependents_need_push_properties_ > 0;
   }
 
+  virtual void RunMicroBenchmark(MicroBenchmark* benchmark);
+
  protected:
   friend class LayerImpl;
   friend class TreeSynchronizer;
@@ -407,7 +453,11 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   // Called when there's been a change in layer structure.  Implies both
   // SetNeedsUpdate and SetNeedsCommit, but not SetNeedsPushProperties.
   void SetNeedsFullTreeSync();
-  bool IsPropertyChangeAllowed() const;
+
+  // Called when the next commit should wait until the pending tree is activated
+  // before finishing the commit and unblocking the main thread. Used to ensure
+  // unused resources on the impl thread are returned before commit completes.
+  void SetNextCommitWaitsForActivation();
 
   void SetNeedsPushProperties();
   void AddDependentNeedsPushProperties();
@@ -415,6 +465,16 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   bool parent_should_know_need_push_properties() const {
     return needs_push_properties() || descendant_needs_push_properties();
   }
+
+  bool IsPropertyChangeAllowed() const;
+
+  // If this layer has a scroll parent, it removes |this| from its list of
+  // scroll children.
+  void RemoveFromScrollTree();
+
+  // If this layer has a clip parent, it removes |this| from its list of clip
+  // children.
+  void RemoveFromClipTree();
 
   void reset_raster_scale_to_unknown() { raster_scale_ = 0.f; }
 
@@ -459,6 +519,7 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   void RemoveChildOrDependent(Layer* child);
 
   // LayerAnimationValueObserver implementation.
+  virtual void OnFilterAnimated(const FilterOperations& filters) OVERRIDE;
   virtual void OnOpacityAnimated(float opacity) OVERRIDE;
   virtual void OnTransformAnimated(const gfx::Transform& transform) OVERRIDE;
   virtual bool IsActive() const OVERRIDE;
@@ -481,15 +542,15 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   bool scrollable_;
   bool should_scroll_on_main_thread_;
   bool have_wheel_event_handlers_;
+  bool user_scrollable_horizontal_;
+  bool user_scrollable_vertical_;
   Region non_fast_scrollable_region_;
   Region touch_event_handler_region_;
   gfx::PointF position_;
   gfx::PointF anchor_point_;
   SkColor background_color_;
-  std::string debug_name_;
   CompositingReasons compositing_reasons_;
   float opacity_;
-  skia::RefPtr<SkImageFilter> filter_;
   FilterOperations filters_;
   FilterOperations background_filters_;
   float anchor_point_z_;
@@ -504,6 +565,11 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   bool use_parent_backface_visibility_;
   bool draw_checkerboard_for_missing_tiles_;
   bool force_render_surface_;
+  Layer* scroll_parent_;
+  scoped_ptr<std::set<Layer*> > scroll_children_;
+
+  Layer* clip_parent_;
+  scoped_ptr<std::set<Layer*> > clip_children_;
 
   gfx::Transform transform_;
   gfx::Transform sublayer_transform_;
@@ -514,11 +580,13 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   // Transient properties.
   float raster_scale_;
 
+  LayerClient* client_;
+
   ScopedPtrVector<CopyOutputRequest> copy_requests_;
 
   base::Closure did_scroll_callback_;
 
-  DrawProperties<Layer, RenderSurface> draw_properties_;
+  DrawProperties<Layer> draw_properties_;
 
   PaintProperties paint_properties_;
 

@@ -16,7 +16,7 @@ namespace {
 
 // Hard coded URLs for communication with a google drive server.
 const char kDriveV2AboutUrl[] = "/drive/v2/about";
-const char kDriveV2ApplistUrl[] = "/drive/v2/apps";
+const char kDriveV2AppsUrl[] = "/drive/v2/apps";
 const char kDriveV2ChangelistUrl[] = "/drive/v2/changes";
 const char kDriveV2FilesUrl[] = "/drive/v2/files";
 const char kDriveV2FileUrlPrefix[] = "/drive/v2/files/";
@@ -57,87 +57,105 @@ const char DriveApiUrlGenerator::kBaseUrlForProduction[] =
 const char DriveApiUrlGenerator::kBaseDownloadUrlForProduction[] =
     "https://www.googledrive.com/host/";
 
-GURL DriveApiUrlGenerator::GetAboutUrl() const {
+GURL DriveApiUrlGenerator::GetAboutGetUrl() const {
   return base_url_.Resolve(kDriveV2AboutUrl);
 }
 
-GURL DriveApiUrlGenerator::GetApplistUrl() const {
-  return base_url_.Resolve(kDriveV2ApplistUrl);
+GURL DriveApiUrlGenerator::GetAppsListUrl() const {
+  return base_url_.Resolve(kDriveV2AppsUrl);
 }
 
-GURL DriveApiUrlGenerator::GetChangelistUrl(
-    bool include_deleted, int64 start_changestamp, int max_results) const {
-  DCHECK_GE(start_changestamp, 0);
-
-  GURL url = base_url_.Resolve(kDriveV2ChangelistUrl);
-  if (!include_deleted) {
-    // If include_deleted is set to "false", set the query parameter,
-    // because its default parameter is "true".
-    url = net::AppendOrReplaceQueryParameter(url, "includeDeleted", "false");
-  }
-
-  if (start_changestamp > 0) {
-    url = net::AppendOrReplaceQueryParameter(
-        url, "startChangeId", base::Int64ToString(start_changestamp));
-  }
-
-  return AddMaxResultParam(url, max_results);
-}
-
-GURL DriveApiUrlGenerator::GetFilesUrl() const {
-  return base_url_.Resolve(kDriveV2FilesUrl);
-}
-
-GURL DriveApiUrlGenerator::GetFilelistUrl(
-    const std::string& search_string, int max_results) const {
-  GURL url = base_url_.Resolve(kDriveV2FilesUrl);
-  url = AddMaxResultParam(url, max_results);
-  return search_string.empty() ?
-      url :
-      net::AppendOrReplaceQueryParameter(url, "q", search_string);
-}
-
-GURL DriveApiUrlGenerator::GetFileUrl(const std::string& file_id) const {
+GURL DriveApiUrlGenerator::GetFilesGetUrl(const std::string& file_id) const {
   return base_url_.Resolve(kDriveV2FileUrlPrefix + net::EscapePath(file_id));
 }
 
-GURL DriveApiUrlGenerator::GetFileCopyUrl(
-    const std::string& resource_id) const {
-  return base_url_.Resolve(
-      base::StringPrintf(kDriveV2FileCopyUrlFormat,
-                         net::EscapePath(resource_id).c_str()));
+GURL DriveApiUrlGenerator::GetFilesInsertUrl() const {
+  return base_url_.Resolve(kDriveV2FilesUrl);
 }
 
-GURL DriveApiUrlGenerator::GetFileTouchUrl(
-    const std::string& resource_id) const {
-  GURL url = base_url_.Resolve(
-      kDriveV2FileUrlPrefix + net::EscapePath(resource_id));
+GURL DriveApiUrlGenerator::GetFilesPatchUrl(const std::string& file_id,
+                                            bool set_modified_date,
+                                            bool update_viewed_date) const {
+  GURL url =
+      base_url_.Resolve(kDriveV2FileUrlPrefix + net::EscapePath(file_id));
 
-  // This parameter is needed to set the modified date.
-  url = net::AppendOrReplaceQueryParameter(url, "setModifiedDate", "true");
+  // setModifiedDate is "false" by default.
+  if (set_modified_date)
+    url = net::AppendOrReplaceQueryParameter(url, "setModifiedDate", "true");
 
-  // This parameter is needed to set the last viewed by me date. Otherwise
-  // the current time is set automatically.
-  url = net::AppendOrReplaceQueryParameter(url, "updateViewedDate", "false");
+  // updateViewedDate is "true" by default.
+  if (!update_viewed_date)
+    url = net::AppendOrReplaceQueryParameter(url, "updateViewedDate", "false");
 
   return url;
 }
 
-GURL DriveApiUrlGenerator::GetFileTrashUrl(const std::string& file_id) const {
-  return base_url_.Resolve(
-      base::StringPrintf(kDriveV2FileTrashUrlFormat,
-                         net::EscapePath(file_id).c_str()));
+GURL DriveApiUrlGenerator::GetFilesCopyUrl(const std::string& file_id) const {
+  return base_url_.Resolve(base::StringPrintf(
+      kDriveV2FileCopyUrlFormat, net::EscapePath(file_id).c_str()));
 }
 
-GURL DriveApiUrlGenerator::GetChildrenUrl(
-    const std::string& resource_id) const {
-  return base_url_.Resolve(
-      base::StringPrintf(kDriveV2ChildrenUrlFormat,
-                         net::EscapePath(resource_id).c_str()));
+GURL DriveApiUrlGenerator::GetFilesListUrl(int max_results,
+                                           const std::string& page_token,
+                                           const std::string& q) const {
+  GURL url = base_url_.Resolve(kDriveV2FilesUrl);
+
+  // maxResults is 100 by default.
+  if (max_results != 100) {
+    url = net::AppendOrReplaceQueryParameter(
+        url, "maxResults", base::IntToString(max_results));
+  }
+
+  if (!page_token.empty())
+    url = net::AppendOrReplaceQueryParameter(url, "pageToken", page_token);
+
+  if (!q.empty())
+    url = net::AppendOrReplaceQueryParameter(url, "q", q);
+
+  return url;
 }
 
-GURL DriveApiUrlGenerator::GetChildrenUrlForRemoval(
-    const std::string& folder_id, const std::string& child_id) const {
+GURL DriveApiUrlGenerator::GetFilesTrashUrl(const std::string& file_id) const {
+  return base_url_.Resolve(base::StringPrintf(
+      kDriveV2FileTrashUrlFormat, net::EscapePath(file_id).c_str()));
+}
+
+GURL DriveApiUrlGenerator::GetChangesListUrl(bool include_deleted,
+                                             int max_results,
+                                             const std::string& page_token,
+                                             int64 start_change_id) const {
+  DCHECK_GE(start_change_id, 0);
+
+  GURL url = base_url_.Resolve(kDriveV2ChangelistUrl);
+
+  // includeDeleted is "true" by default.
+  if (!include_deleted)
+    url = net::AppendOrReplaceQueryParameter(url, "includeDeleted", "false");
+
+  // maxResults is "100" by default.
+  if (max_results != 100) {
+    url = net::AppendOrReplaceQueryParameter(
+        url, "maxResults", base::IntToString(max_results));
+  }
+
+  if (!page_token.empty())
+    url = net::AppendOrReplaceQueryParameter(url, "pageToken", page_token);
+
+  if (start_change_id > 0)
+    url = net::AppendOrReplaceQueryParameter(
+        url, "startChangeId", base::Int64ToString(start_change_id));
+
+  return url;
+}
+
+GURL DriveApiUrlGenerator::GetChildrenInsertUrl(
+    const std::string& file_id) const {
+  return base_url_.Resolve(base::StringPrintf(
+      kDriveV2ChildrenUrlFormat, net::EscapePath(file_id).c_str()));
+}
+
+GURL DriveApiUrlGenerator::GetChildrenDeleteUrl(
+    const std::string& child_id, const std::string& folder_id) const {
   return base_url_.Resolve(
       base::StringPrintf(kDriveV2ChildrenUrlForRemovalFormat,
                          net::EscapePath(folder_id).c_str(),

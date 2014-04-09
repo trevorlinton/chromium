@@ -117,23 +117,30 @@ class InstallShortcutTest : public testing::Test {
         new base::ScopedPathOverride(base::DIR_COMMON_START_MENU,
                                      fake_common_start_menu_.path()));
 
-    string16 shortcut_name(dist_->GetAppShortCutName() + installer::kLnkExt);
+    string16 shortcut_name(
+        dist_->GetShortcutName(BrowserDistribution::SHORTCUT_CHROME) +
+        installer::kLnkExt);
     string16 alternate_shortcut_name(
-        dist_->GetAlternateApplicationName() + installer::kLnkExt);
+        dist_->GetShortcutName(BrowserDistribution::SHORTCUT_CHROME_ALTERNATE) +
+        installer::kLnkExt);
 
     user_desktop_shortcut_ =
         fake_user_desktop_.path().Append(shortcut_name);
     user_quick_launch_shortcut_ =
         fake_user_quick_launch_.path().Append(shortcut_name);
     user_start_menu_shortcut_ =
-        fake_start_menu_.path().Append(dist_->GetAppShortCutName())
+        fake_start_menu_.path().Append(
+            dist_->GetStartMenuShortcutSubfolder(
+                BrowserDistribution::SUBFOLDER_CHROME))
         .Append(shortcut_name);
     system_desktop_shortcut_ =
         fake_common_desktop_.path().Append(shortcut_name);
     system_quick_launch_shortcut_ =
         fake_default_user_quick_launch_.path().Append(shortcut_name);
     system_start_menu_shortcut_ =
-        fake_common_start_menu_.path().Append(dist_->GetAppShortCutName())
+        fake_common_start_menu_.path().Append(
+            dist_->GetStartMenuShortcutSubfolder(
+                BrowserDistribution::SUBFOLDER_CHROME))
         .Append(shortcut_name);
     user_alternate_desktop_shortcut_ =
         fake_user_desktop_.path().Append(alternate_shortcut_name);
@@ -228,7 +235,7 @@ TEST_F(CreateVisualElementsManifestTest, VisualElementsManifestCreated) {
   ASSERT_TRUE(base::PathExists(manifest_path_));
 
   std::string read_manifest;
-  ASSERT_TRUE(file_util::ReadFileToString(manifest_path_, &read_manifest));
+  ASSERT_TRUE(base::ReadFileToString(manifest_path_, &read_manifest));
 
   static const char kExpectedManifest[] =
       "<Application>\r\n"

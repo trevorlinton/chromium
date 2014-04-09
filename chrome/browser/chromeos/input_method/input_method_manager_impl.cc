@@ -20,7 +20,6 @@
 #include "chrome/browser/chromeos/language_preferences.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/ibus/ibus_client.h"
-#include "chromeos/dbus/ibus/ibus_input_context_client.h"
 #include "chromeos/ime/component_extension_ime_manager.h"
 #include "chromeos/ime/extension_ime_util.h"
 #include "chromeos/ime/input_method_delegate.h"
@@ -33,8 +32,6 @@ namespace input_method {
 
 namespace {
 
-const char nacl_mozc_us_id[] =
-    "_comp_ime_fpfbhcjppmaeaijcidgiibchfbnhbeljnacl_mozc_us";
 const char nacl_mozc_jp_id[] =
     "_comp_ime_fpfbhcjppmaeaijcidgiibchfbnhbeljnacl_mozc_jp";
 
@@ -44,83 +41,13 @@ bool Contains(const std::vector<std::string>& container,
       container.end();
 }
 
-const struct MigrationInputMethodList {
-  const char* old_input_method;
-  const char* new_input_method;
-} kMigrationInputMethodList[] = {
-  { "mozc", "_comp_ime_fpfbhcjppmaeaijcidgiibchfbnhbeljnacl_mozc_us" },
-  { "mozc-jp", "_comp_ime_fpfbhcjppmaeaijcidgiibchfbnhbeljnacl_mozc_jp" },
-  { "mozc-dv", "_comp_ime_fpfbhcjppmaeaijcidgiibchfbnhbeljnacl_mozc_us" },
-  { "pinyin", "_comp_ime_nmblnjkfdkabgdofidlkienfnnbjhnabzh-t-i0-pinyin" },
-  { "pinyin-dv", "_comp_ime_nmblnjkfdkabgdofidlkienfnnbjhnabzh-t-i0-pinyin" },
-  { "mozc-chewing",
-    "_comp_ime_ekbifjdfhkmdeeajnolmgdlmkllopefizh-hant-t-i0-und "},
-  { "m17n:zh:cangjie",
-    "_comp_ime_gjhclobljhjhgoebiipblnmdodbmpdgdzh-hant-t-i0-cangjie-1987" },
-  { "_comp_ime_jcffnbbngddhenhcnebafkbdomehdhpdzh-t-i0-wubi-1986",
-    "_comp_ime_gjhclobljhjhgoebiipblnmdodbmpdgdzh-t-i0-wubi-1986" },
-  // TODO(nona): Remove following migration map in M31.
-  { "m17n:ta:itrans",
-    "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_ta_itrans" },
-  { "m17n:ta:tamil99",
-    "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_ta_tamil99" },
-  { "m17n:ta:typewriter",
-    "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_ta_typewriter" },
-  { "m17n:ta:inscript",
-    "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_ta_phone" },
-  { "m17n:ta:phonetic",
-    "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_ta_inscript" },
-  { "m17n:th:pattachote",
-    "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_th_pattajoti" },
-  { "m17n:th:tis820", "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_th_tis" },
-  { "m17n:th:kesmanee",
-    "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_th" },
-  { "m17n:vi:tcvn", "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_vi_tcvn" },
-  { "m17n:vi:viqr", "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_vi_viqr" },
-  { "m17n:vi:telex",
-    "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_vi_telex" },
-  { "m17n:vi:vni",
-    "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_vi_vni" },
-  { "m17n:am:sera",
-    "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_ethi" },
-  { "m17n:bn:itrans",
-    "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_bn_phone" },
-  { "m17n:gu:itrans",
-    "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_gu_phone" },
-  { "m17n:hi:itrans",
-    "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_deva_phone" },
-  { "m17n:kn:itrans",
-    "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_kn_phone" },
-  { "m17n:ml:itrans",
-    "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_ml_phone" },
-  { "m17n:mr:itrans",
-    "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_deva_phone" },
-  { "m17n:te:itrans",
-    "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_te_phone" },
-  { "m17n:fa:isiri", "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_fa" },
-  { "m17n:ar:kbd", "_comp_ime_jhffeifommiaekmbkkjlpmilogcfdohpvkd_ar" },
-  // TODO(nona): Remove following migration map in M32
-  { "m17n:zh:quick",
-    "_comp_ime_ekbifjdfhkmdeeajnolmgdlmkllopefizh-hant-t-i0-und" },
-};
-
-const struct MigrationHangulKeyboardToInputMethodID {
-  const char* keyboard_id;
-  const char* ime_id;
-} kMigrationHangulKeyboardToInputMethodID[] = {
-  { "2", "_comp_ime_bdgdidmhaijohebebipajioienkglgfohangul_2set" },
-  { "3f", "_comp_ime_bdgdidmhaijohebebipajioienkglgfohangul_3setfinal" },
-  { "39", "_comp_ime_bdgdidmhaijohebebipajioienkglgfohangul_3set390" },
-  { "3s", "_comp_ime_bdgdidmhaijohebebipajioienkglgfohangul_3setnoshift" },
-  { "ro", "_comp_ime_bdgdidmhaijohebebipajioienkglgfohangul_romaja" },
-};
-
 }  // namespace
 
-bool InputMethodManagerImpl::IsFullLatinKeyboard(
+bool InputMethodManagerImpl::IsLoginKeyboard(
     const std::string& layout) const {
-  const std::string& lang = util_.GetLanguageCodeFromInputMethodId(layout);
-  return full_latin_keyboard_checker.IsFullLatinKeyboard(layout, lang);
+  const InputMethodDescriptor* ime =
+      util_.GetInputMethodDescriptorFromId(layout);
+  return ime ? ime->is_login_keyboard() : false;
 }
 
 InputMethodManagerImpl::InputMethodManagerImpl(
@@ -248,7 +175,7 @@ void InputMethodManagerImpl::EnableLayouts(const std::string& language_code,
   // layouts, so it appears first on the list of active input
   // methods at the input language status menu.
   if (util_.IsValidInputMethodId(initial_layout) &&
-      InputMethodUtil::IsKeyboardLayout(initial_layout)) {
+      IsLoginKeyboard(initial_layout)) {
     layouts.push_back(initial_layout);
   } else if (!initial_layout.empty()) {
     DVLOG(1) << "EnableLayouts: ignoring non-keyboard or invalid ID: "
@@ -260,7 +187,7 @@ void InputMethodManagerImpl::EnableLayouts(const std::string& language_code,
     const std::string& candidate = candidates[i];
     // Not efficient, but should be fine, as the two vectors are very
     // short (2-5 items).
-    if (!Contains(layouts, candidate))
+    if (!Contains(layouts, candidate) && IsLoginKeyboard(candidate))
       layouts.push_back(candidate);
   }
 
@@ -342,60 +269,6 @@ bool InputMethodManagerImpl::EnableInputMethods(
   return true;
 }
 
-bool InputMethodManagerImpl::MigrateOldInputMethods(
-    std::vector<std::string>* input_method_ids) {
-  bool rewritten = false;
-  for (size_t i = 0; i < input_method_ids->size(); ++i) {
-    for (size_t j = 0; j < ARRAYSIZE_UNSAFE(kMigrationInputMethodList); ++j) {
-      if (input_method_ids->at(i) ==
-          kMigrationInputMethodList[j].old_input_method) {
-        input_method_ids->at(i).assign(
-            kMigrationInputMethodList[j].new_input_method);
-        rewritten = true;
-      }
-    }
-  }
-  std::vector<std::string>::iterator it =
-      std::unique(input_method_ids->begin(), input_method_ids->end());
-  input_method_ids->resize(std::distance(input_method_ids->begin(), it));
-  return rewritten;
-}
-
-bool InputMethodManagerImpl::MigrateKoreanKeyboard(
-    const std::string& keyboard_id,
-    std::vector<std::string>* input_method_ids) {
-  std::vector<std::string>::iterator it =
-      std::find(active_input_method_ids_.begin(),
-                active_input_method_ids_.end(),
-                "mozc-hangul");
-  if (it == active_input_method_ids_.end())
-    return false;
-
-  for (size_t i = 0;
-       i < ARRAYSIZE_UNSAFE(kMigrationHangulKeyboardToInputMethodID); ++i) {
-    if (kMigrationHangulKeyboardToInputMethodID[i].keyboard_id == keyboard_id) {
-      *it = kMigrationHangulKeyboardToInputMethodID[i].ime_id;
-      input_method_ids->assign(active_input_method_ids_.begin(),
-                               active_input_method_ids_.end());
-      return true;
-    }
-  }
-  return false;
-}
-
-bool InputMethodManagerImpl::SetInputMethodConfig(
-    const std::string& section,
-    const std::string& config_name,
-    const InputMethodConfigValue& value) {
-  DCHECK(section != language_prefs::kGeneralSectionName ||
-         config_name != language_prefs::kPreloadEnginesConfigName);
-
-  if (state_ == STATE_TERMINATING)
-    return false;
-
-  return ibus_controller_->SetInputMethodConfig(section, config_name, value);
-}
-
 void InputMethodManagerImpl::ChangeInputMethod(
     const std::string& input_method_id) {
   ChangeInputMethodInternal(input_method_id, false);
@@ -433,35 +306,32 @@ bool InputMethodManagerImpl::ChangeInputMethodInternal(
   }
 
   pending_input_method_.clear();
-  IBusInputContextClient* input_context =
-      chromeos::DBusThreadManager::Get()->GetIBusInputContextClient();
+  IBusEngineHandlerInterface* engine = IBusBridge::Get()->GetEngineHandler();
+
+  IBusPanelCandidateWindowHandlerInterface* candidate_window =
+      IBusBridge::Get()->GetCandidateWindowHandler();
+  if (candidate_window) {
+    // To hide the candidate window we have to call HideLookupTable and
+    // HideAuxiliaryText. Without calling HideAuxiliaryText the auxiliary text
+    // area will remain.
+    candidate_window->HideLookupTable();
+    candidate_window->HideAuxiliaryText();
+  }
+
   const std::string current_input_method_id = current_input_method_.id();
   IBusClient* client = DBusThreadManager::Get()->GetIBusClient();
   if (InputMethodUtil::IsKeyboardLayout(input_method_id_to_switch)) {
     FOR_EACH_OBSERVER(InputMethodManager::Observer,
                       observers_,
                       InputMethodPropertyChanged(this));
-    // Hack for fixing http://crosbug.com/p/12798
-    // We should notify IME switching to ibus-daemon, otherwise
-    // IBusPreeditFocusMode does not work. To achieve it, change engine to
-    // itself if the next engine is XKB layout.
-    if (current_input_method_id.empty() ||
-        InputMethodUtil::IsKeyboardLayout(current_input_method_id)) {
-      if (input_context)
-        input_context->Reset();
-    } else {
-      if (client)
-        client->SetGlobalEngine(current_input_method_id,
-                                base::Bind(&base::DoNothing));
+    if (engine) {
+      engine->Disable();
+      IBusBridge::Get()->SetEngineHandler(NULL);
     }
-    if (input_context)
-      input_context->SetIsXKBLayout(true);
   } else {
     DCHECK(client);
     client->SetGlobalEngine(input_method_id_to_switch,
                             base::Bind(&base::DoNothing));
-    if (input_context)
-      input_context->SetIsXKBLayout(false);
   }
 
   if (current_input_method_id != input_method_id_to_switch) {
@@ -577,7 +447,7 @@ void InputMethodManagerImpl::AddInputMethodExtension(
   }
 
   extra_input_methods_[id] =
-      InputMethodDescriptor(id, name, layouts, languages, options_url);
+      InputMethodDescriptor(id, name, layouts, languages, false, options_url);
   if (Contains(enabled_extension_imes_, id) &&
       !ComponentExtensionIMEManager::IsComponentExtensionIMEId(id)) {
     if (!Contains(active_input_method_ids_, id)) {
@@ -958,7 +828,7 @@ void InputMethodManagerImpl::OnScreenLocked() {
     const std::string& input_method_id = saved_active_input_method_ids_[i];
     // Skip if it's not a keyboard layout. Drop input methods including
     // extension ones.
-    if (!InputMethodUtil::IsKeyboardLayout(input_method_id))
+    if (!IsLoginKeyboard(input_method_id))
       continue;
     active_input_method_ids_.push_back(input_method_id);
     if (input_method_id == hardware_keyboard_id)

@@ -8,14 +8,15 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/message_loop/message_loop_proxy.h"
+#include "base/metrics/histogram.h"
 #include "base/stl_util.h"
 #include "chrome/browser/password_manager/password_store_consumer.h"
+#include "components/autofill/core/common/password_form.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/common/password_form.h"
 
+using autofill::PasswordForm;
 using content::BrowserThread;
 using std::vector;
-using content::PasswordForm;
 
 namespace {
 
@@ -189,6 +190,11 @@ bool PasswordStore::ScheduleTask(const base::Closure& task) {
 void PasswordStore::ForwardLoginsResult(GetLoginsRequest* request) {
   request->ApplyIgnoreLoginsCutoff();
   request->ForwardResult(request->handle(), request->value);
+}
+
+void PasswordStore::LogStatsForBulkDeletion(int num_deletions) {
+  UMA_HISTOGRAM_COUNTS("PasswordManager.NumPasswordsDeletedByBulkDelete",
+                       num_deletions);
 }
 
 template<typename BackendFunc>

@@ -136,9 +136,11 @@ public class ProfileSyncService {
         syncSignIn(account);
     }
 
-    public void requestSyncFromNativeChrome(String objectId, long version, String payload) {
+    public void requestSyncFromNativeChrome(
+            int objectSource, String objectId, long version, String payload) {
         ThreadUtils.assertOnUiThread();
-        nativeNudgeSyncer(mNativeProfileSyncServiceAndroid, objectId, version, payload);
+        nativeNudgeSyncer(
+                mNativeProfileSyncServiceAndroid, objectSource, objectId, version, payload);
     }
 
     public void requestSyncFromNativeChromeForAllTypes() {
@@ -489,17 +491,26 @@ public class ProfileSyncService {
         nativeDisableSync(mNativeProfileSyncServiceAndroid);
     }
 
+    /**
+     * Returns the time when the last sync cycle was completed.
+     *
+     * @return The difference measured in microseconds, between last sync cycle completion time
+     * and 1 January 1970 00:00:00 UTC.
+     */
+    public long getLastSyncedTimeForTest() {
+        return nativeGetLastSyncedTimeForTest(mNativeProfileSyncServiceAndroid);
+    }
+
     // Native methods
     private native void nativeNudgeSyncer(
-            int nativeProfileSyncServiceAndroid, String objectId, long version, String payload);
+            int nativeProfileSyncServiceAndroid, int objectSource, String objectId, long version,
+            String payload);
     private native void nativeNudgeSyncerForAllTypes(int nativeProfileSyncServiceAndroid);
     private native int nativeInit();
     private native void nativeEnableSync(int nativeProfileSyncServiceAndroid);
     private native void nativeDisableSync(int nativeProfileSyncServiceAndroid);
     private native void nativeSignInSync(int nativeProfileSyncServiceAndroid);
     private native void nativeSignOutSync(int nativeProfileSyncServiceAndroid);
-    private native void nativeTokenAvailable(
-            int nativeProfileSyncServiceAndroid, String username, String authToken);
     private native boolean nativeSetSyncSessionsId(int nativeProfileSyncServiceAndroid, String tag);
     private native String nativeQuerySyncStatusSummary(int nativeProfileSyncServiceAndroid);
     private native int nativeGetAuthError(int nativeProfileSyncServiceAndroid);
@@ -539,4 +550,5 @@ public class ProfileSyncService {
     private native boolean nativeHasKeepEverythingSynced(int nativeProfileSyncServiceAndroid);
     private native boolean nativeHasUnrecoverableError(int nativeProfileSyncServiceAndroid);
     private native String nativeGetAboutInfoForTest(int nativeProfileSyncServiceAndroid);
+    private native long nativeGetLastSyncedTimeForTest(int nativeProfileSyncServiceAndroid);
 }

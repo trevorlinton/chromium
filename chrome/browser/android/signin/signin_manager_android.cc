@@ -17,6 +17,7 @@
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
 #include "chrome/browser/browsing_data/browsing_data_remover.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/signin/google_auto_login_helper.h"
 #include "chrome/browser/signin/signin_manager.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/common/pref_names.h"
@@ -196,6 +197,12 @@ void SigninManagerAndroid::OnBrowsingDataRemoverDone() {
 
   Java_SigninManager_onProfileDataWiped(base::android::AttachCurrentThread(),
                                         java_signin_manager_.obj());
+}
+
+void SigninManagerAndroid::LogInSignedInUser(JNIEnv* env, jobject obj) {
+  // AutoLogin deletes itself.
+  GoogleAutoLoginHelper* autoLogin = new GoogleAutoLoginHelper(profile_);
+  autoLogin->LogIn();
 }
 
 static int Init(JNIEnv* env, jobject obj) {

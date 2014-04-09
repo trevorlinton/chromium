@@ -13,6 +13,7 @@
 #include "chrome/browser/bookmarks/bookmark_model.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/bookmarks/bookmark_node_data.h"
+#include "chrome/browser/bookmarks/bookmark_stats.h"
 #include "chrome/browser/bookmarks/bookmark_utils.h"
 #include "chrome/browser/extensions/api/bookmark_manager_private/bookmark_manager_private_api_constants.h"
 #include "chrome/browser/extensions/api/bookmarks/bookmark_api_constants.h"
@@ -33,7 +34,7 @@
 #include "extensions/browser/view_type_utils.h"
 #include "grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/webui/web_ui_util.h"
+#include "ui/base/webui/web_ui_util.h"
 
 #if defined(OS_WIN)
 #include "win8/util/win8_util.h"
@@ -42,6 +43,7 @@
 namespace extensions {
 
 namespace bookmark_keys = bookmark_api_constants;
+namespace bookmark_manager_private = api::bookmark_manager_private;
 namespace CanPaste = api::bookmark_manager_private::CanPaste;
 namespace Copy = api::bookmark_manager_private::Copy;
 namespace Cut = api::bookmark_manager_private::Cut;
@@ -176,7 +178,7 @@ BookmarkManagerPrivateEventRouter::~BookmarkManagerPrivateEventRouter() {
 }
 
 void BookmarkManagerPrivateEventRouter::DispatchEvent(
-    const char* event_name,
+    const std::string& event_name,
     scoped_ptr<base::ListValue> args) {
   if (!ExtensionSystem::Get(profile_)->event_router())
     return;
@@ -187,7 +189,7 @@ void BookmarkManagerPrivateEventRouter::DispatchEvent(
 
 void BookmarkManagerPrivateEventRouter::DispatchDragEvent(
     const BookmarkNodeData& data,
-    const char* event_name) {
+    const std::string& event_name) {
   if (data.size() == 0)
     return;
 
@@ -198,7 +200,7 @@ void BookmarkManagerPrivateEventRouter::DispatchDragEvent(
 
 void BookmarkManagerPrivateEventRouter::OnDragEnter(
     const BookmarkNodeData& data) {
-  DispatchDragEvent(data, manager_keys::kOnBookmarkDragEnter);
+  DispatchDragEvent(data, bookmark_manager_private::OnDragEnter::kEventName);
 }
 
 void BookmarkManagerPrivateEventRouter::OnDragOver(
@@ -209,11 +211,11 @@ void BookmarkManagerPrivateEventRouter::OnDragOver(
 
 void BookmarkManagerPrivateEventRouter::OnDragLeave(
     const BookmarkNodeData& data) {
-  DispatchDragEvent(data, manager_keys::kOnBookmarkDragLeave);
+  DispatchDragEvent(data, bookmark_manager_private::OnDragLeave::kEventName);
 }
 
 void BookmarkManagerPrivateEventRouter::OnDrop(const BookmarkNodeData& data) {
-  DispatchDragEvent(data, manager_keys::kOnBookmarkDrop);
+  DispatchDragEvent(data, bookmark_manager_private::OnDrop::kEventName);
 
   // Make a copy that is owned by this instance.
   ClearBookmarkNodeData();
@@ -233,7 +235,7 @@ void BookmarkManagerPrivateEventRouter::ClearBookmarkNodeData() {
 
 bool ClipboardBookmarkManagerFunction::CopyOrCut(bool cut,
     const std::vector<std::string>& id_list) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForProfile(GetProfile());
   std::vector<const BookmarkNode*> nodes;
   EXTENSION_FUNCTION_VALIDATE(GetNodesFromVector(model, id_list, &nodes));
   bookmark_utils::CopyToClipboard(model, nodes, cut);
@@ -261,7 +263,7 @@ bool BookmarkManagerPrivatePasteFunction::RunImpl() {
 
   scoped_ptr<Paste::Params> params(Paste::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForProfile(GetProfile());
   const BookmarkNode* parent_node = GetNodeFromString(model, params->parent_id);
   if (!parent_node) {
     error_ = bookmark_keys::kNoParentError;
@@ -295,7 +297,7 @@ bool BookmarkManagerPrivateCanPasteFunction::RunImpl() {
   scoped_ptr<CanPaste::Params> params(CanPaste::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForProfile(GetProfile());
   const BookmarkNode* parent_node = GetNodeFromString(model, params->parent_id);
   if (!parent_node) {
     error_ = bookmark_keys::kNoParentError;
@@ -313,7 +315,7 @@ bool BookmarkManagerPrivateSortChildrenFunction::RunImpl() {
   scoped_ptr<SortChildren::Params> params(SortChildren::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForProfile(GetProfile());
   const BookmarkNode* parent_node = GetNodeFromString(model, params->parent_id);
   if (!parent_node) {
     error_ = bookmark_keys::kNoParentError;
@@ -409,7 +411,7 @@ bool BookmarkManagerPrivateStartDragFunction::RunImpl() {
   scoped_ptr<StartDrag::Params> params(StartDrag::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForProfile(GetProfile());
   std::vector<const BookmarkNode*> nodes;
   EXTENSION_FUNCTION_VALIDATE(
       GetNodesFromVector(model, params->id_list, &nodes));
@@ -420,8 +422,8 @@ bool BookmarkManagerPrivateStartDragFunction::RunImpl() {
     WebContents* web_contents =
         dispatcher()->delegate()->GetAssociatedWebContents();
     CHECK(web_contents);
-    chrome::DragBookmarks(profile(), nodes,
-                          web_contents->GetView()->GetNativeView());
+    chrome::DragBookmarks(
+        GetProfile(), nodes, web_contents->GetView()->GetNativeView());
 
     return true;
   } else {
@@ -437,7 +439,7 @@ bool BookmarkManagerPrivateDropFunction::RunImpl() {
   scoped_ptr<Drop::Params> params(Drop::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForProfile(GetProfile());
 
   const BookmarkNode* drop_parent = GetNodeFromString(model, params->parent_id);
   if (!drop_parent) {
@@ -469,7 +471,7 @@ bool BookmarkManagerPrivateDropFunction::RunImpl() {
       NOTREACHED() <<"Somehow we're dropping null bookmark data";
       return false;
     }
-    chrome::DropBookmarks(profile(), *drag_data, drop_parent, drop_index);
+    chrome::DropBookmarks(GetProfile(), *drag_data, drop_parent, drop_index);
 
     router->ClearBookmarkNodeData();
     return true;
@@ -483,7 +485,7 @@ bool BookmarkManagerPrivateGetSubtreeFunction::RunImpl() {
   scoped_ptr<GetSubtree::Params> params(GetSubtree::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForProfile(GetProfile());
   const BookmarkNode* node = NULL;
 
   if (params->id == "") {
@@ -512,14 +514,14 @@ bool BookmarkManagerPrivateGetSubtreeFunction::RunImpl() {
 }
 
 bool BookmarkManagerPrivateCanEditFunction::RunImpl() {
-  PrefService* prefs = user_prefs::UserPrefs::Get(profile_);
+  PrefService* prefs = user_prefs::UserPrefs::Get(GetProfile());
   SetResult(new base::FundamentalValue(
       prefs->GetBoolean(prefs::kEditBookmarksEnabled)));
   return true;
 }
 
 bool BookmarkManagerPrivateRecordLaunchFunction::RunImpl() {
-  bookmark_utils::RecordBookmarkLaunch(bookmark_utils::LAUNCH_MANAGER);
+  RecordBookmarkLaunch(NULL, BOOKMARK_LAUNCH_LOCATION_MANAGER);
   return true;
 }
 
@@ -539,7 +541,7 @@ bool BookmarkManagerPrivateRemoveTreesFunction::RunImpl() {
   scoped_ptr<RemoveTrees::Params> params(RemoveTrees::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForProfile(GetProfile());
   int64 id;
   for (size_t i = 0; i < params->id_list.size(); ++i) {
     if (!base::StringToInt64(params->id_list[i], &id)) {

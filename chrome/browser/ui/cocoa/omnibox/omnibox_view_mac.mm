@@ -133,11 +133,10 @@ NSColor* OmniboxViewMac::SuggestTextColor() {
 }
 
 OmniboxViewMac::OmniboxViewMac(OmniboxEditController* controller,
-                               ToolbarModel* toolbar_model,
                                Profile* profile,
                                CommandUpdater* command_updater,
                                AutocompleteTextField* field)
-    : OmniboxView(profile, controller, toolbar_model, command_updater),
+    : OmniboxView(profile, controller, command_updater),
       popup_view_(new OmniboxPopupViewMac(this, model(), field)),
       field_(field),
       saved_temporary_selection_(NSMakeRange(0, 0)),
@@ -184,48 +183,40 @@ void OmniboxViewMac::SaveStateToTab(WebContents* tab) {
   StoreStateToTab(tab, state);
 }
 
-void OmniboxViewMac::Update(const WebContents* tab_for_state_restoring) {
-  // TODO(shess): It seems like if the tab is non-NULL, then this code
-  // shouldn't need to be called at all.  When coded that way, I find
-  // that the field isn't always updated correctly.  Figure out why
-  // this is.  Maybe this method should be refactored into more
-  // specific cases.
-  bool user_visible =
-      model()->UpdatePermanentText(toolbar_model()->GetText(true));
-
-  if (tab_for_state_restoring) {
-    RevertAll();
-
-    const OmniboxViewMacState* state = GetStateFromTab(tab_for_state_restoring);
-    if (state) {
-      // Should restore the user's text via SetUserText().
-      model()->RestoreState(state->model_state);
-
-      // Restore focus and selection if they were present when the tab
-      // was switched away.
-      if (state->has_focus) {
-        // TODO(shess): Unfortunately, there is no safe way to update
-        // this because TabStripController -selectTabWithContents:* is
-        // also messing with focus.  Both parties need to agree to
-        // store existing state before anyone tries to setup the new
-        // state.  Anyhow, it would look something like this.
+void OmniboxViewMac::OnTabChanged(const WebContents* web_contents) {
+  const OmniboxViewMacState* state = GetStateFromTab(web_contents);
+  model()->RestoreState(state ? &state->model_state : NULL);
+  // Restore focus and selection if they were present when the tab
+  // was switched away.
+  if (state && state->has_focus) {
+    // TODO(shess): Unfortunately, there is no safe way to update
+    // this because TabStripController -selectTabWithContents:* is
+    // also messing with focus.  Both parties need to agree to
+    // store existing state before anyone tries to setup the new
+    // state.  Anyhow, it would look something like this.
 #if 0
-        [[field_ window] makeFirstResponder:field_];
-        [[field_ currentEditor] setSelectedRange:state->selection];
+    [[field_ window] makeFirstResponder:field_];
+    [[field_ currentEditor] setSelectedRange:state->selection];
 #endif
-      }
-    }
-  } else if (user_visible) {
+  }
+}
+
+void OmniboxViewMac::Update() {
+  if (model()->UpdatePermanentText()) {
+    // Something visibly changed.  Re-enable search term replacement.
+    controller()->GetToolbarModel()->set_search_term_replacement_enabled(true);
+    model()->UpdatePermanentText();
+
     // Restore everything to the baseline look.
     RevertAll();
+
     // TODO(shess): Figure out how this case is used, to make sure
     // we're getting the selection and popup right.
-
   } else {
     // TODO(shess): This corresponds to _win and _gtk, except those
     // guard it with a test for whether the security level changed.
     // But AFAICT, that can only change if the text changed, and that
-    // code compares the toolbar_model() security level with the local
+    // code compares the toolbar model security level with the local
     // security level.  Dig in and figure out why this isn't a no-op
     // that should go away.
     EmphasizeURLComponents();
@@ -442,6 +433,7 @@ void OmniboxViewMac::ApplyTextAttributes(const string16& display_text,
   CGFloat line_height = [[field_ cell] lineHeight];
   [paragraph_style setMaximumLineHeight:line_height];
   [paragraph_style setMinimumLineHeight:line_height];
+  [paragraph_style setLineBreakMode:NSLineBreakByTruncatingTail];
   [as addAttribute:NSParagraphStyleAttributeName value:paragraph_style
              range:as_entire_string];
 
@@ -465,7 +457,7 @@ void OmniboxViewMac::ApplyTextAttributes(const string16& display_text,
   // [Could it be to not change if no change?  If so, I'm guessing
   // AppKit may already handle that.]
   const ToolbarModel::SecurityLevel security_level =
-      toolbar_model()->GetSecurityLevel(false);
+      controller()->GetToolbarModel()->GetSecurityLevel(false);
 
   // Emphasize the scheme for security UI display purposes (if necessary).
   if (!model()->user_input_in_progress() && model()->CurrentTextIsURL() &&
@@ -772,7 +764,6 @@ void OmniboxViewMac::OnKillFocus() {
   // Tell the model to reset itself.
   model()->OnWillKillFocus(NULL);
   model()->OnKillFocus();
-  controller()->OnKillFocus();
 }
 
 void OmniboxViewMac::OnMouseDown(NSInteger button_number) {
@@ -781,6 +772,11 @@ void OmniboxViewMac::OnMouseDown(NSInteger button_number) {
   // omnibox has invisible focus does not trigger a new OnSetFocus() call.
   if (button_number == 0 || button_number == 1)
     model()->SetCaretVisibility(true);
+}
+
+bool OmniboxViewMac::ShouldSelectAllOnMouseDown() {
+  return !controller()->GetToolbarModel()->WouldPerformSearchTermReplacement(
+      false);
 }
 
 bool OmniboxViewMac::CanCopy() {
@@ -799,7 +795,8 @@ void OmniboxViewMac::CopyToPasteboard(NSPasteboard* pb) {
   // Extended Instant API.
   GURL url;
   bool write_url = false;
-  if (!ShouldEnableCopyURL()) {
+  if (!controller()->GetToolbarModel()->WouldPerformSearchTermReplacement(
+      false)) {
     model()->AdjustTextForCopy(selection.location, IsSelectAll(), &text, &url,
                                &write_url);
   }
@@ -814,19 +811,9 @@ void OmniboxViewMac::CopyToPasteboard(NSPasteboard* pb) {
   }
 }
 
-void OmniboxViewMac::CopyURLToPasteboard(NSPasteboard* pb) {
-  DCHECK(CanCopy());
-  DCHECK(ShouldEnableCopyURL());
-
-  string16 text = toolbar_model()->GetText(false);
-  GURL url = toolbar_model()->GetURL();
-
-  NSString* nstext = base::SysUTF16ToNSString(text);
-  [pb declareTypes:[NSArray arrayWithObject:NSStringPboardType] owner:nil];
-  [pb setString:nstext forType:NSStringPboardType];
-
-  [pb declareURLPasteboardWithAdditionalTypes:[NSArray array] owner:nil];
-  [pb setDataForURL:base::SysUTF8ToNSString(url.spec()) title:nstext];
+void OmniboxViewMac::ShowURL() {
+  DCHECK(ShouldEnableShowURL());
+  OmniboxView::ShowURL();
 }
 
 void OmniboxViewMac::OnPaste() {
@@ -865,9 +852,9 @@ void OmniboxViewMac::OnPaste() {
 // the AutocompleteTextFieldObserver but the logic is shared between all
 // platforms. Some refactor might be necessary to simplify this. Or at least
 // this method could call the OmniboxView version.
-bool OmniboxViewMac::ShouldEnableCopyURL() {
-  return !model()->user_input_in_progress() &&
-      toolbar_model()->WouldReplaceSearchURLWithSearchTerms(false);
+bool OmniboxViewMac::ShouldEnableShowURL() {
+  return controller()->GetToolbarModel()->WouldPerformSearchTermReplacement(
+      false);
 }
 
 bool OmniboxViewMac::CanPasteAndGo() {

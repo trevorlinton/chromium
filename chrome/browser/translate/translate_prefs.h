@@ -23,6 +23,9 @@ namespace user_prefs {
 class PrefRegistrySyncable;
 }
 
+// The wrapper of PrefService object for Translate.
+//
+// It is assumed that |prefs_| is alive while this instance is alive.
 class TranslatePrefs {
  public:
   static const char kPrefTranslateLanguageBlacklist[];
@@ -79,6 +82,12 @@ class TranslatePrefs {
   void IncrementTranslationAcceptedCount(const std::string& language);
   void ResetTranslationAcceptedCount(const std::string& language);
 
+  // Sets the language list of chrome://settings/languages.
+  void GetLanguageList(std::vector<std::string>* languages);
+
+  // Updates the language list of chrome://settings/languages.
+  void UpdateLanguageList(const std::vector<std::string>& languages);
+
   static bool CanTranslateLanguage(
       Profile* profile, const std::string& language);
   static bool ShouldAutoTranslate(PrefService* user_prefs,
@@ -89,6 +98,8 @@ class TranslatePrefs {
  private:
   friend class TranslatePrefsTest;
   FRIEND_TEST_ALL_PREFIXES(TranslatePrefsTest, CreateBlockedLanguages);
+  FRIEND_TEST_ALL_PREFIXES(TranslatePrefsTest,
+                           CreateBlockedLanguagesNonEnglishUI);
 
   // Merges two language sets to migrate to the language setting UI.
   static void CreateBlockedLanguages(
@@ -115,6 +126,8 @@ class TranslatePrefs {
   base::DictionaryValue* GetTranslationAcceptedCountDictionary() const;
 
   PrefService* prefs_;  // Weak.
+
+  DISALLOW_COPY_AND_ASSIGN(TranslatePrefs);
 };
 
 #endif  // CHROME_BROWSER_TRANSLATE_TRANSLATE_PREFS_H_

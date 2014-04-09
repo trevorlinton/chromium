@@ -11,9 +11,9 @@
 #include "ui/base/ime/composition_text.h"
 #include "ui/base/ime/text_input_mode.h"
 #include "ui/base/ime/text_input_type.h"
-#include "ui/base/range/range.h"
 #include "ui/base/ui_export.h"
 #include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/range/range.h"
 
 namespace gfx {
 class Rect;
@@ -74,37 +74,38 @@ class UI_EXPORT TextInputClient {
   // Returns current caret (insertion point) bounds relative to the screen
   // coordinates. If there is selection, then the selection bounds will be
   // returned.
-  virtual gfx::Rect GetCaretBounds() = 0;
+  virtual gfx::Rect GetCaretBounds() const = 0;
 
   // Retrieves the composition character boundary rectangle relative to the
   // screen coordinates. The |index| is zero-based index of character position
   // in composition text.
   // Returns false if there is no composition text or |index| is out of range.
   // The |rect| is not touched in the case of failure.
-  virtual bool GetCompositionCharacterBounds(uint32 index, gfx::Rect* rect) = 0;
+  virtual bool GetCompositionCharacterBounds(uint32 index,
+                                             gfx::Rect* rect) const = 0;
 
   // Returns true if there is composition text.
-  virtual bool HasCompositionText() = 0;
+  virtual bool HasCompositionText() const = 0;
 
   // Document content operations ----------------------------------------------
 
   // Retrieves the UTF-16 based character range containing accessibled text in
   // the View. It must cover the composition and selection range.
   // Returns false if the information cannot be retrieved right now.
-  virtual bool GetTextRange(ui::Range* range) = 0;
+  virtual bool GetTextRange(gfx::Range* range) const = 0;
 
   // Retrieves the UTF-16 based character range of current composition text.
   // Returns false if the information cannot be retrieved right now.
-  virtual bool GetCompositionTextRange(ui::Range* range) = 0;
+  virtual bool GetCompositionTextRange(gfx::Range* range) const = 0;
 
   // Retrieves the UTF-16 based character range of current selection.
   // Returns false if the information cannot be retrieved right now.
-  virtual bool GetSelectionRange(ui::Range* range) = 0;
+  virtual bool GetSelectionRange(gfx::Range* range) const = 0;
 
   // Selects the given UTF-16 based character range. Current composition text
   // will be confirmed before selecting the range.
   // Returns false if the operation is not supported.
-  virtual bool SetSelectionRange(const ui::Range& range) = 0;
+  virtual bool SetSelectionRange(const gfx::Range& range) = 0;
 
   // Deletes contents in the given UTF-16 based character range. Current
   // composition text will be confirmed before deleting the range.
@@ -114,13 +115,14 @@ class UI_EXPORT TextInputClient {
   // GetSelectionRange has a race condition due to asynchronous IPCs between
   // browser and renderer.
   // Returns false if the operation is not supported.
-  virtual bool DeleteRange(const ui::Range& range) = 0;
+  virtual bool DeleteRange(const gfx::Range& range) = 0;
 
   // Retrieves the text content in a given UTF-16 based character range.
   // The result will be stored into |*text|.
   // Returns false if the operation is not supported or the specified range
   // is out of the text range returned by GetTextRange().
-  virtual bool GetTextFromRange(const ui::Range& range, string16* text) = 0;
+  virtual bool GetTextFromRange(
+      const gfx::Range& range, string16* text) const = 0;
 
   // Miscellaneous ------------------------------------------------------------
 

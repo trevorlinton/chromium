@@ -14,7 +14,7 @@
 #include "ui/aura/client/capture_client.h"
 #include "ui/aura/root_window.h"
 #include "ui/base/cursor/cursor.h"
-#include "ui/base/events/event.h"
+#include "ui/events/event.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/rect.h"
 #include "ui/views/view.h"
@@ -163,7 +163,7 @@ void PartialScreenshotView::OnSelectionFinished() {
 
   is_dragging_ = false;
   if (screenshot_delegate_) {
-    aura::RootWindow *root_window =
+    aura::Window*root_window =
         GetWidget()->GetNativeWindow()->GetRootWindow();
     screenshot_delegate_->HandleTakePartialScreenshot(
         root_window,

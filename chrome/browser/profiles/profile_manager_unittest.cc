@@ -54,13 +54,9 @@ namespace {
 // observers is the same.
 Profile* g_created_profile;
 
-}  // namespace
-
-namespace testing {
-
-class ProfileManager : public ::ProfileManagerWithoutInit {
+class UnittestProfileManager : public ::ProfileManagerWithoutInit {
  public:
-  explicit ProfileManager(const base::FilePath& user_data_dir)
+  explicit UnittestProfileManager(const base::FilePath& user_data_dir)
       : ::ProfileManagerWithoutInit(user_data_dir) {}
 
  protected:
@@ -84,7 +80,7 @@ class ProfileManager : public ::ProfileManagerWithoutInit {
   }
 };
 
-}  // namespace testing
+}  // namespace
 
 class ProfileManagerTest : public testing::Test {
  protected:
@@ -102,7 +98,7 @@ class ProfileManagerTest : public testing::Test {
     // Create a new temporary directory, and store the path
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     TestingBrowserProcess::GetGlobal()->SetProfileManager(
-        new testing::ProfileManager(temp_dir_.path()));
+        new UnittestProfileManager(temp_dir_.path()));
 
 #if defined(OS_CHROMEOS)
   CommandLine* cl = CommandLine::ForCurrentProcess();
@@ -170,7 +166,7 @@ TEST_F(ProfileManagerTest, DefaultProfileDir) {
 // This functionality only exists on Chrome OS.
 TEST_F(ProfileManagerTest, LoggedInProfileDir) {
   CommandLine *cl = CommandLine::ForCurrentProcess();
-  std::string profile_dir("my_user");
+  std::string profile_dir(chrome::kTestUserProfileDir);
 
   cl->AppendSwitchASCII(chromeos::switches::kLoginProfile, profile_dir);
 
@@ -417,11 +413,12 @@ TEST_F(ProfileManagerTest, GetLastUsedProfileAllowedByPolicy) {
 
   // Attach an incognito Profile to the TestingProfile.
   ASSERT_FALSE(profile->GetOffTheRecordProfile());
-  TestingProfile* incognito_profile = new TestingProfile();
-  incognito_profile->set_incognito(true);
+  TestingProfile::Builder builder;
+  builder.SetIncognito();
+  scoped_ptr<TestingProfile> incognito_profile = builder.Build();
   EXPECT_TRUE(incognito_profile->IsOffTheRecord());
   TestingProfile* testing_profile = static_cast<TestingProfile*>(profile);
-  testing_profile->SetOffTheRecordProfile(incognito_profile);
+  testing_profile->SetOffTheRecordProfile(incognito_profile.PassAs<Profile>());
   ASSERT_TRUE(profile->GetOffTheRecordProfile());
 
   IncognitoModePrefs::SetAvailability(prefs, IncognitoModePrefs::DISABLED);
@@ -569,10 +566,10 @@ TEST_F(ProfileManagerTest, LastOpenedProfilesDoesNotContainIncognito) {
 
   // incognito profiles should not be managed by the profile manager but by the
   // original profile.
-  TestingProfile* profile2 = new TestingProfile();
-  ASSERT_TRUE(profile2);
-  profile2->set_incognito(true);
-  profile1->SetOffTheRecordProfile(profile2);
+  TestingProfile::Builder builder;
+  builder.SetIncognito();
+  scoped_ptr<TestingProfile> profile2 = builder.Build();
+  profile1->SetOffTheRecordProfile(profile2.PassAs<Profile>());
 
   std::vector<Profile*> last_opened_profiles =
       profile_manager->GetLastOpenedProfiles();
@@ -588,7 +585,8 @@ TEST_F(ProfileManagerTest, LastOpenedProfilesDoesNotContainIncognito) {
   EXPECT_EQ(profile1, last_opened_profiles[0]);
 
   // And for profile2.
-  Browser::CreateParams profile2_params(profile2, chrome::GetActiveDesktop());
+  Browser::CreateParams profile2_params(profile1->GetOffTheRecordProfile(),
+                                        chrome::GetActiveDesktop());
   scoped_ptr<Browser> browser2a(
       chrome::CreateBrowserWithTestWindowForParams(&profile2_params));
 
@@ -622,6 +620,104 @@ TEST_F(ProfileManagerTest, LastOpenedProfilesDoesNotContainIncognito) {
 
 #if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
 // There's no Browser object on Android and there's no multi-profiles on Chrome.
+TEST_F(ProfileManagerTest, EphemeralProfilesDontEndUpAsLastProfile) {
+  base::FilePath dest_path = temp_dir_.path();
+  dest_path = dest_path.Append(FILE_PATH_LITERAL("Ephemeral Profile"));
+
+  ProfileManager* profile_manager = g_browser_process->profile_manager();
+
+  TestingProfile* profile =
+      static_cast<TestingProfile*>(profile_manager->GetProfile(dest_path));
+  ASSERT_TRUE(profile);
+  profile->GetPrefs()->SetBoolean(prefs::kForceEphemeralProfiles, true);
+
+  // Here the last used profile is still the "Default" profile.
+  Profile* last_used_profile = profile_manager->GetLastUsedProfile();
+  EXPECT_NE(profile, last_used_profile);
+
+  // Create a browser for the profile.
+  Browser::CreateParams profile_params(profile, chrome::GetActiveDesktop());
+  scoped_ptr<Browser> browser(
+      chrome::CreateBrowserWithTestWindowForParams(&profile_params));
+  last_used_profile = profile_manager->GetLastUsedProfile();
+  EXPECT_NE(profile, last_used_profile);
+
+  // Close the browser.
+  browser.reset();
+  last_used_profile = profile_manager->GetLastUsedProfile();
+  EXPECT_NE(profile, last_used_profile);
+}
+
+TEST_F(ProfileManagerTest, EphemeralProfilesDontEndUpAsLastOpenedAtShutdown) {
+  base::FilePath dest_path1 = temp_dir_.path();
+  dest_path1 = dest_path1.Append(FILE_PATH_LITERAL("Normal Profile"));
+
+  base::FilePath dest_path2 = temp_dir_.path();
+  dest_path2 = dest_path2.Append(FILE_PATH_LITERAL("Ephemeral Profile 1"));
+
+  base::FilePath dest_path3 = temp_dir_.path();
+  dest_path3 = dest_path3.Append(FILE_PATH_LITERAL("Ephemeral Profile 2"));
+
+  ProfileManager* profile_manager = g_browser_process->profile_manager();
+
+  // Successfully create the profiles.
+  TestingProfile* normal_profile =
+      static_cast<TestingProfile*>(profile_manager->GetProfile(dest_path1));
+  ASSERT_TRUE(normal_profile);
+
+  // Add one ephemeral profile which should not end up in this list.
+  TestingProfile* ephemeral_profile1 =
+      static_cast<TestingProfile*>(profile_manager->GetProfile(dest_path2));
+  ASSERT_TRUE(ephemeral_profile1);
+  ephemeral_profile1->GetPrefs()->SetBoolean(prefs::kForceEphemeralProfiles,
+                                             true);
+
+  // Add second ephemeral profile but don't mark it as such yet.
+  TestingProfile* ephemeral_profile2 =
+      static_cast<TestingProfile*>(profile_manager->GetProfile(dest_path3));
+  ASSERT_TRUE(ephemeral_profile2);
+
+  // Create a browser for profile1.
+  Browser::CreateParams profile1_params(normal_profile,
+                                        chrome::GetActiveDesktop());
+  scoped_ptr<Browser> browser1(
+      chrome::CreateBrowserWithTestWindowForParams(&profile1_params));
+
+  // Create browsers for the ephemeral profile.
+  Browser::CreateParams profile2_params(ephemeral_profile1,
+                                        chrome::GetActiveDesktop());
+  scoped_ptr<Browser> browser2(
+      chrome::CreateBrowserWithTestWindowForParams(&profile2_params));
+
+  Browser::CreateParams profile3_params(ephemeral_profile2,
+                                        chrome::GetActiveDesktop());
+  scoped_ptr<Browser> browser3(
+      chrome::CreateBrowserWithTestWindowForParams(&profile3_params));
+
+  std::vector<Profile*> last_opened_profiles =
+      profile_manager->GetLastOpenedProfiles();
+  ASSERT_EQ(2U, last_opened_profiles.size());
+  EXPECT_EQ(normal_profile, last_opened_profiles[0]);
+  EXPECT_EQ(ephemeral_profile2, last_opened_profiles[1]);
+
+  // Mark the second profile ephemeral.
+  ephemeral_profile2->GetPrefs()->SetBoolean(prefs::kForceEphemeralProfiles,
+                                             true);
+
+  // Simulate a shutdown.
+  content::NotificationService::current()->Notify(
+      chrome::NOTIFICATION_CLOSE_ALL_BROWSERS_REQUEST,
+      content::NotificationService::AllSources(),
+      content::NotificationService::NoDetails());
+  browser1.reset();
+  browser2.reset();
+  browser3.reset();
+
+  last_opened_profiles = profile_manager->GetLastOpenedProfiles();
+  ASSERT_EQ(1U, last_opened_profiles.size());
+  EXPECT_EQ(normal_profile, last_opened_profiles[0]);
+}
+
 TEST_F(ProfileManagerTest, ActiveProfileDeleted) {
   ProfileManager* profile_manager = g_browser_process->profile_manager();
   ASSERT_TRUE(profile_manager);

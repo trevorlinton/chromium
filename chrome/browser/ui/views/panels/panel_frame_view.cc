@@ -58,13 +58,12 @@ const SkColor kAttentionBackgroundDefaultColor =
 
 // Color used to draw the minimized panel.
 const SkColor kMinimizeBackgroundDefaultColor = SkColorSetRGB(0xf5, 0xf4, 0xf0);
-const SkColor kMinimizeBorderDefaultColor = SkColorSetRGB(0xc9, 0xc9, 0xc9);
 
 // Color used to draw the title text under default theme.
 const SkColor kTitleTextDefaultColor = SkColorSetRGB(0xf9, 0xf9, 0xf9);
 
 gfx::ImageSkia* CreateImageForColor(SkColor color) {
-  gfx::Canvas canvas(gfx::Size(1, 1), ui::SCALE_FACTOR_100P, true);
+  gfx::Canvas canvas(gfx::Size(1, 1), 1.0f, true);
   canvas.DrawColor(color);
   return new gfx::ImageSkia(canvas.ExtractImageRep());
 }

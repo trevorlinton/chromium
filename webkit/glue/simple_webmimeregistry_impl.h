@@ -30,9 +30,6 @@ class WEBKIT_GLUE_EXPORT SimpleWebMimeRegistryImpl :
       const WebKit::WebString&);
   virtual WebKit::WebMimeRegistry::SupportsType supportsJavaScriptMIMEType(
       const WebKit::WebString&);
-  // TODO(ddorwin): Remove after http://webk.it/82983 lands.
-  virtual WebKit::WebMimeRegistry::SupportsType supportsMediaMIMEType(
-      const WebKit::WebString&, const WebKit::WebString&);
   virtual WebKit::WebMimeRegistry::SupportsType supportsMediaMIMEType(
       const WebKit::WebString&,
       const WebKit::WebString&,
@@ -45,8 +42,6 @@ class WEBKIT_GLUE_EXPORT SimpleWebMimeRegistryImpl :
   virtual WebKit::WebString wellKnownMimeTypeForExtension(
       const WebKit::WebString&);
   virtual WebKit::WebString mimeTypeFromFile(const WebKit::WebString&);
-  virtual WebKit::WebString preferredExtensionForMIMEType(
-      const WebKit::WebString&);
 };
 
 }  // namespace webkit_glue

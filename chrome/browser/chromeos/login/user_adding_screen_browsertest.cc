@@ -2,13 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/login/login_display_host_impl.h"
 #include "chrome/browser/chromeos/login/login_manager_test.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
 #include "chrome/browser/chromeos/login/user_adding_screen.h"
 #include "chrome/browser/chromeos/login/user_manager.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -99,7 +99,7 @@ IN_PROC_BROWSER_TEST_F(UserAddingScreenTest, AddingSeveralUsers) {
     UserAddingScreen::Get()->Start();
     content::RunAllPendingInMessageLoop();
     EXPECT_EQ(user_adding_started(), i);
-    LoginUser(kTestUsers[i]);
+    AddUser(kTestUsers[i]);
     EXPECT_EQ(user_adding_finished(), i);
     EXPECT_TRUE(LoginDisplayHostImpl::default_host() == NULL);
     EXPECT_EQ(UserManager::Get()->GetLoggedInUsers().size(), unsigned(i + 1));

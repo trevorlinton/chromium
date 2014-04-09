@@ -233,6 +233,12 @@ FileSystemURL ExternalMountPoints::CreateExternalFileSystemURL(
           base::FilePath::kSeparators[0] + path.value()));
 }
 
+void ExternalMountPoints::RevokeAllFileSystems() {
+  base::AutoLock locker(lock_);
+  instance_map_.clear();
+  path_to_name_map_.clear();
+}
+
 ExternalMountPoints::ExternalMountPoints() {}
 
 ExternalMountPoints::~ExternalMountPoints() {
@@ -312,24 +318,6 @@ bool ExternalMountPoints::ValidateNewMountPoint(const std::string& mount_name,
     return true;
   return !(potential_child->first == path) &&
          !path.IsParent(potential_child->first);
-}
-
-ScopedExternalFileSystem::ScopedExternalFileSystem(
-    const std::string& mount_name,
-    FileSystemType type,
-    const base::FilePath& path)
-    : mount_name_(mount_name) {
-  ExternalMountPoints::GetSystemInstance()->RegisterFileSystem(
-      mount_name, type, path);
-}
-
-base::FilePath ScopedExternalFileSystem::GetVirtualRootPath() const {
-  return ExternalMountPoints::GetSystemInstance()->
-      CreateVirtualRootPath(mount_name_);
-}
-
-ScopedExternalFileSystem::~ScopedExternalFileSystem() {
-  ExternalMountPoints::GetSystemInstance()->RevokeFileSystem(mount_name_);
 }
 
 }  // namespace fileapi

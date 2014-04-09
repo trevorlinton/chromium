@@ -107,11 +107,18 @@ bool NavEntryIsInstantNTP(const content::WebContents* contents,
 // because it doesn't satisfy the requirements for extended mode or if Instant
 // is disabled through preferences). Callers must check that the returned URL is
 // valid before using it. The value of |start_margin| is used for the "es_sm"
-// parameter in the URL.
+// parameter in the URL. |force_instant_results| forces a search page to update
+// results incrementally even if that is otherwise disabled by google.com
+// preferences.
 // NOTE: This method expands the default search engine's instant_url template,
 // so it shouldn't be called from SearchTermsData or other such code that would
 // lead to an infinite recursion.
-GURL GetInstantURL(Profile* profile, int start_margin);
+GURL GetInstantURL(Profile* profile,
+                   int start_margin,
+                   bool force_instant_results);
+
+// Returns URLs associated with the default search engine for |profile|.
+std::vector<GURL> GetSearchURLs(Profile* profile);
 
 // Returns the Local Instant URL of the New Tab Page.
 // TODO(kmadhusu): Remove this function and update the call sites.
@@ -126,6 +133,10 @@ bool ShouldHideTopVerbatimMatch();
 // to always show the remote NTP on browser startup.
 bool ShouldPreferRemoteNTPOnStartup();
 
+// Returns true if the cacheable NTP should be shown and false if not.
+// Exposed for testing.
+bool ShouldUseCacheableNTP();
+
 // Returns true if the Instant NTP should be shown and false if not.
 bool ShouldShowInstantNTP();
 
@@ -136,9 +147,6 @@ bool ShouldShowRecentTabsOnNTP();
 // Returns true if Instant Extended should be disabled on the search results
 // page.
 bool ShouldSuppressInstantExtendedOnSRP();
-
-// Returns true if |my_url| matches |other_url|.
-bool MatchesOriginAndPath(const GURL& my_url, const GURL& other_url);
 
 // Transforms the input |url| into its "effective URL". The returned URL
 // facilitates grouping process-per-site. The |url| is transformed, for
@@ -186,6 +194,9 @@ void SetInstantSupportStateInNavigationEntry(InstantSupportState state,
 InstantSupportState GetInstantSupportStateFromNavigationEntry(
     const content::NavigationEntry& entry);
 
+// Returns true if the field trial flag is enabled to prefetch results on SRP.
+bool ShouldPrefetchSearchResultsOnSRP();
+
 // -----------------------------------------------------
 // The following APIs are exposed for use in tests only.
 // -----------------------------------------------------
@@ -199,16 +210,16 @@ void DisableInstantExtendedAPIForTesting();
 // Type for a collection of experiment configuration parameters.
 typedef std::vector<std::pair<std::string, std::string> > FieldTrialFlags;
 
-// Given a field trial group name, parses out the group number and configuration
-// flags. On success, |flags| will be filled with the field trial flags. |flags|
-// must not be NULL. If not NULL, |group_number| will receive the experiment
-// group number.
-// Returns true iff |group_name| is successfully parsed and not disabled.
+// Finds the active field trial group name and parses out the group number and
+// configuration flags. On success, |flags| will be filled with the field trial
+// flags. |flags| must not be NULL. If not NULL, |group_number| will receive the
+// experiment group number.
+// Returns true iff the active field trial is successfully parsed and not
+// disabled.
 // Note that |flags| may be successfully populated in some cases when false is
 // returned - in these cases it should not be used.
 // Exposed for testing only.
-bool GetFieldTrialInfo(const std::string& group_name,
-                       FieldTrialFlags* flags,
+bool GetFieldTrialInfo(FieldTrialFlags* flags,
                        uint64* group_number);
 
 // Given a FieldTrialFlags object, returns the string value of the provided
@@ -230,6 +241,9 @@ uint64 GetUInt64ValueForFlagWithDefault(const std::string& flag,
 bool GetBoolValueForFlagWithDefault(const std::string& flag,
                                     bool default_value,
                                     const FieldTrialFlags& flags);
+
+// Returns the Cacheable New Tab Page URL for the given |profile|.
+GURL GetNewTabPageURL(Profile* profile);
 
 // Let tests reset the gate that prevents metrics from being sent more than
 // once.

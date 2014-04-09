@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
-// TCP cubic send side congestion algorithm, emulates the behaviour of
+// TCP cubic send side congestion algorithm, emulates the behavior of
 // TCP cubic.
 
 #ifndef NET_QUIC_CONGESTION_CONTROL_TCP_CUBIC_SENDER_H_
@@ -20,6 +20,9 @@
 
 namespace net {
 
+// Default maximum packet size used in Linux TCP implementations.
+const QuicByteCount kDefaultTCPMSS = 1460;
+
 namespace test {
 class TcpCubicSenderPeer;
 }  // namespace test
@@ -32,6 +35,8 @@ class NET_EXPORT_PRIVATE TcpCubicSender : public SendAlgorithmInterface {
                  QuicTcpCongestionWindow max_tcp_congestion_window);
   virtual ~TcpCubicSender();
 
+  virtual void SetFromConfig(const QuicConfig& config, bool is_server) OVERRIDE;
+
   // Start implementation of SendAlgorithmInterface.
   virtual void OnIncomingQuicCongestionFeedbackFrame(
       const QuicCongestionFeedbackFrame& feedback,
@@ -41,27 +46,31 @@ class NET_EXPORT_PRIVATE TcpCubicSender : public SendAlgorithmInterface {
                              QuicByteCount acked_bytes,
                              QuicTime::Delta rtt) OVERRIDE;
   virtual void OnIncomingLoss(QuicTime ack_receive_time) OVERRIDE;
-  virtual void SentPacket(QuicTime sent_time,
-                          QuicPacketSequenceNumber sequence_number,
-                          QuicByteCount bytes,
-                          Retransmission is_retransmission) OVERRIDE;
-  virtual void AbandoningPacket(QuicPacketSequenceNumber sequence_number,
-                                QuicByteCount abandoned_bytes) OVERRIDE;
+  virtual bool OnPacketSent(
+      QuicTime sent_time,
+      QuicPacketSequenceNumber sequence_number,
+      QuicByteCount bytes,
+      TransmissionType transmission_type,
+      HasRetransmittableData is_retransmittable) OVERRIDE;
+  virtual void OnPacketAbandoned(QuicPacketSequenceNumber sequence_number,
+                                 QuicByteCount abandoned_bytes) OVERRIDE;
   virtual QuicTime::Delta TimeUntilSend(
       QuicTime now,
-      Retransmission is_retransmission,
+      TransmissionType transmission_type,
       HasRetransmittableData has_retransmittable_data,
       IsHandshake handshake) OVERRIDE;
   virtual QuicBandwidth BandwidthEstimate() OVERRIDE;
   virtual QuicTime::Delta SmoothedRtt() OVERRIDE;
   virtual QuicTime::Delta RetransmissionDelay() OVERRIDE;
+  virtual QuicByteCount GetCongestionWindow() OVERRIDE;
+  virtual void SetCongestionWindow(QuicByteCount window) OVERRIDE;
   // End implementation of SendAlgorithmInterface.
 
  private:
   friend class test::TcpCubicSenderPeer;
 
-  QuicByteCount AvailableCongestionWindow();
-  QuicByteCount CongestionWindow();
+  QuicByteCount AvailableSendWindow();
+  QuicByteCount SendWindow();
   void Reset();
   void AckAccounting(QuicTime::Delta rtt);
   void CongestionAvoidance(QuicPacketSequenceNumber ack);
@@ -78,7 +87,7 @@ class NET_EXPORT_PRIVATE TcpCubicSender : public SendAlgorithmInterface {
   int64 congestion_window_count_;
 
   // Receiver side advertised window.
-  QuicByteCount receiver_congestion_window_;
+  QuicByteCount receive_window_;
 
   // Receiver side advertised packet loss.
   int last_received_accumulated_number_of_lost_packets_;

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// TODO(robliao,vadimt): Determine the granularity of testing to perform.
+
 /**
  * Test fixture for background.js.
  * @constructor
@@ -16,6 +18,7 @@ GoogleNowBackgroundUnitTest.prototype = {
 
   /** @override */
   extraLibraries: [
+    'common_test_util.js',
     'background_test_util.js',
     'background.js'
   ]
@@ -48,6 +51,406 @@ TEST_F('GoogleNowBackgroundUnitTest', 'AreTasksConflicting', function() {
   testTaskPair(STATE_CHANGED_TASK_NAME, STATE_CHANGED_TASK_NAME, false);
 });
 
+var testNotificationId = 'TEST GROUP-SOME TEST ID';
+var testChromeNotificationId = 'TEST CARD ID';
+var testNotification1 =
+    {testNotificationField: 'TEST NOTIFICATION VALUE1', priority: -1};
+var testNotification2 =
+    {testNotificationField: 'TEST NOTIFICATION VALUE2', priority: 0};
+var testActionUrls1 = {testField: 'TEST VALUE1'};
+var testActionUrls2 = {testField: 'TEST VALUE2'};
+var testDismissal1 = {testDismissalField: 'TEST DISMISSAL VALUE 1'};
+var testDismissal2 = {testDismissalField: 'TEST DISMISSAL VALUE 2'};
+var testVersion = 7;
+var testTimestamp1 = 300000;
+var testTimestamp2 = 600000;
+var testGroupRank1 = 19;
+var testGroupRank2 = 23;
+var testTriggerUnmerged = {showTimeSec: 100, hideTimeSec: 200};
+var testTriggerMerged = {showTime: 300007, hideTime: 300011};
+var testVersion1 = 29;
+var testVersion2 = 31;
+
+TEST_F(
+    'GoogleNowBackgroundUnitTest',
+    'MergeCardsEmptyNoTrigger',
+    function() {
+      // Tests merging a card with an empty trigger into an 'undefined' merged
+      // card. This should start a new card.
+
+      // Invoking the tested function.
+      var resultingMergedCard = mergeCards(undefined, {
+        notificationId: testNotificationId,
+        chromeNotificationId: testChromeNotificationId,
+        version: testVersion1,
+        chromeNotificationOptions: testNotification1,
+        actionUrls: testActionUrls1,
+        dismissal: testDismissal1
+      }, testTimestamp1, testGroupRank1);
+
+      // Check the return value.
+      assertEquals(
+          JSON.stringify({
+            dismissals: [
+              {
+                notificationId: testNotificationId,
+                parameters: testDismissal1
+              }
+            ],
+            groupRank: testGroupRank1,
+            trigger: {},
+            timestamp: testTimestamp1,
+            notification: testNotification1,
+            actionUrls: testActionUrls1,
+            version: testVersion1
+          }),
+        JSON.stringify(resultingMergedCard));
+    });
+
+TEST_F(
+    'GoogleNowBackgroundUnitTest',
+    'MergeCards1',
+    function() {
+      // Tests merging a unmerged card into a merged card.
+      // Unmerged card priority is greater than merged card one. Unmerged card
+      // rank is less than merged card one, and it's older.
+
+      // Setup.
+      var mergedCard = {
+        trigger: testTriggerMerged,
+        version: testVersion1,
+        timestamp: testTimestamp2,
+        notification: testNotification1,
+        actionUrls: testActionUrls1,
+        groupRank: testGroupRank2,
+        dismissals:
+            [{notificationId: testNotificationId, parameters: testDismissal1}]
+      };
+
+      var unmergedNotification = {
+        notificationId: testNotificationId,
+        chromeNotificationId: testChromeNotificationId,
+        version: testVersion2,
+        chromeNotificationOptions: testNotification2,
+        actionUrls: testActionUrls2,
+        dismissal: testDismissal2,
+        trigger: testTriggerUnmerged
+      };
+
+      // Invoking the tested function.
+      var resultingMergedCard = mergeCards(
+          mergedCard, unmergedNotification, testTimestamp1, testGroupRank1);
+
+      // Check the return value.
+      assertEquals(
+          JSON.stringify({
+            trigger: testTriggerMerged,
+            version: testVersion1,
+            timestamp: testTimestamp2,
+            notification: {
+                testNotificationField: 'TEST NOTIFICATION VALUE1',
+                priority: 0
+             },
+            actionUrls: testActionUrls1,
+            groupRank: testGroupRank2,
+            dismissals: [
+              {notificationId: testNotificationId, parameters: testDismissal1},
+              {notificationId: testNotificationId, parameters: testDismissal2}
+            ]
+          }),
+        JSON.stringify(resultingMergedCard));
+    });
+
+TEST_F(
+    'GoogleNowBackgroundUnitTest',
+    'MergeCards2',
+    function() {
+      // Tests merging a unmerged card into a merged card.
+      // Unmerged card priority is less than merged card one. Unmerged card rank
+      // is greater than merged card one, and it's older.
+
+      // Setup.
+      var mergedCard = {
+        trigger: testTriggerMerged,
+        version: testVersion1,
+        timestamp: testTimestamp2,
+        notification: testNotification2,
+        actionUrls: testActionUrls1,
+        groupRank: testGroupRank1,
+        dismissals:
+            [{notificationId: testNotificationId, parameters: testDismissal1}]
+      };
+
+      var unmergedNotification = {
+        notificationId: testNotificationId,
+        chromeNotificationId: testChromeNotificationId,
+        version: testVersion2,
+        chromeNotificationOptions: testNotification1,
+        actionUrls: testActionUrls2,
+        dismissal: testDismissal2,
+        trigger: testTriggerUnmerged
+      };
+
+      // Invoking the tested function.
+      var resultingMergedCard = mergeCards(
+          mergedCard, unmergedNotification, testTimestamp1, testGroupRank2);
+
+      // Check the return value.
+      assertEquals(
+          JSON.stringify({
+            trigger: {showTime: 400000, hideTime: 500000},
+            version: testVersion1,
+            timestamp: testTimestamp2,
+            notification: {
+                testNotificationField: 'TEST NOTIFICATION VALUE2',
+                priority: 0
+             },
+            actionUrls: testActionUrls1,
+            groupRank: testGroupRank2,
+            dismissals: [
+              {notificationId: testNotificationId, parameters: testDismissal1},
+              {notificationId: testNotificationId, parameters: testDismissal2}
+            ]
+          }),
+        JSON.stringify(resultingMergedCard));
+    });
+
+TEST_F(
+    'GoogleNowBackgroundUnitTest',
+    'MergeCards3',
+    function() {
+      // Tests merging a unmerged card into a merged card.
+      // Unmerged card priority is less than merged card one. Unmerged card rank
+      // is less than merged card one, and it's newer.
+
+      // Setup.
+      var mergedCard = {
+        trigger: testTriggerMerged,
+        version: testVersion1,
+        timestamp: testTimestamp1,
+        notification: testNotification2,
+        actionUrls: testActionUrls1,
+        groupRank: testGroupRank2,
+        dismissals:
+            [{notificationId: testNotificationId, parameters: testDismissal1}]
+      };
+
+      var unmergedNotification = {
+        notificationId: testNotificationId,
+        chromeNotificationId: testChromeNotificationId,
+        version: testVersion2,
+        chromeNotificationOptions: testNotification1,
+        actionUrls: testActionUrls2,
+        dismissal: testDismissal2,
+        trigger: testTriggerUnmerged
+      };
+
+      // Invoking the tested function.
+      var resultingMergedCard = mergeCards(
+          mergedCard, unmergedNotification, testTimestamp2, testGroupRank1);
+
+      // Check the return value.
+      assertEquals(
+          JSON.stringify({
+            trigger: testTriggerMerged,
+            version: testVersion2,
+            timestamp: testTimestamp2,
+            notification: {
+                testNotificationField: 'TEST NOTIFICATION VALUE1',
+                priority: 0
+             },
+            actionUrls: testActionUrls2,
+            groupRank: testGroupRank2,
+            dismissals: [
+              {notificationId: testNotificationId, parameters: testDismissal1},
+              {notificationId: testNotificationId, parameters: testDismissal2}
+            ]
+          }),
+        JSON.stringify(resultingMergedCard));
+    });
+
+TEST_F(
+    'GoogleNowBackgroundUnitTest',
+    'MergeGroup',
+    function() {
+      // Tests mergeGroup method.
+
+      // Setup.
+      this.makeAndRegisterMockGlobals(['mergeCards']);
+
+      this.mockGlobals.expects(once()).
+          mergeCards(
+              undefined,
+              eqJSON({chromeNotificationId: 'ID 1', testField: 'TEST_FIELD1'}),
+              300000,
+              17).
+          will(returnValue({testField: 'RESULT 1'}));
+      this.mockGlobals.expects(once()).
+          mergeCards(
+              eqJSON({testField: 'TEST_FIELD22'}),
+              eqJSON({chromeNotificationId: 'ID 2', testField: 'TEST_FIELD2'}),
+              300000,
+              17).
+          will(returnValue({testField: 'RESULT 2'}));
+
+      var group = {
+        cards: [
+          {chromeNotificationId: 'ID 1', testField: 'TEST_FIELD1'},
+          {chromeNotificationId: 'ID 2', testField: 'TEST_FIELD2'}
+        ],
+        cardsTimestamp: 300000,
+        nextPollTime: 600000,
+        rank: 17
+      };
+
+      var mergedCards = {
+        'ID 2': { testField: 'TEST_FIELD22' },
+        'ID 3': { testField: 'TEST_FIELD3' }
+      };
+
+      // Invoking the tested function.
+      mergeGroup(mergedCards, group);
+
+      // Check the output parameter.
+      assertEquals(
+          JSON.stringify({
+            'ID 2': { testField: 'RESULT 2' },
+            'ID 3': { testField: 'TEST_FIELD3'},
+            'ID 1': { testField: 'RESULT 1' }}),
+          JSON.stringify(mergedCards));
+    });
+
+TEST_F(
+    'GoogleNowBackgroundUnitTest',
+    'MergeAndShowNotificationCards',
+    function() {
+      // Tests mergeAndShowNotificationCards function.
+      // The test passes 2 groups to mergeAndShowNotificationCards, checks that
+      // it calls mergeGroup() for each of these groups and calls
+      // showNotificationCards() with the results of these mergeGroup() calls.
+
+      // Setup and expectations.
+      var testGroups = {
+        'TEST GROUP 1': {testField: 'TEST VALUE 1'},
+        'TEST GROUP 2': {testField: 'TEST VALUE 2'}
+      };
+
+      this.makeAndRegisterMockGlobals(['mergeGroup', 'showNotificationCards']);
+
+      var mergeGroupSavedArgs = new SaveMockArguments();
+      this.mockGlobals.expects(once()).
+          mergeGroup(
+              mergeGroupSavedArgs.match(eqJSON({})),
+              mergeGroupSavedArgs.match(eqJSON({testField: 'TEST VALUE 1'}))).
+          will(callFunction(function() {
+            mergeGroupSavedArgs.arguments[0].card1 = {
+              testValue: 'TEST CARD VALUE 1'
+            };
+          }));
+      this.mockGlobals.expects(once()).
+          mergeGroup(
+              mergeGroupSavedArgs.match(
+                  eqJSON({card1: {testValue: 'TEST CARD VALUE 1'}})),
+              mergeGroupSavedArgs.match(
+                  eqJSON({testField: 'TEST VALUE 2'}))).
+          will(callFunction(function() {
+              mergeGroupSavedArgs.arguments[0].card2 = {
+                testValue: 'TEST CARD VALUE 2'
+              };
+          }));
+      this.mockGlobals.expects(once()).
+          showNotificationCards(
+              eqJSON({
+                card1: {testValue: 'TEST CARD VALUE 1'},
+                card2: {testValue: 'TEST CARD VALUE 2'}
+              }),
+              ANYTHING);
+
+      // Invoking the tested function.
+      mergeAndShowNotificationCards(testGroups, function() {});
+    });
+
+// TODO(vadimt): Add more tests for parseAndShowNotificationCards().
+TEST_F(
+    'GoogleNowBackgroundUnitTest',
+    'ParseAndShowNotificationCardsAdd1Remove1',
+    function() {
+      // Tests parseAndShowNotificationCards function for the case when the
+      // extension has 2 groups, and the server sends update with 2 groups, one
+      // of which is new, and another one matches a stored group. The client
+      // has to delete the group that didn't receive an update, keep the
+      // existing group that received an update, and add a new stored group for
+      // the new group from the server.
+
+      // Setup and expectations.
+      var serverResponse = {
+        groups: {
+          GROUP1: {},
+          GROUP2: {}
+        }
+      };
+
+      var storedGroups = {
+        GROUP2: {
+          cards: ['c2'],
+          cardsTimestamp: 239,
+          nextPollTime: 10000,
+          rank: 1
+        },
+        GROUP3: {
+          cards: ['c3'],
+          cardsTimestamp: 240,
+          nextPollTime: 10001,
+          rank: 2
+        }
+      };
+
+      var expectedUpdatedGroups = {
+        GROUP1: {
+          cards: []
+        },
+        GROUP2: {
+          cards: ['c2'],
+          cardsTimestamp: 239,
+          nextPollTime: 10000,
+          rank: 1
+        }
+      };
+
+      this.makeAndRegisterMockGlobals(
+          ['scheduleNextPoll', 'mergeAndShowNotificationCards', 'recordEvent']);
+
+      this.makeAndRegisterMockApis([
+        'chrome.storage.local.set',
+        'instrumented.storage.local.get'
+      ]);
+
+      var storageGetSavedArgs = new SaveMockArguments();
+      this.mockApis.expects(once()).
+          instrumented_storage_local_get(
+              storageGetSavedArgs.match(eq('notificationGroups')),
+              storageGetSavedArgs.match(ANYTHING)).
+          will(invokeCallback(
+              storageGetSavedArgs, 1, {notificationGroups: storedGroups}));
+
+      this.mockGlobals.expects(once()).
+          scheduleNextPoll(eqJSON(expectedUpdatedGroups), true);
+
+      this.mockApis.expects(once()).
+          chrome_storage_local_set(
+              eqJSON({notificationGroups: expectedUpdatedGroups}));
+
+      this.mockGlobals.expects(once()).
+          mergeAndShowNotificationCards(
+              eqJSON(expectedUpdatedGroups), ANYTHING);
+
+      this.mockGlobals.expects(once()).
+          recordEvent(GoogleNowEvent.CARDS_PARSE_SUCCESS);
+
+      // Invoking the tested function.
+      parseAndShowNotificationCards(JSON.stringify(serverResponse));
+    });
+
 /**
  * Mocks global functions and APIs that initialize() depends upon.
  * @param {Test} fixture Test fixture.
@@ -55,14 +458,16 @@ TEST_F('GoogleNowBackgroundUnitTest', 'AreTasksConflicting', function() {
 function mockInitializeDependencies(fixture) {
   fixture.makeAndRegisterMockGlobals([
     'recordEvent',
-    'showWelcomeToast',
+    'setBackgroundEnable',
     'startPollingCards'
   ]);
   fixture.makeAndRegisterMockApis([
     'authenticationManager.isSignedIn',
     'chrome.location.clearWatch',
-    'chrome.storage.local.set',
+    'chrome.storage.local.remove',
+    'instrumented.metricsPrivate.getVariationParams',
     'instrumented.notifications.getAll',
+    'instrumented.notifications.getPermissionLevel',
     'instrumented.preferencesPrivate.googleGeolocationAccessEnabled.get',
     'instrumented.storage.local.get',
     'tasks.add',
@@ -77,19 +482,25 @@ function mockInitializeDependencies(fixture) {
  * Note that this CAN NOT be used if any of the methods below are called
  * outside of this context with the same argument matchers.
  * expects() calls cannot be chained with the same argument matchers.
- * @param {object} mockApisObj Mock APIs Object.
+ * @param {object} fixture Test fixture.
  * @param {string} testIdentityToken getAuthToken callback token.
  * @param {boolean} testGeolocationPref Geolocation Preference callback value.
- * @param {boolean} testUserRespondedToToast User Response to toast
- &     callback value.
+ * @param {object} testExperimentVariationParams Response of
+ *     metricsPrivate.getVariationParams.
+ * @param {string} testExperimentVariationParams Response of
+ *     notifications.getPermissionLevel.
+ * @param {boolean} testGoogleNowEnabled True if the user is opted in to Google
+ *     Now.
  */
 function expectStateMachineCalls(
-    mockApisObj,
+    fixture,
     testIdentityToken,
     testGeolocationPref,
-    testUserRespondedToToast) {
+    testExperimentVariationParams,
+    testNotificationPermissionLevel,
+    testGoogleNowEnabled) {
   var authenticationManagerIsSignedInSavedArgs = new SaveMockArguments();
-  mockApisObj.expects(once()).
+  fixture.mockApis.expects(once()).
       authenticationManager_isSignedIn(
           authenticationManagerIsSignedInSavedArgs.match(ANYTHING)).
       will(invokeCallback(
@@ -97,20 +508,41 @@ function expectStateMachineCalls(
           0,
           testIdentityToken));
 
+  var getVariationParamsSavedArgs = new SaveMockArguments();
+  fixture.mockApis.expects(once()).
+      instrumented_metricsPrivate_getVariationParams(
+          getVariationParamsSavedArgs.match(ANYTHING),
+          getVariationParamsSavedArgs.match(ANYTHING)).
+      will(invokeCallback(
+          getVariationParamsSavedArgs, 1, testExperimentVariationParams));
+
   var googleGeolocationPrefGetSavedArgs = new SaveMockArguments();
-  mockApisObj.expects(once()).
+  fixture.mockApis.expects(once()).
       instrumented_preferencesPrivate_googleGeolocationAccessEnabled_get(
           googleGeolocationPrefGetSavedArgs.match(eqJSON({})),
           googleGeolocationPrefGetSavedArgs.match(ANYTHING)).
       will(invokeCallback(
           googleGeolocationPrefGetSavedArgs, 1, {value: testGeolocationPref}));
 
-  var storageGetSavedArgs = new SaveMockArguments();
-  mockApisObj.expects(once()).
-      instrumented_storage_local_get(
-          storageGetSavedArgs.match(eq('userRespondedToToast')),
-          storageGetSavedArgs.match(ANYTHING)).
-      will(invokeCallback(storageGetSavedArgs, 1, testUserRespondedToToast));
+  var notificationGetPermissionLevelSavedArgs = new SaveMockArguments();
+  fixture.mockApis.expects(once()).
+      instrumented_notifications_getPermissionLevel(
+          notificationGetPermissionLevelSavedArgs.match(ANYTHING)).
+      will(invokeCallback(
+          notificationGetPermissionLevelSavedArgs,
+          0,
+          testNotificationPermissionLevel))
+
+   var storageGetSavedArgs = new SaveMockArguments();	 
+   fixture.mockApis.expects(once()).	 
+       instrumented_storage_local_get(	 
+           storageGetSavedArgs.match(eq('googleNowEnabled')),	 
+           storageGetSavedArgs.match(ANYTHING)).	 
+       will(invokeCallback(
+          storageGetSavedArgs, 1, {googleNowEnabled: testGoogleNowEnabled}));	 
+
+  fixture.mockGlobals.expects(once()).
+      setBackgroundEnable(ANYTHING);
 }
 
 /**
@@ -121,12 +553,6 @@ function expectStateMachineCalls(
  * expects() calls cannot be chained with the same argument matchers.
  */
 function expectInitialization(mockApisObj) {
-  mockApisObj.expects(once()).
-      chrome_location_clearWatch(ANYTHING);
-  mockApisObj.expects(once()).
-      updateCardsAttempts_stop();
-  mockApisObj.expects(once()).
-      chrome_storage_local_set(eqJSON({notificationsData: {}}));
   var tasksAddSavedArgs = new SaveMockArguments();
   mockApisObj.expects(once()).
       tasks_add(
@@ -144,17 +570,18 @@ function expectInitialization(mockApisObj) {
 
 TEST_F(
     'GoogleNowBackgroundUnitTest',
-    'Initialize_ToastStateEmpty1',
+    'Initialize_ToastStateEmpty',
     function() {
-      // Tests the case when the user isn't signed in and NOTIFICATION_CARDS_URL
-      // is not set. Since NOTIFICATION_CARDS_URL is empty,
-      // nothing should start.
+      // Tests the case when getAuthToken fails most likely because the user is
+      // not signed in. In this case, the function should quietly exit after
+      // finding out that getAuthToken fails.
 
       // Setup and expectations.
-      NOTIFICATION_CARDS_URL = undefined;
       var testIdentityToken = undefined;
       var testGeolocationPref = false;
-      var testUserRespondedToToast = {};
+      var testExperimentVariationParams = {};
+      var testNotificationPermissionLevel = 'denied';
+      var testGoogleNowEnabled = undefined;
 
       mockInitializeDependencies(this);
 
@@ -167,20 +594,12 @@ TEST_F(
       expectInitialization(this.mockApis);
 
       expectStateMachineCalls(
-          this.mockApis,
+          this,
           testIdentityToken,
           testGeolocationPref,
-          testUserRespondedToToast);
-
-      var chromeNotificationGetAllSavedArgs = new SaveMockArguments();
-      this.mockApis.expects(exactly(2)).
-          instrumented_notifications_getAll(
-              chromeNotificationGetAllSavedArgs.match(ANYTHING)).
-          will(
-              invokeCallback(chromeNotificationGetAllSavedArgs, 0, {}),
-              invokeCallback(chromeNotificationGetAllSavedArgs, 0, {}));
-
-      // TODO(robliao,vadimt): Determine the granularity of testing to perform.
+          testExperimentVariationParams,
+          testNotificationPermissionLevel,
+          testGoogleNowEnabled);
 
       // Invoking the tested function.
       initialize();
@@ -188,59 +607,18 @@ TEST_F(
 
 TEST_F(
     'GoogleNowBackgroundUnitTest',
-    'Initialize_ToastStateEmpty2',
+    'DISABLED_Initialize_ToastStateEmpty2',
     function() {
-      // Tests the case when NOTIFICATION_CARDS_URL is but getAuthToken fails
-      // most likely because the user is not signed in. In this case, the
-      // function should quietly exit after finding out that getAuthToken fails.
-
-      // Setup and expectations.
-      NOTIFICATION_CARDS_URL = 'https://some.server.url.com';
-      var testIdentityToken = undefined;
-      var testGeolocationPref = false;
-      var testUserRespondedToToast = {};
-
-      mockInitializeDependencies(this);
-
-      this.mockGlobals.expects(once()).recordEvent(
-          GoogleNowEvent.EXTENSION_START);
-
-      this.mockGlobals.expects(once()).recordEvent(
-          GoogleNowEvent.STOPPED);
-
-      expectInitialization(this.mockApis);
-
-      expectStateMachineCalls(
-          this.mockApis,
-          testIdentityToken,
-          testGeolocationPref,
-          testUserRespondedToToast);
-
-      var chromeNotificationGetAllSavedArgs = new SaveMockArguments();
-      this.mockApis.expects(exactly(2)).
-          instrumented_notifications_getAll(
-              chromeNotificationGetAllSavedArgs.match(ANYTHING)).
-          will(
-              invokeCallback(chromeNotificationGetAllSavedArgs, 0, {}),
-              invokeCallback(chromeNotificationGetAllSavedArgs, 0, {}));
-
-      // Invoking the tested function.
-      initialize();
-    });
-
-TEST_F(
-    'GoogleNowBackgroundUnitTest',
-    'Initialize_ToastStateEmpty3',
-    function() {
-      // Tests the case when NOTIFICATION_CARDS_URL is set, getAuthToken
-      // succeeds, and the user has never responded to the toast.
+      // Tests the case when getAuthToken succeeds, and the user has never
+      // responded to the toast.
       // In this case, the function should invoke showWelcomeToast().
 
       // Setup and expectations.
-      NOTIFICATION_CARDS_URL = 'https://some.server.url.com';
       var testIdentityToken = 'some identity token';
       var testGeolocationPref = false;
-      var testUserRespondedToToast = {};
+      var testExperimentVariationParams = {};
+      var testNotificationPermissionLevel = 'denied';
+      var testGoogleNowEnabled = undefined;
 
       mockInitializeDependencies(this);
 
@@ -250,20 +628,20 @@ TEST_F(
       expectInitialization(this.mockApis);
 
       expectStateMachineCalls(
-          this.mockApis,
+          this,
           testIdentityToken,
           testGeolocationPref,
-          testUserRespondedToToast);
+          testExperimentVariationParams,
+          testNotificationPermissionLevel,
+          testGoogleNowEnabled);
 
       var chromeNotificationGetAllSavedArgs = new SaveMockArguments();
-      this.mockApis.expects(exactly(2)).
+      this.mockApis.expects(exactly(1)).
           instrumented_notifications_getAll(
               chromeNotificationGetAllSavedArgs.match(ANYTHING)).
           will(
               invokeCallback(chromeNotificationGetAllSavedArgs, 0, {}),
               invokeCallback(chromeNotificationGetAllSavedArgs, 0, {}));
-
-      this.mockGlobals.expects(once()).showWelcomeToast();
 
       // Invoking the tested function.
       initialize();
@@ -274,10 +652,11 @@ TEST_F('GoogleNowBackgroundUnitTest', 'Initialize_RunGoogleNow', function() {
   // of the required state is fulfilled.
 
   // Setup and expectations.
-  NOTIFICATION_CARDS_URL = 'https://some.server.url.com';
   var testIdentityToken = 'some identity token';
   var testGeolocationPref = true;
-  var testUserRespondedToToast = {userRespondedToToast: true};
+  var testExperimentVariationParams = {};
+  var testNotificationPermissionLevel = 'granted';
+  var testGoogleNowEnabled = true;
 
   mockInitializeDependencies(this);
 
@@ -287,18 +666,12 @@ TEST_F('GoogleNowBackgroundUnitTest', 'Initialize_RunGoogleNow', function() {
   expectInitialization(this.mockApis);
 
   expectStateMachineCalls(
-      this.mockApis,
+      this,
       testIdentityToken,
       testGeolocationPref,
-      testUserRespondedToToast);
-
-  var chromeNotificationGetAllSavedArgs = new SaveMockArguments();
-  this.mockApis.expects(exactly(2)).
-      instrumented_notifications_getAll(
-          chromeNotificationGetAllSavedArgs.match(ANYTHING)).
-      will(
-          invokeCallback(chromeNotificationGetAllSavedArgs, 0, {}),
-          invokeCallback(chromeNotificationGetAllSavedArgs, 0, {}));
+      testExperimentVariationParams,
+      testNotificationPermissionLevel,
+      testGoogleNowEnabled);
 
   this.mockGlobals.expects(once()).startPollingCards();
 
@@ -306,15 +679,20 @@ TEST_F('GoogleNowBackgroundUnitTest', 'Initialize_RunGoogleNow', function() {
   initialize();
 });
 
-TEST_F('GoogleNowBackgroundUnitTest', 'Initialize_NoGeolocation', function() {
+TEST_F(
+    'GoogleNowBackgroundUnitTest',
+    'DISABLED_Initialize_NoGeolocation',
+    function() {
   // Tests the case where everything is in place except for the
   // Geolocation Preference after the user responded to the toast.
 
   // Setup and expectations.
-  NOTIFICATION_CARDS_URL = 'https://some.server.url.com';
   var testIdentityToken = 'some identity token';
   var testGeolocationPref = false;
-  var testUserRespondedToToast = {userRespondedToToast: true};
+  var testExperimentVariationParams = {};
+  var testNotificationPermissionLevel = 'denied';
+  var testGoogleNowEnabled = undefined;
+
 
   mockInitializeDependencies(this);
 
@@ -327,10 +705,13 @@ TEST_F('GoogleNowBackgroundUnitTest', 'Initialize_NoGeolocation', function() {
   expectInitialization(this.mockApis);
 
   expectStateMachineCalls(
-      this.mockApis,
+      this,
       testIdentityToken,
       testGeolocationPref,
-      testUserRespondedToToast);
+      testExperimentVariationParams,
+      testNotificationPermissionLevel,
+      testNotificationPermissionLevel,
+      testGoogleNowEnabled);
 
   var chromeNotificationGetAllSavedArgs = new SaveMockArguments();
   this.mockApis.expects(exactly(2)).
@@ -351,6 +732,7 @@ TEST_F('GoogleNowBackgroundUnitTest', 'Initialize_NoGeolocation', function() {
 function mockOnNotificationClickedDependencies(fixture) {
   fixture.makeAndRegisterMockApis([
       'chrome.windows.create',
+      'chrome.windows.update',
       'instrumented.storage.local.get',
       'instrumented.tabs.create']);
 }
@@ -383,14 +765,14 @@ TEST_F(
 
 TEST_F(
     'GoogleNowBackgroundUnitTest',
-    'OnNotificationClicked_ActionUrlsNotObject',
+    'OnNotificationClicked_ActionUrlsUndefined',
     function() {
-      // Tests the case when the data associated with notification id is not an
-      // object, probably because of a malformed server response.
+      // Tests the case when the data associated with notification id is
+      // 'undefined'.
       // In this case, the function should do nothing.
 
       // Setup and expectations.
-      var testActionUrls = 'string, not object';
+      var testActionUrls = undefined;
       var testNotificationId = 'TEST_ID';
       var testNotificationData = {
           notificationsData: {'TEST_ID': {actionUrls: testActionUrls}}
@@ -405,39 +787,8 @@ TEST_F(
               storageGetSavedArgs.match(eq('notificationsData')),
               storageGetSavedArgs.match(ANYTHING)).
           will(invokeCallback(storageGetSavedArgs, 1, testNotificationData));
-
-      // Invoking the tested function.
-      onNotificationClicked(
-          testNotificationId, this.mockLocalFunctions.functions().selector);
-    });
-
-TEST_F(
-    'GoogleNowBackgroundUnitTest',
-    'OnNotificationClicked_UrlNotString',
-    function() {
-      // Tests the case when selector returns a non-string, probably because of
-      // a malformed server response.
-      // In this case, the function should do nothing.
-
-      // Setup and expectations.
-      var testActionUrls = {testField: 'TEST VALUE'};
-      var testNotificationId = 'TEST_ID';
-      var testNotificationData = {
-          notificationsData: {'TEST_ID': {actionUrls: testActionUrls}}
-      };
-      var testActionUrl = {};
-
-      mockOnNotificationClickedDependencies(this);
-      this.makeMockLocalFunctions(['selector']);
-
-      var storageGetSavedArgs = new SaveMockArguments();
-      this.mockApis.expects(once()).
-          instrumented_storage_local_get(
-              storageGetSavedArgs.match(eq('notificationsData')),
-              storageGetSavedArgs.match(ANYTHING)).
-          will(invokeCallback(storageGetSavedArgs, 1, testNotificationData));
-      this.mockLocalFunctions.expects(once()).selector(testActionUrls).will(
-          returnValue(testActionUrl));
+      this.mockLocalFunctions.expects(once()).selector(undefined).will(
+          returnValue(undefined));
 
       // Invoking the tested function.
       onNotificationClicked(
@@ -457,7 +808,7 @@ TEST_F(
           notificationsData: {'TEST_ID': {actionUrls: testActionUrls}}
       };
       var testActionUrl = 'http://testurl.com';
-      var testCreatedTab = {};
+      var testCreatedTab = {windowId: 239};
 
       mockOnNotificationClickedDependencies(this);
       this.makeMockLocalFunctions(['selector']);
@@ -476,6 +827,9 @@ TEST_F(
               chromeTabsCreateSavedArgs.match(eqJSON({url: testActionUrl})),
               chromeTabsCreateSavedArgs.match(ANYTHING)).
           will(invokeCallback(chromeTabsCreateSavedArgs, 1, testCreatedTab));
+      this.mockApis.expects(once()).chrome_windows_update(
+          testCreatedTab.windowId,
+          eqJSON({focused: true}));
 
       // Invoking the tested function.
       onNotificationClicked(
@@ -517,7 +871,7 @@ TEST_F(
               chromeTabsCreateSavedArgs.match(ANYTHING)).
           will(invokeCallback(chromeTabsCreateSavedArgs, 1, testCreatedTab));
       this.mockApis.expects(once()).chrome_windows_create(
-          eqJSON({url: testActionUrl}));
+          eqJSON({url: testActionUrl, focused: true}));
 
       // Invoking the tested function.
       onNotificationClicked(

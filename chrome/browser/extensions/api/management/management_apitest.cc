@@ -17,8 +17,8 @@
 #include "chrome/browser/ui/browser_iterator.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/extensions/manifest.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/common/manifest.h"
 
 using extensions::Extension;
 using extensions::Manifest;
@@ -48,11 +48,12 @@ class ExtensionManagementApiTest : public ExtensionApiTest {
   virtual void LoadExtensions() {
     base::FilePath basedir = test_data_dir_.AppendASCII("management");
 
-    // Load 4 enabled items.
+    // Load 5 enabled items.
     LoadNamedExtension(basedir, "enabled_extension");
     LoadNamedExtension(basedir, "enabled_app");
     LoadNamedExtension(basedir, "description");
     LoadNamedExtension(basedir, "permissions");
+    LoadNamedExtension(basedir, "short_name");
 
     // Load 2 disabled items.
     LoadNamedExtension(basedir, "disabled_extension");
@@ -69,7 +70,7 @@ class ExtensionManagementApiTest : public ExtensionApiTest {
     ASSERT_TRUE(LoadExtension(test_data_dir_.AppendASCII(app_path)));
 
     if (out_app_id)
-      *out_app_id = last_loaded_extension_id_;
+      *out_app_id = last_loaded_extension_id();
 
     ASSERT_TRUE(launched_app.WaitUntilSatisfied());
   }

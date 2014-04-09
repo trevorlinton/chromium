@@ -12,7 +12,7 @@
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/memory/weak_ptr.h"
+#include "base/timer/timer.h"
 #include "content/browser/indexed_db/indexed_db.h"
 #include "content/browser/indexed_db/indexed_db_metadata.h"
 #include "content/browser/indexed_db/leveldb/leveldb_iterator.h"
@@ -22,6 +22,8 @@
 #include "content/common/indexed_db/indexed_db_key_path.h"
 #include "content/common/indexed_db/indexed_db_key_range.h"
 #include "third_party/WebKit/public/platform/WebIDBCallbacks.h"
+#include "third_party/leveldatabase/src/include/leveldb/status.h"
+#include "url/gurl.h"
 
 namespace content {
 
@@ -31,11 +33,10 @@ class LevelDBDatabase;
 class LevelDBFactory {
  public:
   virtual ~LevelDBFactory() {}
-  virtual leveldb::Status OpenLevelDB(
-      const base::FilePath& file_name,
-      const LevelDBComparator* comparator,
-      scoped_ptr<LevelDBDatabase>* db,
-      bool* is_disk_full) = 0;
+  virtual leveldb::Status OpenLevelDB(const base::FilePath& file_name,
+                                      const LevelDBComparator* comparator,
+                                      scoped_ptr<LevelDBDatabase>* db,
+                                      bool* is_disk_full) = 0;
   virtual bool DestroyLevelDB(const base::FilePath& file_name) = 0;
 };
 
@@ -44,26 +45,30 @@ class CONTENT_EXPORT IndexedDBBackingStore
  public:
   class CONTENT_EXPORT Transaction;
 
-  static scoped_refptr<IndexedDBBackingStore> Open(
-      const std::string& origin_identifier,
-      const base::FilePath& path_base,
-      const std::string& file_identifier,
-      WebKit::WebIDBCallbacks::DataLoss* data_loss);
+  const GURL& origin_url() const { return origin_url_; }
+  base::OneShotTimer<IndexedDBBackingStore>* close_timer() {
+    return &close_timer_;
+  }
 
   static scoped_refptr<IndexedDBBackingStore> Open(
-      const std::string& origin_identifier,
+      const GURL& origin_url,
       const base::FilePath& path_base,
-      const std::string& file_identifier,
       WebKit::WebIDBCallbacks::DataLoss* data_loss,
+      std::string* data_loss_message,
+      bool* disk_full);
+
+  static scoped_refptr<IndexedDBBackingStore> Open(
+      const GURL& origin_url,
+      const base::FilePath& path_base,
+      WebKit::WebIDBCallbacks::DataLoss* data_loss,
+      std::string* data_loss_message,
+      bool* disk_full,
       LevelDBFactory* factory);
   static scoped_refptr<IndexedDBBackingStore> OpenInMemory(
-      const std::string& file_identifier);
+      const GURL& origin_url);
   static scoped_refptr<IndexedDBBackingStore> OpenInMemory(
-      const std::string& file_identifier,
+      const GURL& origin_url,
       LevelDBFactory* factory);
-  base::WeakPtr<IndexedDBBackingStore> GetWeakPtr() {
-    return weak_factory_.GetWeakPtr();
-  }
 
   virtual std::vector<string16> GetDatabaseNames();
   virtual bool GetIDBDatabaseMetaData(const string16& name,
@@ -281,10 +286,7 @@ class CONTENT_EXPORT IndexedDBBackingStore
       transaction_ = NULL;
     }
 
-    static LevelDBTransaction* LevelDBTransactionFrom(
-        Transaction* transaction) {
-      return transaction->transaction_;
-    }
+    LevelDBTransaction* transaction() { return transaction_; }
 
    private:
     IndexedDBBackingStore* backing_store_;
@@ -292,7 +294,7 @@ class CONTENT_EXPORT IndexedDBBackingStore
   };
 
  protected:
-  IndexedDBBackingStore(const std::string& identifier,
+  IndexedDBBackingStore(const GURL& origin_url,
                         scoped_ptr<LevelDBDatabase> db,
                         scoped_ptr<LevelDBComparator> comparator);
   virtual ~IndexedDBBackingStore();
@@ -300,7 +302,7 @@ class CONTENT_EXPORT IndexedDBBackingStore
 
  private:
   static scoped_refptr<IndexedDBBackingStore> Create(
-      const std::string& identifier,
+      const GURL& origin_url,
       scoped_ptr<LevelDBDatabase> db,
       scoped_ptr<LevelDBComparator> comparator);
 
@@ -316,11 +318,19 @@ class CONTENT_EXPORT IndexedDBBackingStore
                   IndexedDBObjectStoreMetadata::IndexMap* map)
       WARN_UNUSED_RESULT;
 
-  std::string identifier_;
+  const GURL origin_url_;
+
+  // The origin identifier is a key prefix unique to the origin used in the
+  // leveldb backing store to partition data by origin. It is a normalized
+  // version of the origin URL with a versioning suffix appended, e.g.
+  // "http_localhost_81@1" Since only one origin is stored per backing store
+  // this is redundant but necessary for backwards compatibility; the suffix
+  // provides for future flexibility.
+  const std::string origin_identifier_;
 
   scoped_ptr<LevelDBDatabase> db_;
   scoped_ptr<LevelDBComparator> comparator_;
-  base::WeakPtrFactory<IndexedDBBackingStore> weak_factory_;
+  base::OneShotTimer<IndexedDBBackingStore> close_timer_;
 };
 
 }  // namespace content

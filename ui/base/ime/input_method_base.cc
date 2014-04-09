@@ -43,13 +43,16 @@ void InputMethodBase::OnBlur() {
 }
 
 void InputMethodBase::SetFocusedTextInputClient(TextInputClient* client) {
-  TextInputClient* old = text_input_client_;
-  OnWillChangeFocusedClient(old, client);
-  text_input_client_ = client;  // NULL allowed.
-  OnDidChangeFocusedClient(old, client);
+  SetFocusedTextInputClientInternal(client);
+}
 
-  if (old != text_input_client_)
+void InputMethodBase::DetachTextInputClient(TextInputClient* client) {
+  if (text_input_client_ == client) {
+    OnWillChangeFocusedClient(client, NULL);
+    text_input_client_ = NULL;
+    OnDidChangeFocusedClient(client, NULL);
     NotifyTextInputStateChanged(text_input_client_);
+  }
 }
 
 TextInputClient* InputMethodBase::GetTextInputClient() const {
@@ -62,9 +65,28 @@ void InputMethodBase::OnTextInputTypeChanged(const TextInputClient* client) {
   NotifyTextInputStateChanged(client);
 }
 
+void InputMethodBase::OnCaretBoundsChanged(const TextInputClient* client) {
+  if (!IsTextInputClientFocused(client))
+    return;
+  FOR_EACH_OBSERVER(InputMethodObserver,
+                    observer_list_,
+                    OnCaretBoundsChanged(client));
+}
+
+void InputMethodBase::OnInputLocaleChanged() {
+  FOR_EACH_OBSERVER(InputMethodObserver,
+                    observer_list_,
+                    OnInputLocaleChanged());
+}
+
 TextInputType InputMethodBase::GetTextInputType() const {
   TextInputClient* client = GetTextInputClient();
   return client ? client->GetTextInputType() : TEXT_INPUT_TYPE_NONE;
+}
+
+TextInputMode InputMethodBase::GetTextInputMode() const {
+  TextInputClient* client = GetTextInputClient();
+  return client ? client->GetTextInputMode() : TEXT_INPUT_MODE_DEFAULT;
 }
 
 bool InputMethodBase::CanComposeInline() const {
@@ -111,6 +133,17 @@ void InputMethodBase::NotifyTextInputStateChanged(
   FOR_EACH_OBSERVER(InputMethodObserver,
                     observer_list_,
                     OnTextInputStateChanged(client));
+}
+
+void InputMethodBase::SetFocusedTextInputClientInternal(
+    TextInputClient* client) {
+  TextInputClient* old = text_input_client_;
+  if (old == client)
+    return;
+  OnWillChangeFocusedClient(old, client);
+  text_input_client_ = client;  // NULL allowed.
+  OnDidChangeFocusedClient(old, client);
+  NotifyTextInputStateChanged(text_input_client_);
 }
 
 }  // namespace ui

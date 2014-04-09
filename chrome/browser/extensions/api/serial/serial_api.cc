@@ -12,6 +12,8 @@
 
 using content::BrowserThread;
 
+namespace serial = extensions::api::serial;
+
 namespace extensions {
 
 const char kConnectionIdKey[] = "connectionId";
@@ -19,6 +21,9 @@ const char kDataKey[] = "data";
 const char kBytesReadKey[] = "bytesRead";
 const char kBytesWrittenKey[] = "bytesWritten";
 const char kBitrateKey[] = "bitrate";
+const char kDataBitKey[] = "dataBit";
+const char kParityKey[] = "parityBit";
+const char kStopBitKey[] = "stopBit";
 const char kSuccessKey[] = "success";
 const char kDcdKey[] = "dcd";
 const char kCtsKey[] = "cts";
@@ -36,7 +41,7 @@ SerialAsyncApiFunction::~SerialAsyncApiFunction() {
 }
 
 bool SerialAsyncApiFunction::PrePrepare() {
-  manager_ = ApiResourceManager<SerialConnection>::Get(profile());
+  manager_ = ApiResourceManager<SerialConnection>::Get(GetProfile());
   DCHECK(manager_);
   return true;
 }
@@ -65,7 +70,7 @@ void SerialGetPortsFunction::Work() {
       SerialPortEnumerator::GenerateValidSerialPortNames();
   SerialPortEnumerator::StringSet::const_iterator i = port_names.begin();
   while (i != port_names.end()) {
-    ports->Append(Value::CreateStringValue(*i++));
+    ports->Append(new base::StringValue(*i++));
   }
 
   SetResult(ports);
@@ -83,7 +88,9 @@ bool SerialGetPortsFunction::Respond() {
 // But we'd like to pick something that has a chance of working, and 9600 is a
 // good balance between popularity and speed. So 9600 it is.
 SerialOpenFunction::SerialOpenFunction()
-    : bitrate_(9600) {
+    : bitrate_(9600), databit_(serial::DATA_BIT_EIGHTBIT),
+      parity_(serial::PARITY_BIT_NOPARITY),
+      stopbit_(serial::STOP_BIT_ONESTOPBIT) {
 }
 
 SerialOpenFunction::~SerialOpenFunction() {
@@ -99,6 +106,24 @@ bool SerialOpenFunction::Prepare() {
     scoped_ptr<base::DictionaryValue> options = params_->options->ToValue();
     if (options->HasKey(kBitrateKey))
       EXTENSION_FUNCTION_VALIDATE(options->GetInteger(kBitrateKey, &bitrate_));
+    if (options->HasKey(kDataBitKey)) {
+      std::string data;
+      options->GetString(kDataBitKey, &data);
+      if (!data.empty())
+        databit_ = serial::ParseDataBit(data);
+    }
+    if (options->HasKey(kParityKey)) {
+      std::string parity;
+      options->GetString(kParityKey, &parity);
+      if (!parity.empty())
+        parity_ = serial::ParseParityBit(parity);
+    }
+    if (options->HasKey(kStopBitKey)) {
+      std::string stopbit;
+      options->GetString(kStopBitKey, &stopbit);
+      if (!stopbit.empty())
+        stopbit_ = serial::ParseStopBit(stopbit);
+    }
   }
 
   return true;
@@ -116,6 +141,9 @@ void SerialOpenFunction::Work() {
     SerialConnection* serial_connection = CreateSerialConnection(
       params_->port,
       bitrate_,
+      databit_,
+      parity_,
+      stopbit_,
       extension_->id());
     CHECK(serial_connection);
     int id = manager_->Add(serial_connection);
@@ -143,8 +171,12 @@ void SerialOpenFunction::Work() {
 SerialConnection* SerialOpenFunction::CreateSerialConnection(
     const std::string& port,
     int bitrate,
+    serial::DataBit databit,
+    serial::ParityBit parity,
+    serial::StopBit stopbit,
     const std::string& owner_extension_id) {
-  return new SerialConnection(port, bitrate, owner_extension_id);
+  return new SerialConnection(port, bitrate, databit, parity, stopbit,
+      owner_extension_id);
 }
 
 bool SerialOpenFunction::DoesPortExist(const std::string& port) {
@@ -182,7 +214,7 @@ void SerialCloseFunction::Work() {
     close_result = true;
   }
 
-  SetResult(Value::CreateBooleanValue(close_result));
+  SetResult(new base::FundamentalValue(close_result));
 }
 
 bool SerialCloseFunction::Respond() {
@@ -294,7 +326,7 @@ void SerialFlushFunction::Work() {
     flush_result = true;
   }
 
-  SetResult(Value::CreateBooleanValue(flush_result));
+  SetResult(new base::FundamentalValue(flush_result));
 }
 
 bool SerialFlushFunction::Respond() {
@@ -369,14 +401,14 @@ void SerialSetControlSignalsFunction::Work() {
     if (control_signals.should_set_rts)
       control_signals.rts = *(params_->options.rts);
     if (serial_connection->SetControlSignals(control_signals)) {
-      SetResult(Value::CreateBooleanValue(true));
+      SetResult(new base::FundamentalValue(true));
     } else {
       error_ = kErrorSetControlSignalsFailed;
-      SetResult(Value::CreateBooleanValue(false));
+      SetResult(new base::FundamentalValue(false));
     }
   } else {
     error_ = kSerialConnectionNotFoundError;
-    SetResult(Value::CreateBooleanValue(false));
+    SetResult(new base::FundamentalValue(false));
   }
 }
 

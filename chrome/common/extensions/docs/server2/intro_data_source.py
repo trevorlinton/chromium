@@ -63,8 +63,13 @@ class IntroDataSource(object):
   of contents dictionary is created, which contains the headings in the intro.
   '''
   class Factory(object):
-    def __init__(self, compiled_fs_factory, ref_resolver_factory, base_paths):
-      self._cache = compiled_fs_factory.Create(self._MakeIntroDict,
+    def __init__(self,
+                 compiled_fs_factory,
+                 file_system,
+                 ref_resolver_factory,
+                 base_paths):
+      self._cache = compiled_fs_factory.Create(file_system,
+                                               self._MakeIntroDict,
                                                IntroDataSource)
       self._ref_resolver = ref_resolver_factory.Create()
       self._base_paths = base_paths
@@ -74,6 +79,10 @@ class IntroDataSource(object):
       api_name = os.path.splitext(intro_path.split('/')[-1])[0]
       intro_with_links = self._ref_resolver.ResolveAllLinks(intro,
                                                             namespace=api_name)
+      # TODO(kalman): Do $ref replacement after rendering the template, not
+      # before, so that (a) $ref links can contain template annotations, and (b)
+      # we can use CompiledFileSystem.ForTemplates to create the templates and
+      # save ourselves some effort.
       apps_parser = _IntroParser()
       apps_parser.feed(Handlebar(intro_with_links).render(
           { 'is_apps': True }).text)
@@ -106,7 +115,7 @@ class IntroDataSource(object):
   def get(self, key):
     path = FormatKey(key)
     def get_from_base_path(base_path):
-      return self._cache.GetFromFile('%s/%s' % (base_path, path))
+      return self._cache.GetFromFile('%s/%s' % (base_path, path)).Get()
     for base_path in self._base_paths:
       try:
         return get_from_base_path(base_path)

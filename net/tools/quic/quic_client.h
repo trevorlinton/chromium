@@ -18,7 +18,7 @@
 #include "net/quic/quic_config.h"
 #include "net/quic/quic_framer.h"
 #include "net/quic/quic_packet_creator.h"
-#include "net/tools/flip_server/epoll_server.h"
+#include "net/tools/epoll_server/epoll_server.h"
 #include "net/tools/quic/quic_client_session.h"
 #include "net/tools/quic/quic_reliable_client_stream.h"
 
@@ -34,14 +34,17 @@ namespace test {
 class QuicClientPeer;
 }  // namespace test
 
-class QuicClient : public EpollCallbackInterface {
+class QuicClient : public EpollCallbackInterface,
+                   public ReliableQuicStream::Visitor {
  public:
-  QuicClient(IPEndPoint server_address, const std::string& server_hostname,
-             const QuicVersion version);
+  QuicClient(IPEndPoint server_address,
+             const string& server_hostname,
+             const QuicVersionVector& supported_versions,
+             bool print_response);
   QuicClient(IPEndPoint server_address,
              const std::string& server_hostname,
              const QuicConfig& config,
-             const QuicVersion version);
+             const QuicVersionVector& supported_versions);
 
   virtual ~QuicClient();
 
@@ -96,13 +99,14 @@ class QuicClient : public EpollCallbackInterface {
   virtual void OnUnregistration(int fd, bool replaced) OVERRIDE {}
   virtual void OnShutdown(EpollServer* eps, int fd) OVERRIDE {}
 
+  // ReliableQuicStream::Visitor
+  virtual void OnClose(ReliableQuicStream* stream) OVERRIDE;
+
   QuicPacketCreator::Options* options();
 
   QuicClientSession* session() { return session_.get(); }
 
   bool connected() const;
-
-  int packets_dropped() { return packets_dropped_; }
 
   void set_bind_to_address(IPAddressNumber address) {
     bind_to_address_ = address;
@@ -111,8 +115,6 @@ class QuicClient : public EpollCallbackInterface {
   IPAddressNumber bind_to_address() const { return bind_to_address_; }
 
   void set_local_port(int local_port) { local_port_ = local_port; }
-
-  int local_port() { return local_port_; }
 
   const IPEndPoint& server_address() const { return server_address_; }
 
@@ -142,7 +144,9 @@ class QuicClient : public EpollCallbackInterface {
   }
 
  protected:
+  virtual QuicGuid GenerateGuid();
   virtual QuicEpollConnectionHelper* CreateQuicConnectionHelper();
+  virtual QuicPacketWriter* CreateQuicPacketWriter();
 
  private:
   friend class net::tools::test::QuicClientPeer;
@@ -179,6 +183,12 @@ class QuicClient : public EpollCallbackInterface {
   // UDP socket.
   int fd_;
 
+  // Helper to be used by created connections.
+  scoped_ptr<QuicEpollConnectionHelper> helper_;
+
+  // Writer used to actually send packets to the wire.
+  scoped_ptr<QuicPacketWriter> writer_;
+
   // Tracks if the client is initialized to connect.
   bool initialized_;
 
@@ -191,8 +201,16 @@ class QuicClient : public EpollCallbackInterface {
   // because the socket would otherwise overflow.
   bool overflow_supported_;
 
-  // Which QUIC version does this client talk?
-  QuicVersion version_;
+  // This vector contains QUIC versions which we currently support.
+  // This should be ordered such that the highest supported version is the first
+  // element, with subsequent elements in descending order (versions can be
+  // skipped as necessary). We will always pick supported_versions_[0] as the
+  // initial version to use.
+  QuicVersionVector supported_versions_;
+
+  // If true, then the contents of each response will be printed to stdout
+  // when the stream is closed (in OnClose).
+  bool print_response_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicClient);
 };

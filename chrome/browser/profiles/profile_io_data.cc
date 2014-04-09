@@ -9,6 +9,7 @@
 #include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/callback.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/debug/alias.h"
@@ -19,6 +20,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/threading/sequenced_worker_pool.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/content_settings/content_settings_provider.h"
@@ -54,8 +56,8 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/common/startup_metric_utils.h"
 #include "chrome/common/url_constants.h"
+#include "components/startup_metric_utils/startup_metric_utils.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/notification_service.h"
@@ -69,6 +71,8 @@
 #include "net/proxy/proxy_config_service_fixed.h"
 #include "net/proxy/proxy_script_fetcher_impl.h"
 #include "net/proxy/proxy_service.h"
+#include "net/ssl/client_cert_store.h"
+#include "net/ssl/client_cert_store_impl.h"
 #include "net/ssl/server_bound_cert_service.h"
 #include "net/url_request/data_protocol_handler.h"
 #include "net/url_request/file_protocol_handler.h"
@@ -88,8 +92,9 @@
 #include "chrome/browser/chromeos/drive/drive_protocol_handler.h"
 #include "chrome/browser/chromeos/policy/policy_cert_verifier.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/chromeos/settings/cros_settings_names.h"
-#include "chrome/browser/policy/browser_policy_connector.h"
+#include "chrome/browser/policy/profile_policy_connector.h"
+#include "chrome/browser/policy/profile_policy_connector_factory.h"
+#include "chromeos/settings/cros_settings_names.h"
 #endif  // defined(OS_CHROMEOS)
 
 using content::BrowserContext;
@@ -209,13 +214,33 @@ class DebugDevToolsInterceptor
       net::NetworkDelegate* network_delegate) const OVERRIDE {
     base::FilePath path;
     if (IsSupportedDevToolsURL(request->url(), &path))
-      return new net::URLRequestFileJob(request, network_delegate, path);
+      return new net::URLRequestFileJob(
+          request, network_delegate, path,
+          content::BrowserThread::GetBlockingPool()->
+              GetTaskRunnerWithShutdownBehavior(
+                  base::SequencedWorkerPool::SKIP_ON_SHUTDOWN));
 
     return NULL;
   }
 };
 #endif  // defined(DEBUG_DEVTOOLS)
 
+#if defined(OS_CHROMEOS)
+scoped_ptr<policy::PolicyCertVerifier> CreatePolicyCertVerifier(
+    Profile* profile) {
+  policy::ProfilePolicyConnector* connector =
+      policy::ProfilePolicyConnectorFactory::GetForProfile(profile);
+  base::Closure policy_cert_trusted_callback =
+      base::Bind(base::IgnoreResult(&content::BrowserThread::PostTask),
+                 content::BrowserThread::UI,
+                 FROM_HERE,
+                 connector->GetPolicyCertTrustedCallback());
+  scoped_ptr<policy::PolicyCertVerifier> cert_verifier(
+      new policy::PolicyCertVerifier(policy_cert_trusted_callback));
+  connector->SetPolicyCertVerifier(cert_verifier.get());
+  return cert_verifier.Pass();
+}
+#endif
 }  // namespace
 
 void ProfileIOData::InitializeOnUIThread(Profile* profile) {
@@ -272,9 +297,7 @@ void ProfileIOData::InitializeOnUIThread(Profile* profile) {
       managed_user_service->GetURLFilterForIOThread();
 #endif
 #if defined(OS_CHROMEOS)
-  policy::BrowserPolicyConnector* connector =
-      g_browser_process->browser_policy_connector();
-  params->trust_anchor_provider = connector->GetCertTrustAnchorProvider();
+  params->cert_verifier = CreatePolicyCertVerifier(profile);
 #endif
 
   params->profile = profile;
@@ -384,9 +407,6 @@ ProfileIOData::ProfileParams::ProfileParams()
     : io_thread(NULL),
 #if defined(ENABLE_NOTIFICATIONS)
       notification_service(NULL),
-#endif
-#if defined(OS_CHROMEOS)
-      trust_anchor_provider(NULL),
 #endif
       profile(NULL) {
 }
@@ -692,6 +712,18 @@ net::URLRequestContext* ProfileIOData::ResourceContext::GetRequestContext()  {
   return request_context_;
 }
 
+scoped_ptr<net::ClientCertStore>
+ProfileIOData::ResourceContext::CreateClientCertStore() {
+#if !defined(USE_OPENSSL)
+  return scoped_ptr<net::ClientCertStore>(new net::ClientCertStoreImpl());
+#else
+  // OpenSSL does not use the ClientCertStore infrastructure. On Android client
+  // cert matching is done by the OS as part of the call to show the cert
+  // selection dialog.
+  return scoped_ptr<net::ClientCertStore>();
+#endif
+}
+
 bool ProfileIOData::ResourceContext::AllowMicAccess(const GURL& origin) {
   return AllowContentAccess(origin, CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC);
 }
@@ -754,10 +786,13 @@ void ProfileIOData::Init(content::ProtocolHandlerMap* protocol_handlers) const {
       new ChromeNetworkDelegate(
           io_thread_globals->extension_event_router_forwarder.get(),
           &enable_referrers_);
+  if (command_line.HasSwitch(switches::kEnableClientHints))
+    network_delegate->SetEnableClientHints();
   network_delegate->set_extension_info_map(
       profile_params_->extension_info_map.get());
   network_delegate->set_url_blacklist_manager(url_blacklist_manager_.get());
   network_delegate->set_profile(profile_params_->profile);
+  network_delegate->set_profile_path(profile_params_->path);
   network_delegate->set_cookie_settings(profile_params_->cookie_settings.get());
   network_delegate->set_enable_do_not_track(&enable_do_not_track_);
   network_delegate->set_force_google_safe_search(&force_safesearch_);
@@ -805,8 +840,8 @@ void ProfileIOData::Init(content::ProtocolHandlerMap* protocol_handlers) const {
 #endif
 
 #if defined(OS_CHROMEOS)
-  cert_verifier_.reset(new policy::PolicyCertVerifier(
-      profile_params_->profile, profile_params_->trust_anchor_provider));
+  profile_params_->cert_verifier->InitializeOnIOThread();
+  cert_verifier_ = profile_params_->cert_verifier.Pass();
   main_request_context_->set_cert_verifier(cert_verifier_.get());
 #else
   main_request_context_->set_cert_verifier(
@@ -835,7 +870,11 @@ scoped_ptr<net::URLRequestJobFactory> ProfileIOData::SetUpJobFactoryDefaults(
   // NOTE(willchan): Keep these protocol handlers in sync with
   // ProfileIOData::IsHandledProtocol().
   bool set_protocol = job_factory->SetProtocolHandler(
-      chrome::kFileScheme, new net::FileProtocolHandler());
+      chrome::kFileScheme,
+      new net::FileProtocolHandler(
+          content::BrowserThread::GetBlockingPool()->
+              GetTaskRunnerWithShutdownBehavior(
+                  base::SequencedWorkerPool::SKIP_ON_SHUTDOWN)));
   DCHECK(set_protocol);
 
   DCHECK(extension_info_map_.get());

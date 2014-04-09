@@ -25,6 +25,7 @@
 #include "net/quic/crypto/quic_decrypter.h"
 #include "net/quic/crypto/quic_encrypter.h"
 #include "net/quic/quic_framer.h"
+#include "net/quic/quic_http_utils.h"
 #include "net/quic/test_tools/crypto_test_utils.h"
 #include "net/quic/test_tools/mock_clock.h"
 #include "net/quic/test_tools/mock_crypto_client_stream_factory.h"
@@ -92,6 +93,7 @@ class QuicNetworkTransactionTest : public PlatformTest {
     header.public_header.guid = 0xDEADBEEF;
     header.public_header.reset_flag = false;
     header.public_header.version_flag = false;
+    header.public_header.sequence_number_length = PACKET_1BYTE_SEQUENCE_NUMBER;
     header.packet_sequence_number = num;
     header.entropy_flag = false;
     header.fec_flag = false;
@@ -108,6 +110,7 @@ class QuicNetworkTransactionTest : public PlatformTest {
     header.public_header.guid = 0xDEADBEEF;
     header.public_header.reset_flag = false;
     header.public_header.version_flag = false;
+    header.public_header.sequence_number_length = PACKET_1BYTE_SEQUENCE_NUMBER;
     header.packet_sequence_number = num;
     header.entropy_flag = false;
     header.fec_flag = false;
@@ -129,6 +132,7 @@ class QuicNetworkTransactionTest : public PlatformTest {
     header.public_header.guid = 0xDEADBEEF;
     header.public_header.reset_flag = false;
     header.public_header.version_flag = false;
+    header.public_header.sequence_number_length = PACKET_1BYTE_SEQUENCE_NUMBER;
     header.packet_sequence_number = 2;
     header.entropy_flag = false;
     header.fec_flag = false;
@@ -141,7 +145,7 @@ class QuicNetworkTransactionTest : public PlatformTest {
     feedback.tcp.accumulated_number_of_lost_packets = 0;
     feedback.tcp.receive_window = 256000;
 
-    QuicFramer framer(QuicVersionMax(), QuicTime::Zero(), false);
+    QuicFramer framer(QuicSupportedVersions(), QuicTime::Zero(), false);
     QuicFrames frames;
     frames.push_back(QuicFrame(&ack));
     frames.push_back(QuicFrame(&feedback));
@@ -174,7 +178,8 @@ class QuicNetworkTransactionTest : public PlatformTest {
 
   std::string SerializeHeaderBlock(const SpdyHeaderBlock& headers) {
     QuicSpdyCompressor compressor;
-    return compressor.CompressHeaders(headers);
+    return compressor.CompressHeadersWithPriority(
+        ConvertRequestPriorityToQuicPriority(DEFAULT_PRIORITY), headers);
   }
 
   // Returns a newly created packet to send kData on stream 1.
@@ -193,7 +198,7 @@ class QuicNetworkTransactionTest : public PlatformTest {
   scoped_ptr<QuicEncryptedPacket> ConstructPacket(
       const QuicPacketHeader& header,
       const QuicFrame& frame) {
-    QuicFramer framer(QuicVersionMax(), QuicTime::Zero(), false);
+    QuicFramer framer(QuicSupportedVersions(), QuicTime::Zero(), false);
     QuicFrames frames;
     frames.push_back(frame);
     scoped_ptr<QuicPacket> packet(
@@ -207,6 +212,7 @@ class QuicNetworkTransactionTest : public PlatformTest {
     header_.public_header.guid = random_generator_.RandUint64();
     header_.public_header.reset_flag = false;
     header_.public_header.version_flag = should_include_version;
+    header_.public_header.sequence_number_length = PACKET_1BYTE_SEQUENCE_NUMBER;
     header_.packet_sequence_number = sequence_number;
     header_.fec_group = 0;
     header_.entropy_flag = false;
@@ -232,6 +238,7 @@ class QuicNetworkTransactionTest : public PlatformTest {
     params_.http_server_properties = http_server_properties.GetWeakPtr();
 
     session_ = new HttpNetworkSession(params_);
+    session_->quic_stream_factory()->set_require_confirmation(false);
   }
 
   void CheckWasQuicResponse(const scoped_ptr<HttpNetworkTransaction>& trans) {
@@ -446,7 +453,7 @@ TEST_F(QuicNetworkTransactionTest, DoNotForceQuicForHttps) {
 }
 
 TEST_F(QuicNetworkTransactionTest, UseAlternateProtocolForQuic) {
-  HttpStreamFactory::EnableNpnSpdy();  // Enables QUIC too.
+  HttpStreamFactory::EnableNpnSpdy3();  // Enables QUIC too.
 
   MockRead http_reads[] = {
     MockRead("HTTP/1.1 200 OK\r\n"),
@@ -499,7 +506,7 @@ TEST_F(QuicNetworkTransactionTest, UseAlternateProtocolForQuicForHttps) {
   params_.origin_to_force_quic_on =
       HostPortPair::FromString("www.google.com:443");
   params_.enable_quic_https = true;
-  HttpStreamFactory::EnableNpnSpdy();  // Enables QUIC too.
+  HttpStreamFactory::EnableNpnSpdy3();  // Enables QUIC too.
 
   MockRead http_reads[] = {
     MockRead("HTTP/1.1 200 OK\r\n"),
@@ -549,7 +556,7 @@ TEST_F(QuicNetworkTransactionTest, UseAlternateProtocolForQuicForHttps) {
 }
 
 TEST_F(QuicNetworkTransactionTest, HungAlternateProtocol) {
-  HttpStreamFactory::EnableNpnSpdy();  // Enables QUIC too.
+  HttpStreamFactory::EnableNpnSpdy3();  // Enables QUIC too.
   crypto_client_stream_factory_.set_handshake_mode(
       MockCryptoClientStream::COLD_START);
 
@@ -608,7 +615,7 @@ TEST_F(QuicNetworkTransactionTest, HungAlternateProtocol) {
 }
 
 TEST_F(QuicNetworkTransactionTest, ZeroRTTWithHttpRace) {
-  HttpStreamFactory::EnableNpnSpdy();  // Enables QUIC too.
+  HttpStreamFactory::EnableNpnSpdy3();  // Enables QUIC too.
 
   scoped_ptr<QuicEncryptedPacket> req(
       ConstructDataPacket(1, 3, true, true, 0,
@@ -645,7 +652,7 @@ TEST_F(QuicNetworkTransactionTest, ZeroRTTWithHttpRace) {
 }
 
 TEST_F(QuicNetworkTransactionTest, ZeroRTTWithNoHttpRace) {
-  HttpStreamFactory::EnableNpnSpdy();  // Enables QUIC too.
+  HttpStreamFactory::EnableNpnSpdy3();  // Enables QUIC too.
 
   scoped_ptr<QuicEncryptedPacket> req(
       ConstructDataPacket(1, 3, true, true, 0,
@@ -679,7 +686,11 @@ TEST_F(QuicNetworkTransactionTest, ZeroRTTWithNoHttpRace) {
   host_resolver_.rules()->AddIPLiteralRule("www.google.com", "192.168.0.1", "");
   HostResolver::RequestInfo info(HostPortPair("www.google.com", 80));
   AddressList address;
-  host_resolver_.Resolve(info, &address, CompletionCallback(), NULL,
+  host_resolver_.Resolve(info,
+                         DEFAULT_PRIORITY,
+                         &address,
+                         CompletionCallback(),
+                         NULL,
                          net_log_.bound());
 
   CreateSession();
@@ -687,8 +698,67 @@ TEST_F(QuicNetworkTransactionTest, ZeroRTTWithNoHttpRace) {
   SendRequestAndExpectQuicResponse("hello!");
 }
 
+TEST_F(QuicNetworkTransactionTest, ZeroRTTWithConfirmationRequired) {
+  HttpStreamFactory::EnableNpnSpdy3();  // Enables QUIC too.
+
+  scoped_ptr<QuicEncryptedPacket> req(
+      ConstructDataPacket(1, 3, true, true, 0,
+                          GetRequestString("GET", "http", "/")));
+  scoped_ptr<QuicEncryptedPacket> ack(ConstructAckPacket(1, 0));
+
+  MockWrite quic_writes[] = {
+    MockWrite(SYNCHRONOUS, req->data(), req->length()),
+    MockWrite(SYNCHRONOUS, ack->data(), ack->length()),
+  };
+
+  scoped_ptr<QuicEncryptedPacket> resp(
+      ConstructDataPacket(
+          1, 3, false, true, 0, GetResponseString("200 OK", "hello!")));
+  MockRead quic_reads[] = {
+    MockRead(SYNCHRONOUS, resp->data(), resp->length()),
+    MockRead(ASYNC, OK),  // EOF
+  };
+
+  DelayedSocketData quic_data(
+      1,  // wait for one write to finish before reading.
+      quic_reads, arraysize(quic_reads),
+      quic_writes, arraysize(quic_writes));
+
+  socket_factory_.AddSocketDataProvider(&quic_data);
+
+  // The non-alternate protocol job needs to hang in order to guarantee that
+  // the alternate-protocol job will "win".
+  AddHangingNonAlternateProtocolSocketData();
+
+  // In order for a new QUIC session to be established via alternate-protocol
+  // without racing an HTTP connection, we need the host resolution to happen
+  // synchronously.  Of course, even though QUIC *could* perform a 0-RTT
+  // connection to the the server, in this test we require confirmation
+  // before encrypting so the HTTP job will still start.
+  host_resolver_.set_synchronous_mode(true);
+  host_resolver_.rules()->AddIPLiteralRule("www.google.com", "192.168.0.1", "");
+  HostResolver::RequestInfo info(HostPortPair("www.google.com", 80));
+  AddressList address;
+  host_resolver_.Resolve(info, DEFAULT_PRIORITY, &address,
+                         CompletionCallback(), NULL, net_log_.bound());
+
+  CreateSession();
+  session_->quic_stream_factory()->set_require_confirmation(true);
+  AddQuicAlternateProtocolMapping(MockCryptoClientStream::ZERO_RTT);
+
+  scoped_ptr<HttpNetworkTransaction> trans(
+      new HttpNetworkTransaction(DEFAULT_PRIORITY, session_.get()));
+  TestCompletionCallback callback;
+  int rv = trans->Start(&request_, callback.callback(), net_log_.bound());
+  EXPECT_EQ(ERR_IO_PENDING, rv);
+
+  crypto_client_stream_factory_.last_stream()->SendOnCryptoHandshakeEvent(
+      QuicSession::HANDSHAKE_CONFIRMED);
+  EXPECT_EQ(OK, callback.WaitForResult());
+}
+
 TEST_F(QuicNetworkTransactionTest, BrokenAlternateProtocol) {
-  HttpStreamFactory::EnableNpnSpdy();  // Enables QUIC too.
+  HttpStreamFactory::EnableNpnSpdy3();  // Enables QUIC too.
 
   // Alternate-protocol job
   scoped_ptr<QuicEncryptedPacket> close(ConstructConnectionClosePacket(1));
@@ -719,7 +789,7 @@ TEST_F(QuicNetworkTransactionTest, BrokenAlternateProtocol) {
 }
 
 TEST_F(QuicNetworkTransactionTest, BrokenAlternateProtocolReadError) {
-  HttpStreamFactory::EnableNpnSpdy();  // Enables QUIC too.
+  HttpStreamFactory::EnableNpnSpdy3();  // Enables QUIC too.
 
   // Alternate-protocol job
   MockRead quic_reads[] = {
@@ -746,6 +816,43 @@ TEST_F(QuicNetworkTransactionTest, BrokenAlternateProtocolReadError) {
   AddQuicAlternateProtocolMapping(MockCryptoClientStream::COLD_START);
   SendRequestAndExpectHttpResponse("hello from http");
   ExpectBrokenAlternateProtocolMapping();
+}
+
+TEST_F(QuicNetworkTransactionTest, FailedZeroRttBrokenAlternateProtocol) {
+  HttpStreamFactory::EnableNpnSpdy3();  // Enables QUIC too.
+
+  // Alternate-protocol job
+  MockRead quic_reads[] = {
+    MockRead(ASYNC, ERR_SOCKET_NOT_CONNECTED),
+  };
+  StaticSocketDataProvider quic_data(quic_reads, arraysize(quic_reads),
+                                     NULL, 0);
+  socket_factory_.AddSocketDataProvider(&quic_data);
+
+  AddHangingNonAlternateProtocolSocketData();
+
+  // Final job that will proceed when the QUIC job fails.
+  MockRead http_reads[] = {
+    MockRead("HTTP/1.1 200 OK\r\n\r\n"),
+    MockRead("hello from http"),
+    MockRead(SYNCHRONOUS, ERR_TEST_PEER_CLOSE_AFTER_NEXT_MOCK_READ),
+    MockRead(ASYNC, OK)
+  };
+
+  StaticSocketDataProvider http_data(http_reads, arraysize(http_reads),
+                                     NULL, 0);
+  socket_factory_.AddSocketDataProvider(&http_data);
+
+  CreateSession();
+
+  AddQuicAlternateProtocolMapping(MockCryptoClientStream::ZERO_RTT);
+
+  SendRequestAndExpectHttpResponse("hello from http");
+
+  ExpectBrokenAlternateProtocolMapping();
+
+  EXPECT_TRUE(quic_data.at_read_eof());
+  EXPECT_TRUE(quic_data.at_write_eof());
 }
 
 }  // namespace test

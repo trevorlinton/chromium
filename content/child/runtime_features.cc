@@ -10,7 +10,7 @@
 
 #if defined(OS_ANDROID)
 #include <cpu-features.h>
-#include "base/android/build_info.h"
+#include "media/base/android/media_codec_bridge.h"
 #endif
 
 using WebKit::WebRuntimeFeatures;
@@ -20,19 +20,19 @@ namespace content {
 static void SetRuntimeFeatureDefaultsForPlatform() {
 #if defined(OS_ANDROID)
 #if !defined(GOOGLE_TV)
-  // MSE/EME implementation needs Android MediaCodec API that was introduced
-  // in JellyBrean.
-  if (base::android::BuildInfo::GetInstance()->sdk_int() < 16) {
+  // MSE/EME implementation needs Android MediaCodec API.
+  if (!media::MediaCodecBridge::IsAvailable()) {
     WebRuntimeFeatures::enableWebKitMediaSource(false);
-    WebRuntimeFeatures::enableLegacyEncryptedMedia(false);
+    WebRuntimeFeatures::enableMediaSource(false);
+    WebRuntimeFeatures::enablePrefixedEncryptedMedia(false);
   }
 #endif  // !defined(GOOGLE_TV)
   bool enable_webaudio = false;
 #if defined(ARCH_CPU_ARMEL)
-  // WebAudio needs Android MediaCodec API that was introduced in
-  // JellyBean, and also currently needs NEON support for the FFT.
+  // WebAudio needs Android MediaCodec API, and also currently needs NEON
+  // support for the FFT.
   enable_webaudio =
-      (base::android::BuildInfo::GetInstance()->sdk_int() >= 16) &&
+      (media::MediaCodecBridge::IsAvailable()) &&
       ((android_getCpuFeatures() & ANDROID_CPU_ARM_FEATURE_NEON) != 0);
 #endif  // defined(ARCH_CPU_ARMEL)
   WebRuntimeFeatures::enableWebAudio(enable_webaudio);
@@ -42,6 +42,10 @@ static void SetRuntimeFeatureDefaultsForPlatform() {
   WebRuntimeFeatures::enablePagePopup(false);
   // datalist on Android is not enabled
   WebRuntimeFeatures::enableDataListElement(false);
+  // Android does not yet support the Web Notification API. crbug.com/115320
+  WebRuntimeFeatures::enableNotifications(false);
+  // Android does not yet support SharedWorker. crbug.com/154571
+  WebRuntimeFeatures::enableSharedWorker(false);
 #endif  // defined(OS_ANDROID)
 }
 
@@ -75,18 +79,24 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   if (command_line.HasSwitch(switches::kDisableWebKitMediaSource))
     WebRuntimeFeatures::enableWebKitMediaSource(false);
 
+  if (command_line.HasSwitch(switches::kDisableUnprefixedMediaSource))
+    WebRuntimeFeatures::enableMediaSource(false);
+
+  if (command_line.HasSwitch(switches::kDisableSharedWorkers))
+    WebRuntimeFeatures::enableSharedWorker(false);
+
 #if defined(OS_ANDROID)
   if (command_line.HasSwitch(switches::kDisableWebRTC)) {
     WebRuntimeFeatures::enableMediaStream(false);
     WebRuntimeFeatures::enablePeerConnection(false);
   }
 
-  if (!command_line.HasSwitch(switches::kEnableSpeechRecognition) ||
-      !command_line.HasSwitch(
-          switches::kEnableExperimentalWebPlatformFeatures)) {
+  if (!command_line.HasSwitch(switches::kEnableSpeechRecognition))
     WebRuntimeFeatures::enableScriptedSpeech(false);
-  }
 #endif
+
+  if (command_line.HasSwitch(switches::kEnableServiceWorker))
+    WebRuntimeFeatures::enableServiceWorker(true);
 
   if (command_line.HasSwitch(switches::kDisableWebAudio))
     WebRuntimeFeatures::enableWebAudio(false);
@@ -97,8 +107,8 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   if (command_line.HasSwitch(switches::kEnableEncryptedMedia))
     WebRuntimeFeatures::enableEncryptedMedia(true);
 
-  if (command_line.HasSwitch(switches::kDisableLegacyEncryptedMedia))
-    WebRuntimeFeatures::enableLegacyEncryptedMedia(false);
+  if (command_line.HasSwitch(switches::kDisablePrefixedEncryptedMedia))
+    WebRuntimeFeatures::enablePrefixedEncryptedMedia(false);
 
   if (command_line.HasSwitch(switches::kEnableWebAnimationsCSS))
     WebRuntimeFeatures::enableWebAnimationsCSS();
@@ -109,14 +119,8 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   if (command_line.HasSwitch(switches::kEnableWebMIDI))
     WebRuntimeFeatures::enableWebMIDI(true);
 
-#if defined(OS_ANDROID)
-  // Enable Device Motion on Android by default.
-  WebRuntimeFeatures::enableDeviceMotion(
-      !command_line.HasSwitch(switches::kDisableDeviceMotion));
-#else
-  if (command_line.HasSwitch(switches::kEnableDeviceMotion))
-      WebRuntimeFeatures::enableDeviceMotion(true);
-#endif
+  if (command_line.HasSwitch(switches::kDisableDeviceMotion))
+    WebRuntimeFeatures::enableDeviceMotion(false);
 
   if (command_line.HasSwitch(switches::kDisableDeviceOrientation))
     WebRuntimeFeatures::enableDeviceOrientation(false);
@@ -139,8 +143,20 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   if (command_line.HasSwitch(switches::kEnableHTMLImports))
     WebRuntimeFeatures::enableHTMLImports(true);
 
+  if (command_line.HasSwitch(switches::kEnableOverlayFullscreenVideo))
+    WebRuntimeFeatures::enableOverlayFullscreenVideo(true);
+
   if (command_line.HasSwitch(switches::kEnableOverlayScrollbars))
     WebRuntimeFeatures::enableOverlayScrollbars(true);
+
+  if (command_line.HasSwitch(switches::kEnableInputModeAttribute))
+    WebRuntimeFeatures::enableInputModeAttribute(true);
+
+  if (command_line.HasSwitch(switches::kEnableFastTextAutosizing))
+    WebRuntimeFeatures::enableFastTextAutosizing(true);
+
+  if (command_line.HasSwitch(switches::kEnableRepaintAfterLayout))
+    WebRuntimeFeatures::enableRepaintAfterLayout(true);
 }
 
 }  // namespace content

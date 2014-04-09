@@ -14,7 +14,7 @@
 
 #if defined(OS_LINUX)
 #include "chrome/browser/ui/libgtk2ui/gtk2_ui.h"
-#include "ui/linux_ui/linux_ui.h"
+#include "ui/views/linux_ui/linux_ui.h"
 #else
 #endif
 
@@ -48,21 +48,35 @@ ChromeBrowserMainExtraPartsAura::ChromeBrowserMainExtraPartsAura() {
 ChromeBrowserMainExtraPartsAura::~ChromeBrowserMainExtraPartsAura() {
 }
 
+void ChromeBrowserMainExtraPartsAura::PreEarlyInitialization() {
+#if !defined(USE_ASH) && defined(OS_LINUX) && defined(USE_X11)
+  // TODO(erg): Refactor this into a dlopen call when we add a GTK3 port.
+  views::LinuxUI::SetInstance(BuildGtk2UI());
+#endif
+}
+
 void ChromeBrowserMainExtraPartsAura::ToolkitInitialized() {
 #if !defined(OS_CHROMEOS)
 #if defined(USE_ASH)
+  aura::Env::CreateInstance();
   active_desktop_monitor_.reset(new ActiveDesktopMonitor(GetInitialDesktop()));
+#endif
+#endif
+
+#if !defined(USE_ASH) && defined(OS_LINUX) && defined(USE_X11)
+  views::LinuxUI::instance()->Initialize();
+#endif
+}
+
+void ChromeBrowserMainExtraPartsAura::PostMainMessageLoopStart() {
+#if !defined(OS_CHROMEOS)
+#if defined(USE_ASH)
   if (!chrome::ShouldOpenAshOnStartup())
 #endif
   {
     gfx::Screen::SetScreenInstance(gfx::SCREEN_TYPE_NATIVE,
                                    views::CreateDesktopScreen());
   }
-#endif
-
-#if !defined(USE_ASH) && defined(OS_LINUX) && defined(USE_X11)
-  // TODO(erg): Refactor this into a dlopen call when we add a GTK3 port.
-  ui::LinuxUI::SetInstance(BuildGtk2UI());
 #endif
 }
 

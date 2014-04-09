@@ -7,9 +7,10 @@ package org.chromium.content.browser.input;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.os.SystemClock;
+import android.test.suitebuilder.annotation.MediumTest;
+import android.test.FlakyTest;
 import android.text.Editable;
 import android.text.Selection;
-import android.test.suitebuilder.annotation.MediumTest;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
@@ -130,9 +131,12 @@ public class SelectionHandleTest extends ContentShellTestBase {
      * selection. Does not check exact handle position as this will depend on
      * screen size; instead, position is expected to be correct within
      * HANDLE_POSITION_TOLERANCE_PIX.
+     *
+     * Test is flaky: crbug.com/290375
+     * @MediumTest
+     * @Feature({ "TextSelection", "Main" })
      */
-    @MediumTest
-    @Feature({ "TextSelection", "Main" })
+    @FlakyTest
     public void testNoneditableSelectionHandles() throws Throwable {
         doSelectionHandleTest(TestPageType.NONEDITABLE);
     }
@@ -392,16 +396,11 @@ public class SelectionHandleTest extends ContentShellTestBase {
         touchCommon.longPressView(getContentView(), centerX, centerY);
 
         assertWaitForHandlesShowingEquals(true);
+        assertWaitForHandleViewStopped(getStartHandle());
 
         // No words wrap in the sample text so handles should be at the same y
         // position.
         assertEquals(getStartHandle().getPositionY(), getEndHandle().getPositionY());
-
-        // In ContentShell, the handles are initially misplaced when they first appear. This is
-        // fixed after the first time they are dragged (or the page is scrolled).
-        // TODO(cjhopman): Fix this problem in ContentShell: http://crbug.com/243836
-        dragHandleTo(getStartHandle(), centerX - 40, centerY - 40, 1);
-        assertWaitForHandleViewStopped(getStartHandle());
     }
 
     private void clickToDismissHandles() throws Throwable {
@@ -420,6 +419,19 @@ public class SelectionHandleTest extends ContentShellTestBase {
         }));
     }
 
+    public void assertWaitForHasInputConnection() {
+        try {
+            assertTrue(CriteriaHelper.pollForCriteria(new Criteria() {
+                @Override
+                public boolean isSatisfied() {
+                    return getContentViewCore().getInputConnectionForTest() != null;
+                }
+            }));
+        } catch (InterruptedException e) {
+            fail();
+        }
+    }
+
     private ImeAdapter getImeAdapter() {
         return getContentViewCore().getImeAdapterForTest();
     }
@@ -433,6 +445,9 @@ public class SelectionHandleTest extends ContentShellTestBase {
     }
 
     private Editable getEditable() {
+        // We have to wait for the input connection (with the IME) to be created before accessing
+        // the ContentViewCore's editable.
+        assertWaitForHasInputConnection();
         return getContentViewCore().getEditableForTest();
     }
 

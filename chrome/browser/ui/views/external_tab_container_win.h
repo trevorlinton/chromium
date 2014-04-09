@@ -17,11 +17,9 @@
 #include "chrome/browser/external_tab/external_tab_container.h"
 #include "chrome/browser/infobars/infobar_container.h"
 #include "chrome/browser/net/chrome_url_request_context.h"
-#include "chrome/browser/ui/blocked_content/blocked_content_tab_helper_delegate.h"
 #include "content/public/browser/navigation_type.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
-#include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "ui/base/accelerators/accelerator.h"
@@ -59,8 +57,7 @@ class ExternalTabContainerWin : public ExternalTabContainer,
                                 public content::NotificationObserver,
                                 public views::WidgetObserver,
                                 public ui::AcceleratorTarget,
-                                public InfoBarContainer::Delegate,
-                                public BlockedContentTabHelperDelegate {
+                                public InfoBarContainer::Delegate {
  public:
   typedef std::map<uintptr_t,
                    scoped_refptr<ExternalTabContainerWin> > PendingTabs;
@@ -185,6 +182,7 @@ class ExternalTabContainerWin : public ExternalTabContainer,
   virtual bool OnMessageReceived(const IPC::Message& message) OVERRIDE;
   virtual void DidFailProvisionalLoad(
       int64 frame_id,
+      const string16& frame_unique_name,
       bool is_main_frame,
       const GURL& validated_url,
       int error_code,
@@ -216,10 +214,6 @@ class ExternalTabContainerWin : public ExternalTabContainer,
   virtual SkColor GetInfoBarSeparatorColor() const OVERRIDE;
   virtual void InfoBarContainerStateChanged(bool is_animating) OVERRIDE;
   virtual bool DrawInfoBarArrows(int* x) const OVERRIDE;
-
-  // Overridden from BlockedContentTabHelperDelegate:
-  virtual content::WebContents* GetConstrainingWebContents(
-      content::WebContents* source) OVERRIDE;
 
  protected:
   virtual ~ExternalTabContainerWin();
@@ -260,8 +254,6 @@ class ExternalTabContainerWin : public ExternalTabContainer,
   views::Widget* widget_;
   scoped_ptr<content::WebContents> web_contents_;
   scoped_refptr<AutomationProvider> automation_;
-
-  content::RenderViewHost::CreatedCallback rvh_callback_;
 
   content::NotificationRegistrar registrar_;
 

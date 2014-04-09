@@ -13,26 +13,24 @@ namespace drive {
 class DummyFileSystem : public FileSystemInterface {
  public:
   virtual ~DummyFileSystem() {}
-  virtual void Initialize() OVERRIDE {}
   virtual void AddObserver(FileSystemObserver* observer) OVERRIDE {}
   virtual void RemoveObserver(FileSystemObserver* observer) OVERRIDE {}
   virtual void CheckForUpdates() OVERRIDE {}
-  virtual void TransferFileFromRemoteToLocal(
-      const base::FilePath& remote_src_file_path,
-      const base::FilePath& local_dest_file_path,
-      const FileOperationCallback& callback) OVERRIDE {}
   virtual void TransferFileFromLocalToRemote(
       const base::FilePath& local_src_file_path,
       const base::FilePath& remote_dest_file_path,
       const FileOperationCallback& callback) OVERRIDE {}
   virtual void OpenFile(const base::FilePath& file_path,
                         OpenMode open_mode,
+                        const std::string& mime_type,
                         const OpenFileCallback& callback) OVERRIDE {}
   virtual void Copy(const base::FilePath& src_file_path,
                     const base::FilePath& dest_file_path,
+                    bool preserve_last_modified,
                     const FileOperationCallback& callback) OVERRIDE {}
   virtual void Move(const base::FilePath& src_file_path,
                     const base::FilePath& dest_file_path,
+                    bool preserve_last_modified,
                     const FileOperationCallback& callback) OVERRIDE {}
   virtual void Remove(const base::FilePath& file_path,
                       bool is_recursive,
@@ -44,6 +42,7 @@ class DummyFileSystem : public FileSystemInterface {
       const FileOperationCallback& callback) OVERRIDE {}
   virtual void CreateFile(const base::FilePath& file_path,
                           bool is_exclusive,
+                          const std::string& mime_type,
                           const FileOperationCallback& callback) OVERRIDE {}
   virtual void TouchFile(const base::FilePath& file_path,
                          const base::Time& last_access_time,
@@ -73,7 +72,7 @@ class DummyFileSystem : public FileSystemInterface {
       const base::FilePath& file_path,
       const ReadDirectoryCallback& callback) OVERRIDE {}
   virtual void Search(const std::string& search_query,
-                      const GURL& next_url,
+                      const GURL& next_link,
                       const SearchCallback& callback) OVERRIDE {}
   virtual void SearchMetadata(
       const std::string& query,
@@ -94,10 +93,10 @@ class DummyFileSystem : public FileSystemInterface {
   virtual void MarkCacheFileAsUnmounted(
       const base::FilePath& cache_file_path,
       const FileOperationCallback& callback) OVERRIDE {}
-  virtual void GetCacheEntryByResourceId(
-      const std::string& resource_id,
+  virtual void GetCacheEntryByPath(
+      const base::FilePath& drive_file_path,
       const GetCacheEntryCallback& callback) OVERRIDE {}
-  virtual void Reload() OVERRIDE {}
+  virtual void Reload(const FileOperationCallback& callback) OVERRIDE {}
 };
 
 }  // namespace drive

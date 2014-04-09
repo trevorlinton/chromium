@@ -6,11 +6,13 @@
 
 #include "android_webview/browser/aw_content_browser_client.h"
 #include "android_webview/browser/gpu_memory_buffer_factory_impl.h"
+#include "android_webview/browser/in_process_view_renderer.h"
 #include "android_webview/browser/scoped_allow_wait_for_legacy_web_view_api.h"
 #include "android_webview/lib/aw_browser_dependency_factory_impl.h"
 #include "android_webview/native/aw_geolocation_permission_context.h"
 #include "android_webview/native/aw_quota_manager_bridge_impl.h"
 #include "android_webview/native/aw_web_contents_view_delegate.h"
+#include "android_webview/native/aw_web_preferences_populater_impl.h"
 #include "android_webview/renderer/aw_content_renderer_client.h"
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
@@ -46,32 +48,35 @@ AwMainDelegate::~AwMainDelegate() {
 bool AwMainDelegate::BasicStartupComplete(int* exit_code) {
   content::SetContentClient(&content_client_);
 
-  gpu::GLInProcessContext::SetGpuMemoryBufferFactory(
+  gpu::InProcessCommandBuffer::SetGpuMemoryBufferFactory(
       gpu_memory_buffer_factory_.get());
   gpu::InProcessCommandBuffer::EnableVirtualizedContext();
 
+  InProcessViewRenderer::CalculateTileMemoryPolicy();
+
   CommandLine* cl = CommandLine::ForCurrentProcess();
   cl->AppendSwitch(switches::kEnableBeginFrameScheduling);
-  if (!cl->HasSwitch("disable-map-image"))
-    cl->AppendSwitch(cc::switches::kUseMapImage);
+  cl->AppendSwitch(cc::switches::kEnableMapImage);
 
   // WebView uses the Android system's scrollbars and overscroll glow.
   cl->AppendSwitch(switches::kHideScrollbars);
   cl->AppendSwitch(switches::kDisableOverscrollEdgeEffect);
 
-  // Not yet secure in single-process mode.
+  // Not yet supported in single-process mode.
   cl->AppendSwitch(switches::kDisableExperimentalWebGL);
+  cl->AppendSwitch(switches::kDisableSharedWorkers);
 
   // Ganesh backed 2D-Canvas is not yet working and causes crashes.
   cl->AppendSwitch(switches::kDisableAccelerated2dCanvas);
 
   // File system API not supported (requires some new API; internal bug 6930981)
-  // TODO(joth): export and use switches::kDisableFileSystem
-  cl->AppendSwitch("disable-file-system");
+  cl->AppendSwitch(switches::kDisableFileSystem);
 
-  // Enable D-PAD navigation for application compatibility.
-  // TODO(joth): export and use switches::EnableSpatialNavigation.
-  cl->AppendSwitch("enable-spatial-navigation");
+  // Disable compositor touch hit testing for now to mitigate risk of bugs.
+  cl->AppendSwitch(cc::switches::kDisableCompositorTouchHitTesting);
+
+  // Disable WebRTC.
+  cl->AppendSwitch(switches::kDisableWebRTC);
 
   return false;
 }
@@ -124,9 +129,9 @@ content::ContentRendererClient*
   return content_renderer_client_.get();
 }
 
-AwQuotaManagerBridge* AwMainDelegate::CreateAwQuotaManagerBridge(
+scoped_refptr<AwQuotaManagerBridge> AwMainDelegate::CreateAwQuotaManagerBridge(
     AwBrowserContext* browser_context) {
-  return new AwQuotaManagerBridgeImpl(browser_context);
+  return AwQuotaManagerBridgeImpl::Create(browser_context);
 }
 
 content::GeolocationPermissionContext*
@@ -138,6 +143,10 @@ content::GeolocationPermissionContext*
 content::WebContentsViewDelegate* AwMainDelegate::CreateViewDelegate(
     content::WebContents* web_contents) {
   return AwWebContentsViewDelegate::Create(web_contents);
+}
+
+AwWebPreferencesPopulater* AwMainDelegate::CreateWebPreferencesPopulater() {
+  return new AwWebPreferencesPopulaterImpl();
 }
 
 }  // namespace android_webview

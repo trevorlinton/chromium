@@ -87,13 +87,6 @@ class ProfileManager : public base::NonThreadSafe,
                           const string16& icon_url,
                           const std::string& managed_user_id);
 
-  // Initiates profile creation identified by |active_profile_username_hash_|.
-  // If profile has already been created then the callback is called
-  // immediately. Should be called on the UI thread.
-  // This method is only used on Chrome OS where every user profile
-  // has username_hash associated with it.
-  static void CreateDefaultProfileAsync(const CreateCallback& callback);
-
   // Returns true if the profile pointer is known to point to an existing
   // profile.
   bool IsValidProfile(Profile* profile);
@@ -173,6 +166,13 @@ class ProfileManager : public base::NonThreadSafe,
   // Returns the full path to be used for guest profiles.
   static base::FilePath GetGuestProfilePath();
 
+  // Get the path of the next profile directory and increment the internal
+  // count.
+  // Lack of side effects:
+  // This function doesn't actually create the directory or touch the file
+  // system.
+  base::FilePath GenerateNextProfileDirectoryPath();
+
   // Returns a ProfileInfoCache object which can be used to get information
   // about profiles without having to load them from disk.
   ProfileInfoCache& GetProfileInfoCache();
@@ -192,6 +192,10 @@ class ProfileManager : public base::NonThreadSafe,
 
   // Sign-Out a profile against use until re-authentication.
   void SignOutProfile(Profile* profile);
+
+  // Initializes user prefs of |profile|. This includes profile name and
+  // avatar values.
+  void InitProfileUserPrefs(Profile* profile);
 
   // Register and add testing profile to the ProfileManager. Use ONLY in tests.
   // This allows the creation of Profiles outside of the standard creation path
@@ -277,19 +281,11 @@ class ProfileManager : public base::NonThreadSafe,
   // Adds |profile| to the profile info cache if it hasn't been added yet.
   void AddProfileToCache(Profile* profile);
 
-  // Initializes user prefs of |profile|. This includes profile name and
-  // avatar values
-  void InitProfileUserPrefs(Profile* profile);
+  // Apply settings for (desktop) Guest User profile.
+  void SetGuestProfilePrefs(Profile* profile);
 
   // For ChromeOS, determines if profile should be otr.
   bool ShouldGoOffTheRecord(Profile* profile);
-
-  // Get the path of the next profile directory and increment the internal
-  // count.
-  // Lack of side effects:
-  // This function doesn't actually create the directory or touch the file
-  // system.
-  base::FilePath GenerateNextProfileDirectoryPath();
 
   void RunCallbacks(const std::vector<CreateCallback>& callbacks,
                     Profile* profile,

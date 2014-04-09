@@ -129,16 +129,10 @@ function handleMessage(peerConnection, message) {
   return;
 }
 
-function createPeerConnection(stun_server, loggingSessionId) {
+function createPeerConnection(stun_server, useRtpDataChannels) {
   servers = {iceServers: [{url: 'stun:' + stun_server}]};
   try {
-    if (loggingSessionId) {
-      var constraints =
-          { optional: [{ RtpDataChannels: true },
-                       { googLog: loggingSessionId }]};
-    } else {
-      var constraints = { optional: [{ RtpDataChannels: true }]};
-    }
+    var constraints = { optional: [{ RtpDataChannels: useRtpDataChannels }]};
     peerConnection = new webkitRTCPeerConnection(servers, constraints);
   } catch (exception) {
     throw failTest('Failed to create peer connection: ' + exception);
@@ -224,7 +218,7 @@ function setLocalAndSendMessage_(session_description) {
 function addStreamCallback_(event) {
   debug('Receiving remote stream...');
   var videoTag = document.getElementById('remote-view');
-  videoTag.src = webkitURL.createObjectURL(event.stream);
+  attachMediaStream(videoTag, event.stream);
 
   // Due to crbug.com/110938 the size is 0 when onloadedmetadata fires.
   // videoTag.onloadedmetadata = displayVideoSize_(videoTag);

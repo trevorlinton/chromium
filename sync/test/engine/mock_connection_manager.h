@@ -15,9 +15,9 @@
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/memory/scoped_vector.h"
+#include "base/synchronization/lock.h"
 #include "sync/engine/net/server_connection_manager.h"
 #include "sync/internal_api/public/base/model_type.h"
-#include "sync/internal_api/public/base/model_type_invalidation_map.h"
 #include "sync/internal_api/public/base/unique_position.h"
 #include "sync/protocol/sync.pb.h"
 
@@ -33,7 +33,8 @@ class MockConnectionManager : public ServerConnectionManager {
     virtual ~MidCommitObserver() {}
   };
 
-  explicit MockConnectionManager(syncable::Directory*);
+  MockConnectionManager(syncable::Directory*,
+                        CancelationSignal* signal);
   virtual ~MockConnectionManager();
 
   // Overridden ServerConnectionManager functions.
@@ -234,10 +235,6 @@ class MockConnectionManager : public ServerConnectionManager {
     expected_filter_ = expected_filter;
   }
 
-  void ExpectGetUpdatesRequestStates(const ModelTypeInvalidationMap& states) {
-    expected_states_ = states;
-  }
-
   void SetServerReachable();
 
   void SetServerNotReachable();
@@ -393,8 +390,6 @@ class MockConnectionManager : public ServerConnectionManager {
   bool use_legacy_bookmarks_protocol_;
 
   ModelTypeSet expected_filter_;
-
-  ModelTypeInvalidationMap expected_states_;
 
   int num_get_updates_requests_;
 

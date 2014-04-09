@@ -9,12 +9,13 @@
 #include <string>
 #include <vector>
 
+#include "base/basictypes.h"
 #include "base/memory/linked_ptr.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/timer/timer.h"
-#include "chrome/common/extensions/permissions/api_permission.h"
 #include "content/public/common/top_controls_state.h"
 #include "content/public/renderer/render_view_observer.h"
+#include "extensions/common/permissions/api_permission.h"
 #include "third_party/WebKit/public/web/WebPermissionClient.h"
 #include "ui/gfx/size.h"
 #include "url/gurl.h"
@@ -71,8 +72,11 @@ class ChromeRenderViewObserver : public content::RenderViewObserver,
   virtual void DidCommitProvisionalLoad(WebKit::WebFrame* frame,
                                         bool is_new_navigation) OVERRIDE;
   virtual void DidClearWindowObject(WebKit::WebFrame* frame) OVERRIDE;
-  virtual void DidHandleGestureEvent(
-      const WebKit::WebGestureEvent& event) OVERRIDE;
+  virtual void DetailedConsoleMessageAdded(const base::string16& message,
+                                           const base::string16& source,
+                                           const base::string16& stack_trace,
+                                           int32 line_number,
+                                           int32 severity_level) OVERRIDE;
 
   // WebKit::WebPermissionClient implementation.
   virtual bool allowDatabase(WebKit::WebFrame* frame,
@@ -104,6 +108,7 @@ class ChromeRenderViewObserver : public content::RenderViewObserver,
   virtual bool allowMutationEvents(const WebKit::WebDocument&,
                                    bool default_value);
   virtual bool allowPushState(const WebKit::WebDocument&);
+  virtual bool allowWebGLDebugRendererInfo(WebKit::WebFrame* frame);
   virtual void didNotAllowPlugins(WebKit::WebFrame* frame);
   virtual void didNotAllowScript(WebKit::WebFrame* frame);
   virtual bool allowDisplayingInsecureContent(
@@ -133,7 +138,6 @@ class ChromeRenderViewObserver : public content::RenderViewObserver,
   void OnSetVisuallyDeemphasized(bool deemphasized);
   void OnRequestThumbnailForContextNode(int thumbnail_min_area_pixels,
                                         gfx::Size thumbnail_max_size_pixels);
-  void OnStartFrameSniffer(const string16& frame_name);
   void OnGetFPS();
   void OnAddStrictSecurityHost(const std::string& host);
   void OnNPAPINotSupported();
@@ -141,6 +145,7 @@ class ChromeRenderViewObserver : public content::RenderViewObserver,
   void OnUpdateTopControlsState(content::TopControlsState constraints,
                                 content::TopControlsState current,
                                 bool animate);
+  void OnRetrieveWebappInformation(const GURL& expected_url);
 #endif
   void OnSetWindowFeatures(const WebKit::WebWindowFeatures& window_features);
 

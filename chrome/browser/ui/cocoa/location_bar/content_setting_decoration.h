@@ -43,6 +43,11 @@ class ContentSettingDecoration : public ImageDecoration {
   // be friends.
   virtual void AnimationTimerFired();
 
+  // Check whether the content setting is blocked already, if not it pops up a
+  // bubble if required by the content setting and blocks the content setting in
+  // in both cases.
+  void PopUpIfNeeded(NSRect frame);
+
  private:
   // Helper to get where the bubble point should land.  Similar to
   // |PageActionDecoration| or |StarDecoration| (|LocationBarViewMac|
@@ -68,7 +73,6 @@ class ContentSettingDecoration : public ImageDecoration {
   base::scoped_nsobject<ContentSettingAnimationState> animation_;
   CGFloat text_width_;
   base::scoped_nsobject<NSAttributedString> animated_text_;
-  base::scoped_nsobject<NSGradient> gradient_;
 
   DISALLOW_COPY_AND_ASSIGN(ContentSettingDecoration);
 };

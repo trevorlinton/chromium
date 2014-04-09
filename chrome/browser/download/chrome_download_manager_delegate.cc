@@ -27,7 +27,6 @@
 #include "chrome/browser/download/download_service.h"
 #include "chrome/browser/download/download_service_factory.h"
 #include "chrome/browser/download/download_target_determiner.h"
-#include "chrome/browser/download/download_util.h"
 #include "chrome/browser/download/save_package_file_picker.h"
 #include "chrome/browser/extensions/api/downloads/downloads_api.h"
 #include "chrome/browser/extensions/crx_installer.h"
@@ -54,9 +53,11 @@ using safe_browsing::DownloadProtectionService;
 
 namespace {
 
+#if defined(FULL_SAFE_BROWSING)
+
 // String pointer used for identifying safebrowing data associated with
 // a download item.
-static const char safe_browsing_id[] = "Safe Browsing ID";
+const char kSafeBrowsingUserDataKey[] = "Safe Browsing ID";
 
 // The state of a safebrowsing check.
 class SafeBrowsingState : public DownloadCompletionBlocker {
@@ -85,6 +86,8 @@ class SafeBrowsingState : public DownloadCompletionBlocker {
 };
 
 SafeBrowsingState::~SafeBrowsingState() {}
+
+#endif  // FULL_SAFE_BROWSING
 
 // Used with GetPlatformDownloadPath() to indicate which platform path to
 // return.
@@ -124,6 +127,7 @@ base::FilePath GetPlatformDownloadPath(Profile* profile,
   return download->GetFullPath();
 }
 
+#if defined(FULL_SAFE_BROWSING)
 // Callback invoked by DownloadProtectionService::CheckClientDownload.
 // |is_content_check_supported| is true if the SB service supports scanning the
 // download for malicious content.
@@ -154,6 +158,8 @@ void CheckDownloadUrlDone(
   }
   callback.Run(danger_type);
 }
+
+#endif  // FULL_SAFE_BROWSING
 
 }  // namespace
 
@@ -242,10 +248,10 @@ void ChromeDownloadManagerDelegate::DisableSafeBrowsing(DownloadItem* item) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 #if defined(FULL_SAFE_BROWSING)
   SafeBrowsingState* state = static_cast<SafeBrowsingState*>(
-      item->GetUserData(&safe_browsing_id));
+      item->GetUserData(&kSafeBrowsingUserDataKey));
   if (!state) {
     state = new SafeBrowsingState();
-    item->SetUserData(&safe_browsing_id, state);
+    item->SetUserData(&kSafeBrowsingUserDataKey, state);
   }
   state->SetVerdict(DownloadProtectionService::SAFE);
 #endif
@@ -257,7 +263,7 @@ bool ChromeDownloadManagerDelegate::IsDownloadReadyForCompletion(
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 #if defined(FULL_SAFE_BROWSING)
   SafeBrowsingState* state = static_cast<SafeBrowsingState*>(
-      item->GetUserData(&safe_browsing_id));
+      item->GetUserData(&kSafeBrowsingUserDataKey));
   if (!state) {
     // Begin the safe browsing download protection check.
     DownloadProtectionService* service = GetDownloadProtectionService();
@@ -266,7 +272,7 @@ bool ChromeDownloadManagerDelegate::IsDownloadReadyForCompletion(
               << item->DebugString(false);
       state = new SafeBrowsingState();
       state->set_callback(internal_complete_callback);
-      item->SetUserData(&safe_browsing_id, state);
+      item->SetUserData(&kSafeBrowsingUserDataKey, state);
       service->CheckClientDownload(
           item,
           base::Bind(
@@ -517,6 +523,7 @@ void ChromeDownloadManagerDelegate::CheckDownloadUrl(
   callback.Run(content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS);
 }
 
+#if defined(FULL_SAFE_BROWSING)
 void ChromeDownloadManagerDelegate::CheckClientDownloadDone(
     uint32 download_id,
     DownloadProtectionService::DownloadCheckResult result) {
@@ -556,9 +563,10 @@ void ChromeDownloadManagerDelegate::CheckClientDownloadDone(
   }
 
   SafeBrowsingState* state = static_cast<SafeBrowsingState*>(
-      item->GetUserData(&safe_browsing_id));
+      item->GetUserData(&kSafeBrowsingUserDataKey));
   state->SetVerdict(result);
 }
+#endif  // FULL_SAFE_BROWSING
 
 // content::NotificationObserver implementation.
 void ChromeDownloadManagerDelegate::Observe(

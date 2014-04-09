@@ -12,6 +12,8 @@
 #include "cc/animation/keyframed_animation_curve.h"
 #include "cc/animation/layer_animation_value_observer.h"
 #include "cc/base/scoped_ptr_algorithm.h"
+#include "cc/output/filter_operations.h"
+#include "ui/gfx/box_f.h"
 #include "ui/gfx/transform.h"
 
 namespace cc {
@@ -90,23 +92,6 @@ void LayerAnimationController::RemoveAnimation(
   UpdateActivation(NormalActivation);
 }
 
-// According to render layer backing, these are for testing only.
-void LayerAnimationController::SuspendAnimations(double monotonic_time) {
-  for (size_t i = 0; i < active_animations_.size(); ++i) {
-    if (!active_animations_[i]->is_finished())
-      active_animations_[i]->SetRunState(Animation::Paused, monotonic_time);
-  }
-}
-
-// Looking at GraphicsLayerCA, this appears to be the analog to
-// SuspendAnimations, which is for testing.
-void LayerAnimationController::ResumeAnimations(double monotonic_time) {
-  for (size_t i = 0; i < active_animations_.size(); ++i) {
-    if (active_animations_[i]->run_state() == Animation::Paused)
-      active_animations_[i]->SetRunState(Animation::Running, monotonic_time);
-  }
-}
-
 // Ensures that the list of active animations on the main thread and the impl
 // thread are kept in sync.
 void LayerAnimationController::PushAnimationUpdatesTo(
@@ -153,27 +138,51 @@ void LayerAnimationController::AccumulatePropertyUpdates(
     if (!animation->is_impl_only())
       continue;
 
-    if (animation->target_property() == Animation::Opacity) {
-      AnimationEvent event(AnimationEvent::PropertyUpdate,
-                           id_,
-                           animation->group(),
-                           Animation::Opacity,
-                           monotonic_time);
-      event.opacity = animation->curve()->ToFloatAnimationCurve()->GetValue(
-          monotonic_time);
-      event.is_impl_only = true;
-      events->push_back(event);
-    } else if (animation->target_property() == Animation::Transform) {
-      AnimationEvent event(AnimationEvent::PropertyUpdate,
-                           id_,
-                           animation->group(),
-                           Animation::Transform,
-                           monotonic_time);
-      event.transform =
-          animation->curve()->ToTransformAnimationCurve()->GetValue(
-              monotonic_time);
-      event.is_impl_only = true;
-      events->push_back(event);
+    switch (animation->target_property()) {
+      case Animation::Opacity: {
+        AnimationEvent event(AnimationEvent::PropertyUpdate,
+                             id_,
+                             animation->group(),
+                             Animation::Opacity,
+                             monotonic_time);
+        event.opacity = animation->curve()->ToFloatAnimationCurve()->GetValue(
+            monotonic_time);
+        event.is_impl_only = true;
+        events->push_back(event);
+        break;
+      }
+
+      case Animation::Transform: {
+        AnimationEvent event(AnimationEvent::PropertyUpdate,
+                             id_,
+                             animation->group(),
+                             Animation::Transform,
+                             monotonic_time);
+        event.transform =
+            animation->curve()->ToTransformAnimationCurve()->GetValue(
+                monotonic_time);
+        event.is_impl_only = true;
+        events->push_back(event);
+        break;
+      }
+
+      case Animation::Filter: {
+        AnimationEvent event(AnimationEvent::PropertyUpdate,
+                             id_,
+                             animation->group(),
+                             Animation::Filter,
+                             monotonic_time);
+        event.filters = animation->curve()->ToFilterAnimationCurve()->GetValue(
+            monotonic_time);
+        event.is_impl_only = true;
+        events->push_back(event);
+        break;
+      }
+
+      case Animation::BackgroundColor: { break; }
+
+      case Animation::TargetPropertyEnumSize:
+        NOTREACHED();
     }
   }
 }
@@ -343,6 +352,31 @@ void LayerAnimationController::RemoveEventObserver(
   event_observers_.RemoveObserver(observer);
 }
 
+bool LayerAnimationController::AnimatedBoundsForBox(const gfx::BoxF& box,
+                                                    gfx::BoxF* bounds) {
+  // Compute bounds based on animations for which is_finished() is false.
+  // Do nothing if there are no such animations; in this case, it is assumed
+  // that callers will take care of computing bounds based on the owning layer's
+  // actual transform.
+  *bounds = gfx::BoxF();
+  for (size_t i = 0; i < active_animations_.size(); ++i) {
+    if (active_animations_[i]->is_finished() ||
+        active_animations_[i]->target_property() != Animation::Transform)
+      continue;
+
+    const TransformAnimationCurve* transform_animation_curve =
+        active_animations_[i]->curve()->ToTransformAnimationCurve();
+    gfx::BoxF animation_bounds;
+    bool success =
+        transform_animation_curve->AnimatedBoundsForBox(box, &animation_bounds);
+    if (!success)
+      return false;
+    bounds->Union(animation_bounds);
+  }
+
+  return true;
+}
+
 void LayerAnimationController::PushNewAnimationsToImplThread(
     LayerAnimationController* controller_impl) const {
   // Any new animations owned by the main thread's controller are cloned and
@@ -368,7 +402,7 @@ void LayerAnimationController::PushNewAnimationsToImplThread(
         Animation::WaitingForTargetAvailability;
     double start_time = 0;
     scoped_ptr<Animation> to_add(active_animations_[i]->CloneAndInitialize(
-        Animation::ControllingInstance, initial_run_state, start_time));
+        initial_run_state, start_time));
     DCHECK(!to_add->needs_synchronized_start_time());
     controller_impl->AddAnimation(to_add.Pass());
   }
@@ -626,11 +660,9 @@ void LayerAnimationController::ReplaceImplThreadAnimations(
           Animation::WaitingForTargetAvailability;
       double start_time = 0;
       to_add = active_animations_[i]->CloneAndInitialize(
-          Animation::ControllingInstance,
           initial_run_state, start_time).Pass();
     } else {
-      to_add = active_animations_[i]->Clone(
-          Animation::ControllingInstance).Pass();
+      to_add = active_animations_[i]->Clone().Pass();
     }
 
     controller_impl->AddAnimation(to_add.Pass());
@@ -644,16 +676,6 @@ void LayerAnimationController::TickAnimations(double monotonic_time) {
         active_animations_[i]->run_state() == Animation::Paused) {
       double trimmed =
           active_animations_[i]->TrimTimeToCurrentIteration(monotonic_time);
-
-      // Animation assumes its initial value until it gets the synchronized
-      // start time from the impl thread and can start ticking.
-      if (active_animations_[i]->needs_synchronized_start_time())
-        trimmed = 0;
-
-      // A just-started animation assumes its initial value.
-      if (active_animations_[i]->run_state() == Animation::Starting &&
-          !active_animations_[i]->has_set_start_time())
-        trimmed = 0;
 
       switch (active_animations_[i]->target_property()) {
         case Animation::Transform: {
@@ -673,7 +695,21 @@ void LayerAnimationController::TickAnimations(double monotonic_time) {
           break;
         }
 
-          // Do nothing for sentinel value.
+        case Animation::Filter: {
+          const FilterAnimationCurve* filter_animation_curve =
+              active_animations_[i]->curve()->ToFilterAnimationCurve();
+          const FilterOperations filter =
+              filter_animation_curve->GetValue(trimmed);
+          NotifyObserversFilterAnimated(filter);
+          break;
+        }
+
+        case Animation::BackgroundColor: {
+          // Not yet implemented.
+          break;
+        }
+
+        // Do nothing for sentinel value.
         case Animation::TargetPropertyEnumSize:
           NOTREACHED();
       }
@@ -703,6 +739,13 @@ void LayerAnimationController::NotifyObserversTransformAnimated(
   FOR_EACH_OBSERVER(LayerAnimationValueObserver,
                     value_observers_,
                     OnTransformAnimated(transform));
+}
+
+void LayerAnimationController::NotifyObserversFilterAnimated(
+    const FilterOperations& filters) {
+  FOR_EACH_OBSERVER(LayerAnimationValueObserver,
+                    value_observers_,
+                    OnFilterAnimated(filters));
 }
 
 bool LayerAnimationController::HasValueObserver() {

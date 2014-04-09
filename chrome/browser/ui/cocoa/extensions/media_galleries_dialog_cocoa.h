@@ -14,8 +14,6 @@
 @class ConstrainedWindowAlert;
 @class MediaGalleriesCocoaController;
 
-namespace chrome {
-
 class MediaGalleriesDialogBrowserTest;
 class MediaGalleriesDialogTest;
 
@@ -39,9 +37,7 @@ class MediaGalleriesDialogCocoa : public ConstrainedWindowMacDelegate,
   void OnCheckboxToggled(NSButton* checkbox);
 
   // MediaGalleriesDialog implementation:
-  virtual void UpdateGallery(const MediaGalleryPrefInfo& gallery,
-                             bool permitted) OVERRIDE;
-  virtual void ForgetGallery(MediaGalleryPrefId gallery) OVERRIDE;
+  virtual void UpdateGalleries() OVERRIDE;
 
   // ConstrainedWindowMacDelegate implementation.
   virtual void OnConstrainedWindowClosed(
@@ -93,7 +89,5 @@ class MediaGalleriesDialogCocoa : public ConstrainedWindowMacDelegate,
 
   DISALLOW_COPY_AND_ASSIGN(MediaGalleriesDialogCocoa);
 };
-
-}  // namespace chrome
 
 #endif  // CHROME_BROWSER_UI_COCOA_EXTENSIONS_MEDIA_GALLERIES_DIALOG_COCOA_H_

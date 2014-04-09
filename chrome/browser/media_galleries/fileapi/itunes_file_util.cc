@@ -15,7 +15,6 @@
 #include "chrome/browser/media_galleries/fileapi/media_path_filter.h"
 #include "chrome/browser/media_galleries/imported_media_gallery_registry.h"
 #include "content/public/browser/browser_thread.h"
-#include "webkit/browser/fileapi/file_system_file_util.h"
 #include "webkit/browser/fileapi/file_system_operation_context.h"
 #include "webkit/browser/fileapi/file_system_url.h"
 #include "webkit/browser/fileapi/native_file_util.h"
@@ -43,8 +42,8 @@ const char kITunesMediaDir[] = "iTunes Media";
 const char kITunesMusicDir[] = "Music";
 const char kITunesAutoAddDir[] = "Automatically Add to iTunes";
 
-ITunesFileUtil::ITunesFileUtil(chrome::MediaPathFilter* media_path_filter)
-    : chrome::NativeMediaFileUtil(media_path_filter),
+ITunesFileUtil::ITunesFileUtil(MediaPathFilter* media_path_filter)
+    : NativeMediaFileUtil(media_path_filter),
       weak_factory_(this),
       imported_registry_(NULL) {
 }
@@ -372,7 +371,7 @@ void ITunesFileUtil::CreateSnapshotFileWithFreshDataProvider(
 
 ITunesDataProvider* ITunesFileUtil::GetDataProvider() {
   if (!imported_registry_)
-    imported_registry_ = chrome::ImportedMediaGalleryRegistry::GetInstance();
+    imported_registry_ = ImportedMediaGalleryRegistry::GetInstance();
   return imported_registry_->ITunesDataProvider();
 }
 

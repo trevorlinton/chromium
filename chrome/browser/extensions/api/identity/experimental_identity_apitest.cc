@@ -12,6 +12,7 @@
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/common/extensions/api/identity/oauth2_manifest_handler.h"
@@ -37,8 +38,7 @@ namespace {
 namespace errors = identity_constants;
 namespace utils = extension_function_test_utils;
 
-static const char kAccessToken[] = "auth_token";
-static const char kExtensionId[] = "ext_id";
+const char kAccessToken[] = "auth_token";
 
 // This helps us be able to wait until an AsyncExtensionFunction calls
 // SendResponse.
@@ -95,7 +95,7 @@ class AsyncExtensionBrowserTest : public ExtensionBrowserTest {
       function->set_extension(empty_extension.get());
     }
 
-    function->set_profile(browser()->profile());
+    function->set_context(browser()->profile());
     function->set_has_callback(true);
     function->Run();
   }
@@ -381,8 +381,14 @@ IN_PROC_BROWSER_TEST_F(ExperimentalGetAuthTokenFunctionTest,
   EXPECT_FALSE(func->install_ui_shown());
 }
 
+// Flaky on mac, http://crbug.com/305349
+#if defined(OS_MACOSX)
+#define MAYBE_NonInteractiveSuccess DISABLED_NonInteractiveSuccess
+#else
+#define MAYBE_NonInteractiveSuccess NonInteractiveSuccess
+#endif
 IN_PROC_BROWSER_TEST_F(ExperimentalGetAuthTokenFunctionTest,
-                       NonInteractiveSuccess) {
+                       MAYBE_NonInteractiveSuccess) {
   scoped_refptr<ExperimentalMockGetAuthTokenFunction> func(
       new ExperimentalMockGetAuthTokenFunction());
   scoped_refptr<const Extension> extension(CreateExtension(CLIENT_ID | SCOPES));
@@ -712,8 +718,9 @@ IN_PROC_BROWSER_TEST_F(ExperimentalLaunchWebAuthFlowFunctionTest,
   EXPECT_EQ(std::string(errors::kInteractionRequired), error);
 }
 
+// Flaky on mac, http://crbug.com/305349
 IN_PROC_BROWSER_TEST_F(ExperimentalLaunchWebAuthFlowFunctionTest,
-                       NonInteractiveSuccess) {
+                       MAYBE_NonInteractiveSuccess) {
   scoped_refptr<ExperimentalIdentityLaunchWebAuthFlowFunction> function(
       new ExperimentalIdentityLaunchWebAuthFlowFunction());
   scoped_refptr<Extension> empty_extension(utils::CreateEmptyExtension());

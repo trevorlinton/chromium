@@ -19,13 +19,17 @@
 
 class Browser;
 class GURL;
+class PasswordManager;
 class ProfileIOData;
+
+namespace autofill {
+struct PasswordForm;
+}
 
 namespace content {
 class WebContents;
 struct FrameNavigateParams;
 struct LoadCommittedDetails;
-struct PasswordForm;
 }
 
 namespace net {
@@ -78,7 +82,9 @@ class OneClickSigninHelper
     CAN_OFFER_FOR_INTERSTITAL_ONLY
   };
 
-  virtual ~OneClickSigninHelper();
+  static void CreateForWebContentsWithPasswordManager(
+      content::WebContents* contents,
+      PasswordManager* password_manager);
 
   // Returns true if the one-click signin feature can be offered at this time.
   // If |email| is not empty, then the profile is checked to see if it's
@@ -125,7 +131,7 @@ class OneClickSigninHelper
  private:
   friend class content::WebContentsUserData<OneClickSigninHelper>;
   friend class OneClickSigninHelperTest;
-  FRIEND_TEST_ALL_PREFIXES(OneClickSigninHelperTest,
+  FRIEND_TEST_ALL_PREFIXES(OneClickSigninHelperIncognitoTest,
                            ShowInfoBarUIThreadIncognito);
   FRIEND_TEST_ALL_PREFIXES(OneClickSigninHelperTest,
                            SigninFromWebstoreWithConfigSyncfirst);
@@ -135,6 +141,8 @@ class OneClickSigninHelper
   FRIEND_TEST_ALL_PREFIXES(OneClickSigninHelperTest, SigninFailed);
   FRIEND_TEST_ALL_PREFIXES(OneClickSigninHelperTest,
                            CleanTransientStateOnNavigate);
+  FRIEND_TEST_ALL_PREFIXES(OneClickSigninHelperTest,
+                           RemoveObserverFromProfileSyncService);
   FRIEND_TEST_ALL_PREFIXES(OneClickSigninHelperIOTest, CanOfferOnIOThread);
   FRIEND_TEST_ALL_PREFIXES(OneClickSigninHelperIOTest,
                            CanOfferOnIOThreadIncognito);
@@ -166,7 +174,10 @@ class OneClickSigninHelper
   // SAML-based accounts, but causes bug crbug.com/181163.
   static const int kMaxNavigationsSince;
 
-  explicit OneClickSigninHelper(content::WebContents* web_contents);
+  OneClickSigninHelper(content::WebContents* web_contents,
+                       PasswordManager* password_manager);
+
+  virtual ~OneClickSigninHelper();
 
   // Returns true if the one-click signin feature can be offered at this time.
   // It can be offered if the io_data is not in an incognito window and if the
@@ -208,11 +219,13 @@ class OneClickSigninHelper
   // TestingProfile provides.
   void SetDoNotClearPendingEmailForTesting();
 
-  // Grab Gaia password if available.
-  bool OnFormSubmitted(const content::PasswordForm& form);
+  // In unit tests, disable starting the actual sync.
+  void set_do_not_start_sync_for_testing();
+
+  // Called when password has been submitted.
+  void PasswordSubmitted(const autofill::PasswordForm& form);
 
   // content::WebContentsObserver overrides.
-  virtual bool OnMessageReceived(const IPC::Message& message) OVERRIDE;
   virtual void NavigateToPendingEntry(
       const GURL& url,
       content::NavigationController::ReloadType reload_type) OVERRIDE;
@@ -221,6 +234,7 @@ class OneClickSigninHelper
       const content::FrameNavigateParams& params) OVERRIDE;
   virtual void DidStopLoading(
       content::RenderViewHost* render_view_host) OVERRIDE;
+  virtual void WebContentsDestroyed(content::WebContents* contents) OVERRIDE;
 
   // ProfileSyncServiceObserver.
   virtual void OnStateChanged() OVERRIDE;
@@ -264,6 +278,9 @@ class OneClickSigninHelper
   // Allows unittests to avoid accessing the ResourceContext for clearing a
   // pending e-mail.
   bool do_not_clear_pending_email_;
+
+  // Allows unittest to avoid starting sync for real.
+  bool do_not_start_sync_for_testing_;
 
   base::WeakPtrFactory<OneClickSigninHelper> weak_pointer_factory_;
 

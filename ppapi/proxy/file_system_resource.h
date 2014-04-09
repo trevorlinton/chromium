@@ -25,8 +25,18 @@ class PPAPI_PROXY_EXPORT FileSystemResource
     : public PluginResource,
       public NON_EXPORTED_BASE(thunk::PPB_FileSystem_API) {
  public:
+  // Creates a new FileSystemResource. The resource must be subsequently opened
+  // via Open() before use.
   FileSystemResource(Connection connection,
                      PP_Instance instance,
+                     PP_FileSystemType type);
+  // Creates a FileSystemResource, attached to an existing pending host
+  // resource. The |pending_renderer_id| and |pending_browser_id| must be
+  // already-opened file systems.
+  FileSystemResource(Connection connection,
+                     PP_Instance instance,
+                     int pending_renderer_id,
+                     int pending_browser_id,
                      PP_FileSystemType type);
   virtual ~FileSystemResource();
 
@@ -38,12 +48,17 @@ class PPAPI_PROXY_EXPORT FileSystemResource
                        scoped_refptr<TrackedCallback> callback) OVERRIDE;
   virtual PP_FileSystemType GetType() OVERRIDE;
 
-  void InitIsolatedFileSystem(const char* fsid);
+  int32_t InitIsolatedFileSystem(const std::string& fsid,
+                                 const base::Callback<void(int32_t)>& callback);
  private:
-
   // Called when the host has responded to our open request.
   void OpenComplete(scoped_refptr<TrackedCallback> callback,
                     const ResourceMessageReplyParams& params);
+
+  // Called when the host has responded to our InitIsolatedFileSystem request.
+  void InitIsolatedFileSystemComplete(
+      const base::Callback<void(int32_t)>& callback,
+      const ResourceMessageReplyParams& params);
 
   PP_FileSystemType type_;
   bool called_open_;

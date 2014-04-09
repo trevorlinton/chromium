@@ -19,6 +19,7 @@
 #include "remoting/host/clipboard.h"
 #include "remoting/proto/internal.pb.h"
 #include "third_party/skia/include/core/SkPoint.h"
+#include "ui/base/keycodes/keycode_converter.h"
 
 namespace remoting {
 
@@ -27,11 +28,6 @@ namespace {
 using protocol::ClipboardEvent;
 using protocol::KeyEvent;
 using protocol::MouseEvent;
-
-// USB to XKB keycode map table.
-#define USB_KEYMAP(usb, xkb, win, mac) {usb, xkb}
-#include "ui/base/keycodes/usb_keycode_map.h"
-#undef USB_KEYMAP
 
 // Pixel-to-wheel-ticks conversion ratio used by GTK.
 // From third_party/WebKit/Source/web/gtk/WebInputEventFactory.cpp .
@@ -219,13 +215,14 @@ void InputInjectorLinux::Core::InjectKeyEvent(const KeyEvent& event) {
     return;
   }
 
-  int keycode = UsbKeycodeToNativeKeycode(event.usb_keycode());
+  ui::KeycodeConverter* key_converter = ui::KeycodeConverter::GetInstance();
+  int keycode = key_converter->UsbKeycodeToNativeKeycode(event.usb_keycode());
 
   VLOG(3) << "Converting USB keycode: " << std::hex << event.usb_keycode()
           << " to keycode: " << keycode << std::dec;
 
   // Ignore events which can't be mapped.
-  if (keycode == InvalidNativeKeycode())
+  if (keycode == key_converter->InvalidNativeKeycode())
     return;
 
   if (event.pressed()) {
@@ -299,7 +296,16 @@ void InputInjectorLinux::Core::InjectMouseEvent(const MouseEvent& event) {
     return;
   }
 
-  if (event.has_x() && event.has_y()) {
+  if (event.has_delta_x() &&
+      event.has_delta_y() &&
+      (event.delta_x() != 0 || event.delta_y() != 0)) {
+    latest_mouse_position_ = SkIPoint::Make(-1, -1);
+    VLOG(3) << "Moving mouse by " << event.delta_x() << "," << event.delta_y();
+    XTestFakeRelativeMotionEvent(display_,
+                                 event.delta_x(), event.delta_y(),
+                                 CurrentTime);
+
+  } else if (event.has_x() && event.has_y()) {
     // Injecting a motion event immediately before a button release results in
     // a MotionNotify even if the mouse position hasn't changed, which confuses
     // apps which assume MotionNotify implies movement. See crbug.com/138075.

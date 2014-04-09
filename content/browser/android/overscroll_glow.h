@@ -30,7 +30,7 @@ class OverscrollGlow {
   // If |enabled| is false, the effect will be be deactivated until
   // SetEnabled(true) is called.
   // The caller should attach |root_layer| to the desired layer tree.
-  static scoped_ptr<OverscrollGlow> Create(bool enabled);
+  static scoped_ptr<OverscrollGlow> Create(bool enabled, gfx::SizeF size);
 
   // Force loading of any necessary resources.  This function is thread-safe.
   static void EnsureResources();
@@ -46,11 +46,6 @@ class OverscrollGlow {
   void OnOverscrolled(base::TimeTicks current_time,
                       gfx::Vector2dF overscroll,
                       gfx::Vector2dF velocity);
-
-  // Triggers glow recession for any active edges.
-  // Note: This does not actually release any resources; the name mirrors that
-  //       in Android's OverscrollGlow class.
-  void Release(base::TimeTicks current_time);
 
   // Returns true if the effect still needs animation ticks.
   bool Animate(base::TimeTicks current_time);
@@ -79,7 +74,10 @@ class OverscrollGlow {
  private:
   enum Axis { AXIS_X, AXIS_Y };
 
-  OverscrollGlow(bool enabled, const SkBitmap& edge, const SkBitmap& glow);
+  OverscrollGlow(bool enabled,
+                 gfx::SizeF size,
+                 const SkBitmap& edge,
+                 const SkBitmap& glow);
 
   void Pull(base::TimeTicks current_time,
             gfx::Vector2dF added_overscroll);
@@ -87,7 +85,7 @@ class OverscrollGlow {
               gfx::Vector2dF velocity,
               gfx::Vector2dF overscroll,
               gfx::Vector2dF old_overscroll);
-
+  void Release(base::TimeTicks current_time);
   void ReleaseAxis(Axis axis, base::TimeTicks current_time);
 
   EdgeEffect* GetOppositeEdge(int edge_index);

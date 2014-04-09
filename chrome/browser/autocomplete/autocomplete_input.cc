@@ -13,6 +13,7 @@
 #include "net/base/net_util.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "url/url_canon_ip.h"
+#include "url/url_util.h"
 
 namespace {
 
@@ -172,8 +173,8 @@ AutocompleteInput::Type AutocompleteInput::Parse(
   // (e.g. "ftp" or "view-source") but I'll wait to spend the effort on that
   // until I run into some cases that really need it.
   if (parts->scheme.is_nonempty() &&
-      !LowerCaseEqualsASCII(parsed_scheme, chrome::kHttpScheme) &&
-      !LowerCaseEqualsASCII(parsed_scheme, chrome::kHttpsScheme)) {
+      !LowerCaseEqualsASCII(parsed_scheme, content::kHttpScheme) &&
+      !LowerCaseEqualsASCII(parsed_scheme, content::kHttpsScheme)) {
     // See if we know how to handle the URL internally.
     if (ProfileIOData::IsHandledProtocol(UTF16ToASCII(parsed_scheme)))
       return URL;
@@ -183,7 +184,7 @@ AutocompleteInput::Type AutocompleteInput::Parse(
     // reaching the net::URLRequest logic.  We thus won't catch these above, but
     // we should still claim to handle them.
     if (LowerCaseEqualsASCII(parsed_scheme, content::kViewSourceScheme) ||
-        LowerCaseEqualsASCII(parsed_scheme, chrome::kJavaScriptScheme) ||
+        LowerCaseEqualsASCII(parsed_scheme, content::kJavaScriptScheme) ||
         LowerCaseEqualsASCII(parsed_scheme, chrome::kDataScheme))
       return URL;
 
@@ -208,7 +209,7 @@ AutocompleteInput::Type AutocompleteInput::Parse(
         // We don't know about this scheme.  It might be that the user typed a
         // URL of the form "username:password@foo.com".
         const string16 http_scheme_prefix =
-            ASCIIToUTF16(std::string(chrome::kHttpScheme) +
+            ASCIIToUTF16(std::string(content::kHttpScheme) +
                          content::kStandardSchemeSeparator);
         url_parse::Parsed http_parts;
         string16 http_scheme;
@@ -216,7 +217,7 @@ AutocompleteInput::Type AutocompleteInput::Parse(
         Type http_type = Parse(http_scheme_prefix + text, desired_tld,
                                &http_parts, &http_scheme,
                                &http_canonicalized_url);
-        DCHECK_EQ(std::string(chrome::kHttpScheme), UTF16ToUTF8(http_scheme));
+        DCHECK_EQ(std::string(content::kHttpScheme), UTF16ToUTF8(http_scheme));
 
         if (http_type == URL &&
             http_parts.username.is_nonempty() &&
@@ -495,6 +496,16 @@ int AutocompleteInput::NumNonHostComponents(const url_parse::Parsed& parts) {
   if (parts.ref.is_nonempty())
     ++num_nonhost_components;
   return num_nonhost_components;
+}
+
+// static
+bool AutocompleteInput::HasHTTPScheme(const string16& input) {
+  std::string utf8_input(UTF16ToUTF8(input));
+  url_parse::Component scheme;
+  if (url_util::FindAndCompareScheme(utf8_input, content::kViewSourceScheme,
+                                     &scheme))
+    utf8_input.erase(0, scheme.end() + 1);
+  return url_util::FindAndCompareScheme(utf8_input, content::kHttpScheme, NULL);
 }
 
 void AutocompleteInput::UpdateText(const string16& text,

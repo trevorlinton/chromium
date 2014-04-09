@@ -17,21 +17,23 @@ void DecodePolicy(const enterprise_management::CloudPolicySettings& policy,
                   base::WeakPtr<CloudExternalDataManager> external_data_manager,
                   PolicyMap* policies);
 
-UserCloudPolicyStoreBase::UserCloudPolicyStoreBase() {
-}
+UserCloudPolicyStoreBase::UserCloudPolicyStoreBase(
+    scoped_refptr<base::SequencedTaskRunner> background_task_runner)
+    : background_task_runner_(background_task_runner) {}
 
 UserCloudPolicyStoreBase::~UserCloudPolicyStoreBase() {
 }
 
 scoped_ptr<UserCloudPolicyValidator> UserCloudPolicyStoreBase::CreateValidator(
-    scoped_ptr<enterprise_management::PolicyFetchResponse> policy) {
+    scoped_ptr<enterprise_management::PolicyFetchResponse> policy,
+    CloudPolicyValidatorBase::ValidateTimestampOption timestamp_option) {
   // Configure the validator.
   UserCloudPolicyValidator* validator =
-      UserCloudPolicyValidator::Create(policy.Pass());
+      UserCloudPolicyValidator::Create(policy.Pass(), background_task_runner_);
   validator->ValidatePolicyType(GetChromeUserPolicyType());
   validator->ValidateAgainstCurrentPolicy(
       policy_.get(),
-      CloudPolicyValidatorBase::TIMESTAMP_REQUIRED,
+      timestamp_option,
       CloudPolicyValidatorBase::DM_TOKEN_REQUIRED);
   validator->ValidatePayload();
   return scoped_ptr<UserCloudPolicyValidator>(validator);

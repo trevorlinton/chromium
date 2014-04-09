@@ -27,6 +27,7 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_ui.h"
 #include "ui/aura/client/capture_client.h"
+#include "ui/aura/root_window.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/x/x11_util.h"
 #include "ui/gfx/screen.h"
@@ -35,7 +36,7 @@
 namespace {
 
 // URL which corresponds to the login WebUI.
-const char kLoginURL[] = "chrome://oobe/login#lock";
+const char kLoginURL[] = "chrome://oobe/lock";
 
 }  // namespace
 
@@ -63,15 +64,11 @@ void WebUIScreenLocker::LockScreen() {
   lock_window->set_observer(this);
   lock_window_ = lock_window->GetWidget();
   lock_window_->AddObserver(this);
-  WebUILoginView::Init(lock_window_);
+  WebUILoginView::Init();
   lock_window_->SetContentsView(this);
   lock_window_->Show();
-  OnWindowCreated();
   LoadURL(GURL(kLoginURL));
   lock_window->Grab();
-
-  // Subscribe to crash events.
-  content::WebContentsObserver::Observe(GetWebContents());
 
   login_display_.reset(new WebUILoginDisplay(this));
   login_display_->set_background_bounds(bounds);
@@ -83,12 +80,6 @@ void WebUIScreenLocker::LockScreen() {
 
   registrar_.Add(this,
                  chrome::NOTIFICATION_LOGIN_USER_IMAGE_CHANGED,
-                 content::NotificationService::AllSources());
-  registrar_.Add(this,
-                 chrome::NOTIFICATION_LOCK_WEBUI_READY,
-                 content::NotificationService::AllSources());
-  registrar_.Add(this,
-                 chrome::NOTIFICATION_LOCK_BACKGROUND_DISPLAYED,
                  content::NotificationService::AllSources());
 }
 
@@ -154,6 +145,19 @@ WebUIScreenLocker::~WebUIScreenLocker() {
   }
 }
 
+void WebUIScreenLocker::OnLockWebUIReady() {
+  VLOG(1) << "WebUI ready; lock window is "
+          << (lock_ready_ ? "too" : "not");
+  webui_ready_ = true;
+  if (lock_ready_)
+    ScreenLockReady();
+}
+
+void WebUIScreenLocker::OnLockBackgroundDisplayed() {
+  UMA_HISTOGRAM_TIMES("LockScreen.BackgroundReady",
+                      base::TimeTicks::Now() - lock_time_);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // WebUIScreenLocker, content::NotificationObserver implementation:
 
@@ -165,19 +169,6 @@ void WebUIScreenLocker::Observe(
     case chrome::NOTIFICATION_LOGIN_USER_IMAGE_CHANGED: {
       const User& user = *content::Details<User>(details).ptr();
       login_display_->OnUserImageChanged(user);
-      break;
-    }
-    case chrome::NOTIFICATION_LOCK_WEBUI_READY: {
-      VLOG(1) << "WebUI ready; lock window is "
-              << (lock_ready_ ? "too" : "not");
-      webui_ready_ = true;
-      if (lock_ready_)
-        ScreenLockReady();
-      break;
-    }
-    case chrome::NOTIFICATION_LOCK_BACKGROUND_DISPLAYED: {
-      UMA_HISTOGRAM_TIMES("LockScreen.BackgroundReady",
-                          base::TimeTicks::Now() - lock_time_);
       break;
     }
     default:
@@ -269,6 +260,10 @@ void WebUIScreenLocker::SetDisplayEmail(const std::string& email) {
 
 void WebUIScreenLocker::Signout() {
   chromeos::ScreenLocker::default_screen_locker()->Signout();
+}
+
+void WebUIScreenLocker::LoginAsKioskApp(const std::string& app_id) {
+  NOTREACHED();
 }
 
 ////////////////////////////////////////////////////////////////////////////////

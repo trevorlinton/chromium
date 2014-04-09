@@ -198,8 +198,8 @@ bool IsValidUrl(const GURL& url) {
       chrome::kFileScheme,
       chrome::kFileSystemScheme,
       chrome::kFtpScheme,
-      chrome::kHttpScheme,
-      chrome::kHttpsScheme,
+      content::kHttpScheme,
+      content::kHttpsScheme,
       extensions::kExtensionScheme,
   };
 
@@ -228,7 +228,7 @@ void GetIconsInfo(const WebApplicationInfo& app_info,
 }
 #endif
 
-#if defined(TOOLKIT_GTK)
+#if defined(OS_LINUX)
 std::string GetWMClassFromAppName(std::string app_name) {
   file_util::ReplaceIllegalCharactersInPath(&app_name, '_');
   TrimString(app_name, "_", &app_name);

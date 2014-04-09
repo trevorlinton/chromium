@@ -21,8 +21,6 @@ using fileapi::FileSystemOperationContext;
 using fileapi::FileSystemURL;
 using webkit_blob::ShareableFileReference;
 
-namespace chrome {
-
 namespace {
 
 const char kDeviceMediaAsyncFileUtilTempDir[] = "DeviceMediaFileSystem";
@@ -166,6 +164,8 @@ void DeviceMediaAsyncFileUtil::CopyFileLocal(
     scoped_ptr<FileSystemOperationContext> context,
     const FileSystemURL& src_url,
     const FileSystemURL& dest_url,
+    CopyOrMoveOption option,
+    const CopyFileProgressCallback& progress_callback,
     const StatusCallback& callback) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::IO));
   NOTIMPLEMENTED();
@@ -176,6 +176,7 @@ void DeviceMediaAsyncFileUtil::MoveFileLocal(
     scoped_ptr<FileSystemOperationContext> context,
     const FileSystemURL& src_url,
     const FileSystemURL& dest_url,
+    CopyOrMoveOption option,
     const StatusCallback& callback) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::IO));
   NOTIMPLEMENTED();
@@ -339,5 +340,3 @@ void DeviceMediaAsyncFileUtil::OnSnapshotFileCreatedRunTask(
                  weak_ptr_factory_.GetWeakPtr(),
                  callback));
 }
-
-}  // namespace chrome

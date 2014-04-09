@@ -43,13 +43,6 @@ public class ContentViewClient {
     }
 
     /**
-      * Lets client listen on the scaling changes on delayed, throttled
-      * and best-effort basis. Used for WebView.onScaleChanged.
-      */
-    public void onScaleChanged(float oldScale, float newScale) {
-    }
-
-    /**
      * Notifies the client that the position of the top controls has changed.
      * @param topControlsOffsetYPix The Y offset of the top controls in physical pixels.
      * @param contentOffsetYPix The Y offset of the content in physical pixels.
@@ -149,6 +142,24 @@ public class ContentViewClient {
      * Called when the contextual ActionBar is hidden.
      */
     public void onContextualActionBarHidden() {
+    }
+
+    /**
+     * Perform a search on {@code searchQuery}.  This method is only called if
+     * {@link #doesPerformWebSearch()} returns {@code true}.
+     * @param searchQuery The string to search for.
+     */
+    public void performWebSearch(String searchQuery) {
+    }
+
+    /**
+     * If this returns {@code true} contextual web search attempts will be forwarded to
+     * {@link #performWebSearch(String)}.
+     * @return {@code true} iff this {@link ContentViewClient} wants to consume web search queries
+     *         and override the default intent behavior.
+     */
+    public boolean doesPerformWebSearch() {
+        return false;
     }
 
     /**

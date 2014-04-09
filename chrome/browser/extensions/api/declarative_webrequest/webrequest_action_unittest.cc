@@ -23,6 +23,7 @@
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_test_util.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "net/base/request_priority.h"
 #include "net/http/http_response_headers.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -57,7 +58,7 @@ scoped_ptr<WebRequestActionSet> CreateSetOfActions(const char* json) {
   bool bad_message = false;
 
   scoped_ptr<WebRequestActionSet> action_set(
-      WebRequestActionSet::Create(actions, &error, &bad_message));
+      WebRequestActionSet::Create(NULL, actions, &error, &bad_message));
   EXPECT_EQ("", error);
   EXPECT_FALSE(bad_message);
   CHECK(action_set);
@@ -135,7 +136,8 @@ bool WebRequestActionWithThreadsTest::ActionWorksOnRequest(
     const std::string& extension_id,
     const WebRequestActionSet* action_set,
     RequestStage stage) {
-  net::TestURLRequest regular_request(GURL(url_string), NULL, &context_, NULL);
+  net::TestURLRequest regular_request(
+      GURL(url_string), net::DEFAULT_PRIORITY, NULL, &context_);
   std::list<LinkedPtrEventResponseDelta> deltas;
   scoped_refptr<net::HttpResponseHeaders> headers(
       new net::HttpResponseHeaders(""));
@@ -180,28 +182,28 @@ TEST(WebRequestActionTest, CreateAction) {
   // Test wrong data type passed.
   error.clear();
   base::ListValue empty_list;
-  result = WebRequestAction::Create(empty_list, &error, &bad_message);
+  result = WebRequestAction::Create(NULL, empty_list, &error, &bad_message);
   EXPECT_TRUE(bad_message);
   EXPECT_FALSE(result.get());
 
   // Test missing instanceType element.
   base::DictionaryValue input;
   error.clear();
-  result = WebRequestAction::Create(input, &error, &bad_message);
+  result = WebRequestAction::Create(NULL, input, &error, &bad_message);
   EXPECT_TRUE(bad_message);
   EXPECT_FALSE(result.get());
 
   // Test wrong instanceType element.
   input.SetString(keys::kInstanceTypeKey, kUnknownActionType);
   error.clear();
-  result = WebRequestAction::Create(input, &error, &bad_message);
+  result = WebRequestAction::Create(NULL, input, &error, &bad_message);
   EXPECT_NE("", error);
   EXPECT_FALSE(result.get());
 
   // Test success
   input.SetString(keys::kInstanceTypeKey, keys::kCancelRequestType);
   error.clear();
-  result = WebRequestAction::Create(input, &error, &bad_message);
+  result = WebRequestAction::Create(NULL, input, &error, &bad_message);
   EXPECT_EQ("", error);
   EXPECT_FALSE(bad_message);
   ASSERT_TRUE(result.get());
@@ -217,7 +219,7 @@ TEST(WebRequestActionTest, CreateActionSet) {
 
   // Test empty input.
   error.clear();
-  result = WebRequestActionSet::Create(input, &error, &bad_message);
+  result = WebRequestActionSet::Create(NULL, input, &error, &bad_message);
   EXPECT_TRUE(error.empty()) << error;
   EXPECT_FALSE(bad_message);
   ASSERT_TRUE(result.get());
@@ -233,7 +235,7 @@ TEST(WebRequestActionTest, CreateActionSet) {
   // Test success.
   input.push_back(linked_ptr<base::Value>(correct_action.DeepCopy()));
   error.clear();
-  result = WebRequestActionSet::Create(input, &error, &bad_message);
+  result = WebRequestActionSet::Create(NULL, input, &error, &bad_message);
   EXPECT_TRUE(error.empty()) << error;
   EXPECT_FALSE(bad_message);
   ASSERT_TRUE(result.get());
@@ -245,7 +247,7 @@ TEST(WebRequestActionTest, CreateActionSet) {
   // Test failure.
   input.push_back(linked_ptr<base::Value>(incorrect_action.DeepCopy()));
   error.clear();
-  result = WebRequestActionSet::Create(input, &error, &bad_message);
+  result = WebRequestActionSet::Create(NULL, input, &error, &bad_message);
   EXPECT_NE("", error);
   EXPECT_FALSE(result.get());
 }

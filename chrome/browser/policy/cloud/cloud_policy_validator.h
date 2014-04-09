@@ -13,6 +13,7 @@
 #include "base/callback.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "chrome/browser/policy/proto/cloud/chrome_extension_policy.pb.h"
 #include "policy/proto/cloud_policy.pb.h"
@@ -35,7 +36,7 @@ class PolicyFetchResponse;
 namespace policy {
 
 // Helper class that implements the gory details of validating a policy blob.
-// Since signature checks are expensive, validation can happen on the FILE
+// Since signature checks are expensive, validation can happen on a background
 // thread. The pattern is to create a validator, configure its behavior through
 // the ValidateXYZ() functions, and then call StartValidation(). Alternatively,
 // RunValidation() can be used to perform validation on the current thread.
@@ -79,8 +80,15 @@ class CloudPolicyValidatorBase {
   };
 
   enum ValidateTimestampOption {
-    // The policy must have a timestamp field.
+    // The policy must have a timestamp field and it should be checked against
+    // both the start and end times.
     TIMESTAMP_REQUIRED,
+
+    // The timestamp should only be compared vs the |not_before| value (this
+    // is appropriate for platforms with unreliable system times, where we want
+    // to ensure that fresh policy is newer than existing policy, but we can't
+    // do any other validation).
+    TIMESTAMP_NOT_BEFORE,
 
     // No timestamp field is required.
     TIMESTAMP_NOT_REQUIRED,
@@ -102,11 +110,11 @@ class CloudPolicyValidatorBase {
   }
 
   // Instructs the validator to check that the policy timestamp is not before
-  // |not_before| and not after |now| + grace interval. If
+  // |not_before| and not after |not_after| + grace interval. If
   // |timestamp_option| is set to TIMESTAMP_REQUIRED, then the policy will fail
   // validation if it does not have a timestamp field.
   void ValidateTimestamp(base::Time not_before,
-                         base::Time now,
+                         base::Time not_after,
                          ValidateTimestampOption timestamp_option);
 
   // Validates the username in the policy blob matches |expected_user|.
@@ -164,7 +172,8 @@ class CloudPolicyValidatorBase {
   // valid for the lifetime of the validator.
   CloudPolicyValidatorBase(
       scoped_ptr<enterprise_management::PolicyFetchResponse> policy_response,
-      google::protobuf::MessageLite* payload);
+      google::protobuf::MessageLite* payload,
+      scoped_refptr<base::SequencedTaskRunner> background_task_runner);
 
   // Posts an asynchronous calls to PerformValidation, which will eventually
   // report its result via |completion_callback|.
@@ -230,6 +239,7 @@ class CloudPolicyValidatorBase {
   std::string settings_entity_id_;
   std::string key_;
   bool allow_key_rotation_;
+  scoped_refptr<base::SequencedTaskRunner> background_task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(CloudPolicyValidatorBase);
 };
@@ -245,11 +255,15 @@ class CloudPolicyValidator : public CloudPolicyValidatorBase {
   virtual ~CloudPolicyValidator() {}
 
   // Creates a new validator.
+  // |background_task_runner| is optional; if RunValidation() is used directly
+  // and StartValidation() is not used then it can be NULL.
   static CloudPolicyValidator<PayloadProto>* Create(
-      scoped_ptr<enterprise_management::PolicyFetchResponse> policy_response) {
+      scoped_ptr<enterprise_management::PolicyFetchResponse> policy_response,
+      scoped_refptr<base::SequencedTaskRunner> background_task_runner) {
     return new CloudPolicyValidator(
         policy_response.Pass(),
-        scoped_ptr<PayloadProto>(new PayloadProto()));
+        scoped_ptr<PayloadProto>(new PayloadProto()),
+        background_task_runner);
   }
 
   scoped_ptr<PayloadProto>& payload() {
@@ -267,8 +281,11 @@ class CloudPolicyValidator : public CloudPolicyValidatorBase {
  private:
   CloudPolicyValidator(
       scoped_ptr<enterprise_management::PolicyFetchResponse> policy_response,
-      scoped_ptr<PayloadProto> payload)
-      : CloudPolicyValidatorBase(policy_response.Pass(), payload.get()),
+      scoped_ptr<PayloadProto> payload,
+      scoped_refptr<base::SequencedTaskRunner> background_task_runner)
+      : CloudPolicyValidatorBase(policy_response.Pass(),
+                                 payload.get(),
+                                 background_task_runner),
         payload_(payload.Pass()) {}
 
   scoped_ptr<PayloadProto> payload_;

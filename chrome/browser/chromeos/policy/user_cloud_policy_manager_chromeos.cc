@@ -7,32 +7,65 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
+#include "base/message_loop/message_loop_proxy.h"
+#include "base/metrics/histogram.h"
+#include "base/metrics/sparse_histogram.h"
+#include "base/sequenced_task_runner.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/policy/policy_oauth2_token_fetcher.h"
 #include "chrome/browser/chromeos/policy/user_cloud_policy_manager_factory_chromeos.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "chrome/browser/policy/cloud/cloud_external_data_manager.h"
 #include "chrome/browser/policy/cloud/cloud_policy_refresh_scheduler.h"
 #include "chrome/browser/policy/cloud/resource_cache.h"
 #include "chrome/browser/policy/policy_bundle.h"
 #include "chrome/browser/policy/policy_domain_descriptor.h"
-#include "chrome/common/pref_names.h"
+#include "components/policy/core/common/policy_pref_names.h"
+#include "content/public/browser/browser_thread.h"
 #include "net/url_request/url_request_context_getter.h"
 
 namespace em = enterprise_management;
 
 namespace policy {
 
+namespace {
+
+// UMA histogram names.
+const char kUMADelayInitialization[] =
+    "Enterprise.UserPolicyChromeOS.DelayInitialization";
+const char kUMAInitialFetchClientError[] =
+    "Enterprise.UserPolicyChromeOS.InitialFetch.ClientError";
+const char kUMAInitialFetchDelayClientRegister[] =
+    "Enterprise.UserPolicyChromeOS.InitialFetch.DelayClientRegister";
+const char kUMAInitialFetchDelayOAuth2Token[] =
+    "Enterprise.UserPolicyChromeOS.InitialFetch.DelayOAuth2Token";
+const char kUMAInitialFetchDelayPolicyFetch[] =
+    "Enterprise.UserPolicyChromeOS.InitialFetch.DelayPolicyFetch";
+const char kUMAInitialFetchDelayTotal[] =
+    "Enterprise.UserPolicyChromeOS.InitialFetch.DelayTotal";
+const char kUMAInitialFetchOAuth2Error[] =
+    "Enterprise.UserPolicyChromeOS.InitialFetch.OAuth2Error";
+const char kUMAInitialFetchOAuth2NetworkError[] =
+    "Enterprise.UserPolicyChromeOS.InitialFetch.OAuth2NetworkError";
+
+}  // namespace
+
 UserCloudPolicyManagerChromeOS::UserCloudPolicyManagerChromeOS(
     scoped_ptr<CloudPolicyStore> store,
+    scoped_ptr<CloudExternalDataManager> external_data_manager,
+    const scoped_refptr<base::SequencedTaskRunner>& task_runner,
     scoped_ptr<ResourceCache> resource_cache,
     bool wait_for_policy_fetch,
     base::TimeDelta initial_policy_fetch_timeout)
     : CloudPolicyManager(
           PolicyNamespaceKey(dm_protocol::kChromeUserPolicyType, std::string()),
-          store.get()),
+          store.get(),
+          task_runner),
       store_(store.Pass()),
+      external_data_manager_(external_data_manager.Pass()),
       wait_for_policy_fetch_(wait_for_policy_fetch),
       policy_fetch_timeout_(false, false) {
+  time_init_started_ = base::Time::Now();
   if (wait_for_policy_fetch_) {
     policy_fetch_timeout_.Start(
         FROM_HERE,
@@ -41,8 +74,16 @@ UserCloudPolicyManagerChromeOS::UserCloudPolicyManagerChromeOS(
                    base::Unretained(this)));
   }
   if (resource_cache) {
+    // TODO(joaodasilva): Move the backend from the FILE thread to the blocking
+    // pool.
     component_policy_service_.reset(new ComponentCloudPolicyService(
-        this, store_.get(), resource_cache.Pass()));
+        this,
+        store_.get(),
+        resource_cache.Pass(),
+        content::BrowserThread::GetMessageLoopProxyForThread(
+            content::BrowserThread::FILE),
+        content::BrowserThread::GetMessageLoopProxyForThread(
+            content::BrowserThread::IO)));
   }
 }
 
@@ -61,6 +102,8 @@ void UserCloudPolicyManagerChromeOS::Connect(
                             NULL, device_management_service));
   core()->Connect(cloud_policy_client.Pass());
   client()->AddObserver(this);
+
+  external_data_manager_->Connect(request_context);
 
   if (component_policy_service_)
     component_policy_service_->Connect(client(), request_context);
@@ -94,6 +137,7 @@ void UserCloudPolicyManagerChromeOS::Shutdown() {
     service()->RemoveObserver(this);
   token_fetcher_.reset();
   component_policy_service_.reset();
+  external_data_manager_->Disconnect();
   CloudPolicyManager::Shutdown();
 }
 
@@ -129,6 +173,11 @@ void UserCloudPolicyManagerChromeOS::OnInitializationCompleted(
     CloudPolicyService* cloud_policy_service) {
   DCHECK_EQ(service(), cloud_policy_service);
   cloud_policy_service->RemoveObserver(this);
+
+  time_init_completed_ = base::Time::Now();
+  UMA_HISTOGRAM_TIMES(kUMADelayInitialization,
+                      time_init_completed_ - time_init_started_);
+
   // If the CloudPolicyClient isn't registered at this stage then it needs an
   // OAuth token for the initial registration.
   //
@@ -170,7 +219,14 @@ void UserCloudPolicyManagerChromeOS::OnPolicyFetched(
 void UserCloudPolicyManagerChromeOS::OnRegistrationStateChanged(
     CloudPolicyClient* cloud_policy_client) {
   DCHECK_EQ(client(), cloud_policy_client);
+
   if (wait_for_policy_fetch_) {
+    time_client_registered_ = base::Time::Now();
+    if (!time_token_available_.is_null()) {
+      UMA_HISTOGRAM_TIMES(kUMAInitialFetchDelayClientRegister,
+                          time_client_registered_ - time_token_available_);
+    }
+
     // If we're blocked on the policy fetch, now is a good time to issue it.
     if (client()->is_registered()) {
       service()->RefreshPolicy(
@@ -188,6 +244,10 @@ void UserCloudPolicyManagerChromeOS::OnRegistrationStateChanged(
 void UserCloudPolicyManagerChromeOS::OnClientError(
     CloudPolicyClient* cloud_policy_client) {
   DCHECK_EQ(client(), cloud_policy_client);
+  if (wait_for_policy_fetch_) {
+    UMA_HISTOGRAM_SPARSE_SLOWLY(kUMAInitialFetchClientError,
+                                cloud_policy_client->status());
+  }
   CancelWaitForPolicyFetch();
 }
 
@@ -224,6 +284,13 @@ void UserCloudPolicyManagerChromeOS::OnOAuth2PolicyTokenFetched(
     const std::string& policy_token,
     const GoogleServiceAuthError& error) {
   DCHECK(!client()->is_registered());
+
+  time_token_available_ = base::Time::Now();
+  if (wait_for_policy_fetch_) {
+    UMA_HISTOGRAM_TIMES(kUMAInitialFetchDelayOAuth2Token,
+                        time_token_available_ - time_init_completed_);
+  }
+
   if (error.state() == GoogleServiceAuthError::NONE) {
     // Start client registration. Either OnRegistrationStateChanged() or
     // OnClientError() will be called back.
@@ -232,6 +299,14 @@ void UserCloudPolicyManagerChromeOS::OnOAuth2PolicyTokenFetched(
   } else {
     // Failed to get a token, stop waiting and use an empty policy.
     CancelWaitForPolicyFetch();
+
+    UMA_HISTOGRAM_ENUMERATION(kUMAInitialFetchOAuth2Error,
+                              error.state(),
+                              GoogleServiceAuthError::NUM_STATES);
+    if (error.state() == GoogleServiceAuthError::CONNECTION_FAILED) {
+      UMA_HISTOGRAM_SPARSE_SLOWLY(kUMAInitialFetchOAuth2NetworkError,
+                                  error.network_error());
+    }
   }
 
   token_fetcher_.reset();
@@ -239,6 +314,10 @@ void UserCloudPolicyManagerChromeOS::OnOAuth2PolicyTokenFetched(
 
 void UserCloudPolicyManagerChromeOS::OnInitialPolicyFetchComplete(
     bool success) {
+  const base::Time now = base::Time::Now();
+  UMA_HISTOGRAM_TIMES(kUMAInitialFetchDelayPolicyFetch,
+                      now - time_client_registered_);
+  UMA_HISTOGRAM_TIMES(kUMAInitialFetchDelayTotal, now - time_init_started_);
   CancelWaitForPolicyFetch();
 }
 
@@ -271,8 +350,9 @@ void UserCloudPolicyManagerChromeOS::StartRefreshSchedulerIfReady() {
     return;
   }
 
-  StartRefreshScheduler();
-  core()->TrackRefreshDelayPref(local_state_, prefs::kUserPolicyRefreshRate);
+  core()->StartRefreshScheduler();
+  core()->TrackRefreshDelayPref(local_state_,
+                                policy_prefs::kUserPolicyRefreshRate);
 }
 
 }  // namespace policy

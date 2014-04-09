@@ -16,12 +16,16 @@
 #include "base/metrics/histogram.h"
 #include "base/pickle.h"
 #include "base/threading/thread.h"
+#include "chrome/browser/background/background_mode_manager.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/defaults.h"
 #include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_backend.h"
 #include "chrome/browser/sessions/session_command.h"
+#include "chrome/browser/sessions/session_data_deleter.h"
 #include "chrome/browser/sessions/session_restore.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/sessions/session_types.h"
@@ -33,7 +37,7 @@
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/extensions/extension.h"
-#include "chrome/common/startup_metric_utils.h"
+#include "components/startup_metric_utils/startup_metric_utils.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_details.h"
@@ -300,6 +304,16 @@ void SessionService::TabClosed(const SessionID& window_id,
   }
 }
 
+void SessionService::WindowOpened(Browser* browser) {
+  if (!ShouldTrackBrowser(browser))
+    return;
+
+  AppType app_type = browser->is_app() ? TYPE_APP : TYPE_NORMAL;
+  RestoreIfNecessary(std::vector<GURL>(), browser);
+  SetWindowType(browser->session_id(), browser->type(), app_type);
+  SetWindowAppName(browser->session_id(), browser->app_name());
+}
+
 void SessionService::WindowClosing(const SessionID& window_id) {
   if (!ShouldTrackChangesToWindow(window_id))
     return;
@@ -337,6 +351,14 @@ void SessionService::WindowClosed(const SessionID& window_id) {
       pending_window_close_ids_.insert(window_id.id());
     else
       ScheduleCommand(CreateWindowClosedCommand(window_id.id()));
+  }
+  // Clear session data if the last window for a profile has been closed and
+  // closing the last window would normally close Chrome, unless background mode
+  // is active.
+  if (!has_open_trackable_browsers_ &&
+      !browser_defaults::kBrowserAliveWithNoWindows &&
+      !g_browser_process->background_mode_manager()->IsBackgroundModeActive()) {
+    DeleteSessionOnlyData(profile());
   }
 }
 
@@ -511,9 +533,6 @@ void SessionService::Init() {
                  content::NotificationService::AllSources());
   registrar_.Add(this, content::NOTIFICATION_NAV_ENTRY_COMMITTED,
                  content::NotificationService::AllSources());
-  // Wait for NOTIFICATION_BROWSER_WINDOW_READY so that is_app() is set.
-  registrar_.Add(this, chrome::NOTIFICATION_BROWSER_WINDOW_READY,
-                 content::NotificationService::AllBrowserContextsAndSources());
   registrar_.Add(
       this, chrome::NOTIFICATION_TAB_CONTENTS_APPLICATION_EXTENSION_CHANGED,
       content::NotificationService::AllSources());
@@ -576,18 +595,6 @@ void SessionService::Observe(int type,
                              const content::NotificationDetails& details) {
   // All of our messages have the NavigationController as the source.
   switch (type) {
-    case chrome::NOTIFICATION_BROWSER_WINDOW_READY: {
-      Browser* browser = content::Source<Browser>(source).ptr();
-      if (!ShouldTrackBrowser(browser))
-        return;
-
-      AppType app_type = browser->is_app() ? TYPE_APP : TYPE_NORMAL;
-      RestoreIfNecessary(std::vector<GURL>(), browser);
-      SetWindowType(browser->session_id(), browser->type(), app_type);
-      SetWindowAppName(browser->session_id(), browser->app_name());
-      break;
-    }
-
     case content::NOTIFICATION_NAV_LIST_PRUNED: {
       WebContents* web_contents =
           content::Source<content::NavigationController>(source).ptr()->

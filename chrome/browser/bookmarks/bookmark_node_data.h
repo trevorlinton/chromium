@@ -9,8 +9,10 @@
 
 #include "base/files/file_path.h"
 #include "base/strings/string16.h"
-#include "url/gurl.h"
+#include "base/time/time.h"
+#include "ui/base/clipboard/clipboard_types.h"
 
+#include "url/gurl.h"
 #if defined(TOOLKIT_VIEWS)
 #include "ui/base/dragdrop/os_exchange_data.h"
 #endif
@@ -54,6 +56,12 @@ struct BookmarkNodeData {
     // Title of the entry, used for both urls and folders.
     string16 title;
 
+    // Date of when this node was created.
+    base::Time date_added;
+
+    // Date of the last modification. Only used for folders.
+    base::Time date_folder_modified;
+
     // Children, only used for non-URL nodes.
     std::vector<Element> children;
 
@@ -93,19 +101,12 @@ struct BookmarkNodeData {
   // Creates a single-bookmark DragData from url/title pair.
   bool ReadFromTuple(const GURL& url, const string16& title);
 
-  // Writes elements to the clipboard.
-  void WriteToClipboard() const;
+  // Writes bookmarks to the specified clipboard.
+  void WriteToClipboard(ui::ClipboardType type);
 
-  // Reads bookmarks from the general copy/paste clipboard. Prefers data
-  // written via WriteToClipboard but will also attempt to read a plain
-  // bookmark.
-  bool ReadFromClipboard();
-
-#if defined(OS_MACOSX)
-  // Reads bookmarks that are being dragged from the drag and drop
-  // pasteboard.
-  bool ReadFromDragClipboard();
-#endif
+  // Reads bookmarks from the specified clipboard. Prefers data written via
+  // WriteToClipboard() but will also attempt to read a plain bookmark.
+  bool ReadFromClipboard(ui::ClipboardType type);
 
 #if defined(TOOLKIT_VIEWS)
   // Writes elements to data. If there is only one element and it is a URL

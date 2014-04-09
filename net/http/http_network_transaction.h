@@ -73,10 +73,10 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   virtual void OnStreamReady(const SSLConfig& used_ssl_config,
                              const ProxyInfo& used_proxy_info,
                              HttpStreamBase* stream) OVERRIDE;
-  virtual void OnWebSocketStreamReady(
+  virtual void OnWebSocketHandshakeStreamReady(
       const SSLConfig& used_ssl_config,
       const ProxyInfo& used_proxy_info,
-      WebSocketStreamBase* stream) OVERRIDE;
+      WebSocketHandshakeStreamBase* stream) OVERRIDE;
   virtual void OnStreamFailed(int status,
                               const SSLConfig& used_ssl_config) OVERRIDE;
   virtual void OnCertificateError(int status,
@@ -256,7 +256,7 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   CompletionCallback io_callback_;
   CompletionCallback callback_;
 
-  scoped_refptr<HttpNetworkSession> session_;
+  HttpNetworkSession* session_;
 
   BoundNetLog net_log_;
   const HttpRequestInfo* request_;

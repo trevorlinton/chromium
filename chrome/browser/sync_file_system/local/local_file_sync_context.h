@@ -33,6 +33,10 @@ class FileSystemContext;
 class FileSystemURL;
 }
 
+namespace webkit_blob {
+class ScopedFile;
+}
+
 namespace sync_file_system {
 
 class FileChange;
@@ -50,15 +54,23 @@ class LocalFileSyncContext
     : public base::RefCountedThreadSafe<LocalFileSyncContext>,
       public LocalFileSyncStatus::Observer {
  public:
+  enum SyncMode {
+    SYNC_EXCLUSIVE,
+    SYNC_SNAPSHOT,
+  };
+
   typedef base::Callback<void(
-      SyncStatusCode status, const LocalFileSyncInfo& sync_file_info)>
+      SyncStatusCode status,
+      const LocalFileSyncInfo& sync_file_info,
+      webkit_blob::ScopedFile snapshot)>
           LocalFileSyncInfoCallback;
 
   typedef base::Callback<void(SyncStatusCode status,
                               bool has_pending_changes)>
       HasPendingLocalChangeCallback;
 
-  LocalFileSyncContext(base::SingleThreadTaskRunner* ui_task_runner,
+  LocalFileSyncContext(const base::FilePath& base_path,
+                       base::SingleThreadTaskRunner* ui_task_runner,
                        base::SingleThreadTaskRunner* io_task_runner);
 
   // Initializes |file_system_context| for syncable file operations
@@ -80,6 +92,7 @@ class LocalFileSyncContext
   void GetFileForLocalSync(fileapi::FileSystemContext* file_system_context,
                            const LocalFileSyncInfoCallback& callback);
 
+  // TODO(kinuko): Make this private.
   // Clears all pending local changes for |url|. |done_callback| is called
   // when the changes are cleared.
   // This method must be called on UI thread.
@@ -87,19 +100,44 @@ class LocalFileSyncContext
                           const fileapi::FileSystemURL& url,
                           const base::Closure& done_callback);
 
-  // A local or remote sync has been finished (either successfully or
-  // with an error). Clears the internal sync flag and enable writing for |url|.
-  // This method must be called on UI thread.
-  void ClearSyncFlagForURL(const fileapi::FileSystemURL& url);
+  // Finalizes SnapshotSync, which must have been started by
+  // PrepareForSync with SYNC_SNAPSHOT.
+  // Updates the on-disk dirty flag for |url| in the tracker DB.
+  // This will clear the dirty flag if |sync_finish_status| is SYNC_STATUS_OK
+  // or SYNC_STATUS_HAS_CONFLICT.
+  // |done_callback| is called when the changes are committed.
+  void FinalizeSnapshotSync(
+      fileapi::FileSystemContext* file_system_context,
+      const fileapi::FileSystemURL& url,
+      SyncStatusCode sync_finish_status,
+      const base::Closure& done_callback);
+
+  // Finalizes ExclusiveSync, which must have been started by
+  // PrepareForSync with SYNC_EXCLUSIVE.
+  void FinalizeExclusiveSync(
+      fileapi::FileSystemContext* file_system_context,
+      const fileapi::FileSystemURL& url,
+      bool clear_local_changes,
+      const base::Closure& done_callback);
 
   // Prepares for sync |url| by disabling writes on |url|.
   // If the target |url| is being written and cannot start sync it
   // returns SYNC_STATUS_WRITING status code via |callback|.
-  // Otherwise it disables writes, marks the |url| syncing and returns
-  // the current change set made on |url|.
+  // Otherwise returns the current change sets made on |url|.
+  //
+  // If |sync_mode| is SYNC_EXCLUSIVE this leaves the target file locked.
+  // If |sync_mode| is SYNC_SNAPSHOT this creates a snapshot (if the
+  // target file is not deleted) and unlocks the file before returning.
+  //
+  // For SYNC_EXCLUSIVE, caller must call FinalizeExclusiveSync() to finalize
+  // sync and unlock the file.
+  // For SYNC_SNAPSHOT, caller must call FinalizeSnapshotSync() to finalize
+  // sync to reset the mirrored change status and decrement writing count.
+  //
   // This method must be called on UI thread.
   void PrepareForSync(fileapi::FileSystemContext* file_system_context,
                       const fileapi::FileSystemURL& url,
+                      SyncMode sync_mode,
                       const LocalFileSyncInfoCallback& callback);
 
   // Registers |url| to wait until sync is enabled for |url|.
@@ -217,17 +255,27 @@ class LocalFileSyncContext
       std::deque<fileapi::FileSystemURL>* remaining_urls,
       const LocalFileSyncInfoCallback& callback,
       SyncStatusCode status,
-      const LocalFileSyncInfo& sync_file_info);
+      const LocalFileSyncInfo& sync_file_info,
+      webkit_blob::ScopedFile snapshot);
 
   // Callback routine for PrepareForSync and GetFileForLocalSync.
   void DidGetWritingStatusForSync(
       fileapi::FileSystemContext* file_system_context,
       SyncStatusCode status,
       const fileapi::FileSystemURL& url,
+      SyncMode sync_mode,
       const LocalFileSyncInfoCallback& callback);
 
-  // Helper routine for ClearSyncFlagForURL.
-  void EnableWritingOnIOThread(const fileapi::FileSystemURL& url);
+  // Helper routine for sync/writing flag handling.
+  //
+  // If |for_snapshot_sync| is true, this increments the writing counter
+  // for |url| (after clearing syncing flag), so that other sync activities
+  // won't step in while snapshot sync is ongoing.
+  // In this case FinalizeSnapshotSyncOnIOThread must be called after the
+  // snapshot sync is finished to decrement the writing counter.
+  void ClearSyncFlagOnIOThread(const fileapi::FileSystemURL& url,
+                               bool for_snapshot_sync);
+  void FinalizeSnapshotSyncOnIOThread(const fileapi::FileSystemURL& url);
 
   void DidRemoveExistingEntryForApplyRemoteChange(
       fileapi::FileSystemContext* file_system_context,
@@ -256,6 +304,8 @@ class LocalFileSyncContext
       const fileapi::FileSystemURL& dest_url,
       const StatusCallback& callback,
       base::PlatformFileError error);
+
+  const base::FilePath local_base_path_;
 
   scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner_;
   scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;

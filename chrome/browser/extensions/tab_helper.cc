@@ -4,11 +4,14 @@
 
 #include "chrome/browser/extensions/tab_helper.h"
 
+#include "base/logging.h"
+#include "base/strings/string_util.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/activity_log/activity_log.h"
 #include "chrome/browser/extensions/api/declarative/rules_registry_service.h"
 #include "chrome/browser/extensions/api/declarative_content/content_rules_registry.h"
 #include "chrome/browser/extensions/crx_installer.h"
+#include "chrome/browser/extensions/error_console/error_console.h"
 #include "chrome/browser/extensions/extension_action.h"
 #include "chrome/browser/extensions/extension_action_manager.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -20,6 +23,7 @@
 #include "chrome/browser/extensions/script_bubble_controller.h"
 #include "chrome/browser/extensions/script_executor.h"
 #include "chrome/browser/extensions/webstore_inline_installer.h"
+#include "chrome/browser/extensions/webstore_inline_installer_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_id.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
@@ -33,6 +37,7 @@
 #include "chrome/common/extensions/feature_switch.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
 #include "chrome/common/extensions/manifest_handlers/icons_handler.h"
+#include "chrome/common/render_messages.h"
 #include "content/public/browser/invalidate_type.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_details.h"
@@ -45,7 +50,9 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
+#include "extensions/browser/extension_error.h"
 #include "extensions/common/extension_resource.h"
+#include "extensions/common/extension_urls.h"
 #include "ui/gfx/image/image.h"
 
 using content::NavigationController;
@@ -54,12 +61,6 @@ using content::RenderViewHost;
 using content::WebContents;
 
 DEFINE_WEB_CONTENTS_USER_DATA_KEY(extensions::TabHelper);
-
-namespace {
-
-const char kPermissionError[] = "permission_error";
-
-}  // namespace
 
 namespace extensions {
 
@@ -86,7 +87,8 @@ TabHelper::TabHelper(content::WebContents* web_contents)
       pending_web_app_action_(NONE),
       script_executor_(new ScriptExecutor(web_contents,
                                           &script_execution_observers_)),
-      image_loader_ptr_factory_(this) {
+      image_loader_ptr_factory_(this),
+      webstore_inline_installer_factory_(new WebstoreInlineInstallerFactory()) {
   // The ActiveTabPermissionManager requires a session ID; ensure this
   // WebContents has one.
   SessionTabHelper::CreateForWebContents(web_contents);
@@ -109,11 +111,13 @@ TabHelper::TabHelper(content::WebContents* web_contents)
         new ScriptBubbleController(web_contents, this));
   }
 
-
   // If more classes need to listen to global content script activity, then
   // a separate routing class with an observer interface should be written.
   profile_ = Profile::FromBrowserContext(web_contents->GetBrowserContext());
+
+#if defined(ENABLE_EXTENSIONS)
   AddScriptExecutionObserver(ActivityLog::GetInstance(profile_));
+#endif
 
   registrar_.Add(this,
                  content::NOTIFICATION_LOAD_STOP,
@@ -126,7 +130,9 @@ TabHelper::TabHelper(content::WebContents* web_contents)
 }
 
 TabHelper::~TabHelper() {
+#if defined(ENABLE_EXTENSIONS)
   RemoveScriptExecutionObserver(ActivityLog::GetInstance(profile_));
+#endif
 }
 
 void TabHelper::CreateApplicationShortcuts() {
@@ -237,6 +243,8 @@ bool TabHelper::OnMessageReceived(const IPC::Message& message) {
                         OnContentScriptsExecuting)
     IPC_MESSAGE_HANDLER(ExtensionHostMsg_OnWatchedPageChange,
                         OnWatchedPageChange)
+    IPC_MESSAGE_HANDLER(ChromeViewHostMsg_DetailedConsoleMessageAdded,
+                        OnDetailedConsoleMessageAdded)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
@@ -252,7 +260,6 @@ void TabHelper::DidCloneToNewWebContents(WebContents* old_web_contents,
   new_helper->SetExtensionApp(extension_app());
   new_helper->extension_app_icon_ = extension_app_icon_;
 }
-
 
 void TabHelper::OnDidGetApplicationInfo(int32 page_id,
                                         const WebApplicationInfo& info) {
@@ -294,7 +301,7 @@ void TabHelper::OnInlineWebstoreInstall(
       base::Bind(&TabHelper::OnInlineInstallComplete, base::Unretained(this),
                  install_id, return_route_id);
   scoped_refptr<WebstoreInlineInstaller> installer(
-      new WebstoreInlineInstaller(
+      webstore_inline_installer_factory_->CreateInstaller(
           web_contents(),
           webstore_item_id,
           requestor_url,
@@ -350,6 +357,28 @@ void TabHelper::OnWatchedPageChange(
 #endif  // defined(ENABLE_EXTENSIONS)
 }
 
+void TabHelper::OnDetailedConsoleMessageAdded(
+    const base::string16& message,
+    const base::string16& source,
+    const StackTrace& stack_trace,
+    int32 severity_level) {
+  if (IsSourceFromAnExtension(source)) {
+    content::RenderViewHost* rvh = web_contents()->GetRenderViewHost();
+    ErrorConsole::Get(profile_)->ReportError(
+        scoped_ptr<ExtensionError>(new RuntimeError(
+            extension_app_ ? extension_app_->id() : EmptyString(),
+            profile_->IsOffTheRecord(),
+            source,
+            message,
+            stack_trace,
+            web_contents() ?
+                web_contents()->GetLastCommittedURL() : GURL::EmptyGURL(),
+            static_cast<logging::LogSeverity>(severity_level),
+            rvh->GetRoutingID(),
+            rvh->GetProcess()->GetID())));
+  }
+}
+
 const Extension* TabHelper::GetExtension(const std::string& extension_app_id) {
   if (extension_app_id.empty())
     return NULL;
@@ -390,6 +419,11 @@ void TabHelper::UpdateExtensionAppIcon(const Extension* extension) {
 void TabHelper::SetAppIcon(const SkBitmap& app_icon) {
   extension_app_icon_ = app_icon;
   web_contents()->NotifyNavigationStateChanged(content::INVALIDATE_TYPE_TITLE);
+}
+
+void TabHelper::SetWebstoreInlineInstallerFactoryForTests(
+    WebstoreInlineInstallerFactory* factory) {
+  webstore_inline_installer_factory_.reset(factory);
 }
 
 void TabHelper::OnImageLoaded(const gfx::Image& image) {

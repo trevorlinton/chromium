@@ -39,6 +39,9 @@ UninstallView::UninstallView(int* user_selection,
 UninstallView::~UninstallView() {
   // Exit the message loop we were started with so that uninstall can continue.
   quit_closure_.Run();
+
+  // Delete Combobox as it holds a reference to us.
+  delete browsers_combo_;
 }
 
 void UninstallView::SetupControls() {
@@ -79,7 +82,8 @@ void UninstallView::SetupControls() {
   // be set programatically as default, neither can any other browser (for
   // instance because the OS doesn't permit that).
   BrowserDistribution* dist = BrowserDistribution::GetDistribution();
-  if (dist->CanSetAsDefault() &&
+  if (dist->GetDefaultBrowserControlPolicy() !=
+          BrowserDistribution::DEFAULT_BROWSER_UNSUPPORTED &&
       ShellIntegration::GetDefaultBrowser() == ShellIntegration::IS_DEFAULT &&
       (ShellIntegration::CanSetAsDefaultBrowser() !=
           ShellIntegration::SET_DEFAULT_INTERACTIVE)) {

@@ -125,11 +125,14 @@ class PnaclHost {
 
   typedef std::pair<int, int> TranslationID;
   typedef std::map<TranslationID, PendingTranslation> PendingTranslationMap;
+  static bool TranslationMayBeCached(
+      const PendingTranslationMap::iterator& entry);
 
   void InitForTest(base::FilePath temp_dir);
   void OnCacheInitialized(int net_error);
 
-  static base::PlatformFile DoCreateTemporaryFile(base::FilePath temp_dir_);
+  static void DoCreateTemporaryFile(base::FilePath temp_dir_,
+                                    TempFileCallback cb);
 
   // GetNexeFd common steps
   void SendCacheQueryAndTempFileRequest(const std::string& key,
@@ -154,8 +157,13 @@ class PnaclHost {
                               scoped_refptr<net::DrainableIOBuffer> buffer);
   void OnBufferCopiedToTempFile(const TranslationID& id, int file_error);
 
-  static void OnEntriesDoomed(const base::Closure& callback, int net_error);
+  void OnEntriesDoomed(const base::Closure& callback, int net_error);
 
+  void DeInitIfSafe();
+
+  // Operations which are pending with the cache backend, which we should
+  // wait for before destroying it (see comment on DeInitIfSafe).
+  int pending_backend_operations_;
   CacheState cache_state_;
   base::FilePath temp_dir_;
   scoped_ptr<pnacl::PnaclTranslationCache> disk_cache_;

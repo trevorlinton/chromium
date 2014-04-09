@@ -59,7 +59,6 @@ class OmniboxViewWin
   DECLARE_WND_SUPERCLASS(L"Chrome_OmniboxView", MSFTEDIT_CLASS);
 
   OmniboxViewWin(OmniboxEditController* controller,
-                 ToolbarModel* toolbar_model,
                  LocationBarView* parent_view,
                  CommandUpdater* command_updater,
                  bool popup_window_mode,
@@ -75,8 +74,8 @@ class OmniboxViewWin
 
   // OmniboxView:
   virtual void SaveStateToTab(content::WebContents* tab) OVERRIDE;
-  virtual void Update(
-      const content::WebContents* tab_for_state_restoring) OVERRIDE;
+  virtual void OnTabChanged(const content::WebContents* web_contents) OVERRIDE;
+  virtual void Update() OVERRIDE;
   virtual void OpenMatch(const AutocompleteMatch& match,
                          WindowOpenDisposition disposition,
                          const GURL& alternate_nav_url,
@@ -331,7 +330,7 @@ class OmniboxViewWin
 
   // TSFEventRouter::Observer:
   virtual void OnCandidateWindowCountChanged(size_t window_count) OVERRIDE;
-  virtual void OnTextUpdated(const ui::Range& composition_range) OVERRIDE;
+  virtual void OnTextUpdated(const gfx::Range& composition_range) OVERRIDE;
 
   // Erases the portion of the selection in the font's y-adjustment area.  For
   // some reason the edit draws the selection rect here even though it's not
@@ -390,10 +389,6 @@ class OmniboxViewWin
 
   // Common implementation for performing a drop on the edit view.
   int OnPerformDropImpl(const ui::DropTargetEvent& event, bool in_drag);
-
-  // Whether to show the menu item for copying the URL.
-  bool ShouldEnableCopyURL() const;
-  void CopyURL();
 
   // The handle to the RichEdit DLL.  In the rare case where the user's system
   // is missing this DLL (due to some kind of system corruption), the similar

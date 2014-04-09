@@ -9,11 +9,11 @@
 #include "content/browser/browser_thread_impl.h"
 #include "content/browser/browsing_instance.h"
 #include "content/browser/child_process_security_policy_impl.h"
+#include "content/browser/frame_host/navigation_entry_impl.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/renderer_host/test_render_view_host.h"
 #include "content/browser/site_instance_impl.h"
-#include "content/browser/web_contents/navigation_entry_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/browser/webui/web_ui_controller_factory_registry.h"
 #include "content/public/common/content_client.h"
@@ -31,8 +31,6 @@
 
 namespace content {
 namespace {
-
-const char kSameAsAnyInstanceURL[] = "about:internets";
 
 const char kPrivilegedScheme[] = "privileged";
 
@@ -345,7 +343,7 @@ TEST_F(SiteInstanceTest, GetSiteForURL) {
   test_url = GURL("file:///C:/Downloads/");
   EXPECT_EQ(GURL(), SiteInstanceImpl::GetSiteForURL(NULL, test_url));
 
-  std::string guest_url(chrome::kGuestScheme);
+  std::string guest_url(kGuestScheme);
   guest_url.append("://abc123");
   test_url = GURL(guest_url);
   EXPECT_EQ(test_url, SiteInstanceImpl::GetSiteForURL(NULL, test_url));

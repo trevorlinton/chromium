@@ -18,9 +18,8 @@
 #include "chromeos/dbus/ibus/ibus_component.h"
 #include "chromeos/dbus/ibus/ibus_engine_factory_service.h"
 #include "chromeos/dbus/ibus/ibus_engine_service.h"
-#include "chromeos/dbus/ibus/ibus_lookup_table.h"
-#include "chromeos/dbus/ibus/ibus_property.h"
 #include "chromeos/dbus/ibus/ibus_text.h"
+#include "chromeos/ime/candidate_window.h"
 #include "chromeos/ime/component_extension_ime_manager.h"
 #include "chromeos/ime/extension_ime_util.h"
 #include "chromeos/ime/ibus_keymap.h"
@@ -52,7 +51,7 @@ InputMethodEngineIBus::InputMethodEngineIBus()
       preedit_text_(new IBusText()),
       preedit_cursor_(0),
       component_(new IBusComponent()),
-      table_(new IBusLookupTable()),
+      candidate_window_(new input_method::CandidateWindow()),
       window_visible_(false),
       weak_ptr_factory_(this) {
 }
@@ -103,7 +102,7 @@ void InputMethodEngineIBus::Initialize(
   component_->set_author(engine_name);
 
   // TODO(nona): Remove IBusComponent once ibus is gone.
-  chromeos::IBusComponent::EngineDescription engine_desc;
+  IBusComponent::EngineDescription engine_desc;
   engine_desc.engine_id = ibus_id_;
   engine_desc.display_name = description;
   engine_desc.description = description;
@@ -179,7 +178,7 @@ bool InputMethodEngineIBus::SetComposition(
       *preedit_text_.get(),
       preedit_cursor_,
       true,
-      chromeos::IBusEngineService::IBUS_ENGINE_PREEEDIT_FOCUS_OUT_MODE_COMMIT);
+      IBusEngineService::IBUS_ENGINE_PREEEDIT_FOCUS_OUT_MODE_COMMIT);
   return true;
 }
 
@@ -200,7 +199,7 @@ bool InputMethodEngineIBus::ClearComposition(int context_id,
       *preedit_text_.get(),
       0,
       false,
-      chromeos::IBusEngineService::IBUS_ENGINE_PREEEDIT_FOCUS_OUT_MODE_COMMIT);
+      IBusEngineService::IBUS_ENGINE_PREEEDIT_FOCUS_OUT_MODE_COMMIT);
   return true;
 }
 
@@ -216,8 +215,36 @@ bool InputMethodEngineIBus::CommitText(int context_id, const char* text,
     return false;
   }
 
-  GetCurrentService()->CommitText(text);
+  IBusBridge::Get()->GetInputContextHandler()->CommitText(text);
   return true;
+}
+
+const InputMethodEngineIBus::CandidateWindowProperty&
+InputMethodEngineIBus::GetCandidateWindowProperty() const {
+  return candidate_window_property_;
+}
+
+void InputMethodEngineIBus::SetCandidateWindowProperty(
+    const CandidateWindowProperty& property) {
+  // Type conversion from InputMethodEngine::CandidateWindowProperty to
+  // CandidateWindow::CandidateWindowProperty defined in chromeos/ime/.
+  input_method::CandidateWindow::CandidateWindowProperty dest_property;
+  dest_property.page_size = property.page_size;
+  dest_property.is_cursor_visible = property.is_cursor_visible;
+  dest_property.is_vertical = property.is_vertical;
+  dest_property.show_window_at_composition =
+      property.show_window_at_composition;
+  dest_property.cursor_position =
+      candidate_window_->GetProperty().cursor_position;
+  candidate_window_->SetProperty(dest_property);
+  candidate_window_property_ = property;
+
+  if (active_) {
+    IBusPanelCandidateWindowHandlerInterface* cw_handler =
+        IBusBridge::Get()->GetCandidateWindowHandler();
+    if (cw_handler)
+      cw_handler->UpdateLookupTable(*candidate_window_, window_visible_);
+  }
 }
 
 bool InputMethodEngineIBus::SetCandidateWindowVisible(bool visible,
@@ -228,34 +255,11 @@ bool InputMethodEngineIBus::SetCandidateWindowVisible(bool visible,
   }
 
   window_visible_ = visible;
-  GetCurrentService()->UpdateLookupTable(*table_.get(), window_visible_);
+  IBusPanelCandidateWindowHandlerInterface* cw_handler =
+    IBusBridge::Get()->GetCandidateWindowHandler();
+  if (cw_handler)
+    cw_handler->UpdateLookupTable(*candidate_window_, window_visible_);
   return true;
-}
-
-void InputMethodEngineIBus::SetCandidateWindowCursorVisible(bool visible) {
-  table_->set_is_cursor_visible(visible);
-  // IBus shows candidates on a page where the cursor is placed, so we need to
-  // set the cursor position appropriately so IBus shows the right page.
-  // In the case that the cursor is not visible, we always show the first page.
-  // This trick works because only extension IMEs use this method and extension
-  // IMEs do not depend on the pagination feature of IBus.
-  if (!visible)
-    table_->set_cursor_position(0);
-  if (active_)
-    GetCurrentService()->UpdateLookupTable(*table_.get(), window_visible_);
-}
-
-void InputMethodEngineIBus::SetCandidateWindowVertical(bool vertical) {
-  table_->set_orientation(vertical ? IBusLookupTable::VERTICAL :
-                          IBusLookupTable::HORIZONTAL);
-  if (active_)
-    GetCurrentService()->UpdateLookupTable(*table_.get(), window_visible_);
-}
-
-void InputMethodEngineIBus::SetCandidateWindowPageSize(int size) {
-  table_->set_page_size(size);
-  if (active_)
-    GetCurrentService()->UpdateLookupTable(*table_.get(), window_visible_);
 }
 
 void InputMethodEngineIBus::SetCandidateWindowAuxText(const char* text) {
@@ -278,13 +282,6 @@ void InputMethodEngineIBus::SetCandidateWindowAuxTextVisible(bool visible) {
   }
 }
 
-void InputMethodEngineIBus::SetCandidateWindowPosition(
-    CandidateWindowPosition position) {
-  table_->set_show_window_at_composition(position == WINDOW_POS_COMPOSITTION);
-  if (active_)
-    GetCurrentService()->UpdateLookupTable(*table_.get(), window_visible_);
-}
-
 bool InputMethodEngineIBus::SetCandidates(
     int context_id,
     const std::vector<Candidate>& candidates,
@@ -301,10 +298,10 @@ bool InputMethodEngineIBus::SetCandidates(
   // TODO: Nested candidates
   candidate_ids_.clear();
   candidate_indexes_.clear();
-  table_->mutable_candidates()->clear();
+  candidate_window_->mutable_candidates()->clear();
   for (std::vector<Candidate>::const_iterator ix = candidates.begin();
        ix != candidates.end(); ++ix) {
-    IBusLookupTable::Entry entry;
+    input_method::CandidateWindow::Entry entry;
     entry.value = ix->value;
     entry.label = ix->label;
     entry.annotation = ix->annotation;
@@ -315,9 +312,14 @@ bool InputMethodEngineIBus::SetCandidates(
     candidate_indexes_[ix->id] = candidate_ids_.size();
     candidate_ids_.push_back(ix->id);
 
-    table_->mutable_candidates()->push_back(entry);
+    candidate_window_->mutable_candidates()->push_back(entry);
   }
-  GetCurrentService()->UpdateLookupTable(*table_.get(), window_visible_);
+  if (active_) {
+    IBusPanelCandidateWindowHandlerInterface* cw_handler =
+      IBusBridge::Get()->GetCandidateWindowHandler();
+    if (cw_handler)
+      cw_handler->UpdateLookupTable(*candidate_window_, window_visible_);
+  }
   return true;
 }
 
@@ -339,28 +341,16 @@ bool InputMethodEngineIBus::SetCursorPosition(int context_id, int candidate_id,
     return false;
   }
 
-  table_->set_cursor_position(position->second);
-  GetCurrentService()->UpdateLookupTable(*table_.get(), window_visible_);
+  candidate_window_->set_cursor_position(position->second);
+  IBusPanelCandidateWindowHandlerInterface* cw_handler =
+    IBusBridge::Get()->GetCandidateWindowHandler();
+  if (cw_handler)
+    cw_handler->UpdateLookupTable(*candidate_window_, window_visible_);
   return true;
 }
 
 bool InputMethodEngineIBus::SetMenuItems(const std::vector<MenuItem>& items) {
-  if (!active_)
-    return false;
-
-  IBusPropertyList properties;
-  for (std::vector<MenuItem>::const_iterator item = items.begin();
-       item != items.end(); ++item) {
-    IBusProperty* property = new IBusProperty();
-    if (!MenuItemToProperty(*item, property)) {
-      delete property;
-      DVLOG(1) << "Bad menu item";
-      return false;
-    }
-    properties.push_back(property);
-  }
-  GetCurrentService()->RegisterProperties(properties);
-  return true;
+  return UpdateMenuItems(items);
 }
 
 bool InputMethodEngineIBus::UpdateMenuItems(
@@ -368,18 +358,19 @@ bool InputMethodEngineIBus::UpdateMenuItems(
   if (!active_)
     return false;
 
-  IBusPropertyList properties;
+  input_method::InputMethodPropertyList property_list;
   for (std::vector<MenuItem>::const_iterator item = items.begin();
        item != items.end(); ++item) {
-    IBusProperty* property = new IBusProperty();
-    if (!MenuItemToProperty(*item, property)) {
-      delete property;
-      DVLOG(1) << "Bad menu item";
-      return false;
-    }
-    properties.push_back(property);
+    input_method::InputMethodProperty property;
+    MenuItemToProperty(*item, &property);
+    property_list.push_back(property);
   }
-  GetCurrentService()->RegisterProperties(properties);
+
+  IBusPanelPropertyHandlerInterface* handler =
+      IBusBridge::Get()->GetPropertyHandler();
+  if (handler)
+    handler->RegisterProperties(property_list);
+
   return true;
 }
 
@@ -416,7 +407,7 @@ bool InputMethodEngineIBus::DeleteSurroundingText(int context_id,
   return true;
 }
 
-void InputMethodEngineIBus::FocusIn() {
+void InputMethodEngineIBus::FocusIn(ibus::TextInputType text_input_type) {
   focused_ = true;
   if (!active_)
     return;
@@ -443,7 +434,7 @@ void InputMethodEngineIBus::FocusOut() {
 void InputMethodEngineIBus::Enable() {
   active_ = true;
   observer_->OnActivate(engine_id_);
-  FocusIn();
+  FocusIn(ibus::TEXT_INPUT_TYPE_TEXT);
 
   // Calls RequireSurroundingText once here to notify ibus-daemon to send
   // surrounding text to this engine.
@@ -455,9 +446,7 @@ void InputMethodEngineIBus::Disable() {
   observer_->OnDeactivated(engine_id_);
 }
 
-void InputMethodEngineIBus::PropertyActivate(
-    const std::string& property_name,
-    ibus::IBusPropertyState property_state) {
+void InputMethodEngineIBus::PropertyActivate(const std::string& property_name) {
   observer_->OnMenuItemActivated(engine_id_, property_name);
 }
 
@@ -541,59 +530,45 @@ IBusEngineService* InputMethodEngineIBus::GetCurrentService() {
   return DBusThreadManager::Get()->GetIBusEngineService(object_path_);
 }
 
-bool InputMethodEngineIBus::MenuItemToProperty(
+void InputMethodEngineIBus::MenuItemToProperty(
     const MenuItem& item,
-    IBusProperty* property) {
-  property->set_key(item.id);
+    input_method::InputMethodProperty* property) {
+  property->key = item.id;
 
   if (item.modified & MENU_ITEM_MODIFIED_LABEL) {
-    property->set_label(item.label);
+    property->label = item.label;
   }
   if (item.modified & MENU_ITEM_MODIFIED_VISIBLE) {
-    property->set_visible(item.visible);
+    // TODO(nona): Implement it.
   }
   if (item.modified & MENU_ITEM_MODIFIED_CHECKED) {
-    property->set_checked(item.checked);
+    property->is_selection_item_checked = item.checked;
   }
   if (item.modified & MENU_ITEM_MODIFIED_ENABLED) {
     // TODO(nona): implement sensitive entry(crbug.com/140192).
   }
   if (item.modified & MENU_ITEM_MODIFIED_STYLE) {
-    IBusProperty::IBusPropertyType type =
-        IBusProperty::IBUS_PROPERTY_TYPE_NORMAL;
     if (!item.children.empty()) {
-      type = IBusProperty::IBUS_PROPERTY_TYPE_MENU;
+      // TODO(nona): Implement it.
     } else {
       switch (item.style) {
         case MENU_ITEM_STYLE_NONE:
-          type = IBusProperty::IBUS_PROPERTY_TYPE_NORMAL;
+          NOTREACHED();
           break;
         case MENU_ITEM_STYLE_CHECK:
-          type = IBusProperty::IBUS_PROPERTY_TYPE_TOGGLE;
+          // TODO(nona): Implement it.
           break;
         case MENU_ITEM_STYLE_RADIO:
-          type = IBusProperty::IBUS_PROPERTY_TYPE_RADIO;
+          property->is_selection_item = true;
           break;
         case MENU_ITEM_STYLE_SEPARATOR:
-          type = IBusProperty::IBUS_PROPERTY_TYPE_SEPARATOR;
+          // TODO(nona): Implement it.
           break;
       }
     }
-    property->set_type(type);
   }
 
-  for (std::vector<MenuItem>::const_iterator child = item.children.begin();
-       child != item.children.end(); ++child) {
-    IBusProperty* new_property = new IBusProperty();
-    if (!MenuItemToProperty(*child, new_property)) {
-      delete new_property;
-      DVLOG(1) << "Bad menu item child";
-      return false;
-    }
-    property->mutable_sub_properties()->push_back(new_property);
-  }
-
-  return true;
+  // TODO(nona): Support item.children.
 }
 
 void InputMethodEngineIBus::OnConnected() {
@@ -608,8 +583,7 @@ bool InputMethodEngineIBus::IsConnected() {
 }
 
 void InputMethodEngineIBus::RegisterComponent() {
-  chromeos::IBusClient* client =
-      chromeos::DBusThreadManager::Get()->GetIBusClient();
+  IBusClient* client = DBusThreadManager::Get()->GetIBusClient();
   client->RegisterComponent(
       *component_.get(),
       base::Bind(&InputMethodEngineIBus::OnComponentRegistered,

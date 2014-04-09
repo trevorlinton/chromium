@@ -15,31 +15,15 @@
 
 #include <vector>
 
-#include <ppapi/c/pp_errors.h>
-
+#include "nacl_io/kernel_handle.h"
 #include "nacl_io/mount_node_dir.h"
 #include "nacl_io/mount_node_http.h"
 #include "nacl_io/osinttypes.h"
 #include "nacl_io/osunistd.h"
+#include <ppapi/c/pp_errors.h>
+#include "sdk_util/string_util.h"
 
 namespace nacl_io {
-
-namespace {
-
-typedef std::vector<char*> StringList_t;
-size_t SplitString(char* str, const char* delim, StringList_t* list) {
-  char* item = strtok(str, delim);
-
-  list->clear();
-  while (item) {
-    list->push_back(item);
-    item = strtok(NULL, delim);
-  }
-
-  return list->size();
-}
-
-}  // namespace
 
 std::string NormalizeHeaderKey(const std::string& s) {
   // Capitalize the first letter and any letter following a hyphen:
@@ -63,7 +47,7 @@ Error MountHttp::Access(const Path& path, int a_mode) {
     // If we can't find the node in the cache, fetch it
     std::string url = MakeUrl(path);
     ScopedMountNode node(new MountNodeHttp(this, url, cache_content_));
-    Error error = node->Init(O_RDONLY);
+    Error error = node->Init(0);
     if (error)
       return error;
 
@@ -79,7 +63,8 @@ Error MountHttp::Access(const Path& path, int a_mode) {
   return 0;
 }
 
-Error MountHttp::Open(const Path& path, int mode, ScopedMountNode* out_node) {
+Error MountHttp::Open(const Path& path, int open_flags,
+                      ScopedMountNode* out_node) {
   out_node->reset(NULL);
   assert(url_root_.empty() || url_root_[url_root_.length() - 1] == '/');
 
@@ -92,7 +77,7 @@ Error MountHttp::Open(const Path& path, int mode, ScopedMountNode* out_node) {
   // If we can't find the node in the cache, create it
   std::string url = MakeUrl(path);
   ScopedMountNode node(new MountNodeHttp(this, url, cache_content_));
-  Error error = node->Init(mode);
+  Error error = node->Init(open_flags);
   if (error)
     return error;
 
@@ -266,7 +251,7 @@ Error MountHttp::FindOrCreateDir(const Path& path,
 
   // If the node does not exist, create it.
   ScopedMountNode node(new MountNodeDir(this));
-  Error error = node->Init(S_IREAD);
+  Error error = node->Init(0);
   if (error)
     return error;
 
@@ -288,22 +273,29 @@ Error MountHttp::FindOrCreateDir(const Path& path,
   return 0;
 }
 
-Error MountHttp::ParseManifest(char* text) {
-  StringList_t lines;
-  SplitString(text, "\n", &lines);
+Error MountHttp::ParseManifest(const char* text) {
+  std::vector<std::string> lines;
+  sdk_util::SplitString(text, '\n', &lines);
 
   for (size_t i = 0; i < lines.size(); i++) {
-    StringList_t words;
-    SplitString(lines[i], " ", &words);
+    std::vector<std::string> words;
+    sdk_util::SplitString(lines[i], ' ', &words);
 
-    if (words.size() == 3) {
-      char* modestr = words[0];
-      char* lenstr = words[1];
-      char* name = words[2];
+    // Remove empty words (due to multiple consecutive spaces).
+    std::vector<std::string> non_empty_words;
+    for (std::vector<std::string>::const_iterator it = words.begin();
+         it != words.end(); ++it) {
+      if (!it->empty())
+        non_empty_words.push_back(*it);
+    }
 
-      assert(modestr && strlen(modestr) == 4);
-      assert(name && name[0] == '/');
-      assert(lenstr);
+    if (non_empty_words.size() == 3) {
+      const std::string& modestr = non_empty_words[0];
+      const std::string& lenstr = non_empty_words[1];
+      const std::string& name = non_empty_words[2];
+
+      assert(modestr.size() == 4);
+      assert(name[0] == '/');
 
       // Only support regular and streams for now
       // Ignore EXEC bit
@@ -316,7 +308,8 @@ Error MountHttp::ParseManifest(char* text) {
           mode = S_IFCHR;
           break;
         default:
-          fprintf(stderr, "Unable to parse type %s for %s.\n", modestr, name);
+          fprintf(stderr, "Unable to parse type %s for %s.\n", modestr.c_str(),
+                  name.c_str());
           return EINVAL;
       }
 
@@ -324,10 +317,11 @@ Error MountHttp::ParseManifest(char* text) {
         case '-':
           break;
         case 'r':
-          mode |= S_IREAD;
+          mode |= S_IRUSR | S_IRGRP | S_IROTH;
           break;
         default:
-          fprintf(stderr, "Unable to parse read %s for %s.\n", modestr, name);
+          fprintf(stderr, "Unable to parse read %s for %s.\n", modestr.c_str(),
+                  name.c_str());
           return EINVAL;
       }
 
@@ -335,10 +329,11 @@ Error MountHttp::ParseManifest(char* text) {
         case '-':
           break;
         case 'w':
-          mode |= S_IWRITE;
+          mode |= S_IWUSR | S_IWGRP | S_IWOTH;
           break;
         default:
-          fprintf(stderr, "Unable to parse write %s for %s.\n", modestr, name);
+          fprintf(stderr, "Unable to parse write %s for %s.\n", modestr.c_str(),
+                  name.c_str());
           return EINVAL;
       }
 
@@ -346,12 +341,13 @@ Error MountHttp::ParseManifest(char* text) {
       std::string url = MakeUrl(path);
 
       MountNodeHttp* http_node = new MountNodeHttp(this, url, cache_content_);
+      http_node->SetMode(mode);
       ScopedMountNode node(http_node);
 
-      Error error = node->Init(mode);
+      Error error = node->Init(0);
       if (error)
         return error;
-      http_node->SetCachedSize(atoi(lenstr));
+      http_node->SetCachedSize(atoi(lenstr.c_str()));
 
       ScopedMountNode dir_node;
       error = FindOrCreateDir(path.Parent(), &dir_node);
@@ -387,7 +383,7 @@ Error MountHttp::LoadManifest(const std::string& manifest_name,
 
   char* text = new char[size + 1];
   int len;
-  error = manifest_node->Read(0, text, size, &len);
+  error = manifest_node->Read(HandleAttr(), text, size, &len);
   if (error)
     return error;
 

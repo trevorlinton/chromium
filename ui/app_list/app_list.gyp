@@ -17,6 +17,8 @@
         '../../skia/skia.gyp:skia',
         '../base/strings/ui_strings.gyp:ui_strings',
         '../compositor/compositor.gyp:compositor',
+        '../events/events.gyp:events',
+        '../gfx/gfx.gyp:gfx',
         '../ui.gyp:ui',
         '../ui.gyp:ui_resources',
       ],
@@ -27,6 +29,11 @@
         'app_list_constants.cc',
         'app_list_constants.h',
         'app_list_export.h',
+        'app_list_folder_item.cc',
+        'app_list_folder_item.h',
+        'app_list_item_list.cc',
+        'app_list_item_list.h',
+        'app_list_item_list_observer.h',
         'app_list_item_model.cc',
         'app_list_item_model.h',
         'app_list_item_model_observer.h',
@@ -36,7 +43,6 @@
         'app_list_model.h',
         'app_list_model_observer.h',
         'app_list_view_delegate.h',
-        'apps_grid_view_delegate.h',
         'cocoa/app_list_pager_view.h',
         'cocoa/app_list_pager_view.mm',
         'cocoa/app_list_view_controller.h',
@@ -56,10 +62,6 @@
         'cocoa/apps_search_results_controller.mm',
         'cocoa/apps_search_results_model_bridge.h',
         'cocoa/apps_search_results_model_bridge.mm',
-        'cocoa/blue_label_button.h',
-        'cocoa/blue_label_button.mm',
-        'cocoa/current_user_menu_item_view.h',
-        'cocoa/current_user_menu_item_view.mm',
         'cocoa/item_drag_controller.h',
         'cocoa/item_drag_controller.mm',
         'cocoa/scroll_view_with_no_scrollbars.h',
@@ -72,16 +74,17 @@
         'search_box_model.cc',
         'search_box_model.h',
         'search_box_model_observer.h',
-        'search_box_view_delegate.h',
         'search_result.cc',
         'search_result.h',
-        'search_result_list_view_delegate.h',
         'signin_delegate.cc',
         'signin_delegate.h',
-        'signin_delegate_observer.h',
+        'views/apps_container_view.cc',
+        'views/apps_container_view.h',
         'views/app_list_background.cc',
         'views/app_list_background.h',
         'views/app_list_drag_and_drop_host.h',
+        'views/app_list_folder_view.cc',
+        'views/app_list_folder_view.h',
         'views/app_list_item_view.cc',
         'views/app_list_item_view.h',
         'views/app_list_main_view.cc',
@@ -92,10 +95,14 @@
         'views/app_list_view.h',
         'views/apps_grid_view.cc',
         'views/apps_grid_view.h',
+        'views/apps_grid_view_delegate.h',
         'views/cached_label.cc',
         'views/cached_label.h',
         'views/contents_view.cc',
         'views/contents_view.h',
+        'views/folder_header_view.cc',
+        'views/folder_header_view.h',
+        'views/folder_header_view_delegate.h',
         'views/page_switcher.cc',
         'views/page_switcher.h',
         'views/progress_bar_view.cc',
@@ -104,10 +111,12 @@
         'views/pulsing_block_view.h',
         'views/search_box_view.cc',
         'views/search_box_view.h',
+        'views/search_box_view_delegate.h',
         'views/search_result_actions_view.cc',
         'views/search_result_actions_view.h',
         'views/search_result_list_view.cc',
         'views/search_result_list_view.h',
+        'views/search_result_list_view_delegate.h',
         'views/search_result_view.cc',
         'views/search_result_view.h',
         'views/search_result_view_delegate.h',
@@ -122,6 +131,9 @@
         }],
         ['toolkit_views==1', {
           'dependencies': [
+            '../../content/content.gyp:content',
+            '../../content/content.gyp:content_browser',
+            '../views/controls/webview/webview.gyp:webview',
             '../views/views.gyp:views',
           ],
         }, {  # toolkit_views==0
@@ -156,13 +168,19 @@
       'dependencies': [
         '../../base/base.gyp:base',
         '../../base/base.gyp:test_support_base',
+        # TODO: Remove this dependency. See comment for views_unittests.
+        '../../chrome/chrome_resources.gyp:packed_resources',
         '../../skia/skia.gyp:skia',
         '../../testing/gtest.gyp:gtest',
         '../compositor/compositor.gyp:compositor',
-        '../ui.gyp:run_ui_unittests',
+        '../ui.gyp:ui',
+        '../ui.gyp:ui_resources',
+        '../ui_unittests.gyp:run_ui_unittests',
+        '../ui_unittests.gyp:ui_test_support',
         'app_list',
       ],
       'sources': [
+        'app_list_model_unittest.cc',
         'pagination_model_unittest.cc',
         'test/app_list_test_model.cc',
         'test/app_list_test_model.h',
@@ -173,7 +191,6 @@
         'cocoa/apps_grid_controller_unittest.mm',
         'cocoa/apps_search_box_controller_unittest.mm',
         'cocoa/apps_search_results_controller_unittest.mm',
-        'cocoa/blue_label_button_unittest.mm',
         'cocoa/signin_view_controller_unittest.mm',
         'cocoa/test/apps_grid_controller_test_helper.h',
         'cocoa/test/apps_grid_controller_test_helper.mm',
@@ -186,6 +203,8 @@
           'dependencies': [
             '../views/views.gyp:views',
             '../views/views.gyp:views_test_support',
+            '../../content/content.gyp:content',
+            '../../content/content.gyp:content_browser',
           ],
         }, {  # toolkit_views==0
           'sources/': [
@@ -194,7 +213,7 @@
         }],
         ['OS=="mac"', {
           'dependencies': [
-            '../ui.gyp:ui_test_support',
+            '../ui_unittests.gyp:ui_test_support',
           ],
           'conditions': [
             ['component=="static_library"', {
@@ -207,8 +226,23 @@
             ['exclude', 'cocoa/'],
           ],
         }],
+        ['use_glib == 1 or OS == "ios"', {
+          'dependencies': [
+            '../base/strings/ui_strings.gyp:ui_unittest_strings',
+          ],
+        }],
         # See http://crbug.com/162998#c4 for why this is needed.
         ['OS=="linux" and linux_use_tcmalloc==1', {
+          'dependencies': [
+            '../../base/allocator/allocator.gyp:allocator',
+            # The following two dependencies provide the missing
+            # symbol HeapProfilerStart in Linux component builds.
+            # They probably can be removed after http://crbug.com/263316
+            '../../webkit/glue/webkit_glue.gyp:glue',
+            '../../webkit/glue/webkit_glue.gyp:glue_child',
+          ],
+        }],
+        ['OS=="win" and win_use_allocator_shim==1', {
           'dependencies': [
             '../../base/allocator/allocator.gyp:allocator',
           ],

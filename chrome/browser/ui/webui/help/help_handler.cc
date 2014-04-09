@@ -11,6 +11,7 @@
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/strings/string16.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
@@ -21,7 +22,6 @@
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/chrome_pages.h"
-#include "chrome/browser/ui/send_feedback_experiment.h"
 #include "chrome/common/chrome_version_info.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
@@ -57,8 +57,6 @@ using base::ListValue;
 using content::BrowserThread;
 
 namespace {
-
-const char kResourceReportIssue[] = "reportAnIssue";
 
 // Returns the browser version as a string.
 string16 BuildBrowserVersionString() {
@@ -125,11 +123,6 @@ bool CanChangeChannel() {
   return false;
 }
 
-// Pointer to a |StringValue| holding the date of the build date to Chromium
-// OS. Because this value is obtained by reading a file, it is cached here to
-// prevent the need to read from the file system multiple times unnecessarily.
-Value* g_build_date_string = NULL;
-
 #endif  // defined(OS_CHROMEOS)
 
 }  // namespace
@@ -163,7 +156,6 @@ void HelpHandler::GetLocalizedValues(content::WebUIDataSource* source) {
     { "relaunchAndPowerwash", IDS_RELAUNCH_AND_POWERWASH_BUTTON },
 #endif
     { "productName", IDS_PRODUCT_NAME },
-    { "productCopyright", IDS_ABOUT_VERSION_COPYRIGHT },
     { "updateCheckStarted", IDS_UPGRADE_CHECK_STARTED },
     { "upToDate", IDS_UPGRADE_UP_TO_DATE },
     { "updating", IDS_UPGRADE_UPDATING },
@@ -175,7 +167,7 @@ void HelpHandler::GetLocalizedValues(content::WebUIDataSource* source) {
     { "successfulChannelSwitch", IDS_UPGRADE_SUCCESSFUL_CHANNEL_SWITCH },
 #endif
     { "getHelpWithChrome", IDS_GET_HELP_USING_CHROME },
-    { kResourceReportIssue, IDS_REPORT_AN_ISSUE },
+    { "reportAnIssue", IDS_REPORT_AN_ISSUE },
 #if defined(OS_CHROMEOS)
     { "platform", IDS_PLATFORM_LABEL },
     { "firmware", IDS_ABOUT_PAGE_FIRMWARE },
@@ -219,16 +211,6 @@ void HelpHandler::GetLocalizedValues(content::WebUIDataSource* source) {
 #endif
   };
 
-  if (chrome::UseAlternateSendFeedbackText()) {
-    // Field trial to substitute "Report an Issue" with "Send Feedback".
-    // (crbug.com/169339)
-    std::string report_issue_key(kResourceReportIssue);
-    for (size_t i = 0; i < ARRAYSIZE_UNSAFE(resources); ++i) {
-      if (report_issue_key == resources[i].name)
-        resources[i].ids = IDS_SEND_FEEDBACK;
-    }
-  }
-
   for (size_t i = 0; i < ARRAYSIZE_UNSAFE(resources); ++i) {
     source->AddString(resources[i].name,
                       l10n_util::GetStringUTF16(resources[i].ids));
@@ -238,6 +220,13 @@ void HelpHandler::GetLocalizedValues(content::WebUIDataSource* source) {
       "browserVersion",
       l10n_util::GetStringFUTF16(IDS_ABOUT_PRODUCT_VERSION,
                                  BuildBrowserVersionString()));
+
+  base::Time::Exploded exploded_time;
+  base::Time::Now().LocalExplode(&exploded_time);
+  source->AddString(
+      "productCopyright",
+       l10n_util::GetStringFUTF16(IDS_ABOUT_VERSION_COPYRIGHT,
+                                  base::IntToString16(exploded_time.year)));
 
   string16 license = l10n_util::GetStringFUTF16(
       IDS_ABOUT_VERSION_LICENSE,
@@ -343,18 +332,10 @@ void HelpHandler::OnPageLoaded(const ListValue* args) {
       "help.HelpPage.updateEnableReleaseChannel",
       base::FundamentalValue(CanChangeChannel()));
 
-  if (g_build_date_string == NULL) {
-    // If |g_build_date_string| is |NULL|, the date has not yet been assigned.
-    // Get the date of the last lsb-release file modification.
-    base::FileUtilProxy::GetFileInfo(
-        BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE).get(),
-        base::SysInfo::GetLsbReleaseFilePath(),
-        base::Bind(&HelpHandler::ProcessLsbFileInfo,
-                   weak_factory_.GetWeakPtr()));
-  } else {
-    web_ui()->CallJavascriptFunction("help.HelpPage.setBuildDate",
-                                     *g_build_date_string);
-  }
+  base::Time build_time = base::SysInfo::GetLsbReleaseTime();
+  string16 build_date = base::TimeFormatFriendlyDate(build_time);
+  web_ui()->CallJavascriptFunction("help.HelpPage.setBuildDate",
+                                   base::StringValue(build_date));
 #endif  // defined(OS_CHROMEOS)
 
   version_updater_->CheckForUpdate(
@@ -546,31 +527,4 @@ void HelpHandler::OnTargetChannel(const std::string& channel) {
       "help.HelpPage.updateTargetChannel", base::StringValue(channel));
 }
 
-void HelpHandler::ProcessLsbFileInfo(
-    base::PlatformFileError error, const base::PlatformFileInfo& file_info) {
-  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-
-  // If |g_build_date_string| is not |NULL|, then the file's information has
-  // already been retrieved by another tab.
-  if (g_build_date_string == NULL) {
-    base::Time time;
-    if (error == base::PLATFORM_FILE_OK) {
-      // Retrieves the time at which the Chrome OS build was created.
-      // Each time a new build is created, /etc/lsb-release is modified with the
-      // new version numbers of the release.
-      time = file_info.last_modified;
-    } else {
-      // If the time of the build cannot be retrieved, return and do not
-      // display the "Build Date" section.
-      return;
-    }
-
-    // Note that this string will be internationalized.
-    string16 build_date = base::TimeFormatFriendlyDate(time);
-    g_build_date_string = Value::CreateStringValue(build_date);
-  }
-
-  web_ui()->CallJavascriptFunction("help.HelpPage.setBuildDate",
-                                   *g_build_date_string);
-}
 #endif // defined(OS_CHROMEOS)

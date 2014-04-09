@@ -16,6 +16,7 @@
 #include "base/containers/mru_cache.h"
 #include "base/metrics/histogram.h"
 #include "base/prefs/pref_service.h"
+#include "base/prefs/scoped_user_pref_update.h"
 #include "base/stl_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -26,7 +27,6 @@
 #include "base/values.h"
 #include "chrome/browser/io_thread.h"
 #include "chrome/browser/net/preconnect.h"
-#include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
@@ -108,7 +108,9 @@ class Predictor::LookupRequest {
     // lets the HostResolver know it can de-prioritize it.
     resolve_info.set_is_speculative(true);
     return resolver_.Resolve(
-        resolve_info, &addresses_,
+        resolve_info,
+        net::DEFAULT_PRIORITY,
+        &addresses_,
         base::Bind(&LookupRequest::OnLookupFinished, base::Unretained(this)),
         net::BoundNetLog());
   }
@@ -465,7 +467,7 @@ UrlList Predictor::GetPredictedUrlListAtStartup(
       GURL gurl = tab_start_pref.urls[i];
       if (!gurl.is_valid() || gurl.SchemeIsFile() || gurl.host().empty())
         continue;
-      if (gurl.SchemeIs("http") || gurl.SchemeIs("https"))
+      if (gurl.SchemeIsHTTPOrHTTPS())
         urls.push_back(gurl.GetWithEmptyPath());
     }
   }
@@ -486,11 +488,8 @@ void Predictor::set_max_parallel_resolves(size_t max_parallel_resolves) {
   g_max_parallel_resolves = max_parallel_resolves;
 }
 
-void Predictor::ShutdownOnUIThread(PrefService* user_prefs) {
+void Predictor::ShutdownOnUIThread() {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-
-  SaveStateForNextStartupAndTrim(user_prefs);
-
   BrowserThread::PostTask(
       BrowserThread::IO,
       FROM_HERE,
@@ -1299,7 +1298,7 @@ void Predictor::InitialObserver::Append(const GURL& url,
   if (kStartupResolutionCount <= first_navigations_.size())
     return;
 
-  DCHECK(url.SchemeIs("http") || url.SchemeIs("https"));
+  DCHECK(url.SchemeIsHTTPOrHTTPS());
   DCHECK_EQ(url, Predictor::CanonicalizeUrl(url));
   if (first_navigations_.find(url) == first_navigations_.end())
     first_navigations_[url] = base::TimeTicks::Now();
@@ -1376,7 +1375,7 @@ void SimplePredictor::InitNetworkPredictor(
   // Empty function for unittests.
 }
 
-void SimplePredictor::ShutdownOnUIThread(PrefService* user_prefs) {
+void SimplePredictor::ShutdownOnUIThread() {
   SetShutdown(true);
 }
 

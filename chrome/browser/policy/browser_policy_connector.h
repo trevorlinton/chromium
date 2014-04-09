@@ -23,7 +23,6 @@ class PrefRegistrySimple;
 class PrefService;
 
 namespace net {
-class CertTrustAnchorProvider;
 class URLRequestContextGetter;
 }
 
@@ -111,12 +110,6 @@ class BrowserPolicyConnector {
 #if defined(OS_CHROMEOS)
   AppPackUpdater* GetAppPackUpdater();
 
-  NetworkConfigurationUpdater* network_configuration_updater() {
-    return network_configuration_updater_.get();
-  }
-
-  net::CertTrustAnchorProvider* GetCertTrustAnchorProvider();
-
   DeviceCloudPolicyManagerChromeOS* GetDeviceCloudPolicyManager() {
     return device_cloud_policy_manager_.get();
   }
@@ -137,12 +130,12 @@ class BrowserPolicyConnector {
   // previously set delegate is removed. Passing NULL removes the current
   // delegate, if there is one.
   void SetUserPolicyDelegate(ConfigurationPolicyProvider* user_policy_provider);
-#endif
 
-  // Allows setting a DeviceManagementService (for injecting mocks in
-  // unit tests).
-  void SetDeviceManagementServiceForTesting(
-      scoped_ptr<DeviceManagementService> service);
+  // Sets the install attributes for testing. Must be called before the browser
+  // is created. Takes ownership of |attributes|.
+  static void SetInstallAttributesForTesting(
+      EnterpriseInstallAttributes* attributes);
+#endif
 
   // Sets a |provider| that will be included in PolicyServices returned by
   // CreatePolicyService. This is a static method because local state is
@@ -152,10 +145,6 @@ class BrowserPolicyConnector {
   // down.
   static void SetPolicyProviderForTesting(
       ConfigurationPolicyProvider* provider);
-
-  // Gets the URL of the DM server (either the default or a URL provided via the
-  // command line).
-  static std::string GetDeviceManagementUrl();
 
   // Check whether a user is known to be non-enterprise. Domains such as
   // gmail.com and googlemail.com are known to not be managed. Also returns
@@ -181,7 +170,7 @@ class BrowserPolicyConnector {
   // may trigger policy updates during shutdown, which will result in
   // |handler_list_| being consulted for policy translation.
   // Therefore, it's important to destroy |handler_list_| after the providers.
-  ConfigurationPolicyHandlerList handler_list_;
+  scoped_ptr<ConfigurationPolicyHandlerList> handler_list_;
 
   scoped_ptr<ConfigurationPolicyProvider> platform_provider_;
 

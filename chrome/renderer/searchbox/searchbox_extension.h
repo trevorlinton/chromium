@@ -6,6 +6,7 @@
 #define CHROME_RENDERER_SEARCHBOX_SEARCHBOX_EXTENSION_H_
 
 #include "base/basictypes.h"
+#include "base/strings/string16.h"
 
 namespace v8 {
 class Extension;
@@ -30,6 +31,9 @@ class SearchBoxExtension {
   static bool PageSupportsInstant(WebKit::WebFrame* frame);
 
   // Helpers to dispatch Javascript events.
+  static void DispatchChromeIdentityCheckResult(WebKit::WebFrame* frame,
+                                                const string16& identity,
+                                                bool identity_match);
   static void DispatchFocusChange(WebKit::WebFrame* frame);
   static void DispatchInputCancel(WebKit::WebFrame* frame);
   static void DispatchInputStart(WebKit::WebFrame* frame);
@@ -37,6 +41,7 @@ class SearchBoxExtension {
   static void DispatchMarginChange(WebKit::WebFrame* frame);
   static void DispatchMostVisitedChanged(WebKit::WebFrame* frame);
   static void DispatchSubmit(WebKit::WebFrame* frame);
+  static void DispatchSuggestionChange(WebKit::WebFrame* frame);
   static void DispatchThemeChange(WebKit::WebFrame* frame);
   static void DispatchToggleVoiceSearch(WebKit::WebFrame* frame);
 

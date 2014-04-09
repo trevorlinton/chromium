@@ -10,6 +10,7 @@
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/sys_info.h"
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -73,7 +74,7 @@ const int kDefaultImageDescriptions[] = {
 // image if its valid.
 std::string GetDefaultImageString(int index, const std::string& prefix) {
   if (index < 0 || index >= kDefaultImagesCount) {
-    NOTREACHED();
+    DCHECK(!base::SysInfo::IsRunningOnChromeOS());
     return std::string();
   }
   return base::StringPrintf("%s%d", prefix.c_str(), index);

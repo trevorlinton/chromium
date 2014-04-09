@@ -95,7 +95,6 @@ class BackendDelegate : public HistoryBackend::Delegate {
   virtual void BroadcastNotifications(int type,
                                       HistoryDetails* details) OVERRIDE;
   virtual void DBLoaded(int backend_id) OVERRIDE {}
-  virtual void StartTopSitesMigration(int backend_id) OVERRIDE {}
   virtual void NotifyVisitDBObserversOnAddVisit(
       const BriefVisitInfo& info) OVERRIDE {}
  private:
@@ -1554,6 +1553,11 @@ class TestChangeProcessor : public syncer::SyncChangeProcessor {
     return syncer::SyncError();
   }
 
+  virtual syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const
+      OVERRIDE {
+    return syncer::SyncDataList();
+  }
+
   const syncer::SyncChangeList& GetChanges() const {
     return changes_;
   }
@@ -1583,6 +1587,11 @@ class SyncChangeProcessorDelegate : public syncer::SyncChangeProcessor {
       const tracked_objects::Location& from_here,
       const syncer::SyncChangeList& change_list) OVERRIDE {
     return recipient_->ProcessSyncChanges(from_here, change_list);
+  }
+
+  virtual syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const
+      OVERRIDE {
+    return recipient_->GetAllSyncData(type);
   }
 
  private:

@@ -528,7 +528,7 @@ IN_PROC_BROWSER_TEST_F(NotificationsTest, TestCreateSimpleNotification) {
   ASSERT_EQ(1, GetNotificationCount());
   if (message_center::IsRichNotificationEnabled()) {
     message_center::NotificationList::Notifications notifications =
-        message_center::MessageCenter::Get()->GetNotifications();
+        message_center::MessageCenter::Get()->GetVisibleNotifications();
     EXPECT_EQ(ASCIIToUTF16("My Title"), (*notifications.rbegin())->title());
     EXPECT_EQ(ASCIIToUTF16("My Body"), (*notifications.rbegin())->message());
   } else {
@@ -555,7 +555,7 @@ IN_PROC_BROWSER_TEST_F(NotificationsTest, TestCloseNotification) {
 
   if (message_center::IsRichNotificationEnabled()) {
     message_center::NotificationList::Notifications notifications =
-        message_center::MessageCenter::Get()->GetNotifications();
+        message_center::MessageCenter::Get()->GetVisibleNotifications();
     message_center::MessageCenter::Get()->RemoveNotification(
         (*notifications.rbegin())->id(),
         true);  // by_user
@@ -737,7 +737,7 @@ IN_PROC_BROWSER_TEST_F(NotificationsTest, TestCreateDenyCloseNotifications) {
   EXPECT_EQ(1, GetNotificationCount());
   if (message_center::IsRichNotificationEnabled()) {
     message_center::NotificationList::Notifications notifications =
-        message_center::MessageCenter::Get()->GetNotifications();
+        message_center::MessageCenter::Get()->GetVisibleNotifications();
     message_center::MessageCenter::Get()->RemoveNotification(
         (*notifications.rbegin())->id(),
         true);  // by_user
@@ -856,12 +856,11 @@ IN_PROC_BROWSER_TEST_F(NotificationsTest, TestCloseTabWithPermissionInfobar) {
   browser()->tab_strip_model()->ActivateTabAt(0, true);
   ui_test_utils::NavigateToURL(browser(), GetTestPageURL());
   ASSERT_TRUE(RequestPermissionAndWait(browser()));
-  content::WindowedNotificationObserver observer(
-      content::NOTIFICATION_WEB_CONTENTS_DESTROYED,
-      content::NotificationService::AllSources());
+  content::WebContentsDestroyedWatcher destroyed_watcher(
+      browser()->tab_strip_model()->GetWebContentsAt(0));
   browser()->tab_strip_model()->CloseWebContentsAt(0,
                                                    TabStripModel::CLOSE_NONE);
-  observer.Wait();
+  destroyed_watcher.Wait();
 }
 
 IN_PROC_BROWSER_TEST_F(
@@ -935,7 +934,7 @@ IN_PROC_BROWSER_TEST_F(NotificationsTest, TestNotificationReplacement) {
   if (message_center::IsRichNotificationEnabled()) {
     ASSERT_EQ(1, GetNotificationCount());
     message_center::NotificationList::Notifications notifications =
-        message_center::MessageCenter::Get()->GetNotifications();
+        message_center::MessageCenter::Get()->GetVisibleNotifications();
     EXPECT_EQ(ASCIIToUTF16("Title2"), (*notifications.rbegin())->title());
     EXPECT_EQ(ASCIIToUTF16("Body2"), (*notifications.rbegin())->message());
   } else {

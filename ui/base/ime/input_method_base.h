@@ -8,9 +8,9 @@
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/observer_list.h"
-#include "ui/base/events/event_constants.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ui_export.h"
+#include "ui/events/event_constants.h"
 
 namespace gfx {
 class Rect;
@@ -37,13 +37,17 @@ class UI_EXPORT InputMethodBase : NON_EXPORTED_BASE(public InputMethod) {
   virtual void OnFocus() OVERRIDE;
   virtual void OnBlur() OVERRIDE;
   virtual void SetFocusedTextInputClient(TextInputClient* client) OVERRIDE;
+  virtual void DetachTextInputClient(TextInputClient* client) OVERRIDE;
   virtual TextInputClient* GetTextInputClient() const OVERRIDE;
 
   // If a derived class overrides this method, it should call parent's
   // implementation.
   virtual void OnTextInputTypeChanged(const TextInputClient* client) OVERRIDE;
+  virtual void OnCaretBoundsChanged(const TextInputClient* client) OVERRIDE;
+  virtual void OnInputLocaleChanged() OVERRIDE;
 
   virtual TextInputType GetTextInputType() const OVERRIDE;
+  virtual TextInputMode GetTextInputMode() const OVERRIDE;
   virtual bool CanComposeInline() const OVERRIDE;
 
   virtual void AddObserver(InputMethodObserver* observer) OVERRIDE;
@@ -86,6 +90,8 @@ class UI_EXPORT InputMethodBase : NON_EXPORTED_BASE(public InputMethod) {
   }
 
  private:
+  void SetFocusedTextInputClientInternal(TextInputClient* client);
+
   internal::InputMethodDelegate* delegate_;
   TextInputClient* text_input_client_;
 

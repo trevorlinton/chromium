@@ -374,22 +374,6 @@ class HistoryService : public CancelableRequestProvider,
       CancelableRequestConsumerBase* consumer,
       const QueryFilteredURLsCallback& callback);
 
-  // Thumbnails ----------------------------------------------------------------
-
-  // Implemented by consumers to get thumbnail data. Called when a request for
-  // the thumbnail data is complete. Once this callback is made, the request
-  // will be completed and no other calls will be made for that handle.
-  //
-  // This function will be called even on error conditions or if there is no
-  // thumbnail for that page. In these cases, the data pointer will be NULL.
-  typedef base::Callback<void(Handle, scoped_refptr<base::RefCountedBytes>)>
-      ThumbnailDataCallback;
-
-  // Requests a page thumbnail. See ThumbnailDataCallback definition above.
-  Handle GetPageThumbnail(const GURL& page_url,
-                          CancelableRequestConsumerBase* consumer,
-                          const ThumbnailDataCallback& callback);
-
   // Database management operations --------------------------------------------
 
   // Delete all the information related to a single url.
@@ -536,6 +520,9 @@ class HistoryService : public CancelableRequestProvider,
       CancelableRequestConsumerBase* consumer,
       const GetMostRecentKeywordSearchTermsCallback& callback);
 
+  // Deletes any search term corresponding to |url|.
+  void DeleteKeywordSearchTermForURL(const GURL& url);
+
   // Bookmarks -----------------------------------------------------------------
 
   // Notification that a URL is no longer bookmarked.
@@ -547,10 +534,6 @@ class HistoryService : public CancelableRequestProvider,
   // HistoryDBTask for details on what this does.
   virtual void ScheduleDBTask(history::HistoryDBTask* task,
                               CancelableRequestConsumerBase* consumer);
-
-  // Returns true if top sites needs to be migrated out of history into its own
-  // db.
-  bool needs_top_sites_migration() const { return needs_top_sites_migration_; }
 
   // Adds or removes observers for the VisitDatabase.
   void AddVisitDatabaseObserver(history::VisitDatabaseObserver* observer);
@@ -596,14 +579,6 @@ class HistoryService : public CancelableRequestProvider,
   // The same as AddPageWithDetails() but takes a vector.
   void AddPagesWithDetails(const history::URLRows& info,
                            history::VisitSource visit_source);
-
-  // Starts the TopSites migration in the HistoryThread. Called by the
-  // BackendDelegate.
-  void StartTopSitesMigration(int backend_id);
-
-  // Called by TopSites after the thumbnails were read and it is safe
-  // to delete the thumbnails DB.
-  void OnTopSitesReady();
 
   // Returns true if this looks like the type of URL we want to add to the
   // history. We filter out some URLs such as JavaScript.
@@ -733,6 +708,24 @@ class HistoryService : public CancelableRequestProvider,
       int desired_size_in_dip,
       const std::vector<ui::ScaleFactor>& desired_scale_factors,
       const FaviconService::FaviconResultsCallback& callback,
+      CancelableTaskTracker* tracker);
+
+  // Used by FaviconService to find the first favicon bitmap whose width and
+  // height are greater than that of |minimum_size_in_pixels|. This searches
+  // for icons by IconType. Each element of |icon_types| is a bitmask of
+  // IconTypes indicating the types to search for.
+  // If the largest icon of |icon_types[0]| is not larger than
+  // |minimum_size_in_pixel|, the next icon types of
+  // |icon_types| will be searched and so on.
+  // If no icon is larger than |minimum_size_in_pixel|, the largest one of all
+  // icon types in |icon_types| is returned.
+  // This feature is especially useful when some types of icon is perfered as
+  // long as its size is larger than a specific value.
+  CancelableTaskTracker::TaskId GetLargestFaviconForURL(
+      const GURL& page_url,
+      const std::vector<int>& icon_types,
+      int minimum_size_in_pixels,
+      const FaviconService::FaviconRawCallback& callback,
       CancelableTaskTracker* tracker);
 
   // Used by the FaviconService to get the favicon bitmap which most closely
@@ -1084,9 +1077,6 @@ class HistoryService : public CancelableRequestProvider,
   base::FilePath history_dir_;
   BookmarkService* bookmark_service_;
   bool no_db_;
-
-  // True if needs top site migration.
-  bool needs_top_sites_migration_;
 
   // The index used for quick history lookups.
   // TODO(mrossetti): Move in_memory_url_index out of history_service.

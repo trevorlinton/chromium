@@ -6,16 +6,12 @@ import os
 import tempfile
 
 from metrics import loading
-from telemetry.core import util
 from telemetry.core.platform.profiler import perf_profiler
 from telemetry.page import page_measurement
 
 class LoadingProfile(page_measurement.PageMeasurement):
   def __init__(self):
     super(LoadingProfile, self).__init__(discard_first_result=True)
-
-    if not perf_profiler.PerfProfiler.is_supported(None):
-      raise Exception('This measurement is not supported on this platform')
 
   @property
   def results_are_the_same_on_every_page(self):
@@ -29,20 +25,20 @@ class LoadingProfile(page_measurement.PageMeasurement):
     parser.add_option(page_repeat_option)
 
   def CustomizeBrowserOptions(self, options):
-    options.AppendExtraBrowserArg('--no-sandbox')
+    if not perf_profiler.PerfProfiler.is_supported(browser_type='any'):
+      raise Exception('This measurement is not supported on this platform')
+
     perf_profiler.PerfProfiler.CustomizeBrowserOptions(options)
 
   def WillNavigateToPage(self, page, tab):
     tab.browser.StartProfiling(perf_profiler.PerfProfiler.name(),
                                os.path.join(tempfile.mkdtemp(),
-                                            page.url_as_file_safe_name))
+                                            page.file_safe_name))
 
   def MeasurePage(self, page, tab, results):
     # In current telemetry tests, all tests wait for DocumentComplete state,
     # but we need to wait for the load event.
-    def IsLoaded():
-      return bool(tab.EvaluateJavaScript('performance.timing.loadEventStart'))
-    util.WaitFor(IsLoaded, 300)
+    tab.WaitForJavaScriptExpression('performance.timing.loadEventStart', 300)
 
     profile_files = tab.browser.StopProfiling()
 
@@ -54,5 +50,5 @@ class LoadingProfile(page_measurement.PageMeasurement):
         break
 
     for function, period in perf_profiler.PerfProfiler.GetTopSamples(
-        profile_file, 10).iteritems():
+        tab.browser.platform.GetOSName(), profile_file, 10).iteritems():
       results.Add(function.replace('.', '_'), 'period', period)

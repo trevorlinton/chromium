@@ -31,6 +31,13 @@ namespace {
 // A simple web page.
 const char kHelloWorldHTML[] = "<body><p>Hello World!</p></body>";
 
+// A simple webpage with a button to print itself with.
+const char kPrintOnUserAction[] =
+    "<body>"
+    "  <button id=\"print\" onclick=\"window.print();\">Hello World!</button>"
+    "</body>";
+
+#if !defined(OS_CHROMEOS)
 // HTML with 3 pages.
 const char kMultipageHTML[] =
   "<html><head><style>"
@@ -66,12 +73,6 @@ const char kHTMLWithLandscapePageCss[] =
     "<body>Lorem Ipsum:"
     "</body></html>";
 
-// A simple webpage with a button to print itself with.
-const char kPrintOnUserAction[] =
-    "<body>"
-    "  <button id=\"print\" onclick=\"window.print();\">Hello World!</button>"
-    "</body>";
-
 // A longer web page.
 const char kLongPageHTML[] =
     "<body><img src=\"\" width=10 height=10000 /></body>";
@@ -79,6 +80,7 @@ const char kLongPageHTML[] =
 // A web page to simulate the print preview page.
 const char kPrintPreviewHTML[] =
     "<body><p id=\"pdf-viewer\">Hello World!</p></body>";
+#endif  // !defined(OS_CHROMEOS)
 
 void CreatePrintSettingsDictionary(base::DictionaryValue* dict) {
   dict->SetBoolean(kSettingLandscape, false);
@@ -347,6 +349,7 @@ struct TestPageData {
   const wchar_t* file;
 };
 
+#if defined(OS_WIN) || defined(OS_MACOSX)
 const TestPageData kTestPages[] = {
   {"<html>"
   "<head>"
@@ -369,6 +372,7 @@ const TestPageData kTestPages[] = {
   NULL,
   },
 };
+#endif  // defined(OS_WIN) || defined(OS_MACOSX)
 }  // namespace
 
 // TODO(estade): need to port MockPrinter to get this on Linux. This involves
@@ -667,7 +671,7 @@ TEST_F(PrintWebViewHelperPreviewTest, PrintPreviewCenterToFitPage) {
   OnPrintPreview(dict);
 
   EXPECT_EQ(0, chrome_render_thread_->print_preview_pages_remaining());
-  VerifyDefaultPageLayout(288, 288, 252, 252, 162, 162, true);
+  VerifyDefaultPageLayout(216, 216, 288, 288, 198, 198, true);
   VerifyPrintPreviewCancelled(false);
   VerifyPrintPreviewFailed(false);
   VerifyPrintPreviewGenerated(true);
@@ -697,7 +701,7 @@ TEST_F(PrintWebViewHelperPreviewTest, PrintPreviewShrinkToFitPage) {
   OnPrintPreview(dict);
 
   EXPECT_EQ(0, chrome_render_thread_->print_preview_pages_remaining());
-  VerifyDefaultPageLayout(612, 693, 49, 50, 0, 0, true);
+  VerifyDefaultPageLayout(571, 652, 69, 71, 20, 21, true);
   VerifyPrintPreviewCancelled(false);
   VerifyPrintPreviewFailed(false);
 }

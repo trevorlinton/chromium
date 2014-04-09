@@ -24,6 +24,10 @@ bool IsOmniboxEnabled(Profile* profile);
 // Returns true iff the Prerender Local Predictor is enabled.
 bool IsLocalPredictorEnabled();
 
+// Indicates whether to disable the local predictor due to unencrypted sync
+// settings and configuration.
+bool DisableLocalPredictorBasedOnSyncAndConfiguration(Profile* profile);
+
 // Returns true iff the LoggedIn Predictor is enabled.
 bool IsLoggedInPredictorEnabled();
 
@@ -37,6 +41,26 @@ bool IsLocalPredictorPrerenderLaunchEnabled();
 // group. If the local predictor never launches prerenders, then this setting
 // is irrelevant.
 bool IsLocalPredictorPrerenderAlwaysControlEnabled();
+
+// Returns true if we should query the prerender service for the profile
+// provided.
+bool ShouldQueryPrerenderService(Profile* profile);
+
+// Indicates whether we should query the prerender service for the current URL
+// and candidate URLs, respectively.
+bool ShouldQueryPrerenderServiceForCurrentURL();
+bool ShouldQueryPrerenderServiceForCandidateURLs();
+
+// Returns the URL prefix to be used for the prerender service. The only thing
+// that will be appended is the urlencoded query json.
+std::string GetPrerenderServiceURLPrefix();
+
+// Returns the prerender service behavior ID that should be passed to the
+// to the prerender service in requests.
+int GetPrerenderServiceBehaviorID();
+
+// Returns the fetch timeout to be used for the prerender service, in ms.
+int GetPrerenderServiceFetchTimeoutMs();
 
 // Returns the TTL to be used for the local predictor.
 int GetLocalPredictorTTLSeconds();
@@ -54,8 +78,11 @@ int GetLocalPredictorMaxConcurrentPrerenders();
 bool SkipLocalPredictorFragment();
 bool SkipLocalPredictorHTTPS();
 bool SkipLocalPredictorWhitelist();
+bool SkipLocalPredictorServiceWhitelist();
 bool SkipLocalPredictorLoggedIn();
 bool SkipLocalPredictorDefaultNoPrerender();
+bool SkipLocalPredictorLocalCandidates();
+bool SkipLocalPredictorServiceCandidates();
 
 }  // namespace prerender
 

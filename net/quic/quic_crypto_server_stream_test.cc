@@ -12,8 +12,8 @@
 #include "net/quic/crypto/crypto_framer.h"
 #include "net/quic/crypto/crypto_handshake.h"
 #include "net/quic/crypto/crypto_protocol.h"
-#include "net/quic/crypto/crypto_server_config.h"
 #include "net/quic/crypto/crypto_utils.h"
+#include "net/quic/crypto/quic_crypto_server_config.h"
 #include "net/quic/crypto/quic_decrypter.h"
 #include "net/quic/crypto/quic_encrypter.h"
 #include "net/quic/crypto/quic_random.h"
@@ -36,25 +36,6 @@ namespace net {
 namespace test {
 namespace {
 
-// TODO(agl): Use rch's utility class for parsing a message when committed.
-class TestQuicVisitor : public NoOpFramerVisitor {
- public:
-  TestQuicVisitor() {}
-
-  // NoOpFramerVisitor
-  virtual bool OnStreamFrame(const QuicStreamFrame& frame) OVERRIDE {
-    frame_ = frame;
-    return true;
-  }
-
-  QuicStreamFrame* frame() { return &frame_; }
-
- private:
-  QuicStreamFrame frame_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestQuicVisitor);
-};
-
 class QuicCryptoServerStreamTest : public ::testing::Test {
  public:
   QuicCryptoServerStreamTest()
@@ -62,7 +43,7 @@ class QuicCryptoServerStreamTest : public ::testing::Test {
         addr_(ParseIPLiteralToNumber("192.0.2.33", &ip_) ?
               ip_ : IPAddressNumber(), 1),
         connection_(new PacketSavingConnection(guid_, addr_, true)),
-        session_(connection_, QuicConfig(), true),
+        session_(connection_, DefaultQuicConfig(), true),
         crypto_config_(QuicCryptoServerConfig::TESTING,
                        QuicRandom::GetInstance()),
         stream_(crypto_config_, &session_) {
@@ -105,21 +86,11 @@ class QuicCryptoServerStreamTest : public ::testing::Test {
 };
 
 TEST_F(QuicCryptoServerStreamTest, NotInitiallyConected) {
-  if (!Aes128Gcm12Encrypter::IsSupported()) {
-    LOG(INFO) << "AES GCM not supported. Test skipped.";
-    return;
-  }
-
   EXPECT_FALSE(stream_.encryption_established());
   EXPECT_FALSE(stream_.handshake_confirmed());
 }
 
 TEST_F(QuicCryptoServerStreamTest, ConnectedAfterCHLO) {
-  if (!Aes128Gcm12Encrypter::IsSupported()) {
-    LOG(INFO) << "AES GCM not supported. Test skipped.";
-    return;
-  }
-
   // CompleteCryptoHandshake returns the number of client hellos sent. This
   // test should send:
   //   * One to get a source-address token and certificates.
@@ -130,11 +101,6 @@ TEST_F(QuicCryptoServerStreamTest, ConnectedAfterCHLO) {
 }
 
 TEST_F(QuicCryptoServerStreamTest, ZeroRTT) {
-  if (!Aes128Gcm12Encrypter::IsSupported()) {
-    LOG(INFO) << "AES GCM not supported. Test skipped.";
-    return;
-  }
-
   QuicGuid guid(1);
   IPAddressNumber ip;
   ParseIPLiteralToNumber("127.0.0.1", &ip);
@@ -203,11 +169,6 @@ TEST_F(QuicCryptoServerStreamTest, ZeroRTT) {
 }
 
 TEST_F(QuicCryptoServerStreamTest, MessageAfterHandshake) {
-  if (!Aes128Gcm12Encrypter::IsSupported()) {
-    LOG(INFO) << "AES GCM not supported. Test skipped.";
-    return;
-  }
-
   CompleteCryptoHandshake();
   EXPECT_CALL(*connection_, SendConnectionClose(
       QUIC_CRYPTO_MESSAGE_AFTER_HANDSHAKE_COMPLETE));
@@ -217,11 +178,6 @@ TEST_F(QuicCryptoServerStreamTest, MessageAfterHandshake) {
 }
 
 TEST_F(QuicCryptoServerStreamTest, BadMessageType) {
-  if (!Aes128Gcm12Encrypter::IsSupported()) {
-    LOG(INFO) << "AES GCM not supported. Test skipped.";
-    return;
-  }
-
   message_.set_tag(kSHLO);
   ConstructHandshakeMessage();
   EXPECT_CALL(*connection_, SendConnectionClose(
@@ -230,11 +186,6 @@ TEST_F(QuicCryptoServerStreamTest, BadMessageType) {
 }
 
 TEST_F(QuicCryptoServerStreamTest, WithoutCertificates) {
-  if (!Aes128Gcm12Encrypter::IsSupported()) {
-    LOG(INFO) << "AES GCM not supported. Test skipped.";
-    return;
-  }
-
   crypto_config_.SetProofSource(NULL);
   client_options_.dont_verify_certs = true;
 
@@ -246,11 +197,6 @@ TEST_F(QuicCryptoServerStreamTest, WithoutCertificates) {
 }
 
 TEST_F(QuicCryptoServerStreamTest, ChannelID) {
-  if (!Aes128Gcm12Encrypter::IsSupported()) {
-    LOG(INFO) << "AES GCM not supported. Test skipped.";
-    return;
-  }
-
   client_options_.channel_id_enabled = true;
   // TODO(rtenneti): Enable testing of ProofVerifier.
   // CompleteCryptoHandshake verifies

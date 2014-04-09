@@ -7,7 +7,7 @@
 
 #include "base/memory/scoped_ptr.h"
 #include "chrome/browser/sessions/session_id.h"
-#include "chrome/browser/sync/glue/synced_tab_delegate.h"
+#include "chrome/browser/sync/glue/synced_window_delegate.h"
 #include "chrome/browser/ui/toolbar/toolbar_model.h"
 #include "chrome/browser/ui/toolbar/toolbar_model_delegate.h"
 #include "content/public/browser/notification_observer.h"
@@ -16,7 +16,6 @@
 namespace browser_sync {
 class SyncedWindowDelegate;
 class SyncedWindowDelegateAndroid;
-class SyncedTabDelegate;
 }
 
 namespace content {
@@ -24,6 +23,7 @@ class WebContents;
 }
 
 class Profile;
+class TabAndroid;
 
 // Abstract representation of a Tab Model for Android.  Since Android does
 // not use Browser/BrowserList, this is required to allow Chrome to interact
@@ -32,9 +32,6 @@ class TabModel : public content::NotificationObserver,
                  public ToolbarModelDelegate {
  public:
   explicit TabModel(Profile* profile);
-  // Deprecated: This constructor is deprecated and should be removed once
-  // downstream Android uses new constructor. See crbug.com/159704.
-  TabModel();
   virtual ~TabModel();
 
   // Implementation of ToolbarDelegate
@@ -48,7 +45,10 @@ class TabModel : public content::NotificationObserver,
   virtual int GetTabCount() const = 0;
   virtual int GetActiveIndex() const = 0;
   virtual content::WebContents* GetWebContentsAt(int index) const = 0;
-  virtual browser_sync::SyncedTabDelegate* GetTabAt(int index) const = 0;
+  virtual TabAndroid* GetTabAt(int index) const = 0;
+
+  virtual void SetActiveIndex(int index) = 0;
+  virtual void CloseTabAt(int index) = 0;
 
   // Used for restoring tabs from synced foreign sessions.
   virtual void CreateTab(content::WebContents* web_contents) = 0;
@@ -60,8 +60,6 @@ class TabModel : public content::NotificationObserver,
   virtual bool IsSessionRestoreInProgress() const = 0;
 
   virtual void OpenClearBrowsingData() const = 0;
-
-  ToolbarModel::SecurityLevel GetSecurityLevelForCurrentTab();
 
   // Returns search terms extracted from the current url if possible.
   string16 GetSearchTermsForCurrentTab();

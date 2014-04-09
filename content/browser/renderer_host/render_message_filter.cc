@@ -321,7 +321,6 @@ RenderMessageFilter::~RenderMessageFilter() {
 }
 
 void RenderMessageFilter::OnChannelClosing() {
-  BrowserMessageFilter::OnChannelClosing();
 #if defined(ENABLE_PLUGINS)
   for (std::set<OpenChannelToNpapiPluginCallback*>::iterator it =
        plugin_host_clients_.begin(); it != plugin_host_clients_.end(); ++it) {
@@ -342,7 +341,6 @@ void RenderMessageFilter::OnChannelClosing() {
 }
 
 void RenderMessageFilter::OnChannelConnected(int32 peer_id) {
-  BrowserMessageFilter::OnChannelConnected(peer_id);
   base::ProcessHandle handle = PeerHandle();
 #if defined(OS_MACOSX)
   process_metrics_.reset(base::ProcessMetrics::CreateProcessMetrics(handle,
@@ -400,6 +398,8 @@ bool RenderMessageFilter::OnMessageReceived(const IPC::Message& message,
                         OnCheckNotificationPermission)
     IPC_MESSAGE_HANDLER(ChildProcessHostMsg_SyncAllocateSharedMemory,
                         OnAllocateSharedMemory)
+    IPC_MESSAGE_HANDLER(ChildProcessHostMsg_SyncAllocateGpuMemoryBuffer,
+                        OnAllocateGpuMemoryBuffer)
 #if defined(OS_POSIX) && !defined(TOOLKIT_GTK) && !defined(OS_ANDROID)
     IPC_MESSAGE_HANDLER(ViewHostMsg_AllocTransportDIB, OnAllocTransportDIB)
     IPC_MESSAGE_HANDLER(ViewHostMsg_FreeTransportDIB, OnFreeTransportDIB)
@@ -834,7 +834,8 @@ void RenderMessageFilter::OnDownloadUrl(const IPC::Message& message,
   scoped_ptr<DownloadSaveInfo> save_info(new DownloadSaveInfo());
   save_info->suggested_name = suggested_name;
   scoped_ptr<net::URLRequest> request(
-      resource_context_->GetRequestContext()->CreateRequest(url, NULL));
+      resource_context_->GetRequestContext()->CreateRequest(
+          url, net::DEFAULT_PRIORITY, NULL));
   RecordDownloadSource(INITIATED_BY_RENDERER);
   resource_dispatcher_host_->BeginDownload(
       request.Pass(),
@@ -989,8 +990,7 @@ void RenderMessageFilter::OnKeygenOnWorkerThread(
 
 void RenderMessageFilter::OnAsyncOpenPepperFile(int routing_id,
                                                 const base::FilePath& path,
-                                                int pp_open_flags,
-                                                int message_id) {
+                                                int pp_open_flags) {
   int platform_file_flags = 0;
   if (!CanOpenWithPepperFlags(pp_open_flags, render_process_id_, path) ||
       !ppapi::PepperFileOpenFlagsToPlatformFileFlags(
@@ -1012,7 +1012,7 @@ void RenderMessageFilter::OnAsyncOpenPepperFile(int routing_id,
           IPC::InvalidPlatformFileForTransit();
 
   Send(new ViewMsg_AsyncOpenPepperFile_ACK(
-      routing_id, error_code, file_for_transit, message_id));
+      routing_id, error_code, file_for_transit));
 }
 
 void RenderMessageFilter::OnMediaLogEvents(
@@ -1168,4 +1168,23 @@ void RenderMessageFilter::OnWebAudioMediaCodec(
       true);
 }
 #endif
+
+void RenderMessageFilter::OnAllocateGpuMemoryBuffer(
+    uint32 buffer_size,
+    gfx::GpuMemoryBufferHandle* handle) {
+  // TODO(reveman): Implement allocation of real GpuMemoryBuffer.
+  // Currently this function creates a fake GpuMemoryBuffer that is
+  // backed by shared memory and requires an upload before it can
+  // be used as a texture. The plan is to instead have this function
+  // allocate a real GpuMemoryBuffer in whatever form is supported
+  // by platform and drivers.
+  //
+  // Note: |buffer_size| likely needs to be replaced by a more
+  // specific buffer description but is enough for the shared memory
+  // backed GpuMemoryBuffer currently returned.
+  handle->type = gfx::SHARED_MEMORY_BUFFER;
+  ChildProcessHostImpl::AllocateSharedMemory(
+      buffer_size, PeerHandle(), &handle->handle);
+}
+
 }  // namespace content

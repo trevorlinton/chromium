@@ -16,15 +16,6 @@ using std::max;
 namespace net {
 namespace test {
 
-class QuicCongestionManagerPeer : public QuicCongestionManager {
- public:
-  explicit QuicCongestionManagerPeer(const QuicClock* clock,
-                                     CongestionFeedbackType congestion_type)
-      : QuicCongestionManager(clock, congestion_type) {
-  }
-  using QuicCongestionManager::BandwidthEstimate;
-};
-
 class QuicCongestionControlTest : public ::testing::Test {
  protected:
   QuicCongestionControlTest()
@@ -32,12 +23,12 @@ class QuicCongestionControlTest : public ::testing::Test {
   }
 
   void SetUpCongestionType(CongestionFeedbackType congestion_type) {
-    manager_.reset(new QuicCongestionManagerPeer(&clock_, congestion_type));
+    manager_.reset(new QuicCongestionManager(&clock_, congestion_type));
   }
 
   MockClock clock_;
   QuicTime start_;
-  scoped_ptr<QuicCongestionManagerPeer> manager_;
+  scoped_ptr<QuicCongestionManager> manager_;
 };
 
 TEST_F(QuicCongestionControlTest, FixedRateSenderAPI) {
@@ -49,7 +40,8 @@ TEST_F(QuicCongestionControlTest, FixedRateSenderAPI) {
                                                   clock_.Now());
   EXPECT_TRUE(manager_->TimeUntilSend(clock_.Now(),
       NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA, NOT_HANDSHAKE).IsZero());
-  manager_->SentPacket(1, clock_.Now(), kMaxPacketSize, NOT_RETRANSMISSION);
+  manager_->OnPacketSent(1, clock_.Now(), kDefaultMaxPacketSize,
+                         NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA);
   EXPECT_EQ(QuicTime::Delta::FromMilliseconds(40),
             manager_->TimeUntilSend(clock_.Now(),
                 NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA, NOT_HANDSHAKE));
@@ -78,7 +70,8 @@ TEST_F(QuicCongestionControlTest, FixedRatePacing) {
   for (QuicPacketSequenceNumber i = 1; i <= 100; ++i) {
     EXPECT_TRUE(manager_->TimeUntilSend(clock_.Now(),
         NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA, NOT_HANDSHAKE).IsZero());
-    manager_->SentPacket(i, clock_.Now(), kMaxPacketSize, NOT_RETRANSMISSION);
+    manager_->OnPacketSent(i, clock_.Now(), kDefaultMaxPacketSize,
+                           NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA);
     QuicTime::Delta advance_time = manager_->TimeUntilSend(clock_.Now(),
         NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA, NOT_HANDSHAKE);
     clock_.AdvanceTime(advance_time);
@@ -108,10 +101,12 @@ TEST_F(QuicCongestionControlTest, Pacing) {
   for (QuicPacketSequenceNumber i = 1; i <= 100;) {
     EXPECT_TRUE(manager_->TimeUntilSend(clock_.Now(),
         NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA, NOT_HANDSHAKE).IsZero());
-    manager_->SentPacket(i++, clock_.Now(), kMaxPacketSize, NOT_RETRANSMISSION);
+    manager_->OnPacketSent(i++, clock_.Now(), kDefaultMaxPacketSize,
+                           NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA);
     EXPECT_TRUE(manager_->TimeUntilSend(clock_.Now(),
         NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA, NOT_HANDSHAKE).IsZero());
-    manager_->SentPacket(i++, clock_.Now(), kMaxPacketSize, NOT_RETRANSMISSION);
+    manager_->OnPacketSent(i++, clock_.Now(), kDefaultMaxPacketSize,
+                           NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA);
     QuicTime::Delta advance_time = manager_->TimeUntilSend(clock_.Now(),
         NOT_RETRANSMISSION, HAS_RETRANSMITTABLE_DATA, NOT_HANDSHAKE);
     clock_.AdvanceTime(advance_time);

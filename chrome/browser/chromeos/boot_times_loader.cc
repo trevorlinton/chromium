@@ -86,8 +86,6 @@ static const base::FilePath::CharType kUptimePrefix[] = FPL("uptime-");
 static const base::FilePath::CharType kDiskPrefix[] = FPL("disk-");
 // Name of the time that Chrome's main() is called.
 static const base::FilePath::CharType kChromeMain[] = FPL("chrome-main");
-// Delay in milliseconds between file read attempts.
-static const int64 kReadAttemptDelayMs = 250;
 // Delay in milliseconds before writing the login times to disk.
 static const int64 kLoginTimeWriteDelayMs = 3000;
 
@@ -261,8 +259,8 @@ BootTimesLoader::Stats BootTimesLoader::GetCurrentStats() {
   const base::FilePath kDiskStat(FPL("/sys/block/sda/stat"));
   Stats stats;
   base::ThreadRestrictions::ScopedAllowIO allow_io;
-  file_util::ReadFileToString(kProcUptime, &stats.uptime);
-  file_util::ReadFileToString(kDiskStat, &stats.disk);
+  base::ReadFileToString(kProcUptime, &stats.uptime);
+  base::ReadFileToString(kDiskStat, &stats.disk);
   return stats;
 }
 

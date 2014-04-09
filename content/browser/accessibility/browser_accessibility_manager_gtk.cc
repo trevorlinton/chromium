@@ -38,29 +38,27 @@ BrowserAccessibilityManagerGtk::~BrowserAccessibilityManagerGtk() {
 AccessibilityNodeData BrowserAccessibilityManagerGtk::GetEmptyDocument() {
   AccessibilityNodeData empty_document;
   empty_document.id = 0;
-  empty_document.role = AccessibilityNodeData::ROLE_ROOT_WEB_AREA;
+  empty_document.role = WebKit::WebAXRoleRootWebArea;
   empty_document.state =
-      1 << AccessibilityNodeData::STATE_READONLY;
+      1 << WebKit::WebAXStateReadonly;
   return empty_document;
 }
 
 void BrowserAccessibilityManagerGtk::NotifyAccessibilityEvent(
-    int type,
+    WebKit::WebAXEvent event_type,
     BrowserAccessibility* node) {
   if (!node->IsNative())
     return;
   AtkObject* atk_object = node->ToBrowserAccessibilityGtk()->GetAtkObject();
 
-  switch (type) {
-    case AccessibilityNotificationChildrenChanged:
+  switch (event_type) {
+    case WebKit::WebAXEventChildrenChanged:
       RecursivelySendChildrenChanged(GetRoot()->ToBrowserAccessibilityGtk());
       break;
-    case AccessibilityNotificationFocusChanged:
-      // Note: atk_focus_tracker_notify may be deprecated in the future;
-      // follow this bug for the replacement:
-      // https://bugzilla.gnome.org/show_bug.cgi?id=649575#c4
+    case WebKit::WebAXEventFocus:
+      // Note: the focus-event was deprecated in ATK 2.9.4
+      // See https://bugzilla.gnome.org/show_bug.cgi?id=649575#c8
       g_signal_emit_by_name(atk_object, "focus-event", true);
-      atk_focus_tracker_notify(atk_object);
       break;
     default:
       break;

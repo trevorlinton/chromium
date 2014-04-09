@@ -6,7 +6,6 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/message_loop/message_loop.h"
 #include "base/prefs/pref_service.h"
 #include "chrome/browser/policy/cloud/cloud_policy_client.h"
 #include "chrome/browser/policy/cloud/cloud_policy_refresh_scheduler.h"
@@ -15,10 +14,15 @@
 
 namespace policy {
 
-CloudPolicyCore::CloudPolicyCore(const PolicyNamespaceKey& key,
-                                 CloudPolicyStore* store)
+CloudPolicyCore::Observer::~Observer() {}
+
+CloudPolicyCore::CloudPolicyCore(
+    const PolicyNamespaceKey& key,
+    CloudPolicyStore* store,
+    const scoped_refptr<base::SequencedTaskRunner>& task_runner)
     : policy_ns_key_(key),
-      store_(store) {}
+      store_(store),
+      task_runner_(task_runner) {}
 
 CloudPolicyCore::~CloudPolicyCore() {}
 
@@ -27,9 +31,12 @@ void CloudPolicyCore::Connect(scoped_ptr<CloudPolicyClient> client) {
   CHECK(client);
   client_ = client.Pass();
   service_.reset(new CloudPolicyService(policy_ns_key_, client_.get(), store_));
+  FOR_EACH_OBSERVER(Observer, observers_, OnCoreConnected(this));
 }
 
 void CloudPolicyCore::Disconnect() {
+  if (client_)
+    FOR_EACH_OBSERVER(Observer, observers_, OnCoreDisconnecting(this));
   refresh_delay_.reset();
   refresh_scheduler_.reset();
   service_.reset();
@@ -44,10 +51,9 @@ void CloudPolicyCore::RefreshSoon() {
 void CloudPolicyCore::StartRefreshScheduler() {
   if (!refresh_scheduler_) {
     refresh_scheduler_.reset(
-        new CloudPolicyRefreshScheduler(
-            client_.get(), store_,
-            base::MessageLoop::current()->message_loop_proxy()));
+        new CloudPolicyRefreshScheduler(client_.get(), store_, task_runner_));
     UpdateRefreshDelayFromPref();
+    FOR_EACH_OBSERVER(Observer, observers_, OnRefreshSchedulerStarted(this));
   }
 }
 
@@ -60,6 +66,14 @@ void CloudPolicyCore::TrackRefreshDelayPref(
       base::Bind(&CloudPolicyCore::UpdateRefreshDelayFromPref,
                  base::Unretained(this)));
   UpdateRefreshDelayFromPref();
+}
+
+void CloudPolicyCore::AddObserver(CloudPolicyCore::Observer* observer) {
+  observers_.AddObserver(observer);
+}
+
+void CloudPolicyCore::RemoveObserver(CloudPolicyCore::Observer* observer) {
+  observers_.RemoveObserver(observer);
 }
 
 void CloudPolicyCore::UpdateRefreshDelayFromPref() {

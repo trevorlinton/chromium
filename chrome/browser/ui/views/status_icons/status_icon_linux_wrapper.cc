@@ -4,12 +4,19 @@
 
 #include "chrome/browser/ui/views/status_icons/status_icon_linux_wrapper.h"
 
-StatusIconLinuxWrapper::StatusIconLinuxWrapper(StatusIconLinux* status_icon) {
+#include "ui/views/linux_ui/linux_ui.h"
+
+StatusIconLinuxWrapper::StatusIconLinuxWrapper(
+    views::StatusIconLinux* status_icon)
+    : menu_model_(NULL) {
   status_icon_.reset(status_icon);
   status_icon_->set_delegate(this);
 }
 
-StatusIconLinuxWrapper::~StatusIconLinuxWrapper() {}
+StatusIconLinuxWrapper::~StatusIconLinuxWrapper() {
+  if (menu_model_)
+    menu_model_->RemoveObserver(this);
+}
 
 void StatusIconLinuxWrapper::SetImage(const gfx::ImageSkia& image) {
   status_icon_->SetImage(image);
@@ -37,12 +44,16 @@ bool StatusIconLinuxWrapper::HasClickAction() {
   return HasObservers();
 }
 
+void StatusIconLinuxWrapper::OnMenuStateChanged() {
+  status_icon_->RefreshPlatformContextMenu();
+}
+
 StatusIconLinuxWrapper* StatusIconLinuxWrapper::CreateWrappedStatusIcon(
     const gfx::ImageSkia& image,
     const string16& tool_tip) {
-  const ui::LinuxUI* linux_ui = ui::LinuxUI::instance();
+  const views::LinuxUI* linux_ui = views::LinuxUI::instance();
   if (linux_ui) {
-    scoped_ptr<StatusIconLinux> status_icon =
+    scoped_ptr<views::StatusIconLinux> status_icon =
         linux_ui->CreateLinuxStatusIcon(image, tool_tip);
     if (status_icon.get())
       return new StatusIconLinuxWrapper(status_icon.release());
@@ -50,6 +61,15 @@ StatusIconLinuxWrapper* StatusIconLinuxWrapper::CreateWrappedStatusIcon(
   return NULL;
 }
 
-void StatusIconLinuxWrapper::UpdatePlatformContextMenu(ui::MenuModel* model) {
+void StatusIconLinuxWrapper::UpdatePlatformContextMenu(
+    StatusIconMenuModel* model) {
+  // If a menu already exists, remove ourself from its oberver list.
+  if (menu_model_)
+    menu_model_->RemoveObserver(this);
+
   status_icon_->UpdatePlatformContextMenu(model);
+  menu_model_ = model;
+
+  if (model)
+    model->AddObserver(this);
 }

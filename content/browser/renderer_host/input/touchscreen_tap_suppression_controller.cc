@@ -6,7 +6,7 @@
 
 #include "content/browser/renderer_host/input/gesture_event_filter.h"
 #include "content/browser/renderer_host/input/tap_suppression_controller.h"
-#include "ui/base/gestures/gesture_configuration.h"
+#include "ui/events/gestures/gesture_configuration.h"
 
 namespace content {
 
@@ -55,12 +55,8 @@ int TouchscreenTapSuppressionController::MaxTapGapTimeInMs() {
 void TouchscreenTapSuppressionController::DropStashedTapDown() {
 }
 
-void TouchscreenTapSuppressionController::ForwardStashedTapDownForDeferral() {
-  gesture_event_filter_->ForwardGestureEventForDeferral(stashed_tap_down_);
-}
-
-void TouchscreenTapSuppressionController::ForwardStashedTapDownSkipDeferral() {
-  gesture_event_filter_->ForwardGestureEventSkipDeferral(stashed_tap_down_);
+void TouchscreenTapSuppressionController::ForwardStashedTapDown() {
+  gesture_event_filter_->ForwardGestureEvent(stashed_tap_down_);
 }
 
 }  // namespace content

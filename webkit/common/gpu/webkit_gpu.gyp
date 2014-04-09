@@ -15,6 +15,7 @@
           'variables': { 'enable_wexit_time_destructors': 1, },
           'dependencies': [
             '<(DEPTH)/base/base.gyp:base',
+            '<(DEPTH)/cc/cc.gyp:cc',
             '<(DEPTH)/base/third_party/dynamic_annotations/dynamic_annotations.gyp:dynamic_annotations',
             '<(DEPTH)/gpu/command_buffer/command_buffer.gyp:gles2_utils',
             '<(DEPTH)/gpu/gpu.gyp:command_buffer_service',
@@ -22,9 +23,9 @@
             '<(DEPTH)/gpu/gpu.gyp:gles2_implementation',
             '<(DEPTH)/skia/skia.gyp:skia',
             '<(DEPTH)/third_party/WebKit/public/blink.gyp:blink_minimal',
-            '<(DEPTH)/third_party/angle_dx11/src/build_angle.gyp:translator_glsl',
+            '<(DEPTH)/third_party/angle_dx11/src/build_angle.gyp:translator',
             '<(DEPTH)/ui/gl/gl.gyp:gl',
-            '<(DEPTH)/ui/ui.gyp:ui',
+            '<(DEPTH)/ui/gfx/gfx.gyp:gfx',
           ],
           'sources': [
             # This list contains all .h and .cc in gpu except for test code.

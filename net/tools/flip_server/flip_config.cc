@@ -72,7 +72,7 @@ FlipAcceptor::FlipAcceptor(enum FlipHandlerType flip_handler_type,
     }
   }
 
-  SetNonBlocking(listen_fd_);
+  FlipSetNonBlocking(listen_fd_);
   VLOG(1) << "Listening on socket: ";
   if (flip_handler_type == FLIP_HANDLER_PROXY)
     VLOG(1) << "\tType         : Proxy";
@@ -90,7 +90,7 @@ FlipAcceptor::FlipAcceptor(enum FlipHandlerType flip_handler_type,
           << (ssl_cert_filename.size()?"true":"false");
   VLOG(1) << "\tCertificate  : " << ssl_cert_filename;
   VLOG(1) << "\tKey          : " << ssl_key_filename;
-  VLOG(1) << "\tSpdy Only    : " << (spdy_only?"true":"flase");
+  VLOG(1) << "\tSpdy Only    : " << (spdy_only?"true":"false");
 }
 
 FlipAcceptor::~FlipAcceptor() {}

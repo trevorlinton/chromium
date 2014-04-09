@@ -10,6 +10,7 @@
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -19,6 +20,7 @@
 #include "url/gurl.h"
 
 class PrefRegistrySimple;
+class PrefService;
 
 namespace base {
 class DictionaryValue;
@@ -79,6 +81,9 @@ class WizardController : public ScreenObserver {
   // Skips any screens that may normally be shown after login (registration,
   // Terms of Service, user image selection).
   static void SkipPostLoginScreensForTesting();
+
+  // Checks whether OOBE should start enrollment automatically.
+  static bool ShouldAutoStartEnrollment();
 
   // Shows the first screen defined by |first_screen_name| or by default
   // if the parameter is empty. Takes ownership of |screen_parameters|.
@@ -145,6 +150,7 @@ class WizardController : public ScreenObserver {
   static const char kTermsOfServiceScreenName[];
   static const char kWrongHWIDScreenName[];
   static const char kLocallyManagedUserCreationScreenName[];
+  static const char kAppLaunchSplashScreenName[];
 
  private:
   // Show specific screen.
@@ -230,11 +236,18 @@ class WizardController : public ScreenObserver {
   // Launched kiosk app configured for auto-launch.
   void AutoLaunchKioskApp();
 
-  // Checks whether OOBE should start enrollment automatically.
-  bool ShouldAutoStartEnrollment() const;
-
   // Checks whether the user is allowed to exit enrollment.
   bool CanExitEnrollment() const;
+
+  // Called when LocalState is initialized.
+  void OnLocalStateInitialized(bool /* succeeded */);
+
+  // Returns local state.
+  PrefService* GetLocalState();
+
+  static void set_local_state_for_testing(PrefService* local_state) {
+    local_state_for_testing_ = local_state;
+  }
 
   // Whether to skip any screens that may normally be shown after login
   // (registration, Terms of Service, user image selection).
@@ -308,10 +321,16 @@ class WizardController : public ScreenObserver {
   // a previous screen instead of proceeding with usual flow.
   bool user_image_screen_return_to_previous_hack_;
 
+  // Non-owning pointer to local state used for testing.
+  static PrefService* local_state_for_testing_;
+
   FRIEND_TEST_ALL_PREFIXES(EnrollmentScreenTest, TestCancel);
   FRIEND_TEST_ALL_PREFIXES(WizardControllerFlowTest, Accelerators);
   friend class WizardControllerFlowTest;
   friend class WizardInProcessBrowserTest;
+  friend class WizardControllerBrokenLocalStateTest;
+
+  base::WeakPtrFactory<WizardController> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(WizardController);
 };

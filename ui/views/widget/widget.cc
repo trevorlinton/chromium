@@ -9,13 +9,14 @@
 #include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/base/default_theme_provider.h"
-#include "ui/base/events/event.h"
 #include "ui/base/hit_test.h"
 #include "ui/base/l10n/l10n_font_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
+#include "ui/events/event.h"
 #include "ui/gfx/screen.h"
+#include "ui/views/controls/menu/menu_controller.h"
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/focus/focus_manager_factory.h"
 #include "ui/views/focus/view_storage.h"
@@ -29,9 +30,10 @@
 #include "ui/views/widget/widget_deletion_observer.h"
 #include "ui/views/widget/widget_observer.h"
 #include "ui/views/window/custom_frame_view.h"
+#include "ui/views/window/dialog_delegate.h"
 
-#if !defined(OS_MACOSX)
-#include "ui/views/controls/menu/menu_controller.h"
+#if defined(USE_AURA)
+#include "ui/base/cursor/cursor.h"
 #endif
 
 namespace views {
@@ -85,9 +87,14 @@ class DefaultWidgetDelegate : public WidgetDelegate {
   virtual const Widget* GetWidget() const OVERRIDE {
     return widget_;
   }
-
   virtual bool CanActivate() const OVERRIDE {
     return can_activate_;
+  }
+  virtual bool ShouldAdvanceFocusToTopLevelWidget() const OVERRIDE {
+    // In most situations where a Widget is used without a delegate the Widget
+    // is used as a container, so that we want focus to advance to the top-level
+    // widget. A good example of this is the find bar.
+    return true;
   }
 
  private:
@@ -173,6 +180,7 @@ Widget::Widget()
       is_touch_down_(false),
       has_menu_bar_(false),
       last_mouse_event_was_move_(false),
+      auto_release_capture_(true),
       root_layers_dirty_(false),
       movement_disabled_(false) {
 }
@@ -244,6 +252,30 @@ Widget* Widget::CreateWindowWithContextAndBounds(WidgetDelegate* delegate,
 }
 
 // static
+Widget* Widget::CreateWindowAsFramelessChild(WidgetDelegate* widget_delegate,
+                                             gfx::NativeView parent,
+                                             gfx::NativeView new_style_parent) {
+  views::Widget* widget = new views::Widget;
+
+  views::Widget::InitParams params;
+  params.delegate = widget_delegate;
+  params.child = true;
+  if (views::DialogDelegate::UseNewStyle()) {
+    params.parent = new_style_parent;
+    params.remove_standard_frame = true;
+#if defined(USE_AURA)
+    params.opacity = views::Widget::InitParams::TRANSLUCENT_WINDOW;
+#endif
+  } else {
+    params.parent = parent;
+  }
+
+  widget->Init(params);
+
+  return widget;
+}
+
+// static
 Widget* Widget::GetWidgetForNativeView(gfx::NativeView native_view) {
   internal::NativeWidgetPrivate* native_widget =
       internal::NativeWidgetPrivate::GetNativeWidgetForNativeView(native_view);
@@ -270,6 +302,12 @@ Widget* Widget::GetTopLevelWidgetForNativeView(gfx::NativeView native_view) {
 void Widget::GetAllChildWidgets(gfx::NativeView native_view,
                                 Widgets* children) {
   internal::NativeWidgetPrivate::GetAllChildWidgets(native_view, children);
+}
+
+// static
+void Widget::GetAllOwnedWidgets(gfx::NativeView native_view,
+                                Widgets* owned) {
+  internal::NativeWidgetPrivate::GetAllOwnedWidgets(native_view, owned);
 }
 
 // static
@@ -403,16 +441,16 @@ void Widget::ViewHierarchyChanged(
   }
 }
 
-void Widget::NotifyNativeViewHierarchyChanged(bool attached,
-                                              gfx::NativeView native_view) {
-  if (!attached) {
-    FocusManager* focus_manager = GetFocusManager();
-    // We are being removed from a window hierarchy.  Treat this as
-    // the root_view_ being removed.
-    if (focus_manager)
-      focus_manager->ViewRemoved(root_view_.get());
-  }
-  root_view_->NotifyNativeViewHierarchyChanged(attached, native_view);
+void Widget::NotifyNativeViewHierarchyWillChange() {
+  FocusManager* focus_manager = GetFocusManager();
+  // We are being removed from a window hierarchy.  Treat this as
+  // the root_view_ being removed.
+  if (focus_manager)
+    focus_manager->ViewRemoved(root_view_.get());
+}
+
+void Widget::NotifyNativeViewHierarchyChanged() {
+  root_view_->NotifyNativeViewHierarchyChanged();
 }
 
 // Converted methods (see header) ----------------------------------------------
@@ -493,9 +531,11 @@ void Widget::SetVisibilityChangedAnimationsEnabled(bool value) {
   native_widget_->SetVisibilityChangedAnimationsEnabled(value);
 }
 
-Widget::MoveLoopResult Widget::RunMoveLoop(const gfx::Vector2d& drag_offset,
-                                           MoveLoopSource source) {
-  return native_widget_->RunMoveLoop(drag_offset, source);
+Widget::MoveLoopResult Widget::RunMoveLoop(
+    const gfx::Vector2d& drag_offset,
+    MoveLoopSource source,
+    MoveLoopEscapeBehavior escape_behavior) {
+  return native_widget_->RunMoveLoop(drag_offset, source, escape_behavior);
 }
 
 void Widget::EndMoveLoop() {
@@ -562,17 +602,6 @@ bool Widget::IsClosed() const {
 void Widget::Show() {
   TRACE_EVENT0("views", "Widget::Show");
   if (non_client_view_) {
-#if defined(OS_MACOSX)
-    // On the Mac the FullScreenBookmarkBar test is different then for any other
-    // OS. Since the new maximize logic from ash does not apply to the mac, we
-    // continue to ignore the fullscreen mode here.
-    if (saved_show_state_ == ui::SHOW_STATE_MAXIMIZED &&
-        !initial_restored_bounds_.IsEmpty()) {
-      native_widget_->ShowMaximizedWithBounds(initial_restored_bounds_);
-    } else {
-      native_widget_->ShowWithWindowState(saved_show_state_);
-    }
-#else
     // While initializing, the kiosk mode will go to full screen before the
     // widget gets shown. In that case we stay in full screen mode, regardless
     // of the |saved_show_state_| member.
@@ -584,7 +613,6 @@ void Widget::Show() {
       native_widget_->ShowWithWindowState(
           IsFullscreen() ? ui::SHOW_STATE_FULLSCREEN : saved_show_state_);
     }
-#endif
     // |saved_show_state_| only applies the first time the window is shown.
     // If we don't reset the value the window may be shown maximized every time
     // it is subsequently shown after being hidden.
@@ -629,6 +657,10 @@ void Widget::DisableInactiveRendering() {
 
 void Widget::SetAlwaysOnTop(bool on_top) {
   native_widget_->SetAlwaysOnTop(on_top);
+}
+
+bool Widget::IsAlwaysOnTop() const {
+  return native_widget_->IsAlwaysOnTop();
 }
 
 void Widget::Maximize() {
@@ -904,10 +936,12 @@ bool Widget::HasCapture() {
   return native_widget_->HasCapture();
 }
 
-void Widget::TooltipTextChanged(View* view) {
-  TooltipManager* manager = native_widget_private()->GetTooltipManager();
-  if (manager)
-    manager->TooltipTextChanged(view);
+TooltipManager* Widget::GetTooltipManager() {
+  return native_widget_->GetTooltipManager();
+}
+
+const TooltipManager* Widget::GetTooltipManager() const {
+  return native_widget_->GetTooltipManager();
 }
 
 bool Widget::SetInitialFocus() {
@@ -924,10 +958,6 @@ bool Widget::SetInitialFocus() {
   return !!v;
 }
 
-View* Widget::GetChildViewParent() {
-  return GetContentsView() ? GetContentsView() : GetRootView();
-}
-
 gfx::Rect Widget::GetWorkAreaBoundsInScreen() const {
   return native_widget_->GetWorkAreaBoundsInScreen();
 }
@@ -939,6 +969,10 @@ void Widget::SynthesizeMouseMoveEvent() {
                              last_mouse_event_position_,
                              ui::EF_IS_SYNTHESIZED);
   root_view_->OnMouseMoved(mouse_event);
+}
+
+void Widget::OnRootViewLayout() {
+  native_widget_->OnRootViewLayout();
 }
 
 void Widget::OnOwnerClosing() {
@@ -986,6 +1020,11 @@ void Widget::OnNativeFocus(gfx::NativeView old_focused_view) {
 void Widget::OnNativeBlur(gfx::NativeView new_focused_view) {
   WidgetFocusManager::GetInstance()->OnWidgetFocusEvent(GetNativeView(),
                                                         new_focused_view);
+}
+
+void Widget::OnNativeWidgetVisibilityChanging(bool visible) {
+  FOR_EACH_OBSERVER(WidgetObserver, observers_,
+                    OnWidgetVisibilityChanging(this, visible));
 }
 
 void Widget::OnNativeWidgetVisibilityChanged(bool visible) {
@@ -1099,9 +1138,6 @@ void Widget::OnKeyEvent(ui::KeyEvent* event) {
 }
 
 void Widget::OnMouseEvent(ui::MouseEvent* event) {
-  if (!IsMouseEventsEnabled())
-    return;
-
   View* root_view = GetRootView();
   switch (event->type()) {
     case ui::ET_MOUSE_PRESSED: {
@@ -1135,10 +1171,8 @@ void Widget::OnMouseEvent(ui::MouseEvent* event) {
       last_mouse_event_was_move_ = false;
       is_mouse_button_pressed_ = false;
       // Release capture first, to avoid confusion if OnMouseReleased blocks.
-      if (native_widget_->HasCapture() &&
-          ShouldReleaseCaptureOnMouseReleased()) {
+      if (auto_release_capture_ && native_widget_->HasCapture())
         native_widget_->ReleaseCapture();
-      }
       if (root_view)
         root_view->OnMouseReleased(*event);
       if ((event->flags() & ui::EF_IS_NON_CLIENT) == 0)
@@ -1206,7 +1240,7 @@ void Widget::OnGestureEvent(ui::GestureEvent* event) {
     case ui::ET_GESTURE_END:
       if (event->details().touch_points() == 1) {
         is_touch_down_ = false;
-        if (ShouldReleaseCaptureOnMouseReleased())
+        if (auto_release_capture_)
           ReleaseCapture();
       }
       break;
@@ -1289,10 +1323,6 @@ void Widget::DestroyRootView() {
 ////////////////////////////////////////////////////////////////////////////////
 // Widget, private:
 
-bool Widget::ShouldReleaseCaptureOnMouseReleased() const {
-  return true;
-}
-
 void Widget::SetInactiveRenderingDisabled(bool value) {
   if (value == disable_inactive_rendering_)
     return;
@@ -1300,7 +1330,6 @@ void Widget::SetInactiveRenderingDisabled(bool value) {
   disable_inactive_rendering_ = value;
   if (non_client_view_)
     non_client_view_->SetInactiveRenderingDisabled(value);
-  native_widget_->SetInactiveRenderingDisabled(value);
 }
 
 void Widget::SaveWindowPlacement() {
@@ -1368,7 +1397,7 @@ bool Widget::GetSavedWindowPlacement(gfx::Rect* bounds,
   // track maximized state independently of sizing information.
 
   // Restore the window's placement from the controller.
-  if (widget_delegate_->GetSavedWindowPlacement(bounds, show_state)) {
+  if (widget_delegate_->GetSavedWindowPlacement(this, bounds, show_state)) {
     if (!widget_delegate_->ShouldRestoreWindowSize()) {
       bounds->set_size(non_client_view_->GetPreferredSize());
     } else {

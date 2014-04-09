@@ -6,12 +6,14 @@
 
 #include <algorithm>
 
+#include "base/debug/trace_event.h"
 #include "base/location.h"
 #include "base/metrics/histogram.h"
 #include "base/single_thread_task_runner.h"
 #include "cc/animation/animation.h"
 #include "cc/animation/animation_events.h"
 #include "cc/animation/layer_animation_controller.h"
+#include "cc/layers/layer_client.h"
 #include "cc/layers/layer_impl.h"
 #include "cc/output/copy_output_request.h"
 #include "cc/output/copy_output_result.h"
@@ -39,6 +41,8 @@ Layer::Layer()
       scrollable_(false),
       should_scroll_on_main_thread_(false),
       have_wheel_event_handlers_(false),
+      user_scrollable_horizontal_(true),
+      user_scrollable_vertical_(true),
       anchor_point_(0.5f, 0.5f),
       background_color_(0),
       compositing_reasons_(kCompositingReasonUnknown),
@@ -54,8 +58,11 @@ Layer::Layer()
       use_parent_backface_visibility_(false),
       draw_checkerboard_for_missing_tiles_(false),
       force_render_surface_(false),
+      scroll_parent_(NULL),
+      clip_parent_(NULL),
       replica_layer_(NULL),
-      raster_scale_(0.f) {
+      raster_scale_(0.f),
+      client_(NULL) {
   if (layer_id_ < 0) {
     s_next_layer_id = 1;
     layer_id_ = s_next_layer_id++;
@@ -85,6 +92,9 @@ Layer::~Layer() {
     DCHECK_EQ(this, replica_layer_->parent());
     replica_layer_->RemoveFromParent();
   }
+
+  RemoveFromScrollTree();
+  RemoveFromClipTree();
 }
 
 void Layer::SetLayerTreeHost(LayerTreeHost* host) {
@@ -115,8 +125,7 @@ void Layer::SetLayerTreeHost(LayerTreeHost* host) {
 
   if (host && layer_animation_controller_->has_any_animation())
     host->SetNeedsCommit();
-  if (host &&
-      (!filters_.IsEmpty() || !background_filters_.IsEmpty() || filter_))
+  if (host && (!filters_.IsEmpty() || !background_filters_.IsEmpty()))
     layer_tree_host_->set_needs_filter_context();
 }
 
@@ -144,14 +153,11 @@ void Layer::SetNeedsFullTreeSync() {
   layer_tree_host_->SetNeedsFullTreeSync();
 }
 
-bool Layer::IsPropertyChangeAllowed() const {
+void Layer::SetNextCommitWaitsForActivation() {
   if (!layer_tree_host_)
-    return true;
+    return;
 
-  if (!layer_tree_host_->settings().strict_layer_property_change_checking)
-    return true;
-
-  return !layer_tree_host_->in_paint_layer_contents();
+  layer_tree_host_->SetNextCommitWaitsForActivation();
 }
 
 void Layer::SetNeedsPushProperties() {
@@ -179,6 +185,16 @@ void Layer::RemoveDependentNeedsPushProperties() {
       parent_->RemoveDependentNeedsPushProperties();
 }
 
+bool Layer::IsPropertyChangeAllowed() const {
+  if (!layer_tree_host_)
+    return true;
+
+  if (!layer_tree_host_->settings().strict_layer_property_change_checking)
+    return true;
+
+  return !layer_tree_host_->in_paint_layer_contents();
+}
+
 gfx::Rect Layer::LayerRectToContentRect(const gfx::RectF& layer_rect) const {
   gfx::RectF content_rect =
       gfx::ScaleRect(layer_rect, contents_scale_x(), contents_scale_y());
@@ -188,26 +204,8 @@ gfx::Rect Layer::LayerRectToContentRect(const gfx::RectF& layer_rect) const {
   return gfx::ToEnclosingRect(content_rect);
 }
 
-bool Layer::BlocksPendingCommit() const {
-  return false;
-}
-
-bool Layer::CanClipSelf() const {
-  return false;
-}
-
-bool Layer::BlocksPendingCommitRecursive() const {
-  if (BlocksPendingCommit())
-    return true;
-  if (mask_layer() && mask_layer()->BlocksPendingCommitRecursive())
-    return true;
-  if (replica_layer() && replica_layer()->BlocksPendingCommitRecursive())
-    return true;
-  for (size_t i = 0; i < children_.size(); ++i) {
-    if (children_[i]->BlocksPendingCommitRecursive())
-      return true;
-  }
-  return false;
+skia::RefPtr<SkPicture> Layer::GetPicture() const {
+  return skia::RefPtr<SkPicture>();
 }
 
 void Layer::SetParent(Layer* layer) {
@@ -471,22 +469,14 @@ void Layer::SetFilters(const FilterOperations& filters) {
   DCHECK(IsPropertyChangeAllowed());
   if (filters_ == filters)
     return;
-  DCHECK(!filter_);
   filters_ = filters;
   SetNeedsCommit();
   if (!filters.IsEmpty() && layer_tree_host_)
     layer_tree_host_->set_needs_filter_context();
 }
 
-void Layer::SetFilter(const skia::RefPtr<SkImageFilter>& filter) {
-  DCHECK(IsPropertyChangeAllowed());
-  if (filter_.get() == filter.get())
-    return;
-  DCHECK(filters_.IsEmpty());
-  filter_ = filter;
-  SetNeedsCommit();
-  if (filter && layer_tree_host_)
-    layer_tree_host_->set_needs_filter_context();
+bool Layer::FilterIsAnimating() const {
+  return layer_animation_controller_->IsAnimatingProperty(Animation::Filter);
 }
 
 void Layer::SetBackgroundFilters(const FilterOperations& filters) {
@@ -559,6 +549,66 @@ bool Layer::TransformIsAnimating() const {
   return layer_animation_controller_->IsAnimatingProperty(Animation::Transform);
 }
 
+void Layer::SetScrollParent(Layer* parent) {
+  DCHECK(IsPropertyChangeAllowed());
+  if (scroll_parent_ == parent)
+    return;
+
+  if (scroll_parent_)
+    scroll_parent_->RemoveScrollChild(this);
+
+  scroll_parent_ = parent;
+
+  if (scroll_parent_)
+    scroll_parent_->AddScrollChild(this);
+
+  SetNeedsCommit();
+}
+
+void Layer::AddScrollChild(Layer* child) {
+  if (!scroll_children_)
+    scroll_children_.reset(new std::set<Layer*>);
+  scroll_children_->insert(child);
+  SetNeedsCommit();
+}
+
+void Layer::RemoveScrollChild(Layer* child) {
+  scroll_children_->erase(child);
+  if (scroll_children_->empty())
+    scroll_children_.reset();
+  SetNeedsCommit();
+}
+
+void Layer::SetClipParent(Layer* ancestor) {
+  DCHECK(IsPropertyChangeAllowed());
+  if (clip_parent_ == ancestor)
+    return;
+
+  if (clip_parent_)
+    clip_parent_->RemoveClipChild(this);
+
+  clip_parent_ = ancestor;
+
+  if (clip_parent_)
+    clip_parent_->AddClipChild(this);
+
+  SetNeedsCommit();
+}
+
+void Layer::AddClipChild(Layer* child) {
+  if (!clip_children_)
+    clip_children_.reset(new std::set<Layer*>);
+  clip_children_->insert(child);
+  SetNeedsCommit();
+}
+
+void Layer::RemoveClipChild(Layer* child) {
+  clip_children_->erase(child);
+  if (clip_children_->empty())
+    clip_children_.reset();
+  SetNeedsCommit();
+}
+
 void Layer::SetScrollOffset(gfx::Vector2d scroll_offset) {
   DCHECK(IsPropertyChangeAllowed());
   if (scroll_offset_ == scroll_offset)
@@ -569,7 +619,7 @@ void Layer::SetScrollOffset(gfx::Vector2d scroll_offset) {
 
 void Layer::SetScrollOffsetFromImplSide(gfx::Vector2d scroll_offset) {
   DCHECK(IsPropertyChangeAllowed());
-  // This function only gets called during a begin frame, so there
+  // This function only gets called during a BeginMainFrame, so there
   // is no need to call SetNeedsUpdate here.
   DCHECK(layer_tree_host_ && layer_tree_host_->CommitRequested());
   if (scroll_offset_ == scroll_offset)
@@ -595,6 +645,16 @@ void Layer::SetScrollable(bool scrollable) {
   if (scrollable_ == scrollable)
     return;
   scrollable_ = scrollable;
+  SetNeedsCommit();
+}
+
+void Layer::SetUserScrollable(bool horizontal, bool vertical) {
+  DCHECK(IsPropertyChangeAllowed());
+  if (user_scrollable_horizontal_ == horizontal &&
+      user_scrollable_vertical_ == vertical)
+    return;
+  user_scrollable_horizontal_ = horizontal;
+  user_scrollable_vertical_ = vertical;
   SetNeedsCommit();
 }
 
@@ -627,6 +687,7 @@ void Layer::SetTouchEventHandlerRegion(const Region& region) {
   if (touch_event_handler_region_ == region)
     return;
   touch_event_handler_region_ = region;
+  SetNeedsCommit();
 }
 
 void Layer::SetDrawCheckerboardForMissingTiles(bool checkerboard) {
@@ -742,7 +803,15 @@ void Layer::PushPropertiesTo(LayerImpl* layer) {
                                         : bounds_);
   layer->SetContentBounds(content_bounds());
   layer->SetContentsScale(contents_scale_x(), contents_scale_y());
-  layer->SetDebugName(debug_name_);
+
+  bool is_tracing;
+  TRACE_EVENT_CATEGORY_GROUP_ENABLED(TRACE_DISABLED_BY_DEFAULT("cc.debug"),
+                                     &is_tracing);
+  if (is_tracing)
+      layer->SetDebugName(DebugName());
+  else
+      layer->SetDebugName(std::string());
+
   layer->SetCompositingReasons(compositing_reasons_);
   layer->SetDoubleSided(double_sided_);
   layer->SetDrawCheckerboardForMissingTiles(
@@ -750,8 +819,9 @@ void Layer::PushPropertiesTo(LayerImpl* layer) {
   layer->SetForceRenderSurface(force_render_surface_);
   layer->SetDrawsContent(DrawsContent());
   layer->SetHideLayerAndSubtree(hide_layer_and_subtree_);
-  layer->SetFilters(filters());
-  layer->SetFilter(filter());
+  if (!layer->FilterIsAnimatingOnImplOnly() && !FilterIsAnimating())
+    layer->SetFilters(filters_);
+  DCHECK(!(FilterIsAnimating() && layer->FilterIsAnimatingOnImplOnly()));
   layer->SetBackgroundFilters(background_filters());
   layer->SetMasksToBounds(masks_to_bounds_);
   layer->SetShouldScrollOnMainThread(should_scroll_on_main_thread_);
@@ -775,8 +845,51 @@ void Layer::PushPropertiesTo(LayerImpl* layer) {
   DCHECK(!(TransformIsAnimating() && layer->TransformIsAnimatingOnImplOnly()));
 
   layer->SetScrollable(scrollable_);
-  layer->SetScrollOffset(scroll_offset_);
+  layer->set_user_scrollable_horizontal(user_scrollable_horizontal_);
+  layer->set_user_scrollable_vertical(user_scrollable_vertical_);
   layer->SetMaxScrollOffset(max_scroll_offset_);
+
+  LayerImpl* scroll_parent = NULL;
+  if (scroll_parent_)
+    scroll_parent = layer->layer_tree_impl()->LayerById(scroll_parent_->id());
+
+  layer->SetScrollParent(scroll_parent);
+  if (scroll_children_) {
+    std::set<LayerImpl*>* scroll_children = new std::set<LayerImpl*>;
+    for (std::set<Layer*>::iterator it = scroll_children_->begin();
+        it != scroll_children_->end(); ++it)
+      scroll_children->insert(layer->layer_tree_impl()->LayerById((*it)->id()));
+    layer->SetScrollChildren(scroll_children);
+  }
+
+  LayerImpl* clip_parent = NULL;
+  if (clip_parent_) {
+    clip_parent =
+        layer->layer_tree_impl()->LayerById(clip_parent_->id());
+  }
+
+  layer->SetClipParent(clip_parent);
+  if (clip_children_) {
+    std::set<LayerImpl*>* clip_children = new std::set<LayerImpl*>;
+    for (std::set<Layer*>::iterator it = clip_children_->begin();
+        it != clip_children_->end(); ++it) {
+      LayerImpl* clip_child = layer->layer_tree_impl()->LayerById((*it)->id());
+      DCHECK(clip_child);
+      clip_children->insert(clip_child);
+    }
+    layer->SetClipChildren(clip_children);
+  }
+
+  // Adjust the scroll delta to be just the scrolls that have happened since
+  // the BeginMainFrame was sent.  This happens for impl-side painting
+  // in LayerImpl::ApplyScrollDeltasSinceBeginMainFrame in a separate tree walk.
+  if (layer->layer_tree_impl()->settings().impl_side_painting) {
+    layer->SetScrollOffset(scroll_offset_);
+  } else {
+    layer->SetScrollOffsetAndDelta(
+        scroll_offset_, layer->ScrollDelta() - layer->sent_scroll_delta());
+    layer->SetSentScrollDelta(gfx::Vector2d());
+  }
 
   // Wrap the copy_requests_ in a PostTask to the main thread.
   ScopedPtrVector<CopyOutputRequest> main_thread_copy_requests;
@@ -804,23 +917,6 @@ void Layer::PushPropertiesTo(LayerImpl* layer) {
   // union) any update changes that have occurred on the main thread.
   update_rect_.Union(layer->update_rect());
   layer->set_update_rect(update_rect_);
-
-  if (layer->layer_tree_impl()->settings().impl_side_painting) {
-    DCHECK(layer->layer_tree_impl()->IsPendingTree());
-    LayerImpl* active_twin =
-        layer->layer_tree_impl()->FindActiveTreeLayerById(id());
-    // Update the scroll delta from the active layer, which may have
-    // adjusted its scroll delta prior to this pending layer being created.
-    // This code is identical to that in LayerImpl::SetScrollDelta.
-    if (active_twin) {
-      DCHECK(layer->sent_scroll_delta().IsZero());
-      layer->SetScrollDelta(active_twin->ScrollDelta() -
-                            active_twin->sent_scroll_delta());
-    }
-  } else {
-    layer->SetScrollDelta(layer->ScrollDelta() - layer->sent_scroll_delta());
-    layer->SetSentScrollDelta(gfx::Vector2d());
-  }
 
   layer->SetStackingOrderChanged(stacking_order_changed_);
 
@@ -868,9 +964,8 @@ bool Layer::NeedMoreUpdates() {
   return false;
 }
 
-void Layer::SetDebugName(const std::string& debug_name) {
-  debug_name_ = debug_name;
-  SetNeedsCommit();
+std::string Layer::DebugName() {
+  return client_ ? client_->DebugName() : std::string();
 }
 
 void Layer::SetCompositingReasons(CompositingReasons reasons) {
@@ -887,19 +982,19 @@ void Layer::ClearRenderSurface() {
   draw_properties_.render_surface.reset();
 }
 
+// On<Property>Animated is called due to an ongoing accelerated animation.
+// Since this animation is also being run on the compositor thread, there
+// is no need to request a commit to push this value over, so the value is
+// set directly rather than by calling Set<Property>.
+void Layer::OnFilterAnimated(const FilterOperations& filters) {
+  filters_ = filters;
+}
+
 void Layer::OnOpacityAnimated(float opacity) {
-  // This is called due to an ongoing accelerated animation. Since this
-  // animation is also being run on the impl thread, there is no need to request
-  // a commit to push this value over, so set the value directly rather than
-  // calling SetOpacity.
   opacity_ = opacity;
 }
 
 void Layer::OnTransformAnimated(const gfx::Transform& transform) {
-  // This is called due to an ongoing accelerated animation. Since this
-  // animation is also being run on the impl thread, there is no need to request
-  // a commit to push this value over, so set this value directly rather than
-  // calling SetTransform.
   transform_ = transform;
 }
 
@@ -925,16 +1020,6 @@ void Layer::PauseAnimation(int animation_id, double time_offset) {
 
 void Layer::RemoveAnimation(int animation_id) {
   layer_animation_controller_->RemoveAnimation(animation_id);
-  SetNeedsCommit();
-}
-
-void Layer::SuspendAnimations(double monotonic_time) {
-  layer_animation_controller_->SuspendAnimations(monotonic_time);
-  SetNeedsCommit();
-}
-
-void Layer::ResumeAnimations(double monotonic_time) {
-  layer_animation_controller_->ResumeAnimations(monotonic_time);
   SetNeedsCommit();
 }
 
@@ -967,7 +1052,7 @@ Region Layer::VisibleContentOpaqueRegion() const {
   return Region();
 }
 
-ScrollbarLayer* Layer::ToScrollbarLayer() {
+ScrollbarLayerInterface* Layer::ToScrollbarLayer() {
   return NULL;
 }
 
@@ -977,6 +1062,36 @@ RenderingStatsInstrumentation* Layer::rendering_stats_instrumentation() const {
 
 bool Layer::SupportsLCDText() const {
   return false;
+}
+
+void Layer::RemoveFromScrollTree() {
+  if (scroll_children_.get()) {
+    for (std::set<Layer*>::iterator it = scroll_children_->begin();
+        it != scroll_children_->end(); ++it)
+      (*it)->scroll_parent_ = NULL;
+  }
+
+  if (scroll_parent_)
+    scroll_parent_->RemoveScrollChild(this);
+
+  scroll_parent_ = NULL;
+}
+
+void Layer::RemoveFromClipTree() {
+  if (clip_children_.get()) {
+    for (std::set<Layer*>::iterator it = clip_children_->begin();
+        it != clip_children_->end(); ++it)
+      (*it)->clip_parent_ = NULL;
+  }
+
+  if (clip_parent_)
+    clip_parent_->RemoveClipChild(this);
+
+  clip_parent_ = NULL;
+}
+
+void Layer::RunMicroBenchmark(MicroBenchmark* benchmark) {
+  benchmark->RunOnLayer(this);
 }
 
 }  // namespace cc

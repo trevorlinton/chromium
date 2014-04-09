@@ -59,7 +59,10 @@ void FilterOperations::GetOutsets(int* top,
                                   int* left) const {
   *top = *right = *bottom = *left = 0;
   for (size_t i = 0; i < operations_.size(); ++i) {
-    const FilterOperation op = operations_[i];
+    const FilterOperation& op = operations_[i];
+    // TODO(ajuma): Add support for reference filters once SkImageFilter
+    // reports its outsets.
+    DCHECK(op.type() != FilterOperation::REFERENCE);
     if (op.type() == FilterOperation::BLUR ||
         op.type() == FilterOperation::DROP_SHADOW) {
       int spread = SpreadForStdDeviation(op.amount());
@@ -80,13 +83,25 @@ void FilterOperations::GetOutsets(int* top,
 
 bool FilterOperations::HasFilterThatMovesPixels() const {
   for (size_t i = 0; i < operations_.size(); ++i) {
-    const FilterOperation op = operations_[i];
+    const FilterOperation& op = operations_[i];
+    // TODO(ajuma): Once SkImageFilter reports its outsets, use those here to
+    // determine whether a reference filter really moves pixels.
     switch (op.type()) {
       case FilterOperation::BLUR:
       case FilterOperation::DROP_SHADOW:
       case FilterOperation::ZOOM:
+      case FilterOperation::REFERENCE:
         return true;
-      default:
+      case FilterOperation::OPACITY:
+      case FilterOperation::COLOR_MATRIX:
+      case FilterOperation::GRAYSCALE:
+      case FilterOperation::SEPIA:
+      case FilterOperation::SATURATE:
+      case FilterOperation::HUE_ROTATE:
+      case FilterOperation::INVERT:
+      case FilterOperation::BRIGHTNESS:
+      case FilterOperation::CONTRAST:
+      case FilterOperation::SATURATING_BRIGHTNESS:
         break;
     }
   }
@@ -95,21 +110,44 @@ bool FilterOperations::HasFilterThatMovesPixels() const {
 
 bool FilterOperations::HasFilterThatAffectsOpacity() const {
   for (size_t i = 0; i < operations_.size(); ++i) {
-    const FilterOperation op = operations_[i];
+    const FilterOperation& op = operations_[i];
+    // TODO(ajuma): Make this smarter for reference filters. Once SkImageFilter
+    // can report affectsOpacity(), call that.
     switch (op.type()) {
       case FilterOperation::OPACITY:
       case FilterOperation::BLUR:
       case FilterOperation::DROP_SHADOW:
       case FilterOperation::ZOOM:
+      case FilterOperation::REFERENCE:
         return true;
       case FilterOperation::COLOR_MATRIX: {
         const SkScalar* matrix = op.matrix();
-        return matrix[15] || matrix[16] || matrix[17] || matrix[18] != 1 ||
-               matrix[19];
+        if (matrix[15] ||
+            matrix[16] ||
+            matrix[17] ||
+            matrix[18] != 1 ||
+            matrix[19])
+          return true;
+        break;
       }
-      default:
+      case FilterOperation::GRAYSCALE:
+      case FilterOperation::SEPIA:
+      case FilterOperation::SATURATE:
+      case FilterOperation::HUE_ROTATE:
+      case FilterOperation::INVERT:
+      case FilterOperation::BRIGHTNESS:
+      case FilterOperation::CONTRAST:
+      case FilterOperation::SATURATING_BRIGHTNESS:
         break;
     }
+  }
+  return false;
+}
+
+bool FilterOperations::HasReferenceFilter() const {
+  for (size_t i = 0; i < operations_.size(); ++i) {
+    if (operations_[i].type() == FilterOperation::REFERENCE)
+      return true;
   }
   return false;
 }

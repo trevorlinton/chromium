@@ -33,7 +33,7 @@ Error MountHtml5Fs::Access(const Path& path, int a_mode) {
 }
 
 Error MountHtml5Fs::Open(const Path& path,
-                         int mode,
+                         int open_flags,
                          ScopedMountNode* out_node) {
   out_node->reset(NULL);
   Error error = BlockUntilFilesystemOpen();
@@ -46,7 +46,7 @@ Error MountHtml5Fs::Open(const Path& path,
     return ENOENT;
 
   ScopedMountNode node(new MountNodeHtml5Fs(this, fileref));
-  error = node->Init(mode);
+  error = node->Init(open_flags);
   if (error)
     return error;
 
@@ -60,6 +60,11 @@ Error MountHtml5Fs::Mkdir(const Path& path, int permissions) {
   Error error = BlockUntilFilesystemOpen();
   if (error)
     return error;
+
+  // FileRef returns PP_ERROR_NOACCESS which is translated to EACCES if you
+  // try to create the root directory. EEXIST is a better errno here.
+  if (path.Top())
+    return EEXIST;
 
   ScopedResource fileref_resource(
       ppapi(),
@@ -138,7 +143,7 @@ Error MountHtml5Fs::Init(int dev, StringMap_t& args, PepperInterface* ppapi) {
   // We can't block the main thread, so make an asynchronous call if on main
   // thread. If we are off-main-thread, then don't make an asynchronous call;
   // otherwise we require a message loop.
-  bool main_thread = ppapi->IsMainThread();
+  bool main_thread = ppapi->GetCoreInterface()->IsMainThread();
   PP_CompletionCallback cc =
       main_thread ? PP_MakeCompletionCallback(
                         &MountHtml5Fs::FilesystemOpenCallbackThunk, this)
@@ -152,11 +157,11 @@ Error MountHtml5Fs::Init(int dev, StringMap_t& args, PepperInterface* ppapi) {
     filesystem_open_error_ = PPErrorToErrno(result);
 
     return filesystem_open_error_;
-  } else {
-    // We have to assume the call to Open will succeed; there is no better
-    // result to return here.
-    return 0;
   }
+
+  // We have to assume the call to Open will succeed; there is no better
+  // result to return here.
+  return 0;
 }
 
 void MountHtml5Fs::Destroy() {

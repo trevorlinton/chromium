@@ -6,7 +6,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/renderer_host/test_render_view_host.h"
-#include "content/browser/web_contents/navigation_controller_impl.h"
 #include "content/common/input_messages.h"
 #include "content/common/view_messages.h"
 #include "content/port/browser/render_view_host_delegate_view.h"
@@ -62,8 +61,8 @@ class RenderViewHostTest : public RenderViewHostImplTestHarness {
 // See RenderViewHost::OnNavigate for a discussion.
 TEST_F(RenderViewHostTest, FilterAbout) {
   test_rvh()->SendNavigate(1, GURL("about:cache"));
-  ASSERT_TRUE(controller().GetActiveEntry());
-  EXPECT_EQ(GURL(kAboutBlankURL), controller().GetActiveEntry()->GetURL());
+  ASSERT_TRUE(controller().GetVisibleEntry());
+  EXPECT_EQ(GURL(kAboutBlankURL), controller().GetVisibleEntry()->GetURL());
 }
 
 // Create a full screen popup RenderWidgetHost and View.
@@ -286,6 +285,13 @@ TEST_F(RenderViewHostTest, NavigationWithBadHistoryItemFiles) {
       process()->GetID(), file_path);
   test_rvh()->SendNavigateWithFile(process()->GetID(), url, file_path);
   EXPECT_EQ(1, process()->bad_msg_count());
+}
+
+TEST_F(RenderViewHostTest, RoutingIdSane) {
+  EXPECT_EQ(test_rvh()->GetProcess(),
+            test_rvh()->main_render_frame_host()->GetProcess());
+  EXPECT_NE(test_rvh()->GetRoutingID(),
+            test_rvh()->main_render_frame_host()->routing_id());
 }
 
 }  // namespace content

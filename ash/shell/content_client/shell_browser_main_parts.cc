@@ -18,10 +18,9 @@
 #include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
 #include "content/public/common/content_switches.h"
-#include "content/shell/shell_browser_context.h"
-#include "content/shell/shell_net_log.h"
+#include "content/shell/browser/shell_browser_context.h"
+#include "content/shell/browser/shell_net_log.h"
 #include "net/base/net_module.h"
-#include "ui/aura/client/stacking_client.h"
 #include "ui/aura/env.h"
 #include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
@@ -34,7 +33,7 @@
 #include "ui/views/test/test_views_delegate.h"
 
 #if defined(USE_X11)
-#include "ui/base/touch/touch_factory_x11.h"
+#include "ui/events/x/touch_factory_x11.h"
 #endif
 
 #if defined(OS_CHROMEOS)
@@ -87,13 +86,11 @@ ShellBrowserMainParts::ShellBrowserMainParts(
 ShellBrowserMainParts::~ShellBrowserMainParts() {
 }
 
-#if !defined(OS_MACOSX)
 void ShellBrowserMainParts::PreMainMessageLoopStart() {
 #if defined(USE_X11)
   ui::TouchFactory::SetTouchDeviceListFromCommandLine();
 #endif
 }
-#endif
 
 void ShellBrowserMainParts::PostMainMessageLoopStart() {
 #if defined(OS_CHROMEOS)
@@ -137,7 +134,7 @@ void ShellBrowserMainParts::PreMainMessageLoopRun() {
   Shell::GetInstance()->desktop_background_controller()->SetDefaultWallpaper(
       false /* is_guest */);
 
-  ash::Shell::GetPrimaryRootWindow()->ShowRootWindow();
+  ash::Shell::GetPrimaryRootWindow()->GetDispatcher()->ShowRootWindow();
 }
 
 void ShellBrowserMainParts::PostMainMessageLoopRun() {

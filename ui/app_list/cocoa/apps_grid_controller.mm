@@ -5,6 +5,7 @@
 #import "ui/app_list/cocoa/apps_grid_controller.h"
 
 #include "base/mac/foundation_util.h"
+#include "ui/app_list/app_list_item_model.h"
 #include "ui/app_list/app_list_model.h"
 #include "ui/app_list/app_list_model_observer.h"
 #include "ui/app_list/app_list_view_delegate.h"
@@ -75,12 +76,11 @@ NSTimeInterval g_scroll_duration = 0.18;
 - (void)updatePageContent:(size_t)pageIndex
                resetModel:(BOOL)resetModel;
 
-// Bridged methods for ui::ListModelObserver.
-- (void)listItemsAdded:(size_t)start
-                 count:(size_t)count;
+// Bridged methods for AppListItemListObserver.
+- (void)listItemAdded:(size_t)index
+                 item:(app_list::AppListItemModel*)item;
 
-- (void)listItemsRemoved:(size_t)start
-                   count:(size_t)count;
+- (void)listItemRemoved:(size_t)index;
 
 - (void)listItemMovedFromIndex:(size_t)fromIndex
                   toModelIndex:(size_t)toIndex;
@@ -92,26 +92,25 @@ NSTimeInterval g_scroll_duration = 0.18;
 
 namespace app_list {
 
-class AppsGridDelegateBridge : public ui::ListModelObserver {
+class AppsGridDelegateBridge : public AppListItemListObserver {
  public:
   AppsGridDelegateBridge(AppsGridController* parent) : parent_(parent) {}
 
  private:
-  // Overridden from ui::ListModelObserver:
-  virtual void ListItemsAdded(size_t start, size_t count) OVERRIDE {
-    [parent_ listItemsAdded:start
-                      count:count];
+  // Overridden from AppListItemListObserver:
+  virtual void OnListItemAdded(size_t index, AppListItemModel* item) OVERRIDE {
+    [parent_ listItemAdded:index
+                      item:item];
   }
-  virtual void ListItemsRemoved(size_t start, size_t count) OVERRIDE {
-    [parent_ listItemsRemoved:start
-                        count:count];
+  virtual void OnListItemRemoved(size_t index,
+                                 AppListItemModel* item) OVERRIDE {
+    [parent_ listItemRemoved:index];
   }
-  virtual void ListItemMoved(size_t index, size_t target_index) OVERRIDE {
-    [parent_ listItemMovedFromIndex:index
-                       toModelIndex:target_index];
-  }
-  virtual void ListItemsChanged(size_t start, size_t count) OVERRIDE {
-    NOTREACHED();
+  virtual void OnListItemMoved(size_t from_index,
+                               size_t to_index,
+                               AppListItemModel* item) OVERRIDE {
+    [parent_ listItemMovedFromIndex:from_index
+                       toModelIndex:to_index];
   }
 
   AppsGridController* parent_;  // Weak, owns us.
@@ -187,7 +186,7 @@ class AppsGridDelegateBridge : public ui::ListModelObserver {
 
 - (void)setModel:(scoped_ptr<app_list::AppListModel>)newModel {
   if (model_) {
-    model_->apps()->RemoveObserver(bridge_.get());
+    model_->item_list()->RemoveObserver(bridge_.get());
 
     // Since the model is about to be deleted, and the AppKit objects might be
     // sitting in an NSAutoreleasePool, ensure there are no references to the
@@ -204,16 +203,20 @@ class AppsGridDelegateBridge : public ui::ListModelObserver {
   if (!model_)
     return;
 
-  model_->apps()->AddObserver(bridge_.get());
-  [self listItemsAdded:0
-                 count:model_->apps()->item_count()];
+  model_->item_list()->AddObserver(bridge_.get());
+  for (size_t i = 0; i < model_->item_list()->item_count(); ++i) {
+    app_list::AppListItemModel* itemModel = model_->item_list()->item_at(i);
+    [items_ insertObject:[NSValue valueWithPointer:itemModel]
+                 atIndex:i];
+  }
+  [self updatePages:0];
 }
 
 - (void)setDelegate:(app_list::AppListViewDelegate*)newDelegate {
   scoped_ptr<app_list::AppListModel> newModel(new app_list::AppListModel);
   delegate_ = newDelegate;
   if (delegate_)
-    delegate_->SetModel(newModel.get());  // Populates items.
+    delegate_->InitModel(newModel.get());  // Populates items.
   [self setModel:newModel.Pass()];
 }
 
@@ -382,7 +385,7 @@ class AppsGridDelegateBridge : public ui::ListModelObserver {
   for (size_t i = 0; i < [items_ count]; ++i) {
     AppsGridViewItem* item = [self itemAtIndex:i];
     if ([[item button] isEqual:sender])
-      delegate_->ActivateAppListItem([item model], 0);
+      [item model]->Activate(0);
   }
 }
 
@@ -521,9 +524,9 @@ class AppsGridDelegateBridge : public ui::ListModelObserver {
   if (itemIndex == modelIndex)
     return;
 
-  model_->apps()->RemoveObserver(bridge_.get());
-  model_->apps()->Move(itemIndex, modelIndex);
-  model_->apps()->AddObserver(bridge_.get());
+  model_->item_list()->RemoveObserver(bridge_.get());
+  model_->item_list()->MoveItem(itemIndex, modelIndex);
+  model_->item_list()->AddObserver(bridge_.get());
 }
 
 - (AppsCollectionViewDragManager*)dragManager {
@@ -534,33 +537,25 @@ class AppsGridDelegateBridge : public ui::ListModelObserver {
   return scheduledScrollPage_;
 }
 
-- (void)listItemsAdded:(size_t)start
-                 count:(size_t)count {
+- (void)listItemAdded:(size_t)index
+                 item:(app_list::AppListItemModel*)itemModel {
   // Cancel any drag, to ensure the model stays consistent.
   [dragManager_ cancelDrag];
 
-  for (size_t i = start; i < start + count; ++i) {
-    app_list::AppListItemModel* itemModel = model_->apps()->GetItemAt(i);
-    [items_ insertObject:[NSValue valueWithPointer:itemModel]
-                 atIndex:i];
-  }
+  [items_ insertObject:[NSValue valueWithPointer:itemModel]
+              atIndex:index];
 
-  [self updatePages:start];
-
-  for (size_t i = start; i < start + count; ++i)
-    [[self itemAtIndex:i] onInitialModelBuilt];
+  [self updatePages:index];
 }
 
-- (void)listItemsRemoved:(size_t)start
-                   count:(size_t)count {
+- (void)listItemRemoved:(size_t)index {
   [dragManager_ cancelDrag];
 
   // Clear the models explicitly to avoid surprises from autorelease.
-  for (size_t i = start; i < start + count; ++i)
-    [[self itemAtIndex:i] setModel:NULL];
+  [[self itemAtIndex:index] setModel:NULL];
 
-  [items_ removeObjectsInRange:NSMakeRange(start, count)];
-  [self updatePages:start];
+  [items_ removeObjectsInRange:NSMakeRange(index, 1)];
+  [self updatePages:index];
 }
 
 - (void)listItemMovedFromIndex:(size_t)fromIndex

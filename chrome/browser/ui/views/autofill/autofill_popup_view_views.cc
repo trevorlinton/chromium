@@ -7,14 +7,21 @@
 #include "chrome/browser/ui/autofill/autofill_popup_controller.h"
 #include "grit/ui_resources.h"
 #include "third_party/WebKit/public/web/WebAutofillClient.h"
-#include "ui/base/keycodes/keyboard_codes.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/image/image.h"
+#include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/point.h"
 #include "ui/gfx/rect.h"
+#include "ui/gfx/screen.h"
 #include "ui/views/border.h"
+#include "ui/views/event_utils.h"
 #include "ui/views/widget/widget.h"
+
+#if defined(USE_AURA)
+#include "ui/views/corewm/window_animations.h"
+#endif
 
 using WebKit::WebAutofillClient;
 
@@ -108,28 +115,61 @@ void AutofillPopupViewViews::OnMouseExited(const ui::MouseEvent& event) {
 }
 
 void AutofillPopupViewViews::OnMouseMoved(const ui::MouseEvent& event) {
-  if (controller_)
+  if (!controller_)
+    return;
+
+  if (HitTestPoint(event.location()))
     controller_->MouseHovered(event.x(), event.y());
+  else
+    controller_->MouseExitedPopup();
 }
 
 bool AutofillPopupViewViews::OnMousePressed(const ui::MouseEvent& event) {
-  // We must return true in order to get the OnMouseReleased event later.
-  return true;
+  if (HitTestPoint(event.location()))
+    return true;
+
+  if (controller_->hide_on_outside_click()) {
+    GetWidget()->ReleaseCapture();
+
+    gfx::Point screen_loc = event.location();
+    views::View::ConvertPointToScreen(this, &screen_loc);
+
+    ui::MouseEvent mouse_event = event;
+    mouse_event.set_location(screen_loc);
+
+    if (controller_->ShouldRepostEvent(mouse_event)) {
+      gfx::NativeView native_view = GetWidget()->GetNativeView();
+      gfx::Screen* screen = gfx::Screen::GetScreenFor(native_view);
+      gfx::NativeWindow window = screen->GetWindowAtScreenPoint(screen_loc);
+      views::RepostLocatedEvent(window, mouse_event);
+    }
+
+    controller_->Hide();
+    // |this| is now deleted.
+  }
+
+  return false;
 }
 
 void AutofillPopupViewViews::OnMouseReleased(const ui::MouseEvent& event) {
   if (!controller_)
     return;
 
+  // Because this view can can be shown in response to a mouse press, it can
+  // receive an OnMouseReleased event just after showing. This breaks the mouse
+  // capture, so restart capturing here.
+  if (controller_->hide_on_outside_click() && GetWidget())
+    GetWidget()->SetCapture(this);
+
   // We only care about the left click.
-  if (event.IsOnlyLeftMouseButton() &&
-      HitTestPoint(event.location()))
+  if (event.IsOnlyLeftMouseButton() && HitTestPoint(event.location()))
     controller_->MouseClicked(event.x(), event.y());
 }
 
 void AutofillPopupViewViews::OnWidgetBoundsChanged(
     views::Widget* widget,
     const gfx::Rect& new_bounds) {
+  DCHECK_EQ(widget, observing_widget_);
   controller_->Hide();
 }
 
@@ -146,12 +186,20 @@ void AutofillPopupViewViews::Show() {
     params.parent = controller_->container_view();
     widget->Init(params);
     widget->SetContentsView(this);
+#if defined(USE_AURA)
+    // No animation for popup appearance (too distracting).
+    views::corewm::SetWindowVisibilityAnimationTransition(
+        widget->GetNativeView(), views::corewm::ANIMATE_HIDE);
+#endif
   }
 
   set_border(views::Border::CreateSolidBorder(kBorderThickness, kBorderColor));
 
   UpdateBoundsAndRedrawPopup();
   GetWidget()->Show();
+
+  if (controller_->hide_on_outside_click())
+    GetWidget()->SetCapture(this);
 }
 
 void AutofillPopupViewViews::InvalidateRow(size_t row) {
@@ -199,13 +247,14 @@ void AutofillPopupViewViews::DrawAutofillEntry(gfx::Canvas* canvas,
   if (!controller_->icons()[index].empty()) {
     int icon = controller_->GetIconResourceID(controller_->icons()[index]);
     DCHECK_NE(-1, icon);
-    int icon_y = entry_rect.y() + (row_height - kAutofillIconHeight) / 2;
+    const gfx::ImageSkia* image = rb.GetImageSkiaNamed(icon);
+    int icon_y = entry_rect.y() + (row_height - image->height()) / 2;
 
-    x_align_left += is_rtl ? 0 : -kAutofillIconWidth;
+    x_align_left += is_rtl ? 0 : -image->width();
 
-    canvas->DrawImageInt(*rb.GetImageSkiaNamed(icon), x_align_left, icon_y);
+    canvas->DrawImageInt(*image, x_align_left, icon_y);
 
-    x_align_left += is_rtl ? kAutofillIconWidth + kIconPadding : -kIconPadding;
+    x_align_left += is_rtl ? image->width() + kIconPadding : -kIconPadding;
   }
 
   // Draw the name text.

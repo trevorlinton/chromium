@@ -21,8 +21,8 @@ MockAutofillDialogViewDelegate::MockAutofillDialogViewDelegate() {
   // breaking because of this, use ON_CALL instead.
   DefaultValue<const DetailInputs&>::Set(default_inputs_);
   DefaultValue<string16>::Set(string16());
-  DefaultValue<ValidityData>::Set(ValidityData());
-  DefaultValue<DialogSignedInState>::Set(REQUIRES_RESPONSE);
+  DefaultValue<GURL>::Set(GURL());
+  DefaultValue<ValidityMessages>::Set(ValidityMessages());
   DefaultValue<gfx::Image>::Set(gfx::Image());
   DefaultValue<SuggestionState>::Set(SuggestionState(false,
                                                      string16(),
@@ -30,6 +30,9 @@ MockAutofillDialogViewDelegate::MockAutofillDialogViewDelegate() {
                                                      gfx::Image(),
                                                      string16(),
                                                      gfx::Image()));
+  DefaultValue<FieldIconMap>::Set(FieldIconMap());
+  DefaultValue<std::vector<DialogNotification> >::Set(
+      std::vector<DialogNotification>());
 
   // SECTION_CC *must* have a CREDIT_CARD_VERIFICATION_CODE field.
   const DetailInput kCreditCardInputs[] = {
@@ -50,15 +53,28 @@ MockAutofillDialogViewDelegate::MockAutofillDialogViewDelegate() {
       .WillByDefault(Return(false));
 }
 
+void MockAutofillDialogViewDelegate::SetWebContents(
+    content::WebContents* contents) {
+  testing::DefaultValue<content::WebContents*>::Set(contents);
+}
+
+void MockAutofillDialogViewDelegate::SetProfile(Profile* profile) {
+  testing::DefaultValue<Profile*>::Set(profile);
+}
+
 MockAutofillDialogViewDelegate::~MockAutofillDialogViewDelegate() {
   using testing::DefaultValue;
 
   DefaultValue<SuggestionState>::Clear();
   DefaultValue<gfx::Image>::Clear();
-  DefaultValue<DialogSignedInState>::Clear();
-  DefaultValue<ValidityData>::Clear();
+  DefaultValue<ValidityMessages>::Clear();
   DefaultValue<string16>::Clear();
+  DefaultValue<GURL>::Clear();
   DefaultValue<const DetailInputs&>::Clear();
+  DefaultValue<FieldIconMap>::Clear();
+  DefaultValue<std::vector<DialogNotification> >::Clear();
+  DefaultValue<content::WebContents*>::Clear();
+  DefaultValue<Profile*>::Clear();
 }
 
 }  // namespace autofill

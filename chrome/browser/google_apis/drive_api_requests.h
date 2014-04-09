@@ -14,7 +14,9 @@
 
 namespace google_apis {
 
+class ChangeList;
 class FileResource;
+class FileList;
 
 // Callback used for requests that the server returns FileResource data
 // formatted into JSON value.
@@ -22,378 +24,526 @@ typedef base::Callback<void(GDataErrorCode error,
                             scoped_ptr<FileResource> entry)>
     FileResourceCallback;
 
+// Callback used for requests that the server returns FileList data
+// formatted into JSON value.
+typedef base::Callback<void(GDataErrorCode error,
+                            scoped_ptr<FileList> entry)> FileListCallback;
 
-//============================== GetAboutRequest =============================
+// Callback used for requests that the server returns ChangeList data
+// formatted into JSON value.
+typedef base::Callback<void(GDataErrorCode error,
+                            scoped_ptr<ChangeList> entry)> ChangeListCallback;
 
-// This class performs the request for fetching About data.
-class GetAboutRequest : public GetDataRequest {
+namespace drive {
+
+//============================ DriveApiDataRequest ===========================
+
+// This is base class of the Drive API related requests. All Drive API requests
+// support partial request (to improve the performance). The function can be
+// shared among the Drive API requests.
+// See also https://developers.google.com/drive/performance
+class DriveApiDataRequest : public GetDataRequest {
  public:
-  GetAboutRequest(RequestSender* sender,
-                  const DriveApiUrlGenerator& url_generator,
-                  const GetAboutResourceCallback& callback);
-  virtual ~GetAboutRequest();
+  DriveApiDataRequest(RequestSender* sender, const GetDataCallback& callback);
+  virtual ~DriveApiDataRequest();
+
+  // Optional parameter.
+  const std::string& fields() const { return fields_; }
+  void set_fields(const std::string& fields) { fields_ = fields; }
 
  protected:
   // Overridden from GetDataRequest.
   virtual GURL GetURL() const OVERRIDE;
 
- private:
-  const DriveApiUrlGenerator url_generator_;
-
-  DISALLOW_COPY_AND_ASSIGN(GetAboutRequest);
-};
-
-//============================= GetApplistRequest ============================
-
-// This class performs the request for fetching Applist.
-class GetApplistRequest : public GetDataRequest {
- public:
-  GetApplistRequest(RequestSender* sender,
-                    const DriveApiUrlGenerator& url_generator,
-                    const GetDataCallback& callback);
-  virtual ~GetApplistRequest();
-
- protected:
-  // Overridden from GetDataRequest.
-  virtual GURL GetURL() const OVERRIDE;
+  // Derived classes should override GetURLInternal instead of GetURL()
+  // directly.
+  virtual GURL GetURLInternal() const = 0;
 
  private:
-  const DriveApiUrlGenerator url_generator_;
+  std::string fields_;
 
-  DISALLOW_COPY_AND_ASSIGN(GetApplistRequest);
+  DISALLOW_COPY_AND_ASSIGN(DriveApiDataRequest);
 };
 
-//============================ GetChangelistRequest ==========================
-
-// This class performs the request for fetching changelist.
-// The result may contain only first part of the result. The remaining result
-// should be able to be fetched by ContinueGetFileListRequest defined below.
-class GetChangelistRequest : public GetDataRequest {
- public:
-  // |include_deleted| specifies if the response should contain the changes
-  // for deleted entries or not.
-  // |start_changestamp| specifies the starting point of change list or 0 if
-  // all changes are necessary.
-  // |max_results| specifies the max of the number of files resource in the
-  // response.
-  GetChangelistRequest(RequestSender* sender,
-                       const DriveApiUrlGenerator& url_generator,
-                       bool include_deleted,
-                       int64 start_changestamp,
-                       int max_results,
-                       const GetDataCallback& callback);
-  virtual ~GetChangelistRequest();
-
- protected:
-  // Overridden from GetDataRequest.
-  virtual GURL GetURL() const OVERRIDE;
-
- private:
-  const DriveApiUrlGenerator url_generator_;
-  const bool include_deleted_;
-  const int64 start_changestamp_;
-  const int max_results_;
-
-  DISALLOW_COPY_AND_ASSIGN(GetChangelistRequest);
-};
-
-//============================= GetFilelistRequest ===========================
-
-// This class performs the request for fetching Filelist.
-// The result may contain only first part of the result. The remaining result
-// should be able to be fetched by ContinueGetFileListRequest defined below.
-class GetFilelistRequest : public GetDataRequest {
- public:
-  GetFilelistRequest(RequestSender* sender,
-                     const DriveApiUrlGenerator& url_generator,
-                     const std::string& search_string,
-                     int max_results,
-                     const GetDataCallback& callback);
-  virtual ~GetFilelistRequest();
-
- protected:
-  // Overridden from GetDataRequest.
-  virtual GURL GetURL() const OVERRIDE;
-
- private:
-  const DriveApiUrlGenerator url_generator_;
-  const std::string search_string_;
-  const int max_results_;
-
-  DISALLOW_COPY_AND_ASSIGN(GetFilelistRequest);
-};
-
-//=============================== GetFileRequest =============================
+//=============================== FilesGetRequest =============================
 
 // This class performs the request for fetching a file.
-class GetFileRequest : public GetDataRequest {
+// This request is mapped to
+// https://developers.google.com/drive/v2/reference/files/get
+class FilesGetRequest : public DriveApiDataRequest {
  public:
-  GetFileRequest(RequestSender* sender,
-                 const DriveApiUrlGenerator& url_generator,
-                 const std::string& file_id,
-                 const FileResourceCallback& callback);
-  virtual ~GetFileRequest();
+  FilesGetRequest(RequestSender* sender,
+                  const DriveApiUrlGenerator& url_generator,
+                  const FileResourceCallback& callback);
+  virtual ~FilesGetRequest();
+
+  // Required parameter.
+  const std::string& file_id() const { return file_id_; }
+  void set_file_id(const std::string& file_id) { file_id_ = file_id; }
 
  protected:
-  // Overridden from GetDataRequest.
-  virtual GURL GetURL() const OVERRIDE;
+  // Overridden from DriveApiDataRequest.
+  virtual GURL GetURLInternal() const OVERRIDE;
 
  private:
   const DriveApiUrlGenerator url_generator_;
   std::string file_id_;
 
-  DISALLOW_COPY_AND_ASSIGN(GetFileRequest);
+  DISALLOW_COPY_AND_ASSIGN(FilesGetRequest);
 };
 
-// This namespace is introduced to avoid class name confliction between
-// the requests for Drive API v2 and GData WAPI for transition.
-// And, when the migration is done and GData WAPI's code is cleaned up,
-// classes inside this namespace should be moved to the google_apis namespace.
-// TODO(hidehiko): Move all the requests defined in this file into drive
-// namespace.  crbug.com/180808
-namespace drive {
+//============================ FilesInsertRequest =============================
 
-//======================= ContinueGetFileListRequest =========================
-
-// This class performs the request to fetch remaining Filelist result.
-class ContinueGetFileListRequest : public GetDataRequest {
+// This class performs the request for creating a resource.
+// This request is mapped to
+// https://developers.google.com/drive/v2/reference/files/insert
+// See also https://developers.google.com/drive/manage-uploads and
+// https://developers.google.com/drive/folder
+class FilesInsertRequest : public DriveApiDataRequest {
  public:
-  ContinueGetFileListRequest(RequestSender* sender,
-                             const GURL& url,
-                             const GetDataCallback& callback);
-  virtual ~ContinueGetFileListRequest();
+  FilesInsertRequest(RequestSender* sender,
+                     const DriveApiUrlGenerator& url_generator,
+                     const FileResourceCallback& callback);
+  virtual ~FilesInsertRequest();
 
- protected:
-  virtual GURL GetURL() const OVERRIDE;
+  // Optional request body.
+  const std::string& mime_type() const { return mime_type_; }
+  void set_mime_type(const std::string& mime_type) {
+    mime_type_ = mime_type;
+  }
 
- private:
-  const GURL url_;
+  const std::vector<std::string>& parents() const { return parents_; }
+  void add_parent(const std::string& parent) { parents_.push_back(parent); }
 
-  DISALLOW_COPY_AND_ASSIGN(ContinueGetFileListRequest);
-};
-
-//========================== CreateDirectoryRequest ==========================
-
-// This class performs the request for creating a directory.
-class CreateDirectoryRequest : public GetDataRequest {
- public:
-  CreateDirectoryRequest(RequestSender* sender,
-                         const DriveApiUrlGenerator& url_generator,
-                         const std::string& parent_resource_id,
-                         const std::string& directory_title,
-                         const FileResourceCallback& callback);
-  virtual ~CreateDirectoryRequest();
+  const std::string& title() const { return title_; }
+  void set_title(const std::string& title) { title_ = title; }
 
  protected:
   // Overridden from GetDataRequest.
-  virtual GURL GetURL() const OVERRIDE;
   virtual net::URLFetcher::RequestType GetRequestType() const OVERRIDE;
   virtual bool GetContentData(std::string* upload_content_type,
                               std::string* upload_content) OVERRIDE;
 
+  // Overridden from DriveApiDataRequest.
+  virtual GURL GetURLInternal() const OVERRIDE;
+
  private:
   const DriveApiUrlGenerator url_generator_;
-  const std::string parent_resource_id_;
-  const std::string directory_title_;
 
-  DISALLOW_COPY_AND_ASSIGN(CreateDirectoryRequest);
+  std::string mime_type_;
+  std::vector<std::string> parents_;
+  std::string title_;
+
+  DISALLOW_COPY_AND_ASSIGN(FilesInsertRequest);
 };
 
-//=========================== RenameResourceRequest ==========================
+//============================== FilesPatchRequest ============================
 
-// This class performs the request for renaming a document/file/directory.
-class RenameResourceRequest : public EntryActionRequest {
+// This class performs the request for patching file metadata.
+// This request is mapped to
+// https://developers.google.com/drive/v2/reference/files/patch
+class FilesPatchRequest : public DriveApiDataRequest {
  public:
-  // |callback| must not be null.
-  RenameResourceRequest(RequestSender* sender,
-                        const DriveApiUrlGenerator& url_generator,
-                        const std::string& resource_id,
-                        const std::string& new_title,
-                        const EntryActionCallback& callback);
-  virtual ~RenameResourceRequest();
+  FilesPatchRequest(RequestSender* sender,
+                    const DriveApiUrlGenerator& url_generator,
+                    const FileResourceCallback& callback);
+  virtual ~FilesPatchRequest();
+
+  // Required parameter.
+  const std::string& file_id() const { return file_id_; }
+  void set_file_id(const std::string& file_id) { file_id_ = file_id; }
+
+  // Optional parameter.
+  bool set_modified_date() const { return set_modified_date_; }
+  void set_set_modified_date(bool set_modified_date) {
+    set_modified_date_ = set_modified_date;
+  }
+
+  bool update_viewed_date() const { return update_viewed_date_; }
+  void set_update_viewed_date(bool update_viewed_date) {
+    update_viewed_date_ = update_viewed_date;
+  }
+
+  // Optional request body.
+  // Note: "Files: patch" accepts any "Files resource" data, but this class
+  // only supports limited members of it for now. We can extend it upon
+  // requirments.
+  const std::string& title() const { return title_; }
+  void set_title(const std::string& title) { title_ = title; }
+
+  const base::Time& modified_date() const { return modified_date_; }
+  void set_modified_date(const base::Time& modified_date) {
+    modified_date_ = modified_date;
+  }
+
+  const base::Time& last_viewed_by_me_date() const {
+    return last_viewed_by_me_date_;
+  }
+  void set_last_viewed_by_me_date(const base::Time& last_viewed_by_me_date) {
+    last_viewed_by_me_date_ = last_viewed_by_me_date;
+  }
+
+  const std::vector<std::string>& parents() const { return parents_; }
+  void add_parent(const std::string& parent) { parents_.push_back(parent); }
 
  protected:
-  // UrlFetchRequestBase overrides.
+  // Overridden from URLFetchRequestBase.
   virtual net::URLFetcher::RequestType GetRequestType() const OVERRIDE;
   virtual std::vector<std::string> GetExtraRequestHeaders() const OVERRIDE;
-  virtual GURL GetURL() const OVERRIDE;
   virtual bool GetContentData(std::string* upload_content_type,
                               std::string* upload_content) OVERRIDE;
+
+  // Overridden from DriveApiDataRequest.
+  virtual GURL GetURLInternal() const OVERRIDE;
 
  private:
   const DriveApiUrlGenerator url_generator_;
 
-  const std::string resource_id_;
-  const std::string new_title_;
+  std::string file_id_;
+  bool set_modified_date_;
+  bool update_viewed_date_;
 
-  DISALLOW_COPY_AND_ASSIGN(RenameResourceRequest);
+  std::string title_;
+  base::Time modified_date_;
+  base::Time last_viewed_by_me_date_;
+  std::vector<std::string> parents_;
+
+  DISALLOW_COPY_AND_ASSIGN(FilesPatchRequest);
 };
 
-//=========================== TouchResourceRequest ===========================
-
-// This class performs the request to touch a document/file/directory.
-// This uses "files.patch" of Drive API v2 rather than "files.touch". See also:
-// https://developers.google.com/drive/v2/reference/files/patch, and
-// https://developers.google.com/drive/v2/reference/files/touch
-class TouchResourceRequest : public GetDataRequest {
- public:
-  // |callback| must not be null.
-  TouchResourceRequest(RequestSender* sender,
-                       const DriveApiUrlGenerator& url_generator,
-                       const std::string& resource_id,
-                       const base::Time& modified_date,
-                       const base::Time& last_viewed_by_me_date,
-                       const FileResourceCallback& callback);
-  virtual ~TouchResourceRequest();
-
- protected:
-  // UrlFetchRequestBase overrides.
-  virtual net::URLFetcher::RequestType GetRequestType() const OVERRIDE;
-  virtual std::vector<std::string> GetExtraRequestHeaders() const OVERRIDE;
-  virtual GURL GetURL() const OVERRIDE;
-  virtual bool GetContentData(std::string* upload_content_type,
-                              std::string* upload_content) OVERRIDE;
-
- private:
-  const DriveApiUrlGenerator url_generator_;
-
-  const std::string resource_id_;
-  const base::Time modified_date_;
-  const base::Time last_viewed_by_me_date_;
-
-  DISALLOW_COPY_AND_ASSIGN(TouchResourceRequest);
-};
-
-//=========================== CopyResourceRequest ============================
+//============================= FilesCopyRequest ==============================
 
 // This class performs the request for copying a resource.
-//
-// Copies the resource with |resource_id| into a directory with
-// |parent_resource_id|. The new resource will be named as |new_title|.
-// |parent_resource_id| can be empty. In the case, the copy will be created
-// directly under the default root directory (this is the default behavior
-// of Drive API v2's copy request).
-//
-// This request corresponds to "Files: copy" request on Drive API v2. See
-// also: https://developers.google.com/drive/v2/reference/files/copy
-class CopyResourceRequest : public GetDataRequest {
+// This request is mapped to
+// https://developers.google.com/drive/v2/reference/files/copy
+class FilesCopyRequest : public DriveApiDataRequest {
  public:
   // Upon completion, |callback| will be called. |callback| must not be null.
-  CopyResourceRequest(RequestSender* sender,
-                      const DriveApiUrlGenerator& url_generator,
-                      const std::string& resource_id,
-                      const std::string& parent_resource_id,
-                      const std::string& new_title,
-                      const FileResourceCallback& callback);
-  virtual ~CopyResourceRequest();
+  FilesCopyRequest(RequestSender* sender,
+                   const DriveApiUrlGenerator& url_generator,
+                   const FileResourceCallback& callback);
+  virtual ~FilesCopyRequest();
+
+  // Required parameter.
+  const std::string& file_id() const { return file_id_; }
+  void set_file_id(const std::string& file_id) { file_id_ = file_id; }
+
+  // Optional request body.
+  const std::vector<std::string>& parents() const { return parents_; }
+  void add_parent(const std::string& parent) { parents_.push_back(parent); }
+
+  const base::Time& modified_date() const { return modified_date_; }
+  void set_modified_date(const base::Time& modified_date) {
+    modified_date_ = modified_date;
+  }
+
+  const std::string& title() const { return title_; }
+  void set_title(const std::string& title) { title_ = title; }
 
  protected:
+  // Overridden from URLFetchRequestBase.
   virtual net::URLFetcher::RequestType GetRequestType() const OVERRIDE;
-  virtual GURL GetURL() const OVERRIDE;
   virtual bool GetContentData(std::string* upload_content_type,
                               std::string* upload_content) OVERRIDE;
+
+  // Overridden from DriveApiDataRequest.
+  virtual GURL GetURLInternal() const OVERRIDE;
+
  private:
   const DriveApiUrlGenerator url_generator_;
-  const std::string resource_id_;
-  const std::string parent_resource_id_;
-  const std::string new_title_;
 
-  DISALLOW_COPY_AND_ASSIGN(CopyResourceRequest);
+  std::string file_id_;
+  base::Time modified_date_;
+  std::vector<std::string> parents_;
+  std::string title_;
+
+  DISALLOW_COPY_AND_ASSIGN(FilesCopyRequest);
 };
 
-//=========================== TrashResourceRequest ===========================
+//============================= FilesListRequest =============================
+
+// This class performs the request for fetching FileList.
+// The result may contain only first part of the result. The remaining result
+// should be able to be fetched by ContinueGetFileListRequest defined below,
+// or by FilesListRequest with setting page token.
+// This request is mapped to
+// https://developers.google.com/drive/v2/reference/files/list
+class FilesListRequest : public DriveApiDataRequest {
+ public:
+  FilesListRequest(RequestSender* sender,
+                   const DriveApiUrlGenerator& url_generator,
+                   const FileListCallback& callback);
+  virtual ~FilesListRequest();
+
+  // Optional parameter
+  int max_results() const { return max_results_; }
+  void set_max_results(int max_results) { max_results_ = max_results; }
+
+  const std::string& page_token() const { return page_token_; }
+  void set_page_token(const std::string& page_token) {
+    page_token_ = page_token;
+  }
+
+  const std::string& q() const { return q_; }
+  void set_q(const std::string& q) { q_ = q; }
+
+ protected:
+  // Overridden from DriveApiDataRequest.
+  virtual GURL GetURLInternal() const OVERRIDE;
+
+ private:
+  const DriveApiUrlGenerator url_generator_;
+  int max_results_;
+  std::string page_token_;
+  std::string q_;
+
+  DISALLOW_COPY_AND_ASSIGN(FilesListRequest);
+};
+
+//========================= FilesListNextPageRequest ==========================
+
+// There are two ways to obtain next pages of "Files: list" result (if paged).
+// 1) Set pageToken and all params used for the initial request.
+// 2) Use URL in the nextLink field in the previous response.
+// This class implements 2)'s request.
+class FilesListNextPageRequest : public DriveApiDataRequest {
+ public:
+  FilesListNextPageRequest(RequestSender* sender,
+                           const FileListCallback& callback);
+  virtual ~FilesListNextPageRequest();
+
+  const GURL& next_link() const { return next_link_; }
+  void set_next_link(const GURL& next_link) { next_link_ = next_link; }
+
+ protected:
+  // Overridden from DriveApiDataRequest.
+  virtual GURL GetURLInternal() const OVERRIDE;
+
+ private:
+  GURL next_link_;
+
+  DISALLOW_COPY_AND_ASSIGN(FilesListNextPageRequest);
+};
+
+//============================= FilesTrashRequest =============================
 
 // This class performs the request for trashing a resource.
-//
-// According to the document:
+// This request is mapped to
 // https://developers.google.com/drive/v2/reference/files/trash
-// the file resource will be returned from the server, which is not in the
-// response from WAPI server. For the transition, we simply ignore the result,
-// because now we do not handle resources in trash.
-// Note for the naming: the name "trash" comes from the server's request
-// name. In order to be consistent with the server, we chose "trash" here,
-// although we are preferring the term "remove" in drive/google_api code.
-// TODO(hidehiko): Replace the base class to GetDataRequest.
-class TrashResourceRequest : public EntryActionRequest {
+class FilesTrashRequest : public DriveApiDataRequest {
  public:
-  // |callback| must not be null.
-  TrashResourceRequest(RequestSender* sender,
-                       const DriveApiUrlGenerator& url_generator,
-                       const std::string& resource_id,
-                       const EntryActionCallback& callback);
-  virtual ~TrashResourceRequest();
+  FilesTrashRequest(RequestSender* sender,
+                    const DriveApiUrlGenerator& url_generator,
+                    const FileResourceCallback& callback);
+  virtual ~FilesTrashRequest();
+
+  // Required parameter.
+  const std::string& file_id() const { return file_id_; }
+  void set_file_id(const std::string& file_id) { file_id_ = file_id; }
 
  protected:
-  // UrlFetchRequestBase overrides.
-  virtual GURL GetURL() const OVERRIDE;
+  // Overridden from UrlFetchRequestBase.
   virtual net::URLFetcher::RequestType GetRequestType() const OVERRIDE;
+
+  // Overridden from DriveApiDataRequest.
+  virtual GURL GetURLInternal() const OVERRIDE;
 
  private:
   const DriveApiUrlGenerator url_generator_;
-  const std::string resource_id_;
+  std::string file_id_;
 
-  DISALLOW_COPY_AND_ASSIGN(TrashResourceRequest);
+  DISALLOW_COPY_AND_ASSIGN(FilesTrashRequest);
 };
 
-//========================== InsertResourceRequest ===========================
+//============================== AboutGetRequest =============================
+
+// This class performs the request for fetching About data.
+// This request is mapped to
+// https://developers.google.com/drive/v2/reference/about/get
+class AboutGetRequest : public DriveApiDataRequest {
+ public:
+  AboutGetRequest(RequestSender* sender,
+                  const DriveApiUrlGenerator& url_generator,
+                  const AboutResourceCallback& callback);
+  virtual ~AboutGetRequest();
+
+ protected:
+  // Overridden from DriveApiDataRequest.
+  virtual GURL GetURLInternal() const OVERRIDE;
+
+ private:
+  const DriveApiUrlGenerator url_generator_;
+
+  DISALLOW_COPY_AND_ASSIGN(AboutGetRequest);
+};
+
+//============================ ChangesListRequest ============================
+
+// This class performs the request for fetching ChangeList.
+// The result may contain only first part of the result. The remaining result
+// should be able to be fetched by ContinueGetFileListRequest defined below.
+// or by ChangesListRequest with setting page token.
+// This request is mapped to
+// https://developers.google.com/drive/v2/reference/changes/list
+class ChangesListRequest : public DriveApiDataRequest {
+ public:
+  ChangesListRequest(RequestSender* sender,
+                     const DriveApiUrlGenerator& url_generator,
+                     const ChangeListCallback& callback);
+  virtual ~ChangesListRequest();
+
+  // Optional parameter
+  bool include_deleted() const { return include_deleted_; }
+  void set_include_deleted(bool include_deleted) {
+    include_deleted_ = include_deleted;
+  }
+
+  int max_results() const { return max_results_; }
+  void set_max_results(int max_results) { max_results_ = max_results; }
+
+  const std::string& page_token() const { return page_token_; }
+  void set_page_token(const std::string& page_token) {
+    page_token_ = page_token;
+  }
+
+  int64 start_change_id() const { return start_change_id_; }
+  void set_start_change_id(int64 start_change_id) {
+    start_change_id_ = start_change_id;
+  }
+
+ protected:
+  // Overridden from DriveApiDataRequest.
+  virtual GURL GetURLInternal() const OVERRIDE;
+
+ private:
+  const DriveApiUrlGenerator url_generator_;
+  bool include_deleted_;
+  int max_results_;
+  std::string page_token_;
+  int64 start_change_id_;
+
+  DISALLOW_COPY_AND_ASSIGN(ChangesListRequest);
+};
+
+//======================== ChangesListNextPageRequest =========================
+
+// There are two ways to obtain next pages of "Changes: list" result (if paged).
+// 1) Set pageToken and all params used for the initial request.
+// 2) Use URL in the nextLink field in the previous response.
+// This class implements 2)'s request.
+class ChangesListNextPageRequest : public DriveApiDataRequest {
+ public:
+  ChangesListNextPageRequest(RequestSender* sender,
+                             const ChangeListCallback& callback);
+  virtual ~ChangesListNextPageRequest();
+
+  const GURL& next_link() const { return next_link_; }
+  void set_next_link(const GURL& next_link) { next_link_ = next_link; }
+
+ protected:
+  // Overridden from DriveApiDataRequest.
+  virtual GURL GetURLInternal() const OVERRIDE;
+
+ private:
+  GURL next_link_;
+
+  DISALLOW_COPY_AND_ASSIGN(ChangesListNextPageRequest);
+};
+
+//============================= AppsListRequest ============================
+
+// This class performs the request for fetching AppList.
+// This request is mapped to
+// https://developers.google.com/drive/v2/reference/apps/list
+class AppsListRequest : public DriveApiDataRequest {
+ public:
+  AppsListRequest(RequestSender* sender,
+                  const DriveApiUrlGenerator& url_generator,
+                  const AppListCallback& callback);
+  virtual ~AppsListRequest();
+
+ protected:
+  // Overridden from DriveApiDataRequest.
+  virtual GURL GetURLInternal() const OVERRIDE;
+
+ private:
+  const DriveApiUrlGenerator url_generator_;
+
+  DISALLOW_COPY_AND_ASSIGN(AppsListRequest);
+};
+
+//========================== ChildrenInsertRequest ============================
 
 // This class performs the request for inserting a resource to a directory.
-// Note that this is the request of "Children: insert" of the Drive API v2.
-// https://developers.google.com/drive/v2/reference/children/insert.
-class InsertResourceRequest : public EntryActionRequest {
+// This request is mapped to
+// https://developers.google.com/drive/v2/reference/children/insert
+class ChildrenInsertRequest : public EntryActionRequest {
  public:
-  // |callback| must not be null.
-  InsertResourceRequest(RequestSender* sender,
+  ChildrenInsertRequest(RequestSender* sender,
                         const DriveApiUrlGenerator& url_generator,
-                        const std::string& parent_resource_id,
-                        const std::string& resource_id,
                         const EntryActionCallback& callback);
-  virtual ~InsertResourceRequest();
+  virtual ~ChildrenInsertRequest();
+
+  // Required parameter.
+  const std::string& folder_id() const { return folder_id_; }
+  void set_folder_id(const std::string& folder_id) {
+    folder_id_ = folder_id;
+  }
+
+  // Required body.
+  const std::string& id() const { return id_; }
+  void set_id(const std::string& id) { id_ = id; }
 
  protected:
   // UrlFetchRequestBase overrides.
-  virtual GURL GetURL() const OVERRIDE;
   virtual net::URLFetcher::RequestType GetRequestType() const OVERRIDE;
+  virtual GURL GetURL() const OVERRIDE;
   virtual bool GetContentData(std::string* upload_content_type,
                               std::string* upload_content) OVERRIDE;
 
  private:
   const DriveApiUrlGenerator url_generator_;
-  const std::string parent_resource_id_;
-  const std::string resource_id_;
+  std::string folder_id_;
+  std::string id_;
 
-  DISALLOW_COPY_AND_ASSIGN(InsertResourceRequest);
+  DISALLOW_COPY_AND_ASSIGN(ChildrenInsertRequest);
 };
 
-//========================== DeleteResourceRequest ===========================
+//========================== ChildrenDeleteRequest ============================
 
 // This class performs the request for removing a resource from a directory.
-// Note that we use "delete" for the name of this class, which comes from the
-// request name of the Drive API v2, although we prefer "remove" for that
-// sense in "drive/google_api"
-// Also note that this is the request of "Children: delete" of the Drive API
-// v2. https://developers.google.com/drive/v2/reference/children/delete
-class DeleteResourceRequest : public EntryActionRequest {
+// This request is mapped to
+// https://developers.google.com/drive/v2/reference/children/delete
+class ChildrenDeleteRequest : public EntryActionRequest {
  public:
   // |callback| must not be null.
-  DeleteResourceRequest(RequestSender* sender,
+  ChildrenDeleteRequest(RequestSender* sender,
                         const DriveApiUrlGenerator& url_generator,
-                        const std::string& parent_resource_id,
-                        const std::string& resource_id,
                         const EntryActionCallback& callback);
-  virtual ~DeleteResourceRequest();
+  virtual ~ChildrenDeleteRequest();
+
+  // Required parameter.
+  const std::string& child_id() const { return child_id_; }
+  void set_child_id(const std::string& child_id) {
+    child_id_ = child_id;
+  }
+
+  const std::string& folder_id() const { return folder_id_; }
+  void set_folder_id(const std::string& folder_id) {
+    folder_id_ = folder_id;
+  }
 
  protected:
   // UrlFetchRequestBase overrides.
-  virtual GURL GetURL() const OVERRIDE;
   virtual net::URLFetcher::RequestType GetRequestType() const OVERRIDE;
+  virtual GURL GetURL() const OVERRIDE;
 
  private:
   const DriveApiUrlGenerator url_generator_;
-  const std::string parent_resource_id_;
-  const std::string resource_id_;
+  std::string child_id_;
+  std::string folder_id_;
 
-  DISALLOW_COPY_AND_ASSIGN(DeleteResourceRequest);
+  DISALLOW_COPY_AND_ASSIGN(ChildrenDeleteRequest);
 };
 
 //======================= InitiateUploadNewFileRequest =======================
@@ -433,8 +583,7 @@ class InitiateUploadNewFileRequest : public InitiateUploadRequestBase {
 
 // This class performs the request for initiating the upload of an existing
 // file.
-class InitiateUploadExistingFileRequest
-    : public InitiateUploadRequestBase {
+class InitiateUploadExistingFileRequest : public InitiateUploadRequestBase {
  public:
   // |upload_url| should be the upload_url() of the file
   //    (resumable-create-media URL)

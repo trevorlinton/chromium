@@ -5,7 +5,7 @@
 // HttpStreamBase is an interface for reading and writing data to an
 // HTTP-like stream that keeps the client agnostic of the actual underlying
 // transport layer.  This provides an abstraction for HttpStream and
-// WebSocketStream.
+// WebSocketHandshakeStreamBase.
 
 #ifndef NET_HTTP_HTTP_STREAM_BASE_H_
 #define NET_HTTP_HTTP_STREAM_BASE_H_
@@ -140,6 +140,9 @@ class NET_EXPORT_PRIVATE HttpStreamBase {
   // underlying connection. This stream is responsible for deleting itself when
   // draining is complete.
   virtual void Drain(HttpNetworkSession* session) = 0;
+
+  // Called when the priority of the parent transaction changes.
+  virtual void SetPriority(RequestPriority priority) = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(HttpStreamBase);

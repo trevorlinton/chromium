@@ -41,6 +41,7 @@ namespace extensions {
 
 namespace helpers = web_navigation_api_helpers;
 namespace keys = web_navigation_api_constants;
+namespace web_navigation = api::web_navigation;
 
 namespace {
 
@@ -90,12 +91,13 @@ WebNavigationEventRouter::WebNavigationEventRouter(Profile* profile)
                  content::NotificationService::AllSources());
 
   BrowserList::AddObserver(this);
-  for (chrome::BrowserIterator it; !it.done(); it.Next()) {
+  for (chrome::BrowserIterator it; !it.done(); it.Next())
     OnBrowserAdded(*it);
-  }
 }
 
 WebNavigationEventRouter::~WebNavigationEventRouter() {
+  for (chrome::BrowserIterator it; !it.done(); it.Next())
+    OnBrowserRemoved(*it);
   BrowserList::RemoveObserver(this);
 }
 
@@ -404,6 +406,7 @@ void WebNavigationTabObserver::DidStartProvisionalLoadForFrame(
 
 void WebNavigationTabObserver::DidCommitProvisionalLoadForFrame(
     int64 frame_num,
+    const string16& frame_unique_name,
     bool is_main_frame,
     const GURL& url,
     content::PageTransition transition_type,
@@ -445,15 +448,12 @@ void WebNavigationTabObserver::DidCommitProvisionalLoadForFrame(
   navigation_state_.UpdateFrame(frame_id, url);
   navigation_state_.SetNavigationCommitted(frame_id);
 
-  if (is_reference_fragment_navigation || is_history_state_modification)
-    navigation_state_.SetNavigationCompleted(frame_id);
-
   if (!navigation_state_.CanSendEvents(frame_id))
     return;
 
   if (is_reference_fragment_navigation) {
     helpers::DispatchOnCommitted(
-        keys::kOnReferenceFragmentUpdated,
+        web_navigation::OnReferenceFragmentUpdated::kEventName,
         web_contents(),
         frame_num,
         is_main_frame,
@@ -461,7 +461,7 @@ void WebNavigationTabObserver::DidCommitProvisionalLoadForFrame(
         transition_type);
   } else if (is_history_state_modification) {
     helpers::DispatchOnCommitted(
-        keys::kOnHistoryStateUpdated,
+        web_navigation::OnHistoryStateUpdated::kEventName,
         web_contents(),
         frame_num,
         is_main_frame,
@@ -473,7 +473,7 @@ void WebNavigationTabObserver::DidCommitProvisionalLoadForFrame(
           transition_type | content::PAGE_TRANSITION_SERVER_REDIRECT);
     }
     helpers::DispatchOnCommitted(
-        keys::kOnCommitted,
+        web_navigation::OnCommitted::kEventName,
         web_contents(),
         frame_num,
         is_main_frame,
@@ -484,6 +484,7 @@ void WebNavigationTabObserver::DidCommitProvisionalLoadForFrame(
 
 void WebNavigationTabObserver::DidFailProvisionalLoad(
     int64 frame_num,
+    const string16& frame_unique_id,
     bool is_main_frame,
     const GURL& validated_url,
     int error_code,
@@ -722,9 +723,10 @@ bool WebNavigationGetFrameFunction::RunImpl() {
 
   content::WebContents* web_contents;
   if (!ExtensionTabUtil::GetTabById(tab_id,
-                                    profile(),
+                                    GetProfile(),
                                     include_incognito(),
-                                    NULL, NULL,
+                                    NULL,
+                                    NULL,
                                     &web_contents,
                                     NULL) ||
       !web_contents) {
@@ -776,9 +778,10 @@ bool WebNavigationGetAllFramesFunction::RunImpl() {
 
   content::WebContents* web_contents;
   if (!ExtensionTabUtil::GetTabById(tab_id,
-                                    profile(),
+                                    GetProfile(),
                                     include_incognito(),
-                                    NULL, NULL,
+                                    NULL,
+                                    NULL,
                                     &web_contents,
                                     NULL) ||
       !web_contents) {
@@ -820,23 +823,23 @@ bool WebNavigationGetAllFramesFunction::RunImpl() {
 WebNavigationAPI::WebNavigationAPI(Profile* profile)
     : profile_(profile) {
   ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
-      this, keys::kOnBeforeNavigate);
+      this, web_navigation::OnBeforeNavigate::kEventName);
   ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
-      this, keys::kOnCommitted);
+      this, web_navigation::OnCommitted::kEventName);
   ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
-      this, keys::kOnCompleted);
+      this, web_navigation::OnCompleted::kEventName);
   ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
-      this, keys::kOnCreatedNavigationTarget);
+      this, web_navigation::OnCreatedNavigationTarget::kEventName);
   ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
-      this, keys::kOnDOMContentLoaded);
+      this, web_navigation::OnDOMContentLoaded::kEventName);
   ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
-      this, keys::kOnHistoryStateUpdated);
+      this, web_navigation::OnHistoryStateUpdated::kEventName);
   ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
-      this, keys::kOnErrorOccurred);
+      this, web_navigation::OnErrorOccurred::kEventName);
   ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
-      this, keys::kOnReferenceFragmentUpdated);
+      this, web_navigation::OnReferenceFragmentUpdated::kEventName);
   ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
-      this, keys::kOnTabReplaced);
+      this, web_navigation::OnTabReplaced::kEventName);
 }
 
 WebNavigationAPI::~WebNavigationAPI() {

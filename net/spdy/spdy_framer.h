@@ -19,6 +19,8 @@
 #include "net/spdy/spdy_header_block.h"
 #include "net/spdy/spdy_protocol.h"
 
+// TODO(akalin): Remove support for CREDENTIAL frames.
+
 typedef struct z_stream_s z_stream;  // Forward declaration for zlib.
 
 namespace net {
@@ -623,8 +625,6 @@ class NET_EXPORT_PRIVATE SpdyFramer {
 
   // Set the error code and moves the framer into the error state.
   void set_error(SpdyError error);
-
-  size_t GoAwaySize() const;
 
   // The maximum size of the control frames that we support.
   // This limit is arbitrary. We can enforce it here or at the application

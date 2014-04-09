@@ -12,7 +12,6 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/signin/signin_promo.h"
 #include "chrome/browser/signin/signin_tracker.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/host_desktop.h"
@@ -81,9 +80,8 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
   // OneClickSigninSyncStarter from a browser, provide both.
   // If |display_confirmation| is true, the user will be prompted to confirm the
   // signin before signin completes.
-  // |web_contents| is used to show the sync setup page, if necessary. If NULL,
-  // the sync setup page will be loaded in either a new tab or a tab that is
-  // already showing it.
+  // |web_contents| is used to show the sync UI if it's showing a blank page
+  // and not about to be closed. It can be NULL.
   // |callback| is always executed before OneClickSigninSyncStarter is deleted.
   // It can be empty.
   OneClickSigninSyncStarter(Profile* profile,
@@ -91,10 +89,10 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
                             const std::string& session_index,
                             const std::string& email,
                             const std::string& password,
+                            const std::string& oauth_code,
                             StartSyncMode start_mode,
                             content::WebContents* web_contents,
                             ConfirmationRequired display_confirmation,
-                            signin::Source source,
                             Callback callback);
 
   // chrome::BrowserListObserver override.
@@ -157,9 +155,10 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
                                  Profile* profile,
                                  Profile::CreateStatus status);
 
+#endif  // defined(ENABLE_CONFIGURATION_POLICY)
+
   // Cancels the in-progress signin for this profile.
   void CancelSigninAndDelete();
-#endif  // defined(ENABLE_CONFIGURATION_POLICY)
 
   // Callback invoked to check whether the user needs policy or if a
   // confirmation is required (in which case we have to prompt the user first).
@@ -183,12 +182,16 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
 
   void FinishProfileSyncServiceSetup();
 
-  // Displays the settings UI in a new tab. Brings up the advanced sync settings
-  // dialog if |configure_sync| is true.
-  void ShowSettingsPageInNewTab(bool configure_sync);
+  // Displays the settings UI and brings up the advanced sync settings
+  // dialog if |configure_sync| is true. The web contents provided to the
+  // constructor is used if it's showing a blank page and not about to be
+  // closed. Otherwise, a new tab or an existing settings tab is used.
+  void ShowSettingsPage(bool configure_sync);
 
-  // Displays the sync configuration UI in the provided web contents.
-  void ShowSyncSettingsPageInWebContents(content::WebContents* contents);
+  // Displays a settings page in the provided web contents. |sub_page| can be
+  // empty to show the main settings page.
+  void ShowSettingsPageInWebContents(content::WebContents* contents,
+                                     const std::string& sub_page);
 
   // Shows the post-signin confirmation bubble. If |custom_message| is empty,
   // the default "You are signed in" message is displayed.
@@ -206,18 +209,17 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
   chrome::HostDesktopType desktop_type_;
   bool force_same_tab_navigation_;
   ConfirmationRequired confirmation_required_;
-  signin::Source source_;
 
   // Callback executed when sync setup succeeds or fails.
   Callback sync_setup_completed_callback_;
-
-  base::WeakPtrFactory<OneClickSigninSyncStarter> weak_pointer_factory_;
 
 #if defined(ENABLE_CONFIGURATION_POLICY)
   // CloudPolicyClient reference we keep while determining whether to create
   // a new profile for an enterprise user or not.
   scoped_ptr<policy::CloudPolicyClient> policy_client_;
 #endif
+
+  base::WeakPtrFactory<OneClickSigninSyncStarter> weak_pointer_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(OneClickSigninSyncStarter);
 };

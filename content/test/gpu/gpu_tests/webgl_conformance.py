@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 import json
+import optparse
 import os
 import sys
 
@@ -21,13 +22,19 @@ conformance_harness_script = r"""
   testHarness._messages = '';
   testHarness._failures = 0;
   testHarness._finished = false;
+  testHarness._originalLog = window.console.log;
+
+  testHarness.log = function(msg) {
+    testHarness._messages += msg + "\n";
+    testHarness._originalLog.apply(window.console, [msg]);
+  }
 
   testHarness.reportResults = function(success, msg) {
     testHarness._allTestSucceeded = testHarness._allTestSucceeded && !!success;
     if(!success) {
       testHarness._failures++;
       if(msg) {
-        testHarness._messages += msg + "\n";
+        testHarness.log(msg);
       }
     }
   };
@@ -41,7 +48,7 @@ conformance_harness_script = r"""
 
   window.webglTestHarness = testHarness;
   window.parent.webglTestHarness = testHarness;
-  console.log("Harness injected.");
+  window.console.log = testHarness.log;
 """
 
 def _DidWebGLTestSucceed(tab):
@@ -59,18 +66,25 @@ class WebglConformanceValidator(page_test.PageTest):
       raise page_test.Failure(_WebGLTestMessages(tab))
 
   def CustomizeBrowserOptions(self, options):
-    options.AppendExtraBrowserArg('--enable-webgl')
-    options.AppendExtraBrowserArg(
+    options.AppendExtraBrowserArgs(
         '--disable-gesture-requirement-for-media-playback')
 
 
 class WebglConformance(test_module.Test):
   """Conformance with Khronos WebGL Conformance Tests"""
-  enabled = False
   test = WebglConformanceValidator
 
+  @staticmethod
+  def AddTestCommandLineOptions(parser):
+    group = optparse.OptionGroup(parser, 'WebGL conformance options')
+    group.add_option('--webgl-conformance-version',
+        help='Version of the WebGL conformance tests to run.',
+        default='1.0.1')
+    parser.add_option_group(group)
+
   def CreatePageSet(self, options):
-    tests = self._ParseTests('00_test_list.txt', '1.0.1')
+    tests = self._ParseTests('00_test_list.txt',
+        options.webgl_conformance_version)
 
     page_set_dict = {
       'description': 'Executes WebGL conformance tests',
@@ -83,9 +97,19 @@ class WebglConformance(test_module.Test):
 
     for test in tests:
       pages.append({
-        'url': 'file:///' + test,
+        'name': 'WebglConformance.%s' %
+            test.replace('/', '_').replace('-', '_').
+            replace('\\', '_').rpartition('.')[0].replace('.', '_'),
+        'url': 'file://' + test,
         'script_to_evaluate_on_commit': conformance_harness_script,
-        'wait_for_javascript_expression': 'webglTestHarness._finished'
+        'navigate_steps': [
+          {'action': 'navigate'},
+          {
+            'action': 'wait',
+            'javascript': 'webglTestHarness._finished',
+            'timeout': 120
+          }
+        ]
       })
 
     return page_set.PageSet.FromDict(page_set_dict, conformance_path)

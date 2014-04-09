@@ -19,7 +19,7 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "content/public/browser/native_web_keyboard_event.h"
-#include "ui/base/keycodes/keyboard_codes.h"
+#include "ui/events/keycodes/keyboard_codes.h"
 
 typedef BrowserWithTestWindowTest BrowserCommandControllerTest;
 
@@ -27,14 +27,14 @@ TEST_F(BrowserCommandControllerTest, IsReservedCommandOrKey) {
 #if defined(OS_CHROMEOS)
   // F1-3 keys are reserved Chrome accelerators on Chrome OS.
   EXPECT_TRUE(browser()->command_controller()->IsReservedCommandOrKey(
-      IDC_BACK, content::NativeWebKeyboardEvent(ui::ET_KEY_PRESSED, false,
-                                                ui::VKEY_F1, 0, 0)));
+      IDC_BACK, content::NativeWebKeyboardEvent(
+          ui::ET_KEY_PRESSED, false, ui::VKEY_BROWSER_BACK, 0, 0)));
   EXPECT_TRUE(browser()->command_controller()->IsReservedCommandOrKey(
-      IDC_FORWARD, content::NativeWebKeyboardEvent(ui::ET_KEY_PRESSED, false,
-                                                   ui::VKEY_F2, 0, 0)));
+      IDC_FORWARD, content::NativeWebKeyboardEvent(
+          ui::ET_KEY_PRESSED, false, ui::VKEY_BROWSER_FORWARD, 0, 0)));
   EXPECT_TRUE(browser()->command_controller()->IsReservedCommandOrKey(
-      IDC_RELOAD, content::NativeWebKeyboardEvent(ui::ET_KEY_PRESSED, false,
-                                                  ui::VKEY_F3, 0, 0)));
+      IDC_RELOAD, content::NativeWebKeyboardEvent(
+          ui::ET_KEY_PRESSED, false, ui::VKEY_BROWSER_REFRESH, 0, 0)));
 
   // When there are modifier keys pressed, don't reserve.
   EXPECT_FALSE(browser()->command_controller()->IsReservedCommandOrKey(
@@ -227,7 +227,9 @@ TEST_F(BrowserCommandControllerFullscreenTest,
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_FOCUS_PREVIOUS_PANE));
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_FOCUS_BOOKMARKS));
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_DEVELOPER_MENU));
+#if defined(GOOGLE_CHROME_BUILD)
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_FEEDBACK));
+#endif
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_OPTIONS));
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_IMPORT_SETTINGS));
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_EDIT_SEARCH_ENGINES));
@@ -252,7 +254,9 @@ TEST_F(BrowserCommandControllerFullscreenTest,
   EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_FOCUS_PREVIOUS_PANE));
   EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_FOCUS_BOOKMARKS));
   EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_DEVELOPER_MENU));
+#if defined(GOOGLE_CHROME_BUILD)
   EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_FEEDBACK));
+#endif
   EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_OPTIONS));
   EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_IMPORT_SETTINGS));
   EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_EDIT_SEARCH_ENGINES));
@@ -275,7 +279,9 @@ TEST_F(BrowserCommandControllerFullscreenTest,
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_FOCUS_PREVIOUS_PANE));
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_FOCUS_BOOKMARKS));
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_DEVELOPER_MENU));
+#if defined(GOOGLE_CHROME_BUILD)
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_FEEDBACK));
+#endif
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_OPTIONS));
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_IMPORT_SETTINGS));
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_EDIT_SEARCH_ENGINES));
@@ -293,16 +299,17 @@ TEST_F(BrowserCommandControllerTest,
 
   // Set up a profile with an off the record profile.
   TestingProfile::Builder builder;
-  TestingProfile* profile2 = builder.Build().release();
-  profile2->set_incognito(true);
+  builder.SetIncognito();
+  scoped_ptr<TestingProfile> profile2(builder.Build());
   TestingProfile::Builder builder2;
   TestingProfile* profile1 = builder2.Build().release();
   profile2->SetOriginalProfile(profile1);
   EXPECT_EQ(profile2->GetOriginalProfile(), profile1);
-  profile1->SetOffTheRecordProfile(profile2);
+  profile1->SetOffTheRecordProfile(profile2.PassAs<Profile>());
 
   // Create a new browser based on the off the record profile.
-  Browser::CreateParams profile_params(profile2, chrome::GetActiveDesktop());
+  Browser::CreateParams profile_params(profile1->GetOffTheRecordProfile(),
+                                       chrome::GetActiveDesktop());
   scoped_ptr<Browser> browser2(
       chrome::CreateBrowserWithTestWindowForParams(&profile_params));
 

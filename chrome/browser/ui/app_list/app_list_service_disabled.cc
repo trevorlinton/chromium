@@ -21,6 +21,8 @@ class AppListServiceDisabled : public AppListService {
   AppListServiceDisabled() {}
 
   // AppListService overrides:
+  virtual void SetAppListNextPaintCallback(
+      const base::Closure& callback) OVERRIDE {}
   virtual void HandleFirstRun() OVERRIDE {}
   virtual void Init(Profile* initial_profile) OVERRIDE {}
 
@@ -53,7 +55,7 @@ class AppListServiceDisabled : public AppListService {
 }  // namespace
 
 // static
-AppListService* AppListService::Get() {
+AppListService* AppListService::Get(chrome::HostDesktopType desktop_type) {
   return AppListServiceDisabled::GetInstance();
 }
 

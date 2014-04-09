@@ -10,6 +10,7 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/test/browser_test_utils.h"
 #include "net/http/http_response_headers.h"
+#include "net/http/http_status_code.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
@@ -19,9 +20,12 @@ using ::testing::_;
 
 namespace {
 
-const char kEULAURL[] = "https://www.google.com/intl/en-US/chrome/eula_text.html";
+const char kEULAURL[] =
+    "https://www.google.com/intl/en-US/chrome/eula_text.html";
 const char kFakeOnlineEULA[] = "No obligations at all";
+#if defined(GOOGLE_CHROME_BUILD)
 const char kOfflineEULAWarning[] = "A copy of the Google Terms of Service";
+#endif
 
 class TermsOfServiceProcessBrowserTest : public InProcessBrowserTest {
 };
@@ -32,9 +36,9 @@ class TestURLFetcherCallback {
       const GURL& url,
       net::URLFetcherDelegate* d,
       const std::string& response_data,
-      bool success) {
+      net::HttpStatusCode response_code) {
     scoped_ptr<net::FakeURLFetcher> fetcher(
-        new net::FakeURLFetcher(url, d, response_data, success));
+        new net::FakeURLFetcher(url, d, response_data, response_code));
     OnRequestCreate(url, fetcher.get());
     return fetcher.Pass();
   }
@@ -56,7 +60,7 @@ IN_PROC_BROWSER_TEST_F(TermsOfServiceProcessBrowserTest, LoadOnline) {
       NULL,
       base::Bind(&TestURLFetcherCallback::CreateURLFetcher,
                  base::Unretained(&url_callback)));
-  factory.SetFakeResponse(kEULAURL, kFakeOnlineEULA, true);
+  factory.SetFakeResponse(GURL(kEULAURL), kFakeOnlineEULA, net::HTTP_OK);
   EXPECT_CALL(url_callback, OnRequestCreate(GURL(kEULAURL), _))
       .Times(Exactly(1))
       .WillRepeatedly(Invoke(AddMimeHeader));
@@ -76,7 +80,7 @@ IN_PROC_BROWSER_TEST_F(TermsOfServiceProcessBrowserTest, LoadOnline) {
 // Make sure offline version is shown.
 IN_PROC_BROWSER_TEST_F(TermsOfServiceProcessBrowserTest, LoadOffline) {
   net::FakeURLFetcherFactory factory(NULL);
-  factory.SetFakeResponse(kEULAURL, "", false);
+  factory.SetFakeResponse(GURL(kEULAURL), "", net::HTTP_INTERNAL_SERVER_ERROR);
 
   ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUITermsURL));
   content::WebContents* web_contents =

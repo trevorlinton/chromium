@@ -5,6 +5,8 @@
 #ifndef UI_GFX_PLATFORM_FONT_PANGO_H_
 #define UI_GFX_PLATFORM_FONT_PANGO_H_
 
+#include <string>
+
 #include "base/compiler_specific.h"
 #include "base/memory/scoped_ptr.h"
 #include "skia/ext/refptr.h"
@@ -16,7 +18,7 @@ class SkPaint;
 
 namespace gfx {
 
-class UI_EXPORT PlatformFontPango : public PlatformFont {
+class GFX_EXPORT PlatformFontPango : public PlatformFont {
  public:
   PlatformFontPango();
   explicit PlatformFontPango(NativeFont native_font);
@@ -31,6 +33,11 @@ class UI_EXPORT PlatformFontPango : public PlatformFont {
   // the locale has changed.
   static void ReloadDefaultFont();
 
+#if defined(OS_CHROMEOS)
+  // Sets the default font.
+  static void SetDefaultFontDescription(const std::string& font_description);
+#endif
+
   // Position as an offset from the height of the drawn text, used to draw
   // an underline. This is a negative number, so the underline would be
   // drawn at y + height + underline_position.
@@ -42,6 +49,7 @@ class UI_EXPORT PlatformFontPango : public PlatformFont {
   virtual Font DeriveFont(int size_delta, int style) const OVERRIDE;
   virtual int GetHeight() const OVERRIDE;
   virtual int GetBaseline() const OVERRIDE;
+  virtual int GetCapHeight() const OVERRIDE;
   virtual int GetAverageCharacterWidth() const OVERRIDE;
   virtual int GetStringWidth(const base::string16& text) const OVERRIDE;
   virtual int GetExpectedTextWidth(int length) const OVERRIDE;
@@ -58,6 +66,10 @@ class UI_EXPORT PlatformFontPango : public PlatformFont {
                     int size,
                     int style);
   virtual ~PlatformFontPango();
+
+  // Returns a Pango font description (suitable for parsing by
+  // pango_font_description_from_string()) for the default UI font.
+  static std::string GetDefaultFont();
 
   // Initialize this object.
   void InitWithNameAndSize(const std::string& font_name, int font_size);
@@ -101,6 +113,10 @@ class UI_EXPORT PlatformFontPango : public PlatformFont {
 
   // The default font, used for the default constructor.
   static Font* default_font_;
+
+#if defined(OS_CHROMEOS)
+  static std::string* default_font_description_;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(PlatformFontPango);
 };

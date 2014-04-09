@@ -10,12 +10,13 @@
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string_split.h"
 #include "base/time/time.h"
+#include "cc/output/context_provider.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "third_party/skia/include/core/SkXfermode.h"
 #include "ui/aura/client/default_capture_client.h"
 #include "ui/aura/env.h"
-#include "ui/aura/focus_manager.h"
 #include "ui/aura/root_window.h"
+#include "ui/aura/test/test_focus_client.h"
 #include "ui/aura/test/test_screen.h"
 #include "ui/aura/window.h"
 #include "ui/base/hit_test.h"
@@ -25,6 +26,7 @@
 #include "ui/compositor/compositor_observer.h"
 #include "ui/compositor/debug_utils.h"
 #include "ui/compositor/layer.h"
+#include "ui/compositor/test/context_factories_for_test.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/rect.h"
 #include "ui/gfx/skia_util.h"
@@ -35,7 +37,7 @@
 #include "third_party/khronos/GLES2/gl2ext.h"
 
 #if defined(USE_X11)
-#include "base/message_loop/message_pump_aurax11.h"
+#include "base/message_loop/message_pump_x11.h"
 #endif
 
 using base::TimeTicks;
@@ -181,7 +183,6 @@ class WebGLBench : public BenchCompositorObserver {
         parent_(parent),
         webgl_(ui::LAYER_TEXTURED),
         compositor_(compositor),
-        context_(),
         texture_(),
         fbo_(0),
         do_draw_(true) {
@@ -207,35 +208,38 @@ class WebGLBench : public BenchCompositorObserver {
     webgl_.SetBounds(bounds);
     parent_->Add(&webgl_);
 
-    context_ = ui::ContextFactory::GetInstance()->CreateOffscreenContext();
-    context_->makeContextCurrent();
-    texture_ = new WebGLTexture(context_.get(), bounds.size());
-    fbo_ = context_->createFramebuffer();
+    context_provider_ =
+        ui::ContextFactory::GetInstance()->SharedMainThreadContextProvider();
+    WebKit::WebGraphicsContext3D* context = context_provider_->Context3d();
+    context->makeContextCurrent();
+    texture_ = new WebGLTexture(context, bounds.size());
+    fbo_ = context->createFramebuffer();
     compositor->AddObserver(this);
     webgl_.SetExternalTexture(texture_.get());
-    context_->bindFramebuffer(GL_FRAMEBUFFER, fbo_);
-    context_->framebufferTexture2D(
+    context->bindFramebuffer(GL_FRAMEBUFFER, fbo_);
+    context->framebufferTexture2D(
         GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
         GL_TEXTURE_2D, texture_->PrepareTexture(), 0);
-    context_->clearColor(0.f, 1.f, 0.f, 1.f);
-    context_->clear(GL_COLOR_BUFFER_BIT);
-    context_->flush();
+    context->clearColor(0.f, 1.f, 0.f, 1.f);
+    context->clear(GL_COLOR_BUFFER_BIT);
+    context->flush();
   }
 
   virtual ~WebGLBench() {
-    context_->makeContextCurrent();
-    context_->deleteFramebuffer(fbo_);
-    webgl_.SetExternalTexture(NULL);
+    context_provider_->Context3d()->makeContextCurrent();
+    context_provider_->Context3d()->deleteFramebuffer(fbo_);
+    webgl_.SetShowPaintedContent();
     texture_ = NULL;
     compositor_->RemoveObserver(this);
   }
 
   virtual void Draw() OVERRIDE {
     if (do_draw_) {
-      context_->makeContextCurrent();
-      context_->clearColor((frames() % kFrames)*1.0/kFrames, 1.f, 0.f, 1.f);
-      context_->clear(GL_COLOR_BUFFER_BIT);
-      context_->flush();
+      WebKit::WebGraphicsContext3D* context = context_provider_->Context3d();
+      context->makeContextCurrent();
+      context->clearColor((frames() % kFrames)*1.0/kFrames, 1.f, 0.f, 1.f);
+      context->clear(GL_COLOR_BUFFER_BIT);
+      context->flush();
     }
     webgl_.SetExternalTexture(texture_.get());
     webgl_.SchedulePaint(gfx::Rect(webgl_.bounds().size()));
@@ -246,7 +250,7 @@ class WebGLBench : public BenchCompositorObserver {
   Layer* parent_;
   Layer webgl_;
   Compositor* compositor_;
-  scoped_ptr<WebGraphicsContext3D> context_;
+  scoped_refptr<cc::ContextProvider> context_provider_;
   scoped_refptr<WebGLTexture> texture_;
 
   // The FBO that is used to render to the texture.
@@ -296,12 +300,16 @@ int main(int argc, char** argv) {
 
   base::AtExitManager exit_manager;
 
+  // The ContextFactory must exist before any Compositors are created.
+  bool allow_test_contexts = false;
+  ui::InitializeContextFactoryForTests(allow_test_contexts);
+
   ui::RegisterPathProvider();
-  icu_util::Initialize();
+  base::i18n::InitializeICU();
   ResourceBundle::InitSharedInstanceWithLocale("en-US", NULL);
 
   base::MessageLoop message_loop(base::MessageLoop::TYPE_UI);
-  aura::Env::GetInstance();
+  aura::Env::CreateInstance();
   scoped_ptr<aura::TestScreen> test_screen(
       aura::TestScreen::CreateFullscreen());
   gfx::Screen::SetScreenInstance(gfx::SCREEN_TYPE_NATIVE, test_screen.get());
@@ -311,7 +319,8 @@ int main(int argc, char** argv) {
       root_window.get(),
       new aura::client::DefaultCaptureClient(root_window.get()));
 
-  scoped_ptr<aura::client::FocusClient> focus_client(new aura::FocusManager);
+  scoped_ptr<aura::client::FocusClient> focus_client(
+      new aura::test::TestFocusClient);
   aura::client::SetFocusClient(root_window.get(), focus_client.get());
 
   // add layers

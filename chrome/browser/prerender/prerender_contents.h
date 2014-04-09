@@ -44,7 +44,6 @@ namespace prerender {
 
 class PrerenderHandle;
 class PrerenderManager;
-class PrerenderRenderViewHostObserver;
 
 class PrerenderContents : public content::NotificationObserver,
                           public content::WebContentsObserver {
@@ -228,8 +227,14 @@ class PrerenderContents : public content::NotificationObserver,
       const GURL& validated_url,
       bool is_main_frame,
       content::RenderViewHost* render_view_host) OVERRIDE;
+  virtual void DidNavigateMainFrame(
+      const content::LoadCommittedDetails& details,
+      const content::FrameNavigateParams& params) OVERRIDE;
+  virtual void DidGetRedirectForResourceRequest(
+      const content::ResourceRedirectDetails& details) OVERRIDE;
   virtual void DidUpdateFaviconURL(int32 page_id,
       const std::vector<content::FaviconURL>& urls) OVERRIDE;
+  virtual bool OnMessageReceived(const IPC::Message& message) OVERRIDE;
 
   virtual void RenderProcessGone(base::TerminationStatus status) OVERRIDE;
 
@@ -238,11 +243,14 @@ class PrerenderContents : public content::NotificationObserver,
                        const content::NotificationSource& source,
                        const content::NotificationDetails& details) OVERRIDE;
 
-  // Adds an alias URL, for one of the many redirections. If the URL can not
-  // be prerendered - for example, it's an ftp URL - |this| will be destroyed
-  // and false is returned. Otherwise, true is returned and the alias is
-  // remembered.
-  virtual bool AddAliasURL(const GURL& url);
+  // Checks that a URL may be prerendered, for one of the many redirections. If
+  // the URL can not be prerendered - for example, it's an ftp URL - |this| will
+  // be destroyed and false is returned. Otherwise, true is returned.
+  virtual bool CheckURL(const GURL& url);
+
+  // Adds an alias URL. If the URL can not be prerendered, |this| will be
+  // destroyed and false is returned.
+  bool AddAliasURL(const GURL& url);
 
   // The prerender WebContents (may be NULL).
   content::WebContents* prerender_contents() const {
@@ -327,10 +335,11 @@ class PrerenderContents : public content::NotificationObserver,
   // Needs to be able to call the constructor.
   friend class PrerenderContentsFactoryImpl;
 
-  friend class PrerenderRenderViewHostObserver;
-
   // Returns the ProcessMetrics for the render process, if it exists.
   base::ProcessMetrics* MaybeGetProcessMetrics();
+
+  // Message handlers.
+  void OnCancelPrerenderForPrinting();
 
   ObserverList<Observer> observer_list_;
 
@@ -391,8 +400,6 @@ class PrerenderContents : public content::NotificationObserver,
 
   // The prerendered WebContents; may be null.
   scoped_ptr<content::WebContents> prerender_contents_;
-
-  scoped_ptr<PrerenderRenderViewHostObserver> render_view_host_observer_;
 
   scoped_ptr<WebContentsDelegateImpl> web_contents_delegate_;
 

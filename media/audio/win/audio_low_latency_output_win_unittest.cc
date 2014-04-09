@@ -16,7 +16,6 @@
 #include "base/win/scoped_com_initializer.h"
 #include "media/audio/audio_io.h"
 #include "media/audio/audio_manager.h"
-#include "media/audio/audio_util.h"
 #include "media/audio/win/audio_low_latency_output_win.h"
 #include "media/audio/win/core_audio_util_win.h"
 #include "media/base/decoder_buffer.h"
@@ -234,7 +233,7 @@ class AudioOutputStreamWrapper {
     AudioOutputStream* aos = audio_man_->MakeAudioOutputStream(
         AudioParameters(format_, channel_layout_, sample_rate_,
                         bits_per_sample_, samples_per_packet_),
-        std::string());
+        std::string(), std::string());
     EXPECT_TRUE(aos);
     return aos;
   }
@@ -268,7 +267,7 @@ TEST(WASAPIAudioOutputStreamTest, HardwareSampleRate) {
   // Default device intended for games, system notification sounds,
   // and voice commands.
   int fs = static_cast<int>(
-      WASAPIAudioOutputStream::HardwareSampleRate());
+      WASAPIAudioOutputStream::HardwareSampleRate(std::string()));
   EXPECT_GE(fs, 0);
 }
 

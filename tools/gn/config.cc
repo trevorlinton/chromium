@@ -10,7 +10,8 @@
 #include "tools/gn/item_tree.h"
 #include "tools/gn/scheduler.h"
 
-Config::Config(const Label& label) : Item(label) {
+Config::Config(const Settings* settings, const Label& label)
+    : Item(settings, label) {
 }
 
 Config::~Config() {
@@ -38,8 +39,9 @@ Config* Config::GetConfig(const Settings* settings,
   ItemNode* node = tree->GetExistingNodeLocked(label);
   Config* config = NULL;
   if (!node) {
-    config = new Config(label);
+    config = new Config(settings, label);
     node = new ItemNode(config);
+    node->set_originally_referenced_from_here(specified_from_here);
     tree->AddNodeLocked(node);
 
     // Only schedule loading the given target if somebody is depending on it
@@ -72,7 +74,7 @@ Config* Config::GetConfig(const Settings* settings,
   // Keep a record of the guy asking us for this dependency. We know if
   // somebody is adding a dependency, that guy it himself not resolved.
   if (dep_from) {
-    if (!tree->GetExistingNodeLocked(dep_from->label())->AddDependency(
+    if (!dep_from->item_node()->AddDependency(
             settings->build_settings(), specified_from_here, node, err))
       return NULL;
   }

@@ -31,7 +31,9 @@ SourceDir::SourceDir(const base::StringPiece& p)
 SourceDir::~SourceDir() {
 }
 
-SourceFile SourceDir::ResolveRelativeFile(const base::StringPiece& p) const {
+SourceFile SourceDir::ResolveRelativeFile(
+    const base::StringPiece& p,
+    const base::StringPiece& source_root) const {
   SourceFile ret;
 
   // It's an error to resolve an empty string or one that is a directory
@@ -39,9 +41,23 @@ SourceFile SourceDir::ResolveRelativeFile(const base::StringPiece& p) const {
   // to return a file.
   if (p.empty() || (p.size() > 0 && p[p.size() - 1] == '/'))
     return SourceFile();
-  if (p[0] == '/') {
-    // Absolute path.
+  if (p.size() >= 2 && p[0] == '/' && p[1] == '/') {
+    // Source-relative.
     ret.value_.assign(p.data(), p.size());
+    NormalizePath(&ret.value_);
+    return ret;
+  } else if (IsPathAbsolute(p)) {
+    if (source_root.empty() ||
+        !MakeAbsolutePathRelativeIfPossible(source_root, p, &ret.value_)) {
+#if defined(OS_WIN)
+      // On Windows we'll accept "C:\foo" as an absolute path, which we want
+      // to convert to "/C:..." here.
+      if (p[0] != '/')
+        ret.value_ = "/";
+#endif
+      ret.value_.append(p.data(), p.size());
+    }
+    NormalizePath(&ret.value_);
     return ret;
   }
 
@@ -53,14 +69,33 @@ SourceFile SourceDir::ResolveRelativeFile(const base::StringPiece& p) const {
   return ret;
 }
 
-SourceDir SourceDir::ResolveRelativeDir(const base::StringPiece& p) const {
+SourceDir SourceDir::ResolveRelativeDir(
+    const base::StringPiece& p,
+    const base::StringPiece& source_root) const {
   SourceDir ret;
 
   if (p.empty())
     return ret;
-  if (p[0] == '/') {
-    // Absolute path.
-    return SourceDir(p);
+  if (p.size() >= 2 && p[0] == '/' && p[1] == '/') {
+    // Source-relative.
+    ret.value_.assign(p.data(), p.size());
+    if (!EndsWithSlash(ret.value_))
+      ret.value_.push_back('/');
+    NormalizePath(&ret.value_);
+    return ret;
+  } else if (IsPathAbsolute(p)) {
+    if (source_root.empty() ||
+        !MakeAbsolutePathRelativeIfPossible(source_root, p, &ret.value_)) {
+#if defined(OS_WIN)
+      if (p[0] != '/')  // See the file case for why we do this check.
+        ret.value_ = "/";
+#endif
+      ret.value_.append(p.data(), p.size());
+    }
+    NormalizePath(&ret.value_);
+    if (!EndsWithSlash(ret.value_))
+      ret.value_.push_back('/');
+    return ret;
   }
 
   ret.value_.reserve(value_.size() + p.size());
@@ -81,7 +116,12 @@ base::FilePath SourceDir::Resolve(const base::FilePath& source_root) const {
 
   std::string converted;
   if (is_system_absolute()) {
-    converted = value_;
+    if (value_.size() > 2 && value_[2] == ':') {
+      // Windows path, strip the leading slash.
+      converted.assign(&value_[1], value_.size() - 1);
+    } else {
+      converted.assign(value_);
+    }
     ConvertPathToSystem(&converted);
     return base::FilePath(UTF8ToFilePath(converted));
   }

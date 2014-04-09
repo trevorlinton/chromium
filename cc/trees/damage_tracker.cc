@@ -52,8 +52,7 @@ void DamageTracker::UpdateDamageTrackingState(
     bool target_surface_property_changed_only_from_descendant,
     gfx::Rect target_surface_content_rect,
     LayerImpl* target_surface_mask_layer,
-    const FilterOperations& filters,
-    SkImageFilter* filter) {
+    const FilterOperations& filters) {
   //
   // This function computes the "damage rect" of a target surface, and updates
   // the state that is used to correctly track damage across frames. The damage
@@ -143,12 +142,12 @@ void DamageTracker::UpdateDamageTrackingState(
     damage_rect_for_this_update.Union(damage_from_surface_mask);
     damage_rect_for_this_update.Union(damage_from_leftover_rects);
 
-    if (filters.HasFilterThatMovesPixels()) {
-      ExpandRectWithFilters(&damage_rect_for_this_update, filters);
-    } else if (filter) {
+    if (filters.HasReferenceFilter()) {
       // TODO(senorblanco):  Once SkImageFilter reports its outsets, use
       // those here to limit damage.
       damage_rect_for_this_update = target_surface_content_rect;
+    } else if (filters.HasFilterThatMovesPixels()) {
+      ExpandRectWithFilters(&damage_rect_for_this_update, filters);
     }
   }
 
@@ -243,17 +242,6 @@ gfx::RectF DamageTracker::TrackDamageFromLeftoverRects() {
   return damage_rect;
 }
 
-static bool LayerNeedsToRedrawOntoItsTargetSurface(LayerImpl* layer) {
-  // If the layer does NOT own a surface but has SurfacePropertyChanged,
-  // this means that its target surface is affected and needs to be redrawn.
-  // However, if the layer DOES own a surface, then the SurfacePropertyChanged
-  // flag should not be used here, because that flag represents whether the
-  // layer's surface has changed.
-  if (layer->render_surface())
-    return layer->LayerPropertyChanged();
-  return layer->LayerPropertyChanged() || layer->LayerSurfacePropertyChanged();
-}
-
 void DamageTracker::ExtendDamageForLayer(LayerImpl* layer,
                                          gfx::RectF* target_damage_rect) {
   // There are two ways that a layer can damage a region of the target surface:
@@ -283,7 +271,7 @@ void DamageTracker::ExtendDamageForLayer(LayerImpl* layer,
       gfx::RectF(gfx::PointF(), layer->content_bounds()));
   SaveRectForNextFrame(layer->id(), rect_in_target_space);
 
-  if (layer_is_new || LayerNeedsToRedrawOntoItsTargetSurface(layer)) {
+  if (layer_is_new || layer->LayerPropertyChanged()) {
     // If a layer is new or has changed, then its entire layer rect affects the
     // target surface.
     target_damage_rect->Union(rect_in_target_space);
@@ -331,9 +319,7 @@ void DamageTracker::ExtendDamageForRenderSurface(
   SaveRectForNextFrame(layer->id(), surface_rect_in_target_space);
 
   gfx::RectF damage_rect_in_local_space;
-  if (surface_is_new ||
-      render_surface->SurfacePropertyChanged() ||
-      layer->LayerSurfacePropertyChanged()) {
+  if (surface_is_new || render_surface->SurfacePropertyChanged()) {
     // The entire surface contributes damage.
     damage_rect_in_local_space = render_surface->content_rect();
 

@@ -10,19 +10,20 @@
 
 #include "base/pickle.h"
 #include "base/strings/utf_string_conversions.h"
+#include "net/base/escape.h"
 #include "ui/gfx/size.h"
 
 namespace ui {
 
 ScopedClipboardWriter::ScopedClipboardWriter(Clipboard* clipboard,
-                                             Clipboard::Buffer buffer)
+                                             ClipboardType type)
     : clipboard_(clipboard),
-      buffer_(buffer) {
+      type_(type) {
 }
 
 ScopedClipboardWriter::~ScopedClipboardWriter() {
   if (!objects_.empty() && clipboard_)
-    clipboard_->WriteObjects(buffer_, objects_);
+    clipboard_->WriteObjects(type_, objects_);
 }
 
 void ScopedClipboardWriter::WriteText(const string16& text) {
@@ -77,9 +78,9 @@ void ScopedClipboardWriter::WriteHyperlink(const string16& anchor_text,
 
   // Construct the hyperlink.
   std::string html("<a href=\"");
-  html.append(url);
+  html.append(net::EscapeForHTML(url));
   html.append("\">");
-  html.append(UTF16ToUTF8(anchor_text));
+  html.append(net::EscapeForHTML(UTF16ToUTF8(anchor_text)));
   html.append("</a>");
   WriteHTML(UTF8ToUTF16(html), std::string());
 }

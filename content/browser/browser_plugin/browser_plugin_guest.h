@@ -6,12 +6,9 @@
 // renderer channel. A BrowserPlugin (a WebPlugin) is on the embedder
 // renderer side of browser <--> embedder renderer communication.
 //
-// BrowserPluginGuest lives on the UI thread of the browser process. It has a
-// helper, BrowserPluginGuestHelper, which is a RenderViewHostObserver. The
-// helper object intercepts messages (ViewHostMsg_*) directed at the browser
-// process and redirects them to this class. Any messages about the guest render
-// process that the embedder might be interested in receiving should be listened
-// for here.
+// BrowserPluginGuest lives on the UI thread of the browser process. Any
+// messages about the guest render process that the embedder might be interested
+// in receiving should be listened for here.
 //
 // BrowserPluginGuest is a WebContentsDelegate and WebContentsObserver for the
 // guest WebContents. BrowserPluginGuest operates under the assumption that the
@@ -33,9 +30,6 @@
 #include "content/port/common/input_event_ack_state.h"
 #include "content/public/browser/browser_plugin_guest_delegate.h"
 #include "content/public/browser/javascript_dialog_manager.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
-#include "content/public/browser/render_view_host_observer.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/browser_plugin_permission_type.h"
@@ -70,6 +64,7 @@ class BrowserPluginEmbedder;
 class BrowserPluginGuestManager;
 class RenderProcessHost;
 class RenderWidgetHostView;
+class SiteInstance;
 struct DropData;
 struct MediaStreamRequest;
 
@@ -85,7 +80,6 @@ struct MediaStreamRequest;
 // which means it can share storage and can script this guest.
 class CONTENT_EXPORT BrowserPluginGuest
     : public JavaScriptDialogManager,
-      public NotificationObserver,
       public WebContentsDelegate,
       public WebContentsObserver,
       public base::SupportsWeakPtr<BrowserPluginGuest> {
@@ -93,8 +87,16 @@ class CONTENT_EXPORT BrowserPluginGuest
   typedef base::Callback<void(bool)> GeolocationCallback;
   virtual ~BrowserPluginGuest();
 
+  // The WebContents passed into the factory method here has not been
+  // initialized yet and so it does not yet hold a SiteInstance.
+  // BrowserPluginGuest must be constructed and installed into a WebContents
+  // prior to its initialization because WebContents needs to determine what
+  // type of WebContentsView to construct on initialization. The content
+  // embedder needs to be aware of |guest_site_instance| on the guest's
+  // construction and so we pass it in here.
   static BrowserPluginGuest* Create(
       int instance_id,
+      SiteInstance* guest_site_instance,
       WebContentsImpl* web_contents,
       scoped_ptr<base::DictionaryValue> extra_params);
 
@@ -103,6 +105,13 @@ class CONTENT_EXPORT BrowserPluginGuest
       WebContentsImpl* web_contents,
       BrowserPluginGuest* opener,
       bool has_render_view);
+
+  // Called when the embedder WebContents is destroyed to give the
+  // BrowserPluginGuest an opportunity to clean up after itself.
+  void EmbedderDestroyed();
+
+  // Called when the embedder WebContents changes visibility.
+  void EmbedderVisibilityChanged(bool visible);
 
   // Destroys the guest WebContents and all its associated state, including
   // this BrowserPluginGuest, and its new unattached windows.
@@ -145,14 +154,10 @@ class CONTENT_EXPORT BrowserPluginGuest
 
   void UpdateVisibility();
 
-  // NotificationObserver implementation.
-  virtual void Observe(int type,
-                       const NotificationSource& source,
-                       const NotificationDetails& details) OVERRIDE;
-
   // WebContentsObserver implementation.
   virtual void DidCommitProvisionalLoadForFrame(
       int64 frame_id,
+      const string16& frame_unique_name,
       bool is_main_frame,
       const GURL& url,
       PageTransition transition_type,
@@ -182,6 +187,8 @@ class CONTENT_EXPORT BrowserPluginGuest
                            int request_id,
                            const std::string& request_method,
                            const base::Callback<void(bool)>& callback) OVERRIDE;
+  virtual void LoadProgressChanged(WebContents* source,
+                                   double progress) OVERRIDE;
   virtual void CloseContents(WebContents* source) OVERRIDE;
   virtual JavaScriptDialogManager* GetJavaScriptDialogManager() OVERRIDE;
   virtual bool HandleContextMenu(const ContextMenuParams& params) OVERRIDE;
@@ -248,9 +255,12 @@ class CONTENT_EXPORT BrowserPluginGuest
   // Attaches this BrowserPluginGuest to the provided |embedder_web_contents|
   // and initializes the guest with the provided |params|. Attaching a guest
   // to an embedder implies that this guest's lifetime is no longer managed
-  // by its opener, and it can begin loading resources.
+  // by its opener, and it can begin loading resources. |extra_params| are
+  // parameters passed into BrowserPlugin from JavaScript to be forwarded to
+  // the content embedder.
   void Attach(WebContentsImpl* embedder_web_contents,
-              BrowserPluginHostMsg_Attach_Params params);
+              BrowserPluginHostMsg_Attach_Params params,
+              const base::DictionaryValue& extra_params);
 
   // Requests geolocation permission through Embedder JavaScript API.
   void AskEmbedderForGeolocationPermission(int bridge_id,
@@ -288,7 +298,7 @@ class CONTENT_EXPORT BrowserPluginGuest
                                   const std::string& user_input);
 
  private:
-  class EmbedderRenderViewHostObserver;
+  class EmbedderWebContentsObserver;
   friend class TestBrowserPluginGuest;
 
   class DownloadRequest;
@@ -309,6 +319,11 @@ class CONTENT_EXPORT BrowserPluginGuest
   // BrowserPluginGuest.
   void DestroyUnattachedWindows();
 
+  void LoadURLWithParams(WebContents* web_contents,
+                         const GURL& url,
+                         const Referrer& referrer,
+                         PageTransition transition_type);
+
   // Bridge IDs correspond to a geolocation request. This method will remove
   // the bookkeeping for a particular geolocation request associated with the
   // provided |bridge_id|. It returns the request ID of the geolocation request.
@@ -319,6 +334,10 @@ class CONTENT_EXPORT BrowserPluginGuest
       BrowserPluginPermissionType permission_type,
       scoped_refptr<BrowserPluginGuest::PermissionRequest> request,
       const base::DictionaryValue& request_info);
+
+  // Creates a new guest window, and BrowserPluginGuest that is owned by this
+  // BrowserPluginGuest.
+  BrowserPluginGuest* CreateNewGuestWindow(const OpenURLParams& params);
 
   base::SharedMemory* damage_buffer() const { return damage_buffer_.get(); }
   const gfx::Size& damage_view_size() const { return damage_view_size_; }
@@ -458,8 +477,7 @@ class CONTENT_EXPORT BrowserPluginGuest
   // Static factory instance (always NULL for non-test).
   static BrowserPluginHostFactory* factory_;
 
-  NotificationRegistrar notification_registrar_;
-  scoped_ptr<EmbedderRenderViewHostObserver> embedder_rvh_observer_;
+  scoped_ptr<EmbedderWebContentsObserver> embedder_web_contents_observer_;
   WebContentsImpl* embedder_web_contents_;
 
   std::map<int, int> bridge_id_to_request_id_map_;
@@ -516,6 +534,11 @@ class CONTENT_EXPORT BrowserPluginGuest
   // this guest is attached.
   bool has_render_view_;
 
+  // Last seen size of guest contents (by OnUpdateRect).
+  gfx::Size last_seen_view_size_;
+  // Last seen autosize attribute state (by OnUpdateRect).
+  bool last_seen_auto_size_enabled_;
+
   bool is_in_destruction_;
 
   // This is a queue of messages that are destined to be sent to the embedder
@@ -523,6 +546,10 @@ class CONTENT_EXPORT BrowserPluginGuest
   std::queue<IPC::Message*> pending_messages_;
 
   scoped_ptr<BrowserPluginGuestDelegate> delegate_;
+
+  // These are parameters passed from JavaScript on attachment to the content
+  // embedder.
+  scoped_ptr<base::DictionaryValue> extra_attach_params_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserPluginGuest);
 };

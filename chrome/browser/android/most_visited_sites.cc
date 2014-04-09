@@ -112,7 +112,7 @@ void GetUrlThumbnailTask(
   GURL gurl(url_string);
 
   scoped_refptr<base::RefCountedMemory> data;
-  if (top_sites->GetPageThumbnail(gurl, &data)) {
+  if (top_sites->GetPageThumbnail(gurl, false, &data)) {
     SkBitmap thumbnail_bitmap = ExtractThumbnail(*data.get());
     if (!thumbnail_bitmap.empty()) {
       j_bitmap_ref->Reset(
@@ -150,6 +150,10 @@ void GetMostVisitedURLs(
   TopSites* top_sites = profile->GetTopSites();
   if (!top_sites)
     return;
+
+  // TopSites updates itself after a delay. To ensure up-to-date results, force
+  // an update now.
+  top_sites->SyncWithHistory();
 
   scoped_refptr<NativeCallback> native_callback =
       new NativeCallback(j_callback_obj, static_cast<int>(num_results));

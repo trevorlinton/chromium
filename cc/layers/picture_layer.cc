@@ -4,8 +4,8 @@
 
 #include "cc/layers/picture_layer.h"
 
-#include "cc/debug/benchmark_instrumentation.h"
 #include "cc/debug/devtools_instrumentation.h"
+#include "cc/layers/content_layer_client.h"
 #include "cc/layers/picture_layer_impl.h"
 #include "cc/trees/layer_tree_impl.h"
 #include "ui/gfx/rect_conversions.h"
@@ -20,7 +20,8 @@ PictureLayer::PictureLayer(ContentLayerClient* client)
   : client_(client),
     pile_(make_scoped_refptr(new PicturePile())),
     instrumentation_object_tracker_(id()),
-    is_mask_(false) {
+    is_mask_(false),
+    update_source_frame_number_(-1) {
 }
 
 PictureLayer::~PictureLayer() {
@@ -36,25 +37,26 @@ scoped_ptr<LayerImpl> PictureLayer::CreateLayerImpl(LayerTreeImpl* tree_impl) {
 
 void PictureLayer::PushPropertiesTo(LayerImpl* base_layer) {
   Layer::PushPropertiesTo(base_layer);
-
   PictureLayerImpl* layer_impl = static_cast<PictureLayerImpl*>(base_layer);
-  // This should be first so others can use it.
-  layer_impl->UpdateTwinLayer();
+
+  if (layer_impl->bounds().IsEmpty()) {
+    // Update may not get called for an empty layer, so resize here instead.
+    // Using layer_impl because either bounds() or paint_properties().bounds
+    // may disagree and either one could have been pushed to layer_impl.
+    pile_->Resize(gfx::Size());
+    pile_->UpdateRecordedRegion();
+  } else if (update_source_frame_number_ ==
+             layer_tree_host()->source_frame_number()) {
+    // If update called, then pile size must match bounds pushed to impl layer.
+    DCHECK_EQ(layer_impl->bounds().ToString(), pile_->size().ToString());
+  }
 
   layer_impl->SetIsMask(is_mask_);
-  layer_impl->CreateTilingSetIfNeeded();
   // Unlike other properties, invalidation must always be set on layer_impl.
   // See PictureLayerImpl::PushPropertiesTo for more details.
   layer_impl->invalidation_.Clear();
   layer_impl->invalidation_.Swap(&pile_invalidation_);
   layer_impl->pile_ = PicturePileImpl::CreateFromOther(pile_.get());
-  layer_impl->SyncFromActiveLayer();
-
-  // PictureLayer must push properties every frame.
-  // TODO(danakj): If we can avoid requiring to do CreateTilingSetIfNeeded() and
-  // SyncFromActiveLayer() on every commit then this could go away, maybe
-  // conditionally. crbug.com/259402
-  needs_push_properties_ = true;
 }
 
 void PictureLayer::SetLayerTreeHost(LayerTreeHost* host) {
@@ -85,11 +87,11 @@ bool PictureLayer::Update(ResourceUpdateQueue* queue,
   // Do not early-out of this function so that PicturePile::Update has a chance
   // to record pictures due to changing visibility of this layer.
 
-  TRACE_EVENT1(benchmark_instrumentation::kCategory,
-               benchmark_instrumentation::kPictureLayerUpdate,
-               benchmark_instrumentation::kSourceFrameNumber,
+  TRACE_EVENT1("cc", "PictureLayer::Update",
+               "source_frame_number",
                layer_tree_host()->source_frame_number());
 
+  update_source_frame_number_ = layer_tree_host()->source_frame_number();
   bool updated = Layer::Update(queue, occlusion);
 
   pile_->Resize(paint_properties().bounds);
@@ -114,11 +116,14 @@ bool PictureLayer::Update(ResourceUpdateQueue* queue,
                            pile_invalidation_,
                            visible_layer_rect,
                            rendering_stats_instrumentation());
-  if (!updated) {
+  if (updated) {
+    SetNeedsPushProperties();
+  } else {
     // If this invalidation did not affect the pile, then it can be cleared as
     // an optimization.
     pile_invalidation_.Clear();
   }
+
   return updated;
 }
 
@@ -128,6 +133,28 @@ void PictureLayer::SetIsMask(bool is_mask) {
 
 bool PictureLayer::SupportsLCDText() const {
   return true;
+}
+
+skia::RefPtr<SkPicture> PictureLayer::GetPicture() const {
+  // We could either flatten the PicturePile into a single SkPicture,
+  // or paint a fresh one depending on what we intend to do with the
+  // picture. For now we just paint a fresh one to get consistent results.
+  if (!DrawsContent())
+    return skia::RefPtr<SkPicture>();
+
+  int width = bounds().width();
+  int height = bounds().height();
+  gfx::RectF opaque;
+
+  skia::RefPtr<SkPicture> picture = skia::AdoptRef(new SkPicture);
+  SkCanvas* canvas = picture->beginRecording(width, height);
+  client_->PaintContents(canvas, gfx::Rect(width, height), &opaque);
+  picture->endRecording();
+  return picture;
+}
+
+void PictureLayer::RunMicroBenchmark(MicroBenchmark* benchmark) {
+  benchmark->RunOnLayer(this);
 }
 
 }  // namespace cc

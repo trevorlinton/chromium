@@ -4,8 +4,10 @@
 
 #include "chrome/browser/chromeos/login/user_manager.h"
 
-#include "base/logging.h"
+#include "base/command_line.h"
+#include "base/metrics/field_trial.h"
 #include "chrome/browser/chromeos/login/user_manager_impl.h"
+#include "chrome/common/chrome_switches.h"
 
 namespace chromeos {
 
@@ -31,10 +33,11 @@ UserManager::Observer::~Observer() {
 void UserManager::Observer::LocalStateChanged(UserManager* user_manager) {
 }
 
-void UserManager::Observer::MergeSessionStateChanged(MergeSessionState state) {
+void UserManager::UserSessionStateObserver::ActiveUserChanged(
+    const User* active_user) {
 }
 
-void UserManager::UserSessionStateObserver::ActiveUserChanged(
+void UserManager::UserSessionStateObserver::UserAddedToSession(
     const User* active_user) {
 }
 
@@ -70,6 +73,17 @@ void UserManager::Destroy() {
 UserManager* UserManager::Get() {
   CHECK(g_user_manager);
   return g_user_manager;
+}
+
+// static
+bool UserManager::IsMultipleProfilesAllowed() {
+  if (!CommandLine::ForCurrentProcess()->HasSwitch(::switches::kMultiProfiles))
+    return false;
+
+  // TODO(xiyuan): Get rid of this when the underlying support is ready.
+  const char kFieldTrialName[] = "ChromeOSUseMultiProfiles";
+  const char kEnable[] = "Enable";
+  return base::FieldTrialList::FindFullName(kFieldTrialName) == kEnable;
 }
 
 UserManager::~UserManager() {

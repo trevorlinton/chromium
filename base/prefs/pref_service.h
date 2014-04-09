@@ -150,11 +150,6 @@ class BASE_PREFS_EXPORT PrefService : public base::NonThreadSafe {
       bool async);
   virtual ~PrefService();
 
-  // Reloads the data from file. This should only be called when the importer
-  // is running during first run, and the main process may not change pref
-  // values while the importer process is running. Returns true on success.
-  bool ReloadPersistentPrefs();
-
   // Lands pending writes to disk. This should only be used if we need to save
   // immediately (basically, during shutdown).
   void CommitPendingWrite();
@@ -226,6 +221,13 @@ class BASE_PREFS_EXPORT PrefService : public base::NonThreadSafe {
   // registered preference. In that case, will never return NULL.
   const base::Value* GetDefaultPrefValue(const char* path) const;
 
+  // Deprecated. Do not add calls to this method.
+  // Marks that the user store should not prune out empty values for |key| when
+  // writting to disk.
+  // TODO(gab): Enforce this at a lower level for all values and remove this
+  // method.
+  void MarkUserStoreNeedsEmptyValue(const std::string& key) const;
+
   // Returns true if a value has been set for the specified path.
   // NOTE: this is NOT the same as FindPreference. In particular
   // FindPreference returns whether RegisterXXX has been invoked, where as
@@ -234,7 +236,18 @@ class BASE_PREFS_EXPORT PrefService : public base::NonThreadSafe {
 
   // Returns a dictionary with effective preference values. The ownership
   // is passed to the caller.
-  base::DictionaryValue* GetPreferenceValues() const;
+  scoped_ptr<base::DictionaryValue> GetPreferenceValues() const;
+
+  // Returns a dictionary with effective preference values. Contrary to
+  // GetPreferenceValues(), the paths of registered preferences are not split on
+  // '.' characters. If a registered preference stores a dictionary, however,
+  // the hierarchical structure inside the preference will be preserved.
+  // For example, if "foo.bar" is a registered preference, the result could look
+  // like this:
+  //   {"foo.bar": {"a": {"b": true}}}.
+  // The ownership is passed to the caller.
+  scoped_ptr<base::DictionaryValue> GetPreferenceValuesWithoutPathExpansion()
+      const;
 
   bool ReadOnly() const;
 

@@ -4,6 +4,8 @@
 
 #include "chrome/browser/extensions/webstore_installer.h"
 
+#include <vector>
+
 #include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/command_line.h"
@@ -18,8 +20,8 @@
 #include "chrome/browser/download/download_crx_util.h"
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/download/download_stats.h"
-#include "chrome/browser/download/download_util.h"
 #include "chrome/browser/extensions/crx_installer.h"
+#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/install_tracker.h"
 #include "chrome/browser/extensions/install_tracker_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -28,7 +30,7 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
-#include "chrome/common/extensions/extension_manifest_constants.h"
+#include "chrome/common/extensions/manifest_handlers/shared_module_info.h"
 #include "chrome/common/omaha_query_params/omaha_query_params.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_manager.h"
@@ -42,6 +44,7 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/common/manifest_constants.h"
 #include "net/base/escape.h"
 #include "url/gurl.h"
 
@@ -63,15 +66,18 @@ namespace {
 const char kApprovalKey[] = "extensions.webstore_installer";
 
 const char kInvalidIdError[] = "Invalid id";
-const char kNoBrowserError[] = "No browser found";
 const char kDownloadDirectoryError[] = "Could not create download directory";
 const char kDownloadCanceledError[] = "Download canceled";
 const char kInstallCanceledError[] = "Install canceled";
 const char kDownloadInterruptedError[] = "Download interrupted";
 const char kInvalidDownloadError[] =
     "Download was not a valid extension or user script";
+const char kDependencyNotFoundError[] = "Dependency not found";
+const char kDependencyNotSharedModuleError[] =
+  "Dependency is not shared module";
 const char kInlineInstallSource[] = "inline";
 const char kDefaultInstallSource[] = "ondemand";
+const char kAppLauncherInstallSource[] = "applauncher";
 
 base::FilePath* g_download_directory_for_tests = NULL;
 
@@ -85,7 +91,7 @@ void GetDownloadFilePath(
 #if defined(OS_CHROMEOS)
   // Do not use drive for extension downloads.
   if (drive::util::IsUnderDriveMountPoint(directory))
-    directory = download_util::GetDefaultDownloadDirectory();
+    directory = DownloadPrefs::GetDefaultDownloadDirectory();
 #endif
 
   // Ensure the download directory exists. TODO(asargent) - make this use
@@ -125,7 +131,19 @@ namespace extensions {
 
 // static
 GURL WebstoreInstaller::GetWebstoreInstallURL(
-    const std::string& extension_id, const std::string& install_source) {
+    const std::string& extension_id, InstallSource source) {
+  std::string install_source;
+  switch (source) {
+    case INSTALL_SOURCE_INLINE:
+      install_source = kInlineInstallSource;
+      break;
+    case INSTALL_SOURCE_APP_LAUNCHER:
+      install_source = kAppLauncherInstallSource;
+      break;
+    case INSTALL_SOURCE_OTHER:
+      install_source = kDefaultInstallSource;
+  }
+
   CommandLine* cmd_line = CommandLine::ForCurrentProcess();
   if (cmd_line->HasSwitch(switches::kAppsGalleryDownloadURL)) {
     std::string download_url =
@@ -164,7 +182,8 @@ WebstoreInstaller::Approval::Approval()
       use_app_installed_bubble(false),
       skip_post_install_ui(false),
       skip_install_dialog(false),
-      enable_launcher(false) {
+      enable_launcher(false),
+      manifest_check_level(MANIFEST_CHECK_LEVEL_STRICT) {
 }
 
 scoped_ptr<WebstoreInstaller::Approval>
@@ -175,10 +194,20 @@ WebstoreInstaller::Approval::CreateWithInstallPrompt(Profile* profile) {
 }
 
 scoped_ptr<WebstoreInstaller::Approval>
+WebstoreInstaller::Approval::CreateForSharedModule(Profile* profile) {
+  scoped_ptr<Approval> result(new Approval());
+  result->profile = profile;
+  result->skip_install_dialog = true;
+  result->manifest_check_level = MANIFEST_CHECK_LEVEL_NONE;
+  return result.Pass();
+}
+
+scoped_ptr<WebstoreInstaller::Approval>
 WebstoreInstaller::Approval::CreateWithNoInstallPrompt(
     Profile* profile,
     const std::string& extension_id,
-    scoped_ptr<base::DictionaryValue> parsed_manifest) {
+    scoped_ptr<base::DictionaryValue> parsed_manifest,
+    bool strict_manifest_check) {
   scoped_ptr<Approval> result(new Approval());
   result->extension_id = extension_id;
   result->profile = profile;
@@ -186,6 +215,8 @@ WebstoreInstaller::Approval::CreateWithNoInstallPrompt(
       new Manifest(Manifest::INVALID_LOCATION,
                    scoped_ptr<DictionaryValue>(parsed_manifest->DeepCopy())));
   result->skip_install_dialog = true;
+  result->manifest_check_level = strict_manifest_check ?
+    MANIFEST_CHECK_LEVEL_STRICT : MANIFEST_CHECK_LEVEL_LOOSE;
   return result.Pass();
 }
 
@@ -201,17 +232,18 @@ WebstoreInstaller::WebstoreInstaller(Profile* profile,
                                      NavigationController* controller,
                                      const std::string& id,
                                      scoped_ptr<Approval> approval,
-                                     int flags)
+                                     InstallSource source)
     : profile_(profile),
       delegate_(delegate),
       controller_(controller),
       id_(id),
+      install_source_(source),
       download_item_(NULL),
-      approval_(approval.release()) {
+      approval_(approval.release()),
+      total_modules_(0),
+      download_started_(false) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(controller_);
-  download_url_ = GetWebstoreInstallURL(id, flags & FLAG_INLINE_INSTALL ?
-      kInlineInstallSource : kDefaultInstallSource);
 
   registrar_.Add(this, chrome::NOTIFICATION_CRX_INSTALLER_DONE,
                  content::NotificationService::AllSources());
@@ -230,16 +262,33 @@ void WebstoreInstaller::Start() {
     return;
   }
 
-  base::FilePath download_path = DownloadPrefs::FromDownloadManager(
-      BrowserContext::GetDownloadManager(profile_))->DownloadPath();
-  BrowserThread::PostTask(
-      BrowserThread::FILE, FROM_HERE,
-      base::Bind(&GetDownloadFilePath, download_path, id_,
-                 base::Bind(&WebstoreInstaller::StartDownload, this)));
+  ExtensionService* extension_service =
+    ExtensionSystem::Get(profile_)->extension_service();
+  if (approval_.get() && approval_->dummy_extension) {
+    ExtensionService::ImportStatus status =
+      extension_service->CheckImports(approval_->dummy_extension,
+                                      &pending_modules_, &pending_modules_);
+    // For this case, it is because some imports are not shared modules.
+    if (status == ExtensionService::IMPORT_STATUS_UNRECOVERABLE) {
+      ReportFailure(kDependencyNotSharedModuleError,
+          FAILURE_REASON_DEPENDENCY_NOT_SHARED_MODULE);
+      return;
+    }
+  }
+
+  // Add the extension main module into the list.
+  SharedModuleInfo::ImportInfo info;
+  info.extension_id = id_;
+  pending_modules_.push_back(info);
+
+  total_modules_ = pending_modules_.size();
+
+  // TODO(crbug.com/305343): Query manifest of dependencises before
+  // downloading & installing those dependencies.
+  DownloadNextPendingModule();
 
   std::string name;
-  if (!approval_->manifest->value()->GetString(extension_manifest_keys::kName,
-                                               &name)) {
+  if (!approval_->manifest->value()->GetString(manifest_keys::kName, &name)) {
     NOTREACHED();
   }
   extensions::InstallTracker* tracker =
@@ -269,8 +318,33 @@ void WebstoreInstaller::Observe(int type,
       CHECK(profile_->IsSameProfile(content::Source<Profile>(source).ptr()));
       const Extension* extension =
           content::Details<const InstalledExtensionInfo>(details)->extension;
-      if (id_ == extension->id())
+      if (pending_modules_.empty())
+        return;
+      SharedModuleInfo::ImportInfo info = pending_modules_.front();
+      if (extension->id() != info.extension_id)
+        return;
+      pending_modules_.pop_front();
+
+      if (pending_modules_.empty()) {
+        CHECK_EQ(extension->id(), id_);
         ReportSuccess();
+      } else {
+        const Version version_required(info.minimum_version);
+        if (version_required.IsValid() &&
+            extension->version()->CompareTo(version_required) < 0) {
+          // It should not happen, CrxInstaller will make sure the version is
+          // equal or newer than version_required.
+          ReportFailure(kDependencyNotFoundError,
+              FAILURE_REASON_DEPENDENCY_NOT_FOUND);
+        } else if (!SharedModuleInfo::IsSharedModule(extension)) {
+          // It should not happen, CrxInstaller will make sure it is a shared
+          // module.
+          ReportFailure(kDependencyNotSharedModuleError,
+              FAILURE_REASON_DEPENDENCY_NOT_SHARED_MODULE);
+        } else {
+          DownloadNextPendingModule();
+        }
+      }
       break;
     }
 
@@ -320,12 +394,33 @@ void WebstoreInstaller::OnDownloadStarted(
   }
 
   DCHECK_EQ(net::OK, error);
+  DCHECK(!pending_modules_.empty());
   download_item_ = item;
   download_item_->AddObserver(this);
-  if (approval_)
-    download_item_->SetUserData(kApprovalKey, approval_.release());
-  if (delegate_)
-    delegate_->OnExtensionDownloadStarted(id_, download_item_);
+  if (pending_modules_.size() > 1) {
+    // We are downloading a shared module. We need create an approval for it.
+    scoped_ptr<Approval> approval = Approval::CreateForSharedModule(profile_);
+    const SharedModuleInfo::ImportInfo& info = pending_modules_.front();
+    approval->extension_id = info.extension_id;
+    const Version version_required(info.minimum_version);
+
+    if (version_required.IsValid()) {
+      approval->minimum_version.reset(
+          new Version(version_required));
+    }
+    download_item_->SetUserData(kApprovalKey, approval.release());
+  } else {
+    // It is for the main module of the extension. We should use the provided
+    // |approval_|.
+    if (approval_)
+      download_item_->SetUserData(kApprovalKey, approval_.release());
+  }
+
+  if (!download_started_) {
+    if (delegate_)
+      delegate_->OnExtensionDownloadStarted(id_, download_item_);
+    download_started_ = true;
+  }
 }
 
 void WebstoreInstaller::OnDownloadUpdated(DownloadItem* download) {
@@ -342,23 +437,29 @@ void WebstoreInstaller::OnDownloadUpdated(DownloadItem* download) {
       // Wait for other notifications if the download is really an extension.
       if (!download_crx_util::IsExtensionDownload(*download)) {
         ReportFailure(kInvalidDownloadError, FAILURE_REASON_OTHER);
-      } else {
+      } else if (pending_modules_.empty()) {
+        // The download is the last module - the extension main module.
         if (delegate_)
           delegate_->OnExtensionDownloadProgress(id_, download);
-
         extensions::InstallTracker* tracker =
             extensions::InstallTrackerFactory::GetForProfile(profile_);
         tracker->OnDownloadProgress(id_, 100);
       }
       break;
     case DownloadItem::IN_PROGRESS: {
-      if (delegate_)
+      if (delegate_ && pending_modules_.size() == 1) {
+        // Only report download progress for the main module to |delegrate_|.
         delegate_->OnExtensionDownloadProgress(id_, download);
-
-      extensions::InstallTracker* tracker =
+      }
+      int percent = download->PercentComplete();
+      // Only report progress if precent is more than 0
+      if (percent >= 0) {
+        int finished_modules = total_modules_ - pending_modules_.size();
+        percent = (percent + finished_modules * 100) / total_modules_;
+        extensions::InstallTracker* tracker =
           extensions::InstallTrackerFactory::GetForProfile(profile_);
-      tracker->OnDownloadProgress(id_, download->PercentComplete());
-
+        tracker->OnDownloadProgress(id_, percent);
+      }
       break;
     }
     default:
@@ -371,6 +472,27 @@ void WebstoreInstaller::OnDownloadDestroyed(DownloadItem* download) {
   CHECK_EQ(download_item_, download);
   download_item_->RemoveObserver(this);
   download_item_ = NULL;
+}
+
+void WebstoreInstaller::DownloadNextPendingModule() {
+  CHECK(!pending_modules_.empty());
+  if (pending_modules_.size() == 1) {
+    DCHECK_EQ(id_, pending_modules_.front().extension_id);
+    DownloadCrx(id_, install_source_);
+  } else {
+    DownloadCrx(pending_modules_.front().extension_id, INSTALL_SOURCE_OTHER);
+  }
+}
+
+void WebstoreInstaller::DownloadCrx(
+    const std::string& extension_id, InstallSource source) {
+  download_url_ = GetWebstoreInstallURL(extension_id, source);
+  base::FilePath download_path = DownloadPrefs::FromDownloadManager(
+      BrowserContext::GetDownloadManager(profile_))->DownloadPath();
+  BrowserThread::PostTask(
+      BrowserThread::FILE, FROM_HERE,
+      base::Bind(&GetDownloadFilePath, download_path, id_,
+        base::Bind(&WebstoreInstaller::StartDownload, this)));
 }
 
 // http://crbug.com/165634
@@ -435,9 +557,9 @@ void WebstoreInstaller::StartDownload(const base::FilePath& file) {
       render_view_host_routing_id ,
       resource_context));
   params->set_file_path(file);
-  if (controller_->GetActiveEntry())
+  if (controller_->GetVisibleEntry())
     params->set_referrer(
-        content::Referrer(controller_->GetActiveEntry()->GetURL(),
+        content::Referrer(controller_->GetVisibleEntry()->GetURL(),
                           WebKit::WebReferrerPolicyDefault));
   params->set_callback(base::Bind(&WebstoreInstaller::OnDownloadStarted, this));
   download_manager->DownloadUrl(params.Pass());

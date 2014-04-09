@@ -88,11 +88,15 @@ class ZeroSuggestProvider : public AutocompleteProvider,
 
   virtual ~ZeroSuggestProvider();
 
-  bool ShouldRunZeroSuggest(const GURL& url) const;
+  bool ShouldRunZeroSuggest(
+      const GURL& url,
+      AutocompleteInput::PageClassification page_classification) const;
 
   // Whether the URL can get Zero Suggest.  For example, don't send the URL of
   // non-Google HTTPS requests because it may contain sensitive information.
-  bool ShouldSendURL(const GURL& url) const;
+  bool ShouldSendURL(
+      const GURL& url,
+      AutocompleteInput::PageClassification page_classification) const;
 
   // The 4 functions below (that take classes defined in SearchProvider as
   // arguments) were copied and trimmed from SearchProvider.
@@ -147,6 +151,11 @@ class ZeroSuggestProvider : public AutocompleteProvider,
   // page.
   AutocompleteMatch MatchForCurrentURL();
 
+  // When the user is in the Most Visited field trial, we ask the TopSites
+  // service for the most visited URLs during Run().  It calls back to this
+  // function to return those |urls|.
+  void OnMostVisitedUrlsAvailable(const history::MostVisitedURLList& urls);
+
   // Used to build default search engine URLs for suggested queries.
   TemplateURLService* template_url_service_;
 
@@ -184,6 +193,11 @@ class ZeroSuggestProvider : public AutocompleteProvider,
   // triggered (same condition as field_trial_triggered_), or triggered zero
   // suggest but kept typing.
   bool field_trial_triggered_in_session_;
+
+  history::MostVisitedURLList most_visited_urls_;
+
+  // For callbacks that may be run after destruction.
+  base::WeakPtrFactory<ZeroSuggestProvider> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ZeroSuggestProvider);
 };

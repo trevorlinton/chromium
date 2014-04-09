@@ -25,7 +25,7 @@ struct SSLStatus;
 
 // A NavigationEntry is a data structure that captures all the information
 // required to recreate a browsing state. This includes some opaque binary
-// state as provided by the WebContentsImpl as well as some clear text title and
+// state as provided by the WebContents as well as some clear text title and
 // URL which is used for our user interface.
 class NavigationEntry {
  public:
@@ -198,6 +198,16 @@ class NavigationEntry {
   virtual bool GetExtraData(const std::string& key, string16* data) const = 0;
   // Removes the data at the specified |key|.
   virtual void ClearExtraData(const std::string& key) = 0;
+
+  // The status code of the last known successful navigation.  If
+  // GetHttpStatusCode() returns 0 that means that either:
+  //
+  //   - this navigation hasn't completed yet;
+  //   - a response wasn't received;
+  //   - or this navigation was restored and for some reason the
+  //     status code wasn't available.
+  virtual void SetHttpStatusCode(int http_status_code) = 0;
+  virtual int GetHttpStatusCode() const = 0;
 };
 
 }  // namespace content

@@ -9,8 +9,8 @@
 #include "chrome/browser/media/desktop_media_picker_model.h"
 #include "content/public/browser/browser_thread.h"
 #include "grit/generated_resources.h"
-#include "ui/base/keycodes/keyboard_codes.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
@@ -22,6 +22,14 @@
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/dialog_client_view.h"
 #include "ui/views/window/dialog_delegate.h"
+
+#if defined(USE_AURA)
+#include "ui/aura/root_window.h"
+#endif
+
+#if defined(OS_WIN)
+#include "ui/views/win/hwnd_util.h"
+#endif
 
 using content::DesktopMediaID;
 
@@ -100,8 +108,13 @@ class DesktopMediaListView : public views::View,
                        scoped_ptr<DesktopMediaPickerModel> model);
   virtual ~DesktopMediaListView();
 
+  void StartUpdating(content::DesktopMediaID::Id dialog_window_id);
+
   // Called by DesktopMediaSourceView when selection has changed.
   void OnSelectionChanged();
+
+  // Called by DesktopMediaSourceView when a source has been double-clicked.
+  void OnDoubleClick();
 
   // Returns currently selected source.
   DesktopMediaSourceView* GetSelection();
@@ -139,6 +152,7 @@ class DesktopMediaPickerDialogView : public views::DialogDelegateView {
 
   // Called by DesktopMediaListView.
   void OnSelectionChanged();
+  void OnDoubleClick();
 
   // views::View overrides.
   virtual gfx::Size GetPreferredSize() OVERRIDE;
@@ -282,7 +296,12 @@ void DesktopMediaSourceView::OnFocus() {
 }
 
 bool DesktopMediaSourceView::OnMousePressed(const ui::MouseEvent& event) {
-  RequestFocus();
+  if (event.GetClickCount() == 1) {
+    RequestFocus();
+  } else if (event.GetClickCount() == 2) {
+    RequestFocus();
+    parent_->OnDoubleClick();
+  }
   return true;
 }
 
@@ -292,14 +311,22 @@ DesktopMediaListView::DesktopMediaListView(
     : parent_(parent),
       model_(model.Pass()) {
   model_->SetThumbnailSize(gfx::Size(kThumbnailWidth, kThumbnailHeight));
-  model_->StartUpdating(this);
 }
 
-DesktopMediaListView::~DesktopMediaListView() {
+DesktopMediaListView::~DesktopMediaListView() {}
+
+void DesktopMediaListView::StartUpdating(
+    content::DesktopMediaID::Id dialog_window_id) {
+  model_->SetViewDialogWindowId(dialog_window_id);
+  model_->StartUpdating(this);
 }
 
 void DesktopMediaListView::OnSelectionChanged() {
   parent_->OnSelectionChanged();
+}
+
+void DesktopMediaListView::OnDoubleClick() {
+  parent_->OnDoubleClick();
 }
 
 DesktopMediaSourceView* DesktopMediaListView::GetSelection() {
@@ -334,7 +361,6 @@ void DesktopMediaListView::Layout() {
     x += kListItemWidth;
   }
 
-
   y += kListItemHeight;
   SetSize(gfx::Size(kTotalListWidth, y));
 }
@@ -357,7 +383,6 @@ bool DesktopMediaListView::OnKeyPressed(const ui::KeyEvent& event) {
     default:
       return false;
   }
-
 
   if (position_increment != 0) {
     DesktopMediaSourceView* selected = GetSelection();
@@ -395,7 +420,8 @@ void DesktopMediaListView::OnSourceAdded(int index) {
   source_view->SetName(source.name);
   source_view->SetGroup(kDesktopMediaSourceViewGroupId);
   AddChildViewAt(source_view, index);
-  Layout();
+
+  PreferredSizeChanged();
 }
 
 void DesktopMediaListView::OnSourceRemoved(int index) {
@@ -448,6 +474,29 @@ DesktopMediaPickerDialogView::DesktopMediaPickerDialogView(
   AddChildView(scroll_view_);
 
   DialogDelegate::CreateDialogWidget(this, context, parent_window);
+
+  // DesktopMediaPickerModel needs to know the ID of the picker window which
+  // matches the ID it gets from the OS. Depending on the OS and configuration
+  // we get this ID differently.
+  //
+  // TODO(sergeyu): Update this code when Ash-specific window capturer is
+  // implemented. Currently this code will always get native windows ID
+  // which is not what we need in Ash. http://crbug.com/295102
+  content::DesktopMediaID::Id dialog_window_id;
+
+#if defined(OS_WIN)
+  dialog_window_id = reinterpret_cast<content::DesktopMediaID::Id>(
+      views::HWNDForWidget(GetWidget()));
+#elif defined(USE_AURA)
+  dialog_window_id = static_cast<content::DesktopMediaID::Id>(
+      GetWidget()->GetNativeWindow()->GetDispatcher()->GetAcceleratedWidget());
+#else
+  dialog_window_id = 0;
+  NOTIMPLEMENTED();
+#endif
+
+  list_view_->StartUpdating(dialog_window_id);
+
   GetWidget()->Show();
 }
 
@@ -512,6 +561,11 @@ void DesktopMediaPickerDialogView::DeleteDelegate() {
 
 void DesktopMediaPickerDialogView::OnSelectionChanged() {
   GetDialogClientView()->UpdateDialogButtons();
+}
+
+void DesktopMediaPickerDialogView::OnDoubleClick() {
+  // This will call Accept() and close the dialog.
+  GetDialogClientView()->AcceptWindow();
 }
 
 DesktopMediaPickerViews::DesktopMediaPickerViews()

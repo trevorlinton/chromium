@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/memory/scoped_ptr.h"
+#include "base/observer_list.h"
 #include "chrome/browser/bookmarks/base_bookmark_model_observer.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -17,6 +18,7 @@
 
 class BookmarkMenuDelegate;
 class Browser;
+class WrenchMenuObserver;
 
 namespace ui {
 class NativeTheme;
@@ -53,12 +55,16 @@ class WrenchMenu : public views::MenuDelegate,
 
   bool use_new_menu() const { return use_new_menu_; }
 
+  void AddObserver(WrenchMenuObserver* observer);
+  void RemoveObserver(WrenchMenuObserver* observer);
+
   // MenuDelegate overrides:
-  virtual const gfx::Font* GetLabelFont(int index) const OVERRIDE;
+  virtual const gfx::Font* GetLabelFont(int command_id) const OVERRIDE;
   virtual bool GetForegroundColor(int command_id,
                                   bool is_hovered,
                                   SkColor* override_color) const OVERRIDE;
-  virtual string16 GetTooltipText(int id, const gfx::Point& p) const OVERRIDE;
+  virtual string16 GetTooltipText(int command_id,
+                                  const gfx::Point& p) const OVERRIDE;
   virtual bool IsTriggerableEvent(views::MenuItemView* menu,
                                   const ui::Event& e) OVERRIDE;
   virtual bool GetDropFormats(
@@ -75,7 +81,7 @@ class WrenchMenu : public views::MenuDelegate,
                             DropPosition position,
                             const ui::DropTargetEvent& event) OVERRIDE;
   virtual bool ShowContextMenu(views::MenuItemView* source,
-                               int id,
+                               int command_id,
                                const gfx::Point& p,
                                ui::MenuSourceType source_type) OVERRIDE;
   virtual bool CanDrag(views::MenuItemView* menu) OVERRIDE;
@@ -83,10 +89,11 @@ class WrenchMenu : public views::MenuDelegate,
                              ui::OSExchangeData* data) OVERRIDE;
   virtual int GetDragOperations(views::MenuItemView* sender) OVERRIDE;
   virtual int GetMaxWidthForMenu(views::MenuItemView* menu) OVERRIDE;
-  virtual bool IsItemChecked(int id) const OVERRIDE;
-  virtual bool IsCommandEnabled(int id) const OVERRIDE;
-  virtual void ExecuteCommand(int id, int mouse_event_flags) OVERRIDE;
-  virtual bool GetAccelerator(int id, ui::Accelerator* accelerator) OVERRIDE;
+  virtual bool IsItemChecked(int command_id) const OVERRIDE;
+  virtual bool IsCommandEnabled(int command_id) const OVERRIDE;
+  virtual void ExecuteCommand(int command_id, int mouse_event_flags) OVERRIDE;
+  virtual bool GetAccelerator(int command_id,
+                              ui::Accelerator* accelerator) OVERRIDE;
   virtual void WillShowMenu(views::MenuItemView* menu) OVERRIDE;
   virtual void WillHideMenu(views::MenuItemView* menu) OVERRIDE;
 
@@ -104,27 +111,30 @@ class WrenchMenu : public views::MenuDelegate,
   class ZoomView;
 
   typedef std::pair<ui::MenuModel*,int> Entry;
-  typedef std::map<int,Entry> IDToEntry;
+  typedef std::map<int,Entry> CommandIDToEntry;
 
   const ui::NativeTheme* GetNativeTheme() const;
 
   // Populates |parent| with all the child menus in |model|. Recursively invokes
-  // |PopulateMenu| for any submenu. |next_id| is incremented for every menu
-  // that is created.
+  // |PopulateMenu| for any submenu.
   void PopulateMenu(views::MenuItemView* parent,
-                    ui::MenuModel* model,
-                    int* next_id);
+                    ui::MenuModel* model);
 
-  // Adds a new menu to |parent| to represent the MenuModel/index pair passed
-  // in.
-  // Fur button containing menu items a |height| override can be specified with
-  // a number bigger then 0.
-  views::MenuItemView* AppendMenuItem(views::MenuItemView* parent,
-                                      ui::MenuModel* model,
-                                      int index,
-                                      ui::MenuModel::ItemType menu_type,
-                                      int* next_id,
-                                      int height);
+  // Adds a new menu item to |parent| at |menu_index| to represent the item in
+  // |model| at |model_index|:
+  // - |menu_index|: position in |parent| to add the new item.
+  // - |model_index|: position in |model| to retrieve information about the
+  //   new menu item.
+  // - |height|: For button containing menu items, a |height| override can be
+  //   specified with a number bigger then 0.
+  // The returned item's MenuItemView::GetCommand() is the same as that of
+  // |model|->GetCommandIdAt(|model_index|).
+  views::MenuItemView* AddMenuItem(views::MenuItemView* parent,
+                                   int menu_index,
+                                   ui::MenuModel* model,
+                                   int model_index,
+                                   ui::MenuModel::ItemType menu_type,
+                                   int height);
 
   // Invoked from the cut/copy/paste menus. Cancels the current active menu and
   // activates the menu item in |model| at |index|.
@@ -134,26 +144,18 @@ class WrenchMenu : public views::MenuDelegate,
   // the bookmark model isn't loaded.
   void CreateBookmarkMenu();
 
-  // Returns true if |id| identifies a bookmark menu item.
-  bool is_bookmark_command(int id) const {
-    return bookmark_menu_delegate_.get() && id >= first_bookmark_command_id_;
-  }
-
-  // Returns true if |id| identifies a recent tabs menu item.
-  bool is_recent_tabs_command(int id) const {
-    return (recent_tabs_menu_model_delegate_.get() &&
-            id >= first_recent_tabs_command_id_ &&
-            id <= last_recent_tabs_command_id_);
-  }
+  // Returns the index of the MenuModel/index pair representing the |command_id|
+  // in |command_id_to_entry_|.
+  int ModelIndexFromCommandId(int command_id) const;
 
   // The views menu. Owned by |menu_runner_|.
   views::MenuItemView* root_;
 
   scoped_ptr<views::MenuRunner> menu_runner_;
 
-  // Maps from the ID as understood by MenuItemView to the model/index pair the
-  // item came from.
-  IDToEntry id_to_entry_;
+  // Maps from the command ID in model to the model/index pair the item came
+  // from.
+  CommandIDToEntry command_id_to_entry_;
 
   // Browser the menu is being shown for.
   Browser* browser_;
@@ -177,18 +179,13 @@ class WrenchMenu : public views::MenuDelegate,
   // Used for managing "Recent tabs" menu items.
   scoped_ptr<RecentTabsMenuModelDelegate> recent_tabs_menu_model_delegate_;
 
-  // First ID to use for the items representing bookmarks in the bookmark menu.
-  int first_bookmark_command_id_;
-
-  // First/last IDs to use for the items of the recent tabs sub-menu.
-  int first_recent_tabs_command_id_;
-  int last_recent_tabs_command_id_;
-
   content::NotificationRegistrar registrar_;
 
   const bool use_new_menu_;
 
   const bool supports_new_separators_;
+
+  ObserverList<WrenchMenuObserver> observer_list_;
 
   DISALLOW_COPY_AND_ASSIGN(WrenchMenu);
 };

@@ -36,8 +36,7 @@ using ::testing::WithArg;
 namespace media {
 
 // Demuxer properties.
-static const int kTotalBytes = 1024;
-static const int kBitrate = 1234;
+const int kTotalBytes = 1024;
 
 ACTION_P(SetDemuxerProperties, duration) {
   arg0->SetTotalBytes(kTotalBytes);
@@ -181,7 +180,6 @@ class PipelineTest : public ::testing::Test {
 
     if (start_status == PIPELINE_OK) {
       EXPECT_CALL(callbacks_, OnBufferingState(Pipeline::kHaveMetadata));
-      EXPECT_CALL(*demuxer_, SetPlaybackRate(0.0f));
 
       if (audio_stream_) {
         EXPECT_CALL(*audio_renderer_, SetPlaybackRate(0.0f));
@@ -229,7 +227,6 @@ class PipelineTest : public ::testing::Test {
     // Every filter should receive a call to Seek().
     EXPECT_CALL(*demuxer_, Seek(seek_time, _))
         .WillOnce(RunCallback<1>(PIPELINE_OK));
-    EXPECT_CALL(*demuxer_, SetPlaybackRate(_));
 
     if (audio_stream_) {
       EXPECT_CALL(*audio_renderer_, Pause(_))
@@ -616,7 +613,6 @@ TEST_F(PipelineTest, AudioStreamShorterThanVideo) {
   EXPECT_EQ(0, pipeline_->GetMediaTime().ToInternalValue());
 
   float playback_rate = 1.0f;
-  EXPECT_CALL(*demuxer_, SetPlaybackRate(playback_rate));
   EXPECT_CALL(*video_renderer_, SetPlaybackRate(playback_rate));
   EXPECT_CALL(*audio_renderer_, SetPlaybackRate(playback_rate));
   pipeline_->SetPlaybackRate(playback_rate);
@@ -654,7 +650,6 @@ TEST_F(PipelineTest, ErrorDuringSeek) {
   InitializePipeline(PIPELINE_OK);
 
   float playback_rate = 1.0f;
-  EXPECT_CALL(*demuxer_, SetPlaybackRate(playback_rate));
   EXPECT_CALL(*audio_renderer_, SetPlaybackRate(playback_rate));
   pipeline_->SetPlaybackRate(playback_rate);
   message_loop_.RunUntilIdle();
@@ -789,7 +784,6 @@ TEST_F(PipelineTest, AudioTimeUpdateDuringSeek) {
   InitializePipeline(PIPELINE_OK);
 
   float playback_rate = 1.0f;
-  EXPECT_CALL(*demuxer_, SetPlaybackRate(playback_rate));
   EXPECT_CALL(*audio_renderer_, SetPlaybackRate(playback_rate));
   pipeline_->SetPlaybackRate(playback_rate);
   message_loop_.RunUntilIdle();
@@ -815,7 +809,6 @@ TEST_F(PipelineTest, AudioTimeUpdateDuringSeek) {
       .WillOnce(RunClosure<0>());
   EXPECT_CALL(*audio_renderer_, Preroll(seek_time, _))
       .WillOnce(RunCallback<1>(PIPELINE_OK));
-  EXPECT_CALL(*demuxer_, SetPlaybackRate(_));
   EXPECT_CALL(*audio_renderer_, SetPlaybackRate(_));
   EXPECT_CALL(*audio_renderer_, SetVolume(_));
   EXPECT_CALL(*audio_renderer_, Play(_))
@@ -871,6 +864,7 @@ class PipelineTeardownTest : public PipelineTest {
   enum StopOrError {
     kStop,
     kError,
+    kErrorAndStop,
   };
 
   PipelineTeardownTest() {}
@@ -999,7 +993,6 @@ class PipelineTeardownTest : public PipelineTest {
     EXPECT_CALL(*video_renderer_, Preroll(base::TimeDelta(), _))
         .WillOnce(RunCallback<1>(PIPELINE_OK));
 
-    EXPECT_CALL(*demuxer_, SetPlaybackRate(0.0f));
     EXPECT_CALL(*audio_renderer_, SetPlaybackRate(0.0f));
     EXPECT_CALL(*video_renderer_, SetPlaybackRate(0.0f));
     EXPECT_CALL(*audio_renderer_, SetVolume(1.0f));
@@ -1108,7 +1101,6 @@ class PipelineTeardownTest : public PipelineTest {
         .WillOnce(RunCallback<1>(PIPELINE_OK));
 
     // Playback rate and volume are updated prior to starting.
-    EXPECT_CALL(*demuxer_, SetPlaybackRate(0.0f));
     EXPECT_CALL(*audio_renderer_, SetPlaybackRate(0.0f));
     EXPECT_CALL(*video_renderer_, SetPlaybackRate(0.0f));
     EXPECT_CALL(*audio_renderer_, SetVolume(1.0f));
@@ -1136,13 +1128,24 @@ class PipelineTeardownTest : public PipelineTest {
     EXPECT_CALL(*audio_renderer_, Stop(_)).WillOnce(RunClosure<0>());
     EXPECT_CALL(*video_renderer_, Stop(_)).WillOnce(RunClosure<0>());
 
-    if (stop_or_error == kStop) {
-      EXPECT_CALL(callbacks_, OnStop());
-      pipeline_->Stop(base::Bind(
-          &CallbackHelper::OnStop, base::Unretained(&callbacks_)));
-    } else {
-      EXPECT_CALL(callbacks_, OnError(PIPELINE_ERROR_READ));
-      pipeline_->SetErrorForTesting(PIPELINE_ERROR_READ);
+    switch (stop_or_error) {
+      case kStop:
+        EXPECT_CALL(callbacks_, OnStop());
+        pipeline_->Stop(base::Bind(
+            &CallbackHelper::OnStop, base::Unretained(&callbacks_)));
+        break;
+
+      case kError:
+        EXPECT_CALL(callbacks_, OnError(PIPELINE_ERROR_READ));
+        pipeline_->SetErrorForTesting(PIPELINE_ERROR_READ);
+        break;
+
+      case kErrorAndStop:
+        EXPECT_CALL(callbacks_, OnStop());
+        pipeline_->SetErrorForTesting(PIPELINE_ERROR_READ);
+        pipeline_->Stop(base::Bind(
+            &CallbackHelper::OnStop, base::Unretained(&callbacks_)));
+        break;
     }
 
     message_loop_.RunUntilIdle();
@@ -1175,5 +1178,7 @@ INSTANTIATE_TEARDOWN_TEST(Error, Seeking);
 INSTANTIATE_TEARDOWN_TEST(Error, Prerolling);
 INSTANTIATE_TEARDOWN_TEST(Error, Starting);
 INSTANTIATE_TEARDOWN_TEST(Error, Playing);
+
+INSTANTIATE_TEARDOWN_TEST(ErrorAndStop, Playing);
 
 }  // namespace media

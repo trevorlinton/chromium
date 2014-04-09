@@ -10,9 +10,9 @@
 #include "base/logging.h"
 #include "base/memory/shared_memory.h"
 #include "base/metrics/histogram.h"
-#include "base/perftimer.h"
 #include "base/pickle.h"
 #include "base/strings/stringprintf.h"
+#include "base/timer/elapsed_timer.h"
 #include "chrome/common/extensions/csp_handler.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_messages.h"
@@ -104,8 +104,8 @@ void UserScriptSlave::InitializeIsolatedWorld(int isolated_world_id,
   for (URLPatternSet::const_iterator i = permissions.begin();
        i != permissions.end(); ++i) {
     const char* schemes[] = {
-      chrome::kHttpScheme,
-      chrome::kHttpsScheme,
+      content::kHttpScheme,
+      content::kHttpsScheme,
       chrome::kFileScheme,
       chrome::kChromeUIScheme,
     };
@@ -204,7 +204,7 @@ bool UserScriptSlave::UpdateScripts(base::SharedMemoryHandle shared_memory) {
 
   // Push user styles down into WebCore
   RenderThread::Get()->EnsureWebKitInitialized();
-  WebView::removeAllUserContent();
+  WebView::removeInjectedStyleSheets();
   for (size_t i = 0; i < scripts_.size(); ++i) {
     UserScript* script = scripts_[i];
     if (script->css_scripts().empty())
@@ -227,13 +227,12 @@ bool UserScriptSlave::UpdateScripts(base::SharedMemoryHandle shared_memory) {
       const UserScript::File& file = scripts_[i]->css_scripts()[j];
       std::string content = file.GetContent().as_string();
 
-      WebView::addUserStyleSheet(
+      WebView::injectStyleSheet(
           WebString::fromUTF8(content),
           patterns,
            script->match_all_frames() ?
-              WebView::UserContentInjectInAllFrames :
-              WebView::UserContentInjectInTopFrameOnly,
-          WebView::UserStyleInjectInExistingDocuments);
+              WebView::InjectStyleInAllFrames :
+              WebView::InjectStyleInTopFrameOnly);
     }
   }
 
@@ -265,7 +264,7 @@ void UserScriptSlave::InjectScripts(WebFrame* frame,
     data_source_url = GURL(content::kViewSourceScheme + std::string(":") +
                            data_source_url.spec());
 
-  PerfTimer timer;
+  base::ElapsedTimer timer;
   int num_css = 0;
   int num_scripts = 0;
 
@@ -333,12 +332,8 @@ void UserScriptSlave::InjectScripts(WebFrame* frame,
 
       int isolated_world_id = GetIsolatedWorldIdForExtension(extension, frame);
 
-      PerfTimer exec_timer;
-      DOMActivityLogger::AttachToWorld(
-          isolated_world_id,
-          extension->id(),
-          UserScriptSlave::GetDataSourceURLForFrame(frame),
-          frame->document().title());
+      base::ElapsedTimer exec_timer;
+      DOMActivityLogger::AttachToWorld(isolated_world_id, extension->id());
       frame->executeScriptInIsolatedWorld(
           isolated_world_id, &sources.front(), sources.size(),
           EXTENSION_GROUP_CONTENT_SCRIPTS);

@@ -113,10 +113,31 @@ public abstract class WebContentsObserverAndroid {
     }
 
     /**
+     * Notifies that a navigation entry has been committed.
+     */
+    @CalledByNative
+    public void navigationEntryCommitted() {
+    }
+
+    /**
      * Invoked when visible SSL state changes.
      */
     @CalledByNative
     public void didChangeVisibleSSLState() {
+    }
+
+    /**
+     * Called when an interstitial page gets attached to the tab content.
+     */
+    @CalledByNative
+    public void didAttachInterstitialPage() {
+    }
+
+    /**
+     * Called when an interstitial page gets detached from the tab content.
+     */
+    @CalledByNative
+    public void didDetachInterstitialPage() {
     }
 
     /**

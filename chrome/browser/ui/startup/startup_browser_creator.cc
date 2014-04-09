@@ -9,6 +9,7 @@
 
 #include "apps/app_load_service.h"
 #include "apps/switches.h"
+#include "ash/shell.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
@@ -65,7 +66,7 @@
 #include "ui/base/resource/resource_bundle.h"
 
 #if defined(OS_CHROMEOS)
-#include "chrome/browser/chromeos/app_mode/startup_app_launcher.h"
+#include "chrome/browser/chromeos/app_mode/app_launch_utils.h"
 #include "chrome/browser/chromeos/kiosk_mode/kiosk_mode_settings.h"
 #include "chrome/browser/chromeos/login/user_manager.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
@@ -73,7 +74,7 @@
 #endif
 
 #if defined(TOOLKIT_VIEWS) && defined(OS_LINUX)
-#include "ui/base/touch/touch_factory_x11.h"
+#include "ui/events/x/touch_factory_x11.h"
 #endif
 
 #if defined(OS_WIN)
@@ -281,9 +282,21 @@ bool StartupBrowserCreator::LaunchBrowser(
     StartupBrowserCreatorImpl lwp(cur_dir, command_line, this, is_first_run);
     const std::vector<GURL> urls_to_launch =
         GetURLsFromCommandLine(command_line, cur_dir, profile);
+    chrome::HostDesktopType host_desktop_type =
+        chrome::HOST_DESKTOP_TYPE_NATIVE;
+
+#if defined(OS_WIN) && defined(USE_ASH)
+    // We want to maintain only one type of instance for now, either ASH
+    // or desktop.
+    // TODO(shrikant): Remove this code once we decide on running both desktop
+    // and ASH instances side by side.
+    if (ash::Shell::HasInstance())
+      host_desktop_type = chrome::HOST_DESKTOP_TYPE_ASH;
+#endif
+
     const bool launched = lwp.Launch(profile, urls_to_launch,
                                in_synchronous_profile_launch_,
-                               chrome::HOST_DESKTOP_TYPE_NATIVE);
+                               host_desktop_type);
     in_synchronous_profile_launch_ = false;
     if (!launched) {
       LOG(ERROR) << "launch error";
@@ -298,7 +311,9 @@ bool StartupBrowserCreator::LaunchBrowser(
   profile_launch_observer.Get().AddLaunched(profile);
 
 #if defined(OS_CHROMEOS)
-  chromeos::ProfileHelper::ProfileStartup(profile, process_startup);
+  g_browser_process->platform_part()->profile_helper()->ProfileStartup(
+      profile,
+      process_startup);
 #endif
   return true;
 }
@@ -360,16 +375,6 @@ SessionStartupPref StartupBrowserCreator::GetSessionStartupPref(
     // default launch behavior.
     pref.type = SessionStartupPref::DEFAULT;
   }
-
-#if defined(OS_CHROMEOS)
-  // Kiosk/Retail mode has no profile to restore and fails to open the tabs
-  // specified in the startup_urls policy if we try to restore the non-existent
-  // session which is the default for ChromeOS in general.
-  if (chromeos::KioskModeSettings::Get()->IsKioskModeEnabled()) {
-    DCHECK(pref.type == SessionStartupPref::LAST);
-    pref.type = SessionStartupPref::DEFAULT;
-  }
-#endif  // OS_CHROMEOS
 
   return pref;
 }
@@ -595,10 +600,9 @@ bool StartupBrowserCreator::ProcessCmdLineImpl(
 
   if (chrome::IsRunningInAppMode() &&
       command_line.HasSwitch(switches::kAppId)) {
-    // StartupAppLauncher deletes itself when done.
-    (new chromeos::StartupAppLauncher(
+    chromeos::LaunchAppOrDie(
         last_used_profile,
-        command_line.GetSwitchValueASCII(switches::kAppId)))->Start();
+        command_line.GetSwitchValueASCII(switches::kAppId));
 
     // Skip browser launch since app mode launches its app window.
     silent_launch = true;

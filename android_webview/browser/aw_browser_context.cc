@@ -9,18 +9,26 @@
 #include "android_webview/browser/aw_quota_manager_bridge.h"
 #include "android_webview/browser/jni_dependency_factory.h"
 #include "android_webview/browser/net/aw_url_request_context_getter.h"
+#include "android_webview/browser/net/init_native_callback.h"
+#include "base/android/path_utils.h"
+#include "base/file_util.h"
+#include "base/files/file_path.h"
 #include "base/prefs/pref_registry_simple.h"
 #include "base/prefs/pref_service.h"
 #include "base/prefs/pref_service_builder.h"
+#include "base/sequenced_task_runner.h"
+#include "base/threading/sequenced_worker_pool.h"
 #include "components/autofill/core/common/autofill_pref_names.h"
 #include "components/user_prefs/user_prefs.h"
 #include "components/visitedlink/browser/visitedlink_master.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/cookie_store_factory.h"
 #include "content/public/browser/resource_context.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "net/url_request/url_request_context.h"
 
+using base::FilePath;
 using content::BrowserThread;
 
 namespace android_webview {
@@ -34,7 +42,9 @@ void HandleReadError(PersistentPrefStore::PrefReadError error) {
 class AwResourceContext : public content::ResourceContext {
  public:
   explicit AwResourceContext(net::URLRequestContextGetter* getter)
-      : getter_(getter) {}
+      : getter_(getter) {
+    DCHECK(getter_);
+  }
   virtual ~AwResourceContext() {}
 
   // content::ResourceContext implementation.
@@ -61,10 +71,31 @@ class AwResourceContext : public content::ResourceContext {
 
 AwBrowserContext* g_browser_context = NULL;
 
+void ImportLegacyCookieStore(const FilePath& cookie_store_path) {
+  // We use the old cookie store to create the new cookie store only if the
+  // new cookie store does not exist.
+  if (base::PathExists(cookie_store_path))
+    return;
+
+  // WebViewClassic gets the database path from Context and appends a
+  // hardcoded name. (see https://android.googlesource.com/platform/frameworks/base/+/bf6f6f9de72c9fd15e6bd/core/java/android/webkit/JniUtil.java and
+  // https://android.googlesource.com/platform/external/webkit/+/7151ed0c74599/Source/WebKit/android/WebCoreSupport/WebCookieJar.cpp)
+  FilePath old_cookie_store_path;
+  base::android::GetDatabaseDirectory(&old_cookie_store_path);
+  old_cookie_store_path = old_cookie_store_path.Append(
+      FILE_PATH_LITERAL("webviewCookiesChromium.db"));
+  if (base::PathExists(old_cookie_store_path) &&
+      !base::Move(old_cookie_store_path, cookie_store_path)) {
+    LOG(WARNING) << "Failed to move old cookie store path from "
+                 << old_cookie_store_path.AsUTF8Unsafe() << " to "
+                 << cookie_store_path.AsUTF8Unsafe();
+  }
+}
+
 }  // namespace
 
 AwBrowserContext::AwBrowserContext(
-    const base::FilePath path,
+    const FilePath path,
     JniDependencyFactory* native_factory)
     : context_storage_path_(path),
       native_factory_(native_factory),
@@ -96,12 +127,31 @@ AwBrowserContext* AwBrowserContext::FromWebContents(
   return static_cast<AwBrowserContext*>(web_contents->GetBrowserContext());
 }
 
-void AwBrowserContext::InitializeBeforeThreadCreation() {
-  DCHECK(!url_request_context_getter_.get());
-  url_request_context_getter_ = new AwURLRequestContextGetter(this);
-}
-
 void AwBrowserContext::PreMainMessageLoopRun() {
+
+  FilePath cookie_store_path = GetPath().Append(FILE_PATH_LITERAL("Cookies"));
+  scoped_refptr<base::SequencedTaskRunner> background_task_runner =
+      BrowserThread::GetBlockingPool()->GetSequencedTaskRunner(
+          BrowserThread::GetBlockingPool()->GetSequenceToken());
+
+  background_task_runner->PostTask(
+      FROM_HERE,
+      base::Bind(ImportLegacyCookieStore, cookie_store_path));
+
+  cookie_store_ = content::CreatePersistentCookieStore(
+      cookie_store_path,
+      true,
+      NULL,
+      NULL,
+      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO),
+      background_task_runner);
+
+  cookie_store_->GetCookieMonster()->SetPersistSessionCookies(true);
+  url_request_context_getter_ =
+      new AwURLRequestContextGetter(GetPath(), cookie_store_.get());
+
+  DidCreateCookieMonster(cookie_store_->GetCookieMonster());
+
   visitedlink_master_.reset(
       new visitedlink::VisitedLinkMaster(this, this, false));
   visitedlink_master_->Init();
@@ -117,9 +167,14 @@ void AwBrowserContext::AddVisitedURLs(const std::vector<GURL>& urls) {
 
 net::URLRequestContextGetter* AwBrowserContext::CreateRequestContext(
     content::ProtocolHandlerMap* protocol_handlers) {
-  CHECK(url_request_context_getter_.get());
+  // This function cannot actually create the request context because
+  // there is a reentrant dependency on GetResourceContext() via
+  // content::StoragePartitionImplMap::Create(). This is not fixable
+  // until http://crbug.com/159193. Until then, assert that the context
+  // has already been allocated and just handle setting the protocol_handlers.
+  DCHECK(url_request_context_getter_);
   url_request_context_getter_->SetProtocolHandlers(protocol_handlers);
-  return url_request_context_getter_.get();
+  return url_request_context_getter_;
 }
 
 net::URLRequestContextGetter*
@@ -127,14 +182,13 @@ AwBrowserContext::CreateRequestContextForStoragePartition(
     const base::FilePath& partition_path,
     bool in_memory,
     content::ProtocolHandlerMap* protocol_handlers) {
-  CHECK(url_request_context_getter_.get());
-  return url_request_context_getter_.get();
+  NOTREACHED();
+  return NULL;
 }
 
 AwQuotaManagerBridge* AwBrowserContext::GetQuotaManagerBridge() {
-  if (!quota_manager_bridge_) {
-    quota_manager_bridge_.reset(
-        native_factory_->CreateAwQuotaManagerBridge(this));
+  if (!quota_manager_bridge_.get()) {
+    quota_manager_bridge_ = native_factory_->CreateAwQuotaManagerBridge(this);
   }
   return quota_manager_bridge_.get();
 }
@@ -194,10 +248,18 @@ net::URLRequestContextGetter* AwBrowserContext::GetMediaRequestContext() {
 void AwBrowserContext::RequestMIDISysExPermission(
       int render_process_id,
       int render_view_id,
+      int bridge_id,
       const GURL& requesting_frame,
       const MIDISysExPermissionCallback& callback) {
   // TODO(toyoshim): Android is not supported yet.
   callback.Run(false);
+}
+
+void AwBrowserContext::CancelMIDISysExPermissionRequest(
+    int render_process_id,
+    int render_view_id,
+    int bridge_id,
+    const GURL& requesting_frame) {
 }
 
 net::URLRequestContextGetter*
@@ -210,12 +272,12 @@ net::URLRequestContextGetter*
 AwBrowserContext::GetMediaRequestContextForStoragePartition(
     const base::FilePath& partition_path,
     bool in_memory) {
-  return GetRequestContext();
+  NOTREACHED();
+  return NULL;
 }
 
 content::ResourceContext* AwBrowserContext::GetResourceContext() {
   if (!resource_context_) {
-    CHECK(url_request_context_getter_.get());
     resource_context_.reset(
         new AwResourceContext(url_request_context_getter_.get()));
   }

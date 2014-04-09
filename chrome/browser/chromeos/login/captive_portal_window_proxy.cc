@@ -5,24 +5,26 @@
 #include "chrome/browser/chromeos/login/captive_portal_window_proxy.h"
 
 #include "chrome/browser/chromeos/login/captive_portal_view.h"
-#include "chrome/browser/chromeos/login/helper.h"
 #include "chrome/browser/chromeos/login/proxy_settings_dialog.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "components/web_modal/web_contents_modal_dialog_host.h"
+#include "components/web_modal/web_contents_modal_dialog_manager.h"
+#include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
 #include "ui/views/widget/widget.h"
 
-namespace {
-
-int kMargin = 50;
-
-}  // namespace
+using web_modal::WebContentsModalDialogManager;
+using web_modal::WebContentsModalDialogManagerDelegate;
 
 namespace chromeos {
 
-CaptivePortalWindowProxy::CaptivePortalWindowProxy(Delegate* delegate,
-                                                   gfx::NativeWindow parent)
+CaptivePortalWindowProxy::CaptivePortalWindowProxy(
+    Delegate* delegate,
+    gfx::NativeWindow parent,
+    content::WebContents* web_contents)
     : delegate_(delegate),
       widget_(NULL),
-      parent_(parent) {
+      parent_(parent),
+      web_contents_(web_contents) {
   DCHECK(GetState() == STATE_IDLE);
 }
 
@@ -54,17 +56,21 @@ void CaptivePortalWindowProxy::Show() {
   InitCaptivePortalView();
 
   CaptivePortalView* captive_portal_view = captive_portal_view_.release();
-  widget_ = views::Widget::CreateWindowWithParent(
+  WebContentsModalDialogManager* web_contents_modal_dialog_manager =
+      WebContentsModalDialogManager::FromWebContents(web_contents_);
+  DCHECK(web_contents_modal_dialog_manager);
+  WebContentsModalDialogManagerDelegate* delegate =
+      web_contents_modal_dialog_manager->delegate();
+  DCHECK(delegate);
+
+  widget_ = views::Widget::CreateWindowAsFramelessChild(
       captive_portal_view,
-      parent_);
+      parent_,
+      delegate->GetWebContentsModalDialogHost()->GetHostView());
   captive_portal_view->Init();
 
-  gfx::Rect bounds(CalculateScreenBounds(gfx::Size()));
-  bounds.Inset(kMargin, kMargin);
-  widget_->SetBounds(bounds);
-
   widget_->AddObserver(this);
-  widget_->Show();
+  web_contents_modal_dialog_manager->ShowDialog(widget_->GetNativeView());
   DCHECK(GetState() == STATE_DISPLAYED);
 }
 

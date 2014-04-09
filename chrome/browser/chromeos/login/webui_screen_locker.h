@@ -19,7 +19,6 @@
 #include "chromeos/dbus/power_manager_client.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
-#include "content/public/browser/web_contents_observer.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_observer.h"
 
@@ -49,8 +48,7 @@ class WebUIScreenLocker : public WebUILoginView,
                           public LockWindow::Observer,
                           public ash::LockStateObserver,
                           public views::WidgetObserver,
-                          public PowerManagerClient::Observer,
-                          public content::WebContentsObserver {
+                          public PowerManagerClient::Observer {
  public:
   explicit WebUIScreenLocker(ScreenLocker* screen_locker);
 
@@ -66,6 +64,8 @@ class WebUIScreenLocker : public WebUILoginView,
   virtual void AnimateAuthenticationSuccess() OVERRIDE;
   virtual gfx::NativeWindow GetNativeWindow() const OVERRIDE;
   virtual content::WebUI* GetAssociatedWebUI() OVERRIDE;
+  virtual void OnLockWebUIReady() OVERRIDE;
+  virtual void OnLockBackgroundDisplayed() OVERRIDE;
 
   // LoginDisplay::Delegate: implementation
   virtual void CancelPasswordChangedFlow() OVERRIDE;
@@ -89,6 +89,7 @@ class WebUIScreenLocker : public WebUILoginView,
   virtual void ResyncUserData() OVERRIDE;
   virtual void SetDisplayEmail(const std::string& email) OVERRIDE;
   virtual void Signout() OVERRIDE;
+  virtual void LoginAsKioskApp(const std::string& app_id) OVERRIDE;
 
   // content::NotificationObserver (via WebUILoginView) implementation.
   virtual void Observe(int type,

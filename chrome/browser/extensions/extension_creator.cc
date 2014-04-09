@@ -25,7 +25,7 @@
 #include "ui/base/l10n/l10n_util.h"
 
 namespace {
-  const int kRSAKeySize = 1024;
+  const int kRSAKeySize = 2048;
 };
 
 namespace extensions {
@@ -127,8 +127,7 @@ crypto::RSAPrivateKey* ExtensionCreator::ReadInputKey(const base::FilePath&
   }
 
   std::string private_key_contents;
-  if (!file_util::ReadFileToString(private_key_path,
-      &private_key_contents)) {
+  if (!base::ReadFileToString(private_key_path, &private_key_contents)) {
     error_message_ =
         l10n_util::GetStringUTF8(IDS_EXTENSION_PRIVATE_KEY_FAILED_TO_READ);
     return NULL;

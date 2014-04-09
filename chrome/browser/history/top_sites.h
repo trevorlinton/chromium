@@ -15,8 +15,8 @@
 #include "chrome/common/thumbnail_score.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/image/image.h"
-#include "url/gurl.h"
 
+class GURL;
 class Profile;
 
 namespace base {
@@ -71,12 +71,17 @@ class TopSites
   virtual void GetMostVisitedURLs(
       const GetMostVisitedURLsCallback& callback) = 0;
 
-  // Get a thumbnail for a given page. Returns true iff we have the thumbnail.
+  // Gets a thumbnail for a given page. Returns true iff we have the thumbnail.
   // This may be invoked on any thread.
+  // If an exact thumbnail URL match fails, |prefix_match| specifies whether or
+  // not to try harder by matching the query thumbnail URL as URL prefix (as
+  // defined by UrlIsPrefix()).
   // As this method may be invoked on any thread the ref count needs to be
   // incremented before this method returns, so this takes a scoped_refptr*.
   virtual bool GetPageThumbnail(
-      const GURL& url, scoped_refptr<base::RefCountedMemory>* bytes) = 0;
+      const GURL& url,
+      bool prefix_match,
+      scoped_refptr<base::RefCountedMemory>* bytes) = 0;
 
   // Get a thumbnail score for a given page. Returns true iff we have the
   // thumbnail score.  This may be invoked on any thread. The score will
@@ -89,19 +94,6 @@ class TopSites
   // thumbnail for a given page. The score will be copied to |score|.
   virtual bool GetTemporaryPageThumbnailScore(const GURL& url,
                                               ThumbnailScore* score) = 0;
-
-  // Invoked from History if migration is needed. If this is invoked it will
-  // be before HistoryLoaded is invoked. Should be called from the UI thread.
-  virtual void MigrateFromHistory() = 0;
-
-  // Invoked with data from migrating thumbnails out of history. Should be
-  // called from the UI thread.
-  virtual void FinishHistoryMigration(const ThumbnailMigration& data) = 0;
-
-  // Invoked from history when it finishes loading. If MigrateFromHistory was
-  // not invoked at this point then we load from the top sites service. Should
-  // be called from the UI thread.
-  virtual void HistoryLoaded() = 0;
 
   // Asks TopSites to refresh what it thinks the top sites are. This may do
   // nothing. Should be called from the UI thread.

@@ -24,7 +24,13 @@ QuicCryptoStream::QuicCryptoStream(QuicSession* session)
 }
 
 void QuicCryptoStream::OnError(CryptoFramer* framer) {
-  session()->ConnectionClose(framer->error(), false);
+  DLOG(WARNING) << "Error processing crypto data: "
+                << QuicUtils::ErrorToString(framer->error());
+}
+
+void QuicCryptoStream::OnHandshakeMessage(
+    const CryptoHandshakeMessage& message) {
+  session()->OnCryptoHandshakeMessageReceived(message);
 }
 
 uint32 QuicCryptoStream::ProcessData(const char* data,
@@ -41,20 +47,16 @@ uint32 QuicCryptoStream::ProcessData(const char* data,
   return data_len;
 }
 
-void QuicCryptoStream::CloseConnection(QuicErrorCode error) {
-  session()->connection()->SendConnectionClose(error);
-}
-
-void QuicCryptoStream::CloseConnectionWithDetails(QuicErrorCode error,
-                                                  const string& details) {
-  session()->connection()->SendConnectionCloseWithDetails(error, details);
-}
-
 void QuicCryptoStream::SendHandshakeMessage(
     const CryptoHandshakeMessage& message) {
+  session()->OnCryptoHandshakeMessageSent(message);
   const QuicData& data = message.GetSerialized();
+  // To make reasoning about crypto frames easier, we don't combine them with
+  // any other frames in a single packet.
+  session()->connection()->Flush();
   // TODO(wtc): check the return value.
   WriteData(string(data.data(), data.length()), false);
+  session()->connection()->Flush();
 }
 
 const QuicCryptoNegotiatedParameters&

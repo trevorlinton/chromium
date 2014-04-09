@@ -19,7 +19,7 @@
 
 #if defined(CLEAR_KEY_CDM_USE_FAKE_AUDIO_DECODER)
 #include "base/basictypes.h"
-static const int64 kNoTimestamp = kint64min;
+const int64 kNoTimestamp = kint64min;
 #endif  // CLEAR_KEY_CDM_USE_FAKE_AUDIO_DECODER
 
 #if defined(CLEAR_KEY_CDM_USE_FFMPEG_DECODER)
@@ -59,22 +59,22 @@ static bool InitializeFFmpegLibraries() {
 static bool g_ffmpeg_lib_initialized = InitializeFFmpegLibraries();
 #endif  // CLEAR_KEY_CDM_USE_FFMPEG_DECODER
 
-static const char kClearKeyCdmVersion[] = "0.1.0.1";
-static const char kExternalClearKey[] = "org.chromium.externalclearkey";
-static const int64 kSecondsPerMinute = 60;
-static const int64 kMsPerSecond = 1000;
-static const int64 kInitialTimerDelayMs = 200;
-static const int64 kMaxTimerDelayMs = 1 * kSecondsPerMinute * kMsPerSecond;
+const char kClearKeyCdmVersion[] = "0.1.0.1";
+const char kExternalClearKeyKeySystem[] = "org.chromium.externalclearkey";
+const int64 kSecondsPerMinute = 60;
+const int64 kMsPerSecond = 1000;
+const int64 kInitialTimerDelayMs = 200;
+const int64 kMaxTimerDelayMs = 1 * kSecondsPerMinute * kMsPerSecond;
 // Heart beat message header. If a key message starts with |kHeartBeatHeader|,
 // it's a heart beat message. Otherwise, it's a key request.
-static const char kHeartBeatHeader[] = "HEARTBEAT";
+const char kHeartBeatHeader[] = "HEARTBEAT";
 
 // Copies |input_buffer| into a media::DecoderBuffer. If the |input_buffer| is
 // empty, an empty (end-of-stream) media::DecoderBuffer is returned.
 static scoped_refptr<media::DecoderBuffer> CopyDecoderBufferFrom(
     const cdm::InputBuffer& input_buffer) {
   if (!input_buffer.data) {
-    DCHECK_EQ(input_buffer.data_size, 0);
+    DCHECK(!input_buffer.data_size);
     return media::DecoderBuffer::CreateEOSBuffer();
   }
 
@@ -83,7 +83,7 @@ static scoped_refptr<media::DecoderBuffer> CopyDecoderBufferFrom(
       media::DecoderBuffer::CopyFrom(input_buffer.data, input_buffer.data_size);
 
   std::vector<media::SubsampleEntry> subsamples;
-  for (int32_t i = 0; i < input_buffer.num_subsamples; ++i) {
+  for (uint32_t i = 0; i < input_buffer.num_subsamples; ++i) {
     media::SubsampleEntry subsample;
     subsample.clear_bytes = input_buffer.subsamples[i].clear_bytes;
     subsample.cypher_bytes = input_buffer.subsamples[i].cipher_bytes;
@@ -127,20 +127,24 @@ void DeinitializeCdmModule() {
 
 void* CreateCdmInstance(
     int cdm_interface_version,
-    const char* key_system, int key_system_size,
+    const char* key_system, uint32_t key_system_size,
     GetCdmHostFunc get_cdm_host_func, void* user_data) {
   DVLOG(1) << "CreateCdmInstance()";
 
-  if (cdm_interface_version != cdm::kCdmInterfaceVersion)
+  if (std::string(key_system, key_system_size) != kExternalClearKeyKeySystem) {
+    DVLOG(1) << "Unsupported key system.";
+    return NULL;
+  }
+
+  if (cdm_interface_version != media::CdmInterface::kVersion)
     return NULL;
 
-  cdm::Host* host = static_cast<cdm::Host*>(
-      get_cdm_host_func(cdm::kHostInterfaceVersion, user_data));
+  media::CdmHost* host = static_cast<media::CdmHost*>(
+      get_cdm_host_func(media::CdmHost::kVersion, user_data));
   if (!host)
     return NULL;
 
-  return static_cast<cdm::ContentDecryptionModule*>(
-      new media::ClearKeyCdm(host));
+  return new media::ClearKeyCdm(host);
 }
 
 const char* GetCdmVersion() {
@@ -181,7 +185,7 @@ void ClearKeyCdm::Client::KeyMessage(const std::string& session_id,
   default_url_ = default_url;
 }
 
-ClearKeyCdm::ClearKeyCdm(cdm::Host* host)
+ClearKeyCdm::ClearKeyCdm(CdmHost* host)
     : decryptor_(base::Bind(&Client::KeyAdded, base::Unretained(&client_)),
                  base::Bind(&Client::KeyError, base::Unretained(&client_)),
                  base::Bind(&Client::KeyMessage, base::Unretained(&client_))),
@@ -199,9 +203,10 @@ ClearKeyCdm::ClearKeyCdm(cdm::Host* host)
 
 ClearKeyCdm::~ClearKeyCdm() {}
 
-cdm::Status ClearKeyCdm::GenerateKeyRequest(const char* type, int type_size,
+cdm::Status ClearKeyCdm::GenerateKeyRequest(const char* type,
+                                            uint32_t type_size,
                                             const uint8_t* init_data,
-                                            int init_data_size) {
+                                            uint32_t init_data_size) {
   DVLOG(1) << "GenerateKeyRequest()";
   base::AutoLock auto_lock(client_lock_);
   ScopedResetter<Client> auto_resetter(&client_);
@@ -226,11 +231,11 @@ cdm::Status ClearKeyCdm::GenerateKeyRequest(const char* type, int type_size,
 }
 
 cdm::Status ClearKeyCdm::AddKey(const char* session_id,
-                                int session_id_size,
+                                uint32_t session_id_size,
                                 const uint8_t* key,
-                                int key_size,
+                                uint32_t key_size,
                                 const uint8_t* key_id,
-                                int key_id_size) {
+                                uint32_t key_id_size) {
   DVLOG(1) << "AddKey()";
   base::AutoLock auto_lock(client_lock_);
   ScopedResetter<Client> auto_resetter(&client_);
@@ -249,7 +254,7 @@ cdm::Status ClearKeyCdm::AddKey(const char* session_id,
 }
 
 cdm::Status ClearKeyCdm::CancelKeyRequest(const char* session_id,
-                                          int session_id_size) {
+                                          uint32_t session_id_size) {
   DVLOG(1) << "CancelKeyRequest()";
   base::AutoLock auto_lock(client_lock_);
   ScopedResetter<Client> auto_resetter(&client_);
@@ -495,6 +500,16 @@ cdm::Status ClearKeyCdm::DecryptToMediaDecoderBuffer(
   DCHECK_EQ(status, media::Decryptor::kSuccess);
   return cdm::kSuccess;
 }
+
+void ClearKeyCdm::OnPlatformChallengeResponse(
+    const cdm::PlatformChallengeResponse& response) {
+  NOTIMPLEMENTED();
+}
+
+void ClearKeyCdm::OnQueryOutputProtectionStatus(
+    uint32_t link_mask, uint32_t output_protection_mask) {
+  NOTIMPLEMENTED();
+};
 
 #if defined(CLEAR_KEY_CDM_USE_FAKE_AUDIO_DECODER)
 int64 ClearKeyCdm::CurrentTimeStampInMicroseconds() const {

@@ -6,8 +6,8 @@
 
 #include "base/strings/string_util.h"
 #include "chrome/browser/notifications/desktop_notification_service.h"
+#include "ui/base/webui/web_ui_util.h"
 #include "ui/message_center/message_center_util.h"
-#include "ui/webui/web_ui_util.h"
 
 Notification::Notification(const GURL& origin_url,
                            const GURL& content_url,
@@ -20,7 +20,7 @@ Notification::Notification(const GURL& origin_url,
                                    EmptyString16(),
                                    gfx::Image(),
                                    display_source,
-                                   origin_url.spec(),
+                                   message_center::NotifierId(origin_url),
                                    message_center::RichNotificationData(),
                                    delegate),
       origin_url_(origin_url),
@@ -43,7 +43,7 @@ Notification::Notification(const GURL& origin_url,
                                    body,
                                    gfx::Image(),
                                    display_source,
-                                   origin_url.spec(),
+                                   message_center::NotifierId(origin_url),
                                    message_center::RichNotificationData(),
                                    delegate),
       origin_url_(origin_url),
@@ -63,6 +63,7 @@ Notification::Notification(
     const string16& body,
     const gfx::Image& icon,
     WebKit::WebTextDirection dir,
+    const message_center::NotifierId& notifier_id,
     const string16& display_source,
     const string16& replace_id,
     const message_center::RichNotificationData& rich_notification_data,
@@ -73,7 +74,7 @@ Notification::Notification(
                                    body,
                                    icon,
                                    display_source,
-                                   origin_url.spec(),
+                                   notifier_id,
                                    rich_notification_data,
                                    delegate),
       origin_url_(origin_url),
@@ -106,7 +107,7 @@ Notification::Notification(const GURL& origin_url,
                                    body,
                                    icon,
                                    display_source,
-                                   origin_url.spec(),
+                                   message_center::NotifierId(origin_url),
                                    message_center::RichNotificationData(),
                                    delegate),
       origin_url_(origin_url),

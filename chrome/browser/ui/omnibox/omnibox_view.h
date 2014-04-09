@@ -18,7 +18,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/autocomplete/autocomplete_match.h"
 #include "chrome/browser/ui/omnibox/omnibox_edit_model.h"
-#include "chrome/browser/ui/toolbar/toolbar_model.h"
 #include "content/public/common/url_constants.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/native_widget_types.h"
@@ -60,17 +59,15 @@ class OmniboxView {
   CommandUpdater* command_updater() { return command_updater_; }
   const CommandUpdater* command_updater() const { return command_updater_; }
 
-  ToolbarModel* toolbar_model() { return toolbar_model_; }
-  const ToolbarModel* toolbar_model() const { return toolbar_model_; }
-
   // For use when switching tabs, this saves the current state onto the tab so
   // that it can be restored during a later call to Update().
   virtual void SaveStateToTab(content::WebContents* tab) = 0;
 
-  // Called when any LocationBarView state changes. If
-  // |tab_for_state_restoring| is non-NULL, it points to a WebContents whose
-  // state we should restore.
-  virtual void Update(const content::WebContents* tab_for_state_restoring) = 0;
+  // Called when the window's active tab changes.
+  virtual void OnTabChanged(const content::WebContents* web_contents) = 0;
+
+  // Called when any relevant state changes other than changing tabs.
+  virtual void Update() = 0;
 
   // Asks the browser to load the specified match's |destination_url|, which
   // is assumed to be one of the popup entries, using the supplied disposition
@@ -138,9 +135,13 @@ class OmniboxView {
   // avoid selecting the "phantom newline" at the end of the edit.
   virtual void SelectAll(bool reversed) = 0;
 
-  // Reverts the edit and popup back to their unedited state (permanent text
-  // showing, popup closed, no user input in progress).
+  // Re-enables search term replacement on the ToolbarModel, and reverts the
+  // edit and popup back to their unedited state (permanent text showing, popup
+  // closed, no user input in progress).
   virtual void RevertAll();
+
+  // Like RevertAll(), but does not touch the search term replacement state.
+  void RevertWithoutResettingSearchTermReplacement();
 
   // Updates the autocomplete popup and other state after the text has been
   // changed by the user.
@@ -251,11 +252,13 @@ class OmniboxView {
  protected:
   OmniboxView(Profile* profile,
               OmniboxEditController* controller,
-              ToolbarModel* toolbar_model,
               CommandUpdater* command_updater);
 
   // Internally invoked whenever the text changes in some way.
   virtual void TextChanged();
+
+  // Disables search term replacement, reverts the omnibox, and selects all.
+  void ShowURL();
 
   // Return the number of characters in the current buffer. The name
   // |GetTextLength| can't be used as the Windows override of this class
@@ -266,14 +269,15 @@ class OmniboxView {
   virtual void EmphasizeURLComponents() = 0;
 
   OmniboxEditController* controller() { return controller_; }
+  const OmniboxEditController* controller() const { return controller_; }
 
  private:
   friend class OmniboxViewMacTest;
+  FRIEND_TEST_ALL_PREFIXES(InstantExtendedTest, ShowURL);
 
   // |model_| can be NULL in tests.
   scoped_ptr<OmniboxEditModel> model_;
   OmniboxEditController* controller_;
-  ToolbarModel* toolbar_model_;
 
   // The object that handles additional command functionality exposed on the
   // edit, such as invoking the keyword editor.

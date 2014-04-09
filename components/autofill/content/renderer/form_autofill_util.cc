@@ -30,6 +30,7 @@
 #include "third_party/WebKit/public/web/WebNodeList.h"
 #include "third_party/WebKit/public/web/WebOptionElement.h"
 #include "third_party/WebKit/public/web/WebSelectElement.h"
+#include "third_party/WebKit/public/web/WebTextAreaElement.h"
 
 using WebKit::WebDocument;
 using WebKit::WebElement;
@@ -43,6 +44,7 @@ using WebKit::WebNode;
 using WebKit::WebNodeList;
 using WebKit::WebOptionElement;
 using WebKit::WebSelectElement;
+using WebKit::WebTextAreaElement;
 using WebKit::WebString;
 using WebKit::WebVector;
 
@@ -79,26 +81,19 @@ bool IsNoScriptElement(const WebElement& element) {
 }
 
 bool HasTagName(const WebNode& node, const WebKit::WebString& tag) {
-  return node.isElementNode() && node.toConst<WebElement>().hasTagName(tag);
+  return node.isElementNode() && node.toConst<WebElement>().hasHTMLTagName(tag);
 }
 
 bool IsAutofillableElement(const WebFormControlElement& element) {
   const WebInputElement* input_element = toWebInputElement(&element);
-  return IsAutofillableInputElement(input_element) || IsSelectElement(element);
-}
-
-bool IsAutocheckoutEnabled() {
-  return base::FieldTrialList::FindFullName("Autocheckout") == "Yes" ||
-      CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableExperimentalFormFilling);
+  return IsAutofillableInputElement(input_element) ||
+         IsSelectElement(element) ||
+         IsTextAreaElement(element);
 }
 
 // Check whether the given field satisfies the REQUIRE_AUTOCOMPLETE requirement.
-// When Autocheckout is enabled, this requirement is enforced in the browser
-// process rather than in the renderer process, and hence all fields are
-// considered to satisfy this requirement.
 bool SatisfiesRequireAutocomplete(const WebInputElement& input_element) {
-  return input_element.autoComplete() || IsAutocheckoutEnabled();
+  return input_element.autoComplete();
 }
 
 // Appends |suffix| to |prefix| so that any intermediary whitespace is collapsed
@@ -511,8 +506,11 @@ void ForEachMatchingFormField(const WebFormElement& form_element,
     // Only autofill empty fields and the field that initiated the filling,
     // i.e. the field the user is currently editing and interacting with.
     const WebInputElement* input_element = toWebInputElement(element);
-    if (!force_override && IsTextInput(input_element) &&
-        !is_initiating_element && !input_element->value().isEmpty())
+    if (!force_override && !is_initiating_element &&
+        ((IsAutofillableInputElement(input_element) &&
+          !input_element->value().isEmpty()) ||
+         (IsTextAreaElement(*element) &&
+          !element->toConst<WebTextAreaElement>().value().isEmpty())))
       continue;
 
     if (((filters & FILTER_DISABLED_ELEMENTS) && !element->isEnabled()) ||
@@ -533,18 +531,25 @@ void FillFormField(const FormFieldData& data,
   if (data.value.empty())
     return;
 
+  field->setAutofilled(true);
+
   WebInputElement* input_element = toWebInputElement(field);
-  if (IsTextInput(input_element)) {
+  if (IsTextInput(input_element) || IsMonthInput(input_element)) {
     // If the maxlength attribute contains a negative value, maxLength()
     // returns the default maxlength value.
     input_element->setValue(
         data.value.substr(0, input_element->maxLength()), true);
-    input_element->setAutofilled(true);
     if (is_initiating_node) {
       int length = input_element->value().length();
       input_element->setSelectionRange(length, length);
       // Clear the current IME composition (the underline), if there is one.
       input_element->document().frame()->unmarkText();
+    }
+  } else if (IsTextAreaElement(*field)) {
+    WebTextAreaElement text_area = field->to<WebTextAreaElement>();
+    if (text_area.value() != data.value) {
+      text_area.setValue(data.value);
+      text_area.dispatchFormControlChangeEvent();
     }
   } else if (IsSelectElement(*field)) {
     WebSelectElement select_element = field->to<WebSelectElement>();
@@ -599,9 +604,35 @@ std::string RetrievalMethodToString(
   return "UNKNOWN";
 }
 
+// Recursively checks whether |node| or any of its children have a non-empty
+// bounding box. The recursion depth is bounded by |depth|.
+bool IsWebNodeVisibleImpl(const WebKit::WebNode& node, const int depth) {
+  if (depth < 0)
+    return false;
+  if (node.hasNonEmptyBoundingBox())
+    return true;
+
+  // The childNodes method is not a const method. Therefore it cannot be called
+  // on a const reference. Therefore we need a const cast.
+  const WebKit::WebNodeList& children =
+      const_cast<WebKit::WebNode&>(node).childNodes();
+  size_t length = children.length();
+  for (size_t i = 0; i < length; ++i) {
+    const WebKit::WebNode& item = children.item(i);
+    if (IsWebNodeVisibleImpl(item, depth - 1))
+      return true;
+  }
+  return false;
+}
+
 }  // namespace
 
-const size_t kMaxParseableFields = 100;
+const size_t kMaxParseableFields = 200;
+
+bool IsMonthInput(const WebInputElement* element) {
+  CR_DEFINE_STATIC_LOCAL(WebString, kMonth, ("month"));
+  return element && element->formControlType() == kMonth;
+}
 
 // All text fields, including password fields, should be extracted.
 bool IsTextInput(const WebInputElement* element) {
@@ -609,9 +640,15 @@ bool IsTextInput(const WebInputElement* element) {
 }
 
 bool IsSelectElement(const WebFormControlElement& element) {
-  // Is static for improving performance.
+  // Static for improved performance.
   CR_DEFINE_STATIC_LOCAL(WebString, kSelectOne, ("select-one"));
   return element.formControlType() == kSelectOne;
+}
+
+bool IsTextAreaElement(const WebFormControlElement& element) {
+  // Static for improved performance.
+  CR_DEFINE_STATIC_LOCAL(WebString, kTextArea, ("textarea"));
+  return element.formControlType() == kTextArea;
 }
 
 bool IsCheckableElement(const WebInputElement* element) {
@@ -622,7 +659,9 @@ bool IsCheckableElement(const WebInputElement* element) {
 }
 
 bool IsAutofillableInputElement(const WebInputElement* element) {
-  return IsTextInput(element) || IsCheckableElement(element);
+  return IsTextInput(element) ||
+         IsMonthInput(element) ||
+         IsCheckableElement(element);
 }
 
 const base::string16 GetFormIdentifier(const WebFormElement& form) {
@@ -632,6 +671,14 @@ const base::string16 GetFormIdentifier(const WebFormElement& form) {
     identifier = form.getAttribute(kId);
 
   return identifier;
+}
+
+bool IsWebNodeVisible(const WebKit::WebNode& node) {
+  // In the bug http://crbug.com/237216 the form's bounding box is empty
+  // however the form has non empty children. Thus we need to look at the
+  // form's children.
+  int kNodeSearchDepth = 2;
+  return IsWebNodeVisibleImpl(node, kNodeSearchDepth);
 }
 
 bool ClickElement(const WebDocument& document,
@@ -683,8 +730,8 @@ void ExtractAutofillableElements(
       continue;
 
     if (requirements & REQUIRE_AUTOCOMPLETE) {
-      // TODO(jhawkins): WebKit currently doesn't handle the autocomplete
-      // attribute for select control elements, but it probably should.
+      // TODO(isherman): WebKit currently doesn't handle the autocomplete
+      // attribute for select or textarea elements, but it probably should.
       WebInputElement* input_element = toWebInputElement(&control_elements[i]);
       if (IsAutofillableInputElement(input_element) &&
           !SatisfiesRequireAutocomplete(*input_element))
@@ -731,6 +778,8 @@ void WebFormControlElementToFormField(const WebFormControlElement& element,
     field->should_autocomplete = input_element->autoComplete();
     field->text_direction = input_element->directionForFormData() == "rtl" ?
         base::i18n::RIGHT_TO_LEFT : base::i18n::LEFT_TO_RIGHT;
+  } else if (IsTextAreaElement(element)) {
+    // Nothing more to do in this case.
   } else if (extract_mask & EXTRACT_OPTIONS) {
     // Set option strings on the field if available.
     DCHECK(IsSelectElement(element));
@@ -746,6 +795,8 @@ void WebFormControlElementToFormField(const WebFormControlElement& element,
   base::string16 value;
   if (IsAutofillableInputElement(input_element)) {
     value = input_element->value();
+  } else if (IsTextAreaElement(element)) {
+    value = element.toConst<WebTextAreaElement>().value();
   } else {
     DCHECK(IsSelectElement(element));
     const WebSelectElement select_element = element.toConst<WebSelectElement>();
@@ -1054,6 +1105,56 @@ bool FormWithElementIsAutofilled(const WebInputElement& element) {
   }
 
   return false;
+}
+
+bool IsWebpageEmpty(const WebKit::WebFrame* frame) {
+  WebKit::WebDocument document = frame->document();
+
+  return IsWebElementEmpty(document.head()) &&
+         IsWebElementEmpty(document.body());
+}
+
+bool IsWebElementEmpty(const WebKit::WebElement& element) {
+  // This array contains all tags which can be present in an empty page.
+  const char* const kAllowedValue[] = {
+    "script",
+    "meta",
+    "title",
+  };
+  const size_t kAllowedValueLength = arraysize(kAllowedValue);
+
+  if (element.isNull())
+    return true;
+  // The childNodes method is not a const method. Therefore it cannot be called
+  // on a const reference. Therefore we need a const cast.
+  const WebKit::WebNodeList& children =
+      const_cast<WebKit::WebElement&>(element).childNodes();
+  for (size_t i = 0; i < children.length(); ++i) {
+    const WebKit::WebNode& item = children.item(i);
+
+    if (item.isTextNode() &&
+        !ContainsOnlyWhitespaceASCII(item.nodeValue().utf8()))
+      return false;
+
+    // We ignore all other items with names which begin with
+    // the character # because they are not html tags.
+    if (item.nodeName().utf8()[0] == '#')
+      continue;
+
+    bool tag_is_allowed = false;
+    // Test if the item name is in the kAllowedValue array
+    for (size_t allowed_value_index = 0;
+         allowed_value_index < kAllowedValueLength; ++allowed_value_index) {
+      if (HasTagName(item,
+                     WebString::fromUTF8(kAllowedValue[allowed_value_index]))) {
+        tag_is_allowed = true;
+        break;
+      }
+    }
+    if (!tag_is_allowed)
+      return false;
+  }
+  return true;
 }
 
 }  // namespace autofill

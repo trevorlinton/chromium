@@ -139,6 +139,7 @@ class AwContents : public FindHelper::Listener,
                                     int match_count,
                                     bool finished) OVERRIDE;
   // IconHelper::Listener implementation.
+  virtual bool ShouldDownloadFavicon(const GURL& icon_url) OVERRIDE;
   virtual void OnReceivedIcon(const GURL& icon_url,
                               const SkBitmap& bitmap) OVERRIDE;
   virtual void OnReceivedTouchIconUrl(const std::string& url,
@@ -147,6 +148,8 @@ class AwContents : public FindHelper::Listener,
   // AwRenderViewHostExtClient implementation.
   virtual void OnWebLayoutPageScaleFactorChanged(
       float page_scale_factor) OVERRIDE;
+  virtual void OnWebLayoutContentsSizeChanged(
+      const gfx::Size& contents_size) OVERRIDE;
 
   // BrowserViewRenderer::Client implementation.
   virtual bool RequestDrawGL(jobject canvas) OVERRIDE;
@@ -154,25 +157,31 @@ class AwContents : public FindHelper::Listener,
   virtual void UpdateGlobalVisibleRect() OVERRIDE;
   virtual void OnNewPicture() OVERRIDE;
   virtual gfx::Point GetLocationOnScreen() OVERRIDE;
+  virtual void SetMaxContainerViewScrollOffset(
+      gfx::Vector2d new_value) OVERRIDE;
   virtual void ScrollContainerViewTo(gfx::Vector2d new_value) OVERRIDE;
+  virtual bool IsFlingActive() const OVERRIDE;
+  virtual void SetPageScaleFactor(float page_scale_factor) OVERRIDE;
+  virtual void SetContentsSize(gfx::SizeF contents_size_dip) OVERRIDE;
   virtual void DidOverscroll(gfx::Vector2d overscroll_delta) OVERRIDE;
 
   void ClearCache(JNIEnv* env, jobject obj, jboolean include_disk_files);
   void SetPendingWebContentsForPopup(scoped_ptr<content::WebContents> pending);
   jint ReleasePopupAwContents(JNIEnv* env, jobject obj);
 
-  void ScrollTo(JNIEnv* env, jobject obj, jint xPix, jint yPix);
-  void SetDipScale(JNIEnv* env, jobject obj, jfloat dipScale);
-  void SetDisplayedPageScaleFactor(JNIEnv* env,
-                                   jobject obj,
-                                   jfloat pageScaleFactor);
-
+  void ScrollTo(JNIEnv* env, jobject obj, jint x, jint y);
+  void SetDipScale(JNIEnv* env, jobject obj, jfloat dip_scale);
+  void SetFixedLayoutSize(JNIEnv* env,
+                          jobject obj,
+                          jint width_dip,
+                          jint height_dip);
   void SetSaveFormData(bool enabled);
 
   // Sets the java delegate
   void SetAwAutofillManagerDelegate(jobject delegate);
 
   void SetJsOnlineProperty(JNIEnv* env, jobject obj, jboolean network_up);
+  void TrimMemory(JNIEnv* env, jobject obj, jint level);
 
  private:
   void InitAutofillIfNecessary(bool enabled);

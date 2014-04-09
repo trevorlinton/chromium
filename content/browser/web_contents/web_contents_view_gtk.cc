@@ -13,10 +13,10 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "content/browser/frame_host/interstitial_page_impl.h"
 #include "content/browser/renderer_host/render_view_host_factory.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_gtk.h"
-#include "content/browser/web_contents/interstitial_page_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/browser/web_contents/web_drag_dest_gtk.h"
 #include "content/browser/web_contents/web_drag_source_gtk.h"
@@ -177,6 +177,8 @@ void WebContentsViewGtk::RestoreFocus() {
 }
 
 DropData* WebContentsViewGtk::GetDropData() const {
+  if (!drag_dest_)
+    return NULL;
   return drag_dest_->current_drop_data();
 }
 
@@ -283,6 +285,8 @@ WebContents* WebContentsViewGtk::web_contents() {
 }
 
 void WebContentsViewGtk::UpdateDragCursor(WebDragOperation operation) {
+  if (!drag_dest_)
+    return;
   drag_dest_->UpdateDragStatus(operation);
 }
 
@@ -308,6 +312,15 @@ void WebContentsViewGtk::InsertIntoContentArea(GtkWidget* widget) {
 }
 
 void WebContentsViewGtk::UpdateDragDest(RenderViewHost* host) {
+  // Drag-and-drop is entirely managed by BrowserPluginGuest for guest
+  // processes in a largely platform independent way. WebDragDestGtk
+  // will result in spurious messages being sent to the guest process which
+  // will violate assumptions.
+  if (host->GetProcess() && host->GetProcess()->IsGuest()) {
+    DCHECK(!drag_dest_);
+    return;
+  }
+
   gfx::NativeView content_view = host->GetView()->GetNativeView();
 
   // If the host is already used by the drag_dest_, there's no point in deleting

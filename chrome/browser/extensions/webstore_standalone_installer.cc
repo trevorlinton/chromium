@@ -8,7 +8,9 @@
 #include "chrome/browser/extensions/crx_installer.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/extension_install_ui.h"
+#include "chrome/browser/extensions/extension_prefs.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/webstore_data_fetcher.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/extension.h"
@@ -27,7 +29,6 @@ const char kUsersKey[] = "users";
 const char kShowUserCountKey[] = "show_user_count";
 const char kAverageRatingKey[] = "average_rating";
 const char kRatingCountKey[] = "rating_count";
-const char kRedirectUrlKey[] = "redirect_url";
 
 const char kInvalidWebstoreItemId[] = "Invalid Chrome Web Store item ID";
 const char kWebstoreRequestError[] =
@@ -35,7 +36,7 @@ const char kWebstoreRequestError[] =
 const char kInvalidWebstoreResponseError[] = "Invalid Chrome Web Store reponse";
 const char kInvalidManifestError[] = "Invalid manifest";
 const char kUserCancelledError[] = "User cancelled install";
-
+const char kExtensionIsBlacklisted[] = "Extension is blacklisted";
 
 WebstoreStandaloneInstaller::WebstoreStandaloneInstaller(
     const std::string& webstore_item_id,
@@ -44,6 +45,7 @@ WebstoreStandaloneInstaller::WebstoreStandaloneInstaller(
     : id_(webstore_item_id),
       callback_(callback),
       profile_(profile),
+      install_source_(WebstoreInstaller::INSTALL_SOURCE_INLINE),
       show_user_count_(true),
       average_rating_(0.0),
       rating_count_(0) {
@@ -57,7 +59,10 @@ WebstoreStandaloneInstaller::~WebstoreStandaloneInstaller() {}
 //
 
 void WebstoreStandaloneInstaller::BeginInstall() {
-  AddRef();  // Balanced in CompleteInstall or WebContentsDestroyed.
+  // Add a ref to keep this alive for WebstoreDataFetcher.
+  // All code paths from here eventually lead to either CompleteInstall or
+  // AbortInstall, which both release this ref.
+  AddRef();
 
   if (!Extension::IdIsValid(id_)) {
     CompleteInstall(kInvalidWebstoreItemId);
@@ -188,6 +193,9 @@ void WebstoreStandaloneInstaller::OnWebstoreParseSuccess(
     ShowInstallUI();
     // Control flow finishes up in InstallUIProceed or InstallUIAbort.
   } else {
+    // Balanced in InstallUIAbort or indirectly in InstallUIProceed via
+    // OnExtensionInstallSuccess or OnExtensionInstallFailure.
+    AddRef();
     InstallUIProceed();
   }
 }
@@ -205,13 +213,34 @@ void WebstoreStandaloneInstaller::InstallUIProceed() {
     return;
   }
 
+  ExtensionService* extension_service =
+      ExtensionSystem::Get(profile_)->extension_service();
+  const Extension* extension =
+      extension_service->GetExtensionById(id_, true /* include disabled */);
+  if (extension) {
+    std::string install_result;  // Empty string for install success.
+    if (!extension_service->IsExtensionEnabled(id_)) {
+      if (!ExtensionPrefs::Get(profile_)->IsExtensionBlacklisted(id_)) {
+        // If the extension is installed but disabled, and not blacklisted,
+        // enable it.
+        extension_service->EnableExtension(id_);
+      } else {  // Don't install a blacklisted extension.
+        install_result = kExtensionIsBlacklisted;
+      }
+    }  // else extension is installed and enabled; no work to be done.
+    CompleteInstall(install_result);
+    return;
+  }
+
   scoped_ptr<WebstoreInstaller::Approval> approval(
       WebstoreInstaller::Approval::CreateWithNoInstallPrompt(
           profile_,
           id_,
-          scoped_ptr<base::DictionaryValue>(manifest_.get()->DeepCopy())));
+          scoped_ptr<base::DictionaryValue>(manifest_.get()->DeepCopy()),
+          true));
   approval->skip_post_install_ui = !ShouldShowPostInstallUI();
   approval->use_app_installed_bubble = ShouldShowAppInstalledBubble();
+  approval->installing_icon = gfx::ImageSkia::CreateFrom1xBitmap(icon_);
 
   scoped_refptr<WebstoreInstaller> installer = new WebstoreInstaller(
       profile_,
@@ -219,18 +248,20 @@ void WebstoreStandaloneInstaller::InstallUIProceed() {
       &(GetWebContents()->GetController()),
       id_,
       approval.Pass(),
-      WebstoreInstaller::FLAG_INLINE_INSTALL);
+      install_source_);
   installer->Start();
 }
 
 void WebstoreStandaloneInstaller::InstallUIAbort(bool user_initiated) {
   CompleteInstall(kUserCancelledError);
+  Release();  // Balanced in ShowInstallUI.
 }
 
 void WebstoreStandaloneInstaller::OnExtensionInstallSuccess(
     const std::string& id) {
   CHECK_EQ(id_, id);
   CompleteInstall(std::string());
+  Release();  // Balanced in ShowInstallUI.
 }
 
 void WebstoreStandaloneInstaller::OnExtensionInstallFailure(
@@ -239,6 +270,7 @@ void WebstoreStandaloneInstaller::OnExtensionInstallFailure(
     WebstoreInstaller::FailureReason cancelled) {
   CHECK_EQ(id_, id);
   CompleteInstall(error);
+  Release();  // Balanced in ShowInstallUI.
 }
 
 void WebstoreStandaloneInstaller::AbortInstall() {
@@ -251,13 +283,8 @@ void WebstoreStandaloneInstaller::AbortInstall() {
 }
 
 void WebstoreStandaloneInstaller::CompleteInstall(const std::string& error) {
-  // Clear webstore_data_fetcher_ so that WebContentsDestroyed will no longer
-  // call Release in case the WebContents is destroyed before this object.
-  scoped_ptr<WebstoreDataFetcher> webstore_data_fetcher(
-      webstore_data_fetcher_.Pass());
   if (!callback_.is_null())
     callback_.Run(error.empty(), error);
-
   Release();  // Matches the AddRef in BeginInstall.
 }
 
@@ -276,6 +303,11 @@ WebstoreStandaloneInstaller::ShowInstallUI() {
     CompleteInstall(kInvalidManifestError);
     return;
   }
+
+  // Keep this alive as long as the install prompt lives.
+  // Balanced in InstallUIAbort or indirectly in InstallUIProceed via
+  // OnExtensionInstallSuccess or OnExtensionInstallFailure.
+  AddRef();
 
   install_ui_ = CreateInstallUI();
   install_ui_->ConfirmStandaloneInstall(

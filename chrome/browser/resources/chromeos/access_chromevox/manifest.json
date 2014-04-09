@@ -11,8 +11,10 @@
     "bookmarks",
     "tabs",
     "experimental",
+    "history",
     "tts",
     "systemPrivate",
+    "brailleDisplayPrivate",
     "<all_urls>"
   ],
   "content_scripts": [

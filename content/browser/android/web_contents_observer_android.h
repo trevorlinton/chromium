@@ -35,6 +35,7 @@ class WebContentsObserverAndroid : public WebContentsObserver {
   virtual void DidStopLoading(RenderViewHost* render_view_host) OVERRIDE;
   virtual void DidFailProvisionalLoad(
       int64 frame_id,
+      const string16& frame_unique_name,
       bool is_main_frame,
       const GURL& validated_url,
       int error_code,
@@ -60,6 +61,7 @@ class WebContentsObserverAndroid : public WebContentsObserver {
       RenderViewHost* render_view_host) OVERRIDE;
   virtual void DidCommitProvisionalLoadForFrame(
       int64 frame_id,
+      const string16& frame_unique_name,
       bool is_main_frame,
       const GURL& url,
       PageTransition transition_type,
@@ -68,8 +70,12 @@ class WebContentsObserverAndroid : public WebContentsObserver {
                              const GURL& validated_url,
                              bool is_main_frame,
                              RenderViewHost* render_view_host) OVERRIDE;
+  virtual void NavigationEntryCommitted(
+      const LoadCommittedDetails& load_details) OVERRIDE;
   virtual void WebContentsDestroyed(WebContents* web_contents) OVERRIDE;
   virtual void DidChangeVisibleSSLState() OVERRIDE;
+  virtual void DidAttachInterstitialPage() OVERRIDE;
+  virtual void DidDetachInterstitialPage() OVERRIDE;
 
   void DidFailLoadInternal(bool is_provisional_load,
                            bool is_main_frame,

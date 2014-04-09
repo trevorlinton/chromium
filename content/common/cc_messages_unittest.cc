@@ -6,11 +6,14 @@
 
 #include <string.h>
 
+#include <algorithm>
+
 #include "base/command_line.h"
 #include "cc/output/compositor_frame.h"
 #include "content/public/common/content_switches.h"
 #include "ipc/ipc_message.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/khronos/GLES2/gl2ext.h"
 #include "third_party/skia/include/effects/SkBlurImageFilter.h"
 
 using cc::CheckerboardDrawQuad;
@@ -45,8 +48,6 @@ class CCMessagesTest : public testing::Test {
     EXPECT_EQ(a->damage_rect.ToString(), b->damage_rect.ToString());
     EXPECT_EQ(a->transform_to_root_target, b->transform_to_root_target);
     EXPECT_EQ(a->has_transparent_background, b->has_transparent_background);
-    EXPECT_EQ(a->has_occlusion_from_outside_target_surface,
-              b->has_occlusion_from_outside_target_surface);
   }
 
   void Compare(const SharedQuadState* a, const SharedQuadState* b) {
@@ -136,11 +137,16 @@ class CCMessagesTest : public testing::Test {
     EXPECT_EQ(a->contents_changed_since_last_frame,
               b->contents_changed_since_last_frame);
     EXPECT_EQ(a->mask_uv_rect.ToString(), b->mask_uv_rect.ToString());
-    EXPECT_EQ(a->filters, b->filters);
-    if (!a->filter || !b->filter)
-        EXPECT_EQ(a->filter, b->filter);
-    else
-        EXPECT_EQ(a->filter->countInputs(), b->filter->countInputs());
+    EXPECT_EQ(a->filters.size(), b->filters.size());
+    for (size_t i = 0; i < a->filters.size(); ++i) {
+      if (a->filters.at(i).type() != cc::FilterOperation::REFERENCE) {
+        EXPECT_EQ(a->filters.at(i), b->filters.at(i));
+      } else {
+        EXPECT_EQ(b->filters.at(i).type(), cc::FilterOperation::REFERENCE);
+        EXPECT_EQ(a->filters.at(i).image_filter()->countInputs(),
+                  b->filters.at(i).image_filter()->countInputs());
+      }
+    }
     EXPECT_EQ(a->background_filters, b->background_filters);
   }
 
@@ -186,6 +192,7 @@ class CCMessagesTest : public testing::Test {
     EXPECT_EQ(a.id, b.id);
     EXPECT_EQ(a.sync_point, b.sync_point);
     EXPECT_EQ(a.format, b.format);
+    EXPECT_EQ(a.target, b.target);
     EXPECT_EQ(a.filter, b.filter);
     EXPECT_EQ(a.size.ToString(), b.size.ToString());
     for (size_t i = 0; i < arraysize(a.mailbox.name); ++i)
@@ -205,8 +212,14 @@ TEST_F(CCMessagesTest, AllQuads) {
   arbitrary_matrix.Translate(-5, 20);
   arbitrary_matrix.Rotate(15);
   gfx::Rect arbitrary_rect1(-5, 9, 3, 15);
+  gfx::Rect arbitrary_rect1_inside_rect1(-4, 12, 2, 8);
+  gfx::Rect arbitrary_rect2_inside_rect1(-5, 11, 1, 2);
   gfx::Rect arbitrary_rect2(40, 23, 11, 7);
+  gfx::Rect arbitrary_rect1_inside_rect2(44, 23, 4, 2);
+  gfx::Rect arbitrary_rect2_inside_rect2(41, 25, 3, 5);
   gfx::Rect arbitrary_rect3(7, -53, 22, 19);
+  gfx::Rect arbitrary_rect1_inside_rect3(10, -40, 6, 3);
+  gfx::Rect arbitrary_rect2_inside_rect3(12, -51, 5, 12);
   gfx::Size arbitrary_size1(15, 19);
   gfx::Size arbitrary_size2(3, 99);
   gfx::Size arbitrary_size3(75, 1281);
@@ -235,13 +248,14 @@ TEST_F(CCMessagesTest, AllQuads) {
   FilterOperations arbitrary_filters1;
   arbitrary_filters1.Append(FilterOperation::CreateGrayscaleFilter(
       arbitrary_float1));
+  skia::RefPtr<SkImageFilter> arbitrary_filter = skia::AdoptRef(
+    new SkBlurImageFilter(arbitrary_sigma, arbitrary_sigma));
+  arbitrary_filters1.Append(
+      cc::FilterOperation::CreateReferenceFilter(arbitrary_filter));
 
   FilterOperations arbitrary_filters2;
   arbitrary_filters2.Append(FilterOperation::CreateBrightnessFilter(
       arbitrary_float2));
-
-  skia::RefPtr<SkImageFilter> arbitrary_filter = skia::AdoptRef(
-    new SkBlurImageFilter(arbitrary_sigma, arbitrary_sigma));
 
   scoped_ptr<SharedQuadState> shared_state1_in = SharedQuadState::Create();
   shared_state1_in->SetAll(arbitrary_matrix,
@@ -256,8 +270,8 @@ TEST_F(CCMessagesTest, AllQuads) {
       CheckerboardDrawQuad::Create();
   checkerboard_in->SetAll(shared_state1_in.get(),
                           arbitrary_rect1,
-                          arbitrary_rect2,
-                          arbitrary_rect3,
+                          arbitrary_rect2_inside_rect1,
+                          arbitrary_rect1_inside_rect1,
                           arbitrary_bool1,
                           arbitrary_color);
   scoped_ptr<DrawQuad> checkerboard_cmp = checkerboard_in->Copy(
@@ -267,8 +281,8 @@ TEST_F(CCMessagesTest, AllQuads) {
       DebugBorderDrawQuad::Create();
   debugborder_in->SetAll(shared_state1_in.get(),
                          arbitrary_rect3,
-                         arbitrary_rect1,
-                         arbitrary_rect2,
+                         arbitrary_rect1_inside_rect3,
+                         arbitrary_rect2_inside_rect3,
                          arbitrary_bool1,
                          arbitrary_color,
                          arbitrary_int);
@@ -279,8 +293,8 @@ TEST_F(CCMessagesTest, AllQuads) {
       IOSurfaceDrawQuad::Create();
   iosurface_in->SetAll(shared_state1_in.get(),
                        arbitrary_rect2,
-                       arbitrary_rect3,
-                       arbitrary_rect1,
+                       arbitrary_rect2_inside_rect2,
+                       arbitrary_rect1_inside_rect2,
                        arbitrary_bool1,
                        arbitrary_size1,
                        arbitrary_resourceid3,
@@ -292,8 +306,8 @@ TEST_F(CCMessagesTest, AllQuads) {
       RenderPassDrawQuad::Create();
   renderpass_in->SetAll(shared_state1_in.get(),
                         arbitrary_rect1,
-                        arbitrary_rect2,
-                        arbitrary_rect3,
+                        arbitrary_rect2_inside_rect1,
+                        arbitrary_rect1_inside_rect1,
                         arbitrary_bool1,
                         arbitrary_id,
                         arbitrary_bool2,
@@ -301,7 +315,6 @@ TEST_F(CCMessagesTest, AllQuads) {
                         arbitrary_rect1,
                         arbitrary_rectf1,
                         arbitrary_filters1,
-                        arbitrary_filter,
                         arbitrary_filters2);
   scoped_ptr<RenderPassDrawQuad> renderpass_cmp = renderpass_in->Copy(
       renderpass_in->shared_quad_state, renderpass_in->render_pass_id);
@@ -328,8 +341,8 @@ TEST_F(CCMessagesTest, AllQuads) {
       SolidColorDrawQuad::Create();
   solidcolor_in->SetAll(shared_state1_in.get(),
                         arbitrary_rect3,
-                        arbitrary_rect1,
-                        arbitrary_rect2,
+                        arbitrary_rect1_inside_rect3,
+                        arbitrary_rect2_inside_rect3,
                         arbitrary_bool1,
                         arbitrary_color,
                         arbitrary_bool2);
@@ -340,8 +353,8 @@ TEST_F(CCMessagesTest, AllQuads) {
       StreamVideoDrawQuad::Create();
   streamvideo_in->SetAll(shared_state1_in.get(),
                          arbitrary_rect2,
-                         arbitrary_rect3,
-                         arbitrary_rect1,
+                         arbitrary_rect2_inside_rect2,
+                         arbitrary_rect1_inside_rect2,
                          arbitrary_bool1,
                          arbitrary_resourceid2,
                          arbitrary_matrix);
@@ -351,8 +364,8 @@ TEST_F(CCMessagesTest, AllQuads) {
   scoped_ptr<TextureDrawQuad> texture_in = TextureDrawQuad::Create();
   texture_in->SetAll(shared_state1_in.get(),
                      arbitrary_rect2,
-                     arbitrary_rect3,
-                     arbitrary_rect1,
+                     arbitrary_rect2_inside_rect2,
+                     arbitrary_rect1_inside_rect2,
                      arbitrary_bool1,
                      arbitrary_resourceid1,
                      arbitrary_bool2,
@@ -367,8 +380,8 @@ TEST_F(CCMessagesTest, AllQuads) {
   scoped_ptr<TileDrawQuad> tile_in = TileDrawQuad::Create();
   tile_in->SetAll(shared_state1_in.get(),
                   arbitrary_rect2,
-                  arbitrary_rect3,
-                  arbitrary_rect1,
+                  arbitrary_rect2_inside_rect2,
+                  arbitrary_rect1_inside_rect2,
                   arbitrary_bool1,
                   arbitrary_resourceid3,
                   arbitrary_rectf1,
@@ -381,8 +394,8 @@ TEST_F(CCMessagesTest, AllQuads) {
       YUVVideoDrawQuad::Create();
   yuvvideo_in->SetAll(shared_state1_in.get(),
                       arbitrary_rect1,
-                      arbitrary_rect2,
-                      arbitrary_rect3,
+                      arbitrary_rect2_inside_rect1,
+                      arbitrary_rect1_inside_rect1,
                       arbitrary_bool1,
                       arbitrary_sizef1,
                       arbitrary_resourceid1,
@@ -397,8 +410,7 @@ TEST_F(CCMessagesTest, AllQuads) {
                   arbitrary_rect1,
                   arbitrary_rectf1,
                   arbitrary_matrix,
-                  arbitrary_bool1,
-                  arbitrary_bool2);
+                  arbitrary_bool1);
 
   pass_in->shared_quad_state_list.push_back(shared_state1_in.Pass());
   pass_in->quad_list.push_back(checkerboard_in.PassAs<DrawQuad>());
@@ -418,8 +430,7 @@ TEST_F(CCMessagesTest, AllQuads) {
                    arbitrary_rect1,
                    arbitrary_rectf1,
                    arbitrary_matrix,
-                   arbitrary_bool1,
-                   arbitrary_bool2);
+                   arbitrary_bool1);
 
   pass_cmp->shared_quad_state_list.push_back(shared_state1_cmp.Pass());
   pass_cmp->quad_list.push_back(checkerboard_cmp.PassAs<DrawQuad>());
@@ -510,22 +521,29 @@ TEST_F(CCMessagesTest, Resources) {
   TransferableResource arbitrary_resource1;
   arbitrary_resource1.id = 2178312;
   arbitrary_resource1.sync_point = arbitrary_uint1;
-  arbitrary_resource1.format = 7;
+  arbitrary_resource1.format = cc::RGBA_8888;
+  arbitrary_resource1.target = GL_TEXTURE_2D;
   arbitrary_resource1.filter = 53;
   arbitrary_resource1.size = gfx::Size(37189, 123123);
   arbitrary_resource1.mailbox.SetName(arbitrary_mailbox1);
 
   TransferableResource arbitrary_resource2;
   arbitrary_resource2.id = 789132;
-  arbitrary_resource1.sync_point = arbitrary_uint2;
-  arbitrary_resource2.format = 30;
-  arbitrary_resource1.filter = 47;
+  arbitrary_resource2.sync_point = arbitrary_uint2;
+  arbitrary_resource2.format = cc::RGBA_4444;
+  arbitrary_resource2.target = GL_TEXTURE_EXTERNAL_OES;
+  arbitrary_resource2.filter = 47;
   arbitrary_resource2.size = gfx::Size(89123, 23789);
   arbitrary_resource2.mailbox.SetName(arbitrary_mailbox2);
+
+  scoped_ptr<RenderPass> renderpass_in = RenderPass::Create();
+  renderpass_in->SetNew(
+      RenderPass::Id(1, 1), gfx::Rect(), gfx::Rect(), gfx::Transform());
 
   DelegatedFrameData frame_in;
   frame_in.resource_list.push_back(arbitrary_resource1);
   frame_in.resource_list.push_back(arbitrary_resource2);
+  frame_in.render_pass_list.push_back(renderpass_in.Pass());
 
   IPC::ParamTraits<DelegatedFrameData>::Write(&msg, frame_in);
 
@@ -537,6 +555,55 @@ TEST_F(CCMessagesTest, Resources) {
   ASSERT_EQ(2u, frame_out.resource_list.size());
   Compare(arbitrary_resource1, frame_out.resource_list[0]);
   Compare(arbitrary_resource2, frame_out.resource_list[1]);
+}
+
+TEST_F(CCMessagesTest, LargestQuadType) {
+  size_t largest = 0;
+
+  bool done = false;
+  for (int i = 0; !done; ++i) {
+    switch (static_cast<DrawQuad::Material>(i)) {
+      case cc::DrawQuad::CHECKERBOARD:
+        largest = std::max(largest, sizeof(cc::CheckerboardDrawQuad));
+        break;
+      case cc::DrawQuad::DEBUG_BORDER:
+        largest = std::max(largest, sizeof(cc::DebugBorderDrawQuad));
+        break;
+      case cc::DrawQuad::IO_SURFACE_CONTENT:
+        largest = std::max(largest, sizeof(cc::IOSurfaceDrawQuad));
+        break;
+      case cc::DrawQuad::PICTURE_CONTENT:
+        largest = std::max(largest, sizeof(cc::PictureDrawQuad));
+        break;
+      case cc::DrawQuad::TEXTURE_CONTENT:
+        largest = std::max(largest, sizeof(cc::TextureDrawQuad));
+        break;
+      case cc::DrawQuad::RENDER_PASS:
+        largest = std::max(largest, sizeof(cc::RenderPassDrawQuad));
+        break;
+      case cc::DrawQuad::SOLID_COLOR:
+        largest = std::max(largest, sizeof(cc::SolidColorDrawQuad));
+        break;
+      case cc::DrawQuad::TILED_CONTENT:
+        largest = std::max(largest, sizeof(cc::TileDrawQuad));
+        break;
+      case cc::DrawQuad::STREAM_VIDEO_CONTENT:
+        largest = std::max(largest, sizeof(cc::StreamVideoDrawQuad));
+        break;
+      case cc::DrawQuad::YUV_VIDEO_CONTENT:
+        largest = std::max(largest, sizeof(cc::YUVVideoDrawQuad));
+        break;
+      case cc::DrawQuad::INVALID:
+        break;
+      default:
+        done = true;
+    }
+  }
+
+  // Verify the largest DrawQuad type is RenderPassDrawQuad. If this ever
+  // changes, then the ReserveSizeForRenderPassWrite() method needs to be
+  // updated as well to use the new largest quad.
+  EXPECT_EQ(sizeof(RenderPassDrawQuad), largest);
 }
 
 }  // namespace

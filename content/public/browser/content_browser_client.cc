@@ -17,7 +17,8 @@ BrowserMainParts* ContentBrowserClient::CreateBrowserMainParts(
 
 WebContentsViewPort* ContentBrowserClient::OverrideCreateWebContentsView(
     WebContents* web_contents,
-    RenderViewHostDelegateView** render_view_host_delegate_view) {
+    RenderViewHostDelegateView** render_view_host_delegate_view,
+    const WebContents::CreateParams& params) {
   return NULL;
 }
 
@@ -57,6 +58,11 @@ bool ContentBrowserClient::IsHandledURL(const GURL& url) {
 
 bool ContentBrowserClient::CanCommitURL(RenderProcessHost* process_host,
                                         const GURL& site_url) {
+  return true;
+}
+
+bool ContentBrowserClient::ShouldAllowOpenURL(SiteInstance* site_instance,
+                                              const GURL& url) {
   return true;
 }
 
@@ -270,7 +276,7 @@ bool ContentBrowserClient::AllowPepperSocketAPI(
     BrowserContext* browser_context,
     const GURL& url,
     bool private_api,
-    const SocketPermissionRequest& params) {
+    const SocketPermissionRequest* params) {
   return false;
 }
 
@@ -295,5 +301,11 @@ crypto::CryptoModuleBlockingPasswordDelegate*
   return NULL;
 }
 #endif
+
+bool ContentBrowserClient::IsPluginAllowedToCallRequestOSFileHandle(
+    content::BrowserContext* browser_context,
+    const GURL& url) {
+  return false;
+}
 
 }  // namespace content

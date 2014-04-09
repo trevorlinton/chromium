@@ -13,6 +13,7 @@
 #include "net/base/net_export.h"
 #include "net/quic/quic_bandwidth.h"
 #include "net/quic/quic_clock.h"
+#include "net/quic/quic_config.h"
 #include "net/quic/quic_protocol.h"
 #include "net/quic/quic_time.h"
 
@@ -41,6 +42,8 @@ class NET_EXPORT_PRIVATE SendAlgorithmInterface {
 
   virtual ~SendAlgorithmInterface() {}
 
+  virtual void SetFromConfig(const QuicConfig& config, bool is_server) = 0;
+
   // Called when we receive congestion feedback from remote peer.
   virtual void OnIncomingQuicCongestionFeedbackFrame(
       const QuicCongestionFeedbackFrame& feedback,
@@ -55,20 +58,24 @@ class NET_EXPORT_PRIVATE SendAlgorithmInterface {
   virtual void OnIncomingLoss(QuicTime ack_receive_time) = 0;
 
   // Inform that we sent x bytes to the wire, and if that was a retransmission.
+  // Returns true if the packet should be tracked by the congestion manager,
+  // false otherwise. This is used by implementations such as tcp_cubic_sender
+  // that do not count outgoing ACK packets against the congestion window.
   // Note: this function must be called for every packet sent to the wire.
-  virtual void SentPacket(QuicTime sent_time,
-                          QuicPacketSequenceNumber sequence_number,
-                          QuicByteCount bytes,
-                          Retransmission is_retransmission) = 0;
+  virtual bool OnPacketSent(QuicTime sent_time,
+                            QuicPacketSequenceNumber sequence_number,
+                            QuicByteCount bytes,
+                            TransmissionType transmission_type,
+                            HasRetransmittableData is_retransmittable) = 0;
 
   // Called when a packet is timed out.
-  virtual void AbandoningPacket(QuicPacketSequenceNumber sequence_number,
+  virtual void OnPacketAbandoned(QuicPacketSequenceNumber sequence_number,
                                 QuicByteCount abandoned_bytes) = 0;
 
   // Calculate the time until we can send the next packet.
   virtual QuicTime::Delta TimeUntilSend(
       QuicTime now,
-      Retransmission is_retransmission,
+      TransmissionType transmission_type,
       HasRetransmittableData has_retransmittable_data,
       IsHandshake handshake) = 0;
 
@@ -83,6 +90,14 @@ class NET_EXPORT_PRIVATE SendAlgorithmInterface {
   // Note 1: the caller is responsible for sanity checking this value.
   // Note 2: this will return zero if we don't have enough data for an estimate.
   virtual QuicTime::Delta RetransmissionDelay() = 0;
+
+  // Returns the size of the current congestion window.  Note, this
+  // is not the *available* window.  Some send algorithms may not use a
+  // congestion window and will return 0.
+  virtual QuicByteCount GetCongestionWindow() = 0;
+
+  // Sets the value of the current congestion window to |window|.
+  virtual void SetCongestionWindow(QuicByteCount window) = 0;
 };
 
 }  // namespace net

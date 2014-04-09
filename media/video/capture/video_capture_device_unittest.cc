@@ -2,8 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_proxy.h"
+#include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread.h"
@@ -58,15 +62,18 @@ using ::testing::SaveArg;
 
 namespace media {
 
-class MockFrameObserver : public media::VideoCaptureDevice::EventHandler {
+class MockClient : public media::VideoCaptureDevice::Client {
  public:
-  MOCK_METHOD0(ReserveOutputBuffer, scoped_refptr<media::VideoFrame>());
+  MOCK_METHOD1(ReserveOutputBuffer,
+      scoped_refptr<media::VideoFrame>(const gfx::Size&));
   MOCK_METHOD0(OnErr, void());
   MOCK_METHOD1(OnFrameInfo, void(const VideoCaptureCapability&));
   MOCK_METHOD1(OnFrameInfoChanged, void(const VideoCaptureCapability&));
 
-  explicit MockFrameObserver(base::WaitableEvent* wait_event)
-     : wait_event_(wait_event) {}
+  explicit MockClient(
+      base::Closure frame_cb)
+      : main_thread_(base::MessageLoopProxy::current()),
+        frame_cb_(frame_cb) {}
 
   virtual void OnError() OVERRIDE {
     OnErr();
@@ -79,46 +86,41 @@ class MockFrameObserver : public media::VideoCaptureDevice::EventHandler {
       int rotation,
       bool flip_vert,
       bool flip_horiz) OVERRIDE {
-    wait_event_->Signal();
+    main_thread_->PostTask(FROM_HERE, frame_cb_);
   }
 
   virtual void OnIncomingCapturedVideoFrame(
       const scoped_refptr<media::VideoFrame>& frame,
       base::Time timestamp) OVERRIDE {
-    wait_event_->Signal();
+    main_thread_->PostTask(FROM_HERE, frame_cb_);
   }
 
  private:
-  base::WaitableEvent* wait_event_;
+  scoped_refptr<base::MessageLoopProxy> main_thread_;
+  base::Closure frame_cb_;
 };
 
 class VideoCaptureDeviceTest : public testing::Test {
- public:
-  VideoCaptureDeviceTest(): wait_event_(false, false) { }
-
-  void PostQuitTask() {
-    loop_->PostTask(FROM_HERE, base::MessageLoop::QuitClosure());
-    loop_->Run();
-  }
-
  protected:
+  typedef media::VideoCaptureDevice::Client Client;
+
   virtual void SetUp() {
-    frame_observer_.reset(new MockFrameObserver(&wait_event_));
     loop_.reset(new base::MessageLoopForUI());
+    client_.reset(new MockClient(loop_->QuitClosure()));
 #if defined(OS_ANDROID)
     media::VideoCaptureDeviceAndroid::RegisterVideoCaptureDevice(
         base::android::AttachCurrentThread());
 #endif
   }
 
-  virtual void TearDown() {
+  void WaitForCapturedFrame() {
+    loop_->Run();
   }
 
 #if defined(OS_WIN)
   base::win::ScopedCOMInitializer initialize_com_;
 #endif
-  base::WaitableEvent wait_event_;
-  scoped_ptr<MockFrameObserver> frame_observer_;
+  scoped_ptr<MockClient> client_;
   VideoCaptureDevice::Names names_;
   scoped_ptr<base::MessageLoop> loop_;
 };
@@ -150,28 +152,24 @@ TEST_F(VideoCaptureDeviceTest, CaptureVGA) {
   DVLOG(1) << names_.front().id();
   // Get info about the new resolution.
   VideoCaptureCapability rx_capability;
-  EXPECT_CALL(*frame_observer_, OnFrameInfo(_))
+  EXPECT_CALL(*client_, OnFrameInfo(_))
       .Times(1).WillOnce(SaveArg<0>(&rx_capability));
 
-  EXPECT_CALL(*frame_observer_, OnErr())
+  EXPECT_CALL(*client_, OnErr())
       .Times(0);
 
   VideoCaptureCapability capture_format(640,
                                         480,
                                         30,
-                                        VideoCaptureCapability::kI420,
-                                        0,
-                                        false,
+                                        PIXEL_FORMAT_I420,
                                         ConstantResolutionVideoCaptureDevice);
-  device->Allocate(capture_format, frame_observer_.get());
-  device->Start();
+  device->AllocateAndStart(capture_format,
+                           client_.PassAs<Client>());
   // Get captured video frames.
-  PostQuitTask();
-  EXPECT_TRUE(wait_event_.TimedWait(TestTimeouts::action_max_timeout()));
+  loop_->Run();
   EXPECT_EQ(rx_capability.width, 640);
   EXPECT_EQ(rx_capability.height, 480);
-  device->Stop();
-  device->DeAllocate();
+  device->StopAndDeAllocate();
 }
 
 TEST_F(VideoCaptureDeviceTest, Capture720p) {
@@ -188,26 +186,22 @@ TEST_F(VideoCaptureDeviceTest, Capture720p) {
   // Get info about the new resolution.
   // We don't care about the resulting resolution or frame rate as it might
   // be different from one machine to the next.
-  EXPECT_CALL(*frame_observer_, OnFrameInfo(_))
+  EXPECT_CALL(*client_, OnFrameInfo(_))
       .Times(1);
 
-  EXPECT_CALL(*frame_observer_, OnErr())
+  EXPECT_CALL(*client_, OnErr())
       .Times(0);
 
   VideoCaptureCapability capture_format(1280,
                                         720,
                                         30,
-                                        VideoCaptureCapability::kI420,
-                                        0,
-                                        false,
+                                        PIXEL_FORMAT_I420,
                                         ConstantResolutionVideoCaptureDevice);
-  device->Allocate(capture_format, frame_observer_.get());
-  device->Start();
+  device->AllocateAndStart(capture_format,
+                           client_.PassAs<Client>());
   // Get captured video frames.
-  PostQuitTask();
-  EXPECT_TRUE(wait_event_.TimedWait(TestTimeouts::action_max_timeout()));
-  device->Stop();
-  device->DeAllocate();
+  WaitForCapturedFrame();
+  device->StopAndDeAllocate();
 }
 
 TEST_F(VideoCaptureDeviceTest, MAYBE_AllocateBadSize) {
@@ -220,23 +214,22 @@ TEST_F(VideoCaptureDeviceTest, MAYBE_AllocateBadSize) {
       VideoCaptureDevice::Create(names_.front()));
   ASSERT_TRUE(device.get() != NULL);
 
-  EXPECT_CALL(*frame_observer_, OnErr())
+  EXPECT_CALL(*client_, OnErr())
       .Times(0);
 
   // Get info about the new resolution.
   VideoCaptureCapability rx_capability;
-  EXPECT_CALL(*frame_observer_, OnFrameInfo(_))
+  EXPECT_CALL(*client_, OnFrameInfo(_))
       .Times(AtLeast(1)).WillOnce(SaveArg<0>(&rx_capability));
 
   VideoCaptureCapability capture_format(637,
                                         472,
                                         35,
-                                        VideoCaptureCapability::kI420,
-                                        0,
-                                        false,
+                                        PIXEL_FORMAT_I420,
                                         ConstantResolutionVideoCaptureDevice);
-  device->Allocate(capture_format, frame_observer_.get());
-  device->DeAllocate();
+  device->AllocateAndStart(capture_format,
+                           client_.PassAs<Client>());
+  device->StopAndDeAllocate();
   EXPECT_EQ(rx_capability.width, 640);
   EXPECT_EQ(rx_capability.height, 480);
 }
@@ -247,58 +240,63 @@ TEST_F(VideoCaptureDeviceTest, ReAllocateCamera) {
     DVLOG(1) << "No camera available. Exiting test.";
     return;
   }
+
+  // First, do a number of very fast device start/stops.
+  for (int i = 0; i <= 5; i++) {
+    scoped_ptr<MockClient> client(
+        new MockClient(base::Bind(&base::DoNothing)));
+    scoped_ptr<VideoCaptureDevice> device(
+        VideoCaptureDevice::Create(names_.front()));
+    gfx::Size resolution;
+    if (i % 2) {
+      resolution = gfx::Size(640, 480);
+    } else {
+      resolution = gfx::Size(1280, 1024);
+    }
+    VideoCaptureCapability requested_format(
+        resolution.width(),
+        resolution.height(),
+        30,
+        PIXEL_FORMAT_I420,
+        ConstantResolutionVideoCaptureDevice);
+
+    // The device (if it is an async implementation) may or may not get as far
+    // as the OnFrameInfo() step; we're intentionally not going to wait for it
+    // to get that far.
+    EXPECT_CALL(*client, OnFrameInfo(_)).Times(testing::AtMost(1));
+    device->AllocateAndStart(requested_format,
+                             client.PassAs<Client>());
+    device->StopAndDeAllocate();
+  }
+
+  // Finally, do a device start and wait for it to finish.
+  gfx::Size resolution;
+  VideoCaptureCapability requested_format(
+      320,
+      240,
+      30,
+      PIXEL_FORMAT_I420,
+      ConstantResolutionVideoCaptureDevice);
+
+  base::RunLoop run_loop;
+  scoped_ptr<MockClient> client(
+      new MockClient(base::Bind(run_loop.QuitClosure())));
   scoped_ptr<VideoCaptureDevice> device(
       VideoCaptureDevice::Create(names_.front()));
-  ASSERT_TRUE(device.get() != NULL);
-  EXPECT_CALL(*frame_observer_, OnErr())
-      .Times(0);
-  // Get info about the new resolution.
-  VideoCaptureCapability rx_capability_1;
-  VideoCaptureCapability rx_capability_2;
-  VideoCaptureCapability capture_format_1(640,
-                                          480,
-                                          30,
-                                          VideoCaptureCapability::kI420,
-                                          0,
-                                          false,
-                                          ConstantResolutionVideoCaptureDevice);
-  VideoCaptureCapability capture_format_2(1280,
-                                          1024,
-                                          30,
-                                          VideoCaptureCapability::kI420,
-                                          0,
-                                          false,
-                                          ConstantResolutionVideoCaptureDevice);
-  VideoCaptureCapability capture_format_3(320,
-                                          240,
-                                          30,
-                                          VideoCaptureCapability::kI420,
-                                          0,
-                                          false,
-                                          ConstantResolutionVideoCaptureDevice);
 
-  EXPECT_CALL(*frame_observer_, OnFrameInfo(_))
-      .WillOnce(SaveArg<0>(&rx_capability_1));
-  device->Allocate(capture_format_1, frame_observer_.get());
-  device->Start();
-  // Nothing shall happen.
-  device->Allocate(capture_format_2, frame_observer_.get());
-  device->DeAllocate();
-  // Allocate new size 320, 240
-  EXPECT_CALL(*frame_observer_, OnFrameInfo(_))
-      .WillOnce(SaveArg<0>(&rx_capability_2));
-  device->Allocate(capture_format_3, frame_observer_.get());
-
-  device->Start();
-  // Get captured video frames.
-  PostQuitTask();
-  EXPECT_TRUE(wait_event_.TimedWait(TestTimeouts::action_max_timeout()));
-  EXPECT_EQ(rx_capability_1.width, 640);
-  EXPECT_EQ(rx_capability_1.height, 480);
-  EXPECT_EQ(rx_capability_2.width, 320);
-  EXPECT_EQ(rx_capability_2.height, 240);
-  device->Stop();
-  device->DeAllocate();
+    // The device (if it is an async implementation) may or may not get as far
+    // as the OnFrameInfo() step; we're intentionally not going to wait for it
+    // to get that far.
+  VideoCaptureCapability final_format;
+  EXPECT_CALL(*client, OnFrameInfo(_))
+      .Times(1).WillOnce(SaveArg<0>(&final_format));
+  device->AllocateAndStart(requested_format,
+                           client.PassAs<Client>());
+  run_loop.Run();  // Waits for a frame.
+  device->StopAndDeAllocate();
+  device.reset();
+  EXPECT_EQ(final_format.width, 320);
+  EXPECT_EQ(final_format.height, 240);
 }
 
 TEST_F(VideoCaptureDeviceTest, DeAllocateCameraWhileRunning) {
@@ -311,30 +309,25 @@ TEST_F(VideoCaptureDeviceTest, DeAllocateCameraWhileRunning) {
       VideoCaptureDevice::Create(names_.front()));
   ASSERT_TRUE(device.get() != NULL);
 
-  EXPECT_CALL(*frame_observer_, OnErr())
+  EXPECT_CALL(*client_, OnErr())
       .Times(0);
   // Get info about the new resolution.
   VideoCaptureCapability rx_capability;
-  EXPECT_CALL(*frame_observer_, OnFrameInfo(_))
+  EXPECT_CALL(*client_, OnFrameInfo(_))
       .WillOnce(SaveArg<0>(&rx_capability));
 
   VideoCaptureCapability capture_format(640,
                                         480,
                                         30,
-                                        VideoCaptureCapability::kI420,
-                                        0,
-                                        false,
+                                        PIXEL_FORMAT_I420,
                                         ConstantResolutionVideoCaptureDevice);
-  device->Allocate(capture_format, frame_observer_.get());
-
-  device->Start();
+  device->AllocateAndStart(capture_format, client_.PassAs<Client>());
   // Get captured video frames.
-  PostQuitTask();
-  EXPECT_TRUE(wait_event_.TimedWait(TestTimeouts::action_max_timeout()));
+  WaitForCapturedFrame();
   EXPECT_EQ(rx_capability.width, 640);
   EXPECT_EQ(rx_capability.height, 480);
   EXPECT_EQ(rx_capability.frame_rate, 30);
-  device->DeAllocate();
+  device->StopAndDeAllocate();
 }
 
 TEST_F(VideoCaptureDeviceTest, FakeCapture) {
@@ -350,28 +343,24 @@ TEST_F(VideoCaptureDeviceTest, FakeCapture) {
 
   // Get info about the new resolution.
   VideoCaptureCapability rx_capability;
-  EXPECT_CALL(*frame_observer_, OnFrameInfo(_))
+  EXPECT_CALL(*client_, OnFrameInfo(_))
       .Times(1).WillOnce(SaveArg<0>(&rx_capability));
 
-  EXPECT_CALL(*frame_observer_, OnErr())
+  EXPECT_CALL(*client_, OnErr())
       .Times(0);
 
   VideoCaptureCapability capture_format(640,
                                         480,
                                         30,
-                                        VideoCaptureCapability::kI420,
-                                        0,
-                                        false,
+                                        PIXEL_FORMAT_I420,
                                         ConstantResolutionVideoCaptureDevice);
-  device->Allocate(capture_format, frame_observer_.get());
-
-  device->Start();
-  EXPECT_TRUE(wait_event_.TimedWait(TestTimeouts::action_max_timeout()));
+  device->AllocateAndStart(capture_format,
+                           client_.PassAs<Client>());
+  WaitForCapturedFrame();
   EXPECT_EQ(rx_capability.width, 640);
   EXPECT_EQ(rx_capability.height, 480);
   EXPECT_EQ(rx_capability.frame_rate, 30);
-  device->Stop();
-  device->DeAllocate();
+  device->StopAndDeAllocate();
 }
 
 // Start the camera in 720p to capture MJPEG instead of a raw format.
@@ -385,29 +374,40 @@ TEST_F(VideoCaptureDeviceTest, MAYBE_CaptureMjpeg) {
       VideoCaptureDevice::Create(names_.front()));
   ASSERT_TRUE(device.get() != NULL);
 
-  EXPECT_CALL(*frame_observer_, OnErr())
+  EXPECT_CALL(*client_, OnErr())
       .Times(0);
   // Verify we get MJPEG from the device. Not all devices can capture 1280x720
   // @ 30 fps, so we don't care about the exact resolution we get.
   VideoCaptureCapability rx_capability;
-  EXPECT_CALL(*frame_observer_, OnFrameInfo(_))
+  EXPECT_CALL(*client_, OnFrameInfo(_))
       .WillOnce(SaveArg<0>(&rx_capability));
 
   VideoCaptureCapability capture_format(1280,
                                         720,
                                         30,
-                                        VideoCaptureCapability::kMJPEG,
-                                        0,
-                                        false,
+                                        PIXEL_FORMAT_MJPEG,
                                         ConstantResolutionVideoCaptureDevice);
-  device->Allocate(capture_format, frame_observer_.get());
-
-  device->Start();
+  device->AllocateAndStart(capture_format, client_.PassAs<Client>());
   // Get captured video frames.
-  PostQuitTask();
-  EXPECT_TRUE(wait_event_.TimedWait(TestTimeouts::action_max_timeout()));
-  EXPECT_EQ(rx_capability.color, VideoCaptureCapability::kMJPEG);
-  device->DeAllocate();
+  WaitForCapturedFrame();
+  EXPECT_EQ(rx_capability.color, PIXEL_FORMAT_MJPEG);
+  device->StopAndDeAllocate();
+}
+
+TEST_F(VideoCaptureDeviceTest, GetDeviceSupportedFormats) {
+  VideoCaptureDevice::GetDeviceNames(&names_);
+  if (!names_.size()) {
+    DVLOG(1) << "No camera available. Exiting test.";
+    return;
+  }
+  VideoCaptureCapabilities capture_formats;
+  VideoCaptureDevice::Names::iterator names_iterator;
+  for (names_iterator = names_.begin(); names_iterator != names_.end();
+       ++names_iterator) {
+    VideoCaptureDevice::GetDeviceSupportedFormats(*names_iterator,
+                                                  &capture_formats);
+    // Nothing to test here since we cannot forecast the hardware capabilities.
+  }
 }
 
 TEST_F(VideoCaptureDeviceTest, FakeCaptureVariableResolution) {
@@ -427,27 +427,44 @@ TEST_F(VideoCaptureDeviceTest, FakeCaptureVariableResolution) {
   ASSERT_TRUE(device.get() != NULL);
 
   // Get info about the new resolution.
-  EXPECT_CALL(*frame_observer_, OnFrameInfo(_))
+  EXPECT_CALL(*client_, OnFrameInfo(_))
       .Times(1);
 
-  EXPECT_CALL(*frame_observer_, OnErr())
+  EXPECT_CALL(*client_, OnErr())
       .Times(0);
+  int action_count = 200;
+  EXPECT_CALL(*client_, OnFrameInfoChanged(_))
+      .Times(AtLeast(action_count / 30));
 
-  device->Allocate(capture_format, frame_observer_.get());
+  device->AllocateAndStart(capture_format, client_.PassAs<Client>());
 
   // The amount of times the OnFrameInfoChanged gets called depends on how often
   // FakeDevice is supposed to change and what is its actual frame rate.
   // We set TimeWait to 200 action timeouts and this should be enough for at
   // least action_count/kFakeCaptureCapabilityChangePeriod calls.
-  int action_count = 200;
-  EXPECT_CALL(*frame_observer_, OnFrameInfoChanged(_))
-      .Times(AtLeast(action_count / 30));
-  device->Start();
   for (int i = 0; i < action_count; ++i) {
-    EXPECT_TRUE(wait_event_.TimedWait(TestTimeouts::action_timeout()));
+    WaitForCapturedFrame();
   }
-  device->Stop();
-  device->DeAllocate();
+  device->StopAndDeAllocate();
+}
+
+TEST_F(VideoCaptureDeviceTest, FakeGetDeviceSupportedFormats) {
+  VideoCaptureDevice::Names names;
+  FakeVideoCaptureDevice::GetDeviceNames(&names);
+
+  VideoCaptureCapabilities capture_formats;
+  VideoCaptureDevice::Names::iterator names_iterator;
+
+  for (names_iterator = names.begin(); names_iterator != names.end();
+       ++names_iterator) {
+    FakeVideoCaptureDevice::GetDeviceSupportedFormats(*names_iterator,
+                                                      &capture_formats);
+    EXPECT_GE(capture_formats.size(), 1u);
+    EXPECT_EQ(capture_formats[0].width, 640);
+    EXPECT_EQ(capture_formats[0].height, 480);
+    EXPECT_EQ(capture_formats[0].color, media::PIXEL_FORMAT_I420);
+    EXPECT_GE(capture_formats[0].frame_rate, 20);
+  }
 }
 
 };  // namespace media

@@ -22,6 +22,11 @@ class PrefRegistrySimple;
 // PrefMetricsService is responsible for recording prefs-related UMA stats.
 class PrefMetricsService : public BrowserContextKeyedService {
  public:
+  enum HashedPrefStyle {
+    HASHED_PREF_STYLE_NEW,
+    HASHED_PREF_STYLE_DEPRECATED,
+  };
+
   explicit PrefMetricsService(Profile* profile);
   virtual ~PrefMetricsService();
 
@@ -96,6 +101,10 @@ class PrefMetricsService : public BrowserContextKeyedService {
   // Callback to receive a unique device_id.
   void GetDeviceIdCallback(const std::string& device_id);
 
+  // Marks all tracked preferences as required to save their values even if
+  // empty.
+  void MarkNeedsEmptyValueForTrackedPreferences();
+
   // Checks the tracked preferences against their last known values and reports
   // any discrepancies. This must be called after |device_id| has been set.
   void CheckTrackedPreferences();
@@ -104,15 +113,13 @@ class PrefMetricsService : public BrowserContextKeyedService {
   // called after |device_id| has been set.
   void UpdateTrackedPreference(const char* path);
 
-  // Removes the tracked preference from local state. Returns 'true' iff. the
-  // value was present.
-  bool RemoveTrackedPreference(const char* path);
-
-  // Gets the path to the preference value hash in local state.
-  std::string GetHashedPrefPath(const char* path);
-
-  // Computes an MD5 hash for the given preference value.
-  std::string GetHashedPrefValue(const char* path, const base::Value* value);
+  // Computes an MD5 hash for the given preference value. |value| can be
+  // NULL which will result in the unique hash representing NULL for the pref
+  // at |path|.
+  std::string GetHashedPrefValue(
+      const char* path,
+      const base::Value* value,
+      HashedPrefStyle desired_style);
 
   void InitializePrefObservers();
 

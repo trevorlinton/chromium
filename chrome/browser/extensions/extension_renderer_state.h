@@ -7,6 +7,7 @@
 
 #include <map>
 #include <set>
+#include <string>
 #include <utility>
 
 #include "base/basictypes.h"
@@ -20,8 +21,9 @@ class ExtensionRendererState {
  public:
   struct WebViewInfo {
     int embedder_process_id;
-    int embedder_routing_id;
     int instance_id;
+    std::string partition_id;
+    bool allow_chrome_extension_urls;
   };
 
   static ExtensionRendererState* GetInstance();

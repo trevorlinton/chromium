@@ -48,9 +48,11 @@ class IpcPacketSocket : public talk_base::AsyncPacketSocket,
   // talk_base::AsyncPacketSocket interface.
   virtual talk_base::SocketAddress GetLocalAddress() const OVERRIDE;
   virtual talk_base::SocketAddress GetRemoteAddress() const OVERRIDE;
-  virtual int Send(const void *pv, size_t cb) OVERRIDE;
+  virtual int Send(const void *pv, size_t cb,
+                   talk_base::DiffServCodePoint dscp) OVERRIDE;
   virtual int SendTo(const void *pv, size_t cb,
-                     const talk_base::SocketAddress& addr) OVERRIDE;
+                     const talk_base::SocketAddress& addr,
+                     talk_base::DiffServCodePoint dscp) OVERRIDE;
   virtual int Close() OVERRIDE;
   virtual State GetState() const OVERRIDE;
   virtual int GetOption(talk_base::Socket::Option opt, int* value) OVERRIDE;
@@ -202,13 +204,15 @@ talk_base::SocketAddress IpcPacketSocket::GetRemoteAddress() const {
   return remote_address_;
 }
 
-int IpcPacketSocket::Send(const void *data, size_t data_size) {
+int IpcPacketSocket::Send(const void *data, size_t data_size,
+                          talk_base::DiffServCodePoint dscp) {
   DCHECK_EQ(base::MessageLoop::current(), message_loop_);
-  return SendTo(data, data_size, remote_address_);
+  return SendTo(data, data_size, remote_address_, dscp);
 }
 
 int IpcPacketSocket::SendTo(const void *data, size_t data_size,
-                            const talk_base::SocketAddress& address) {
+                            const talk_base::SocketAddress& address,
+                            talk_base::DiffServCodePoint dscp) {
   DCHECK_EQ(base::MessageLoop::current(), message_loop_);
 
   switch (state_) {
@@ -252,7 +256,8 @@ int IpcPacketSocket::SendTo(const void *data, size_t data_size,
 
   const char* data_char = reinterpret_cast<const char*>(data);
   std::vector<char> data_vector(data_char, data_char + data_size);
-  client_->Send(address_chrome, data_vector);
+  client_->SendWithDscp(address_chrome, data_vector,
+                        static_cast<net::DiffServCodePoint>(dscp));
 
   // Fake successful send. The caller ignores result anyway.
   return data_size;

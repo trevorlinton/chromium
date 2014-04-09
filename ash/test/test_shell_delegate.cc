@@ -7,28 +7,50 @@
 #include <limits>
 
 #include "ash/caps_lock_delegate_stub.h"
+#include "ash/default_accessibility_delegate.h"
 #include "ash/host/root_window_host_factory.h"
+#include "ash/keyboard_controller_proxy_stub.h"
+#include "ash/media_delegate.h"
+#include "ash/new_window_delegate.h"
 #include "ash/session_state_delegate.h"
 #include "ash/shell.h"
 #include "ash/shell_window_ids.h"
 #include "ash/test/test_launcher_delegate.h"
 #include "ash/test/test_session_state_delegate.h"
+#include "ash/test/test_system_tray_delegate.h"
+#include "ash/test/test_user_wallpaper_delegate.h"
+#include "ash/wm/window_state.h"
 #include "ash/wm/window_util.h"
 #include "base/logging.h"
 #include "content/public/test/test_browser_context.h"
 #include "ui/aura/window.h"
-#include "ui/compositor/compositor.h"
 
 namespace ash {
 namespace test {
+namespace {
+
+class NewWindowDelegateImpl : public NewWindowDelegate {
+  virtual void NewTab() OVERRIDE {}
+  virtual void NewWindow(bool incognito) OVERRIDE {}
+  virtual void OpenFileManager() OVERRIDE {}
+  virtual void OpenCrosh() OVERRIDE {}
+  virtual void RestoreTab() OVERRIDE {}
+  virtual void ShowKeyboardOverlay() OVERRIDE {}
+  virtual void ShowTaskManager() OVERRIDE {}
+  virtual void OpenFeedbackPage() OVERRIDE {}
+};
+
+class MediaDelegateImpl : public MediaDelegate {
+ public:
+  virtual void HandleMediaNextTrack() OVERRIDE {}
+  virtual void HandleMediaPlayPause() OVERRIDE {}
+  virtual void HandleMediaPrevTrack() OVERRIDE {}
+};
+
+}  // namespace
 
 TestShellDelegate::TestShellDelegate()
-    : spoken_feedback_enabled_(false),
-      high_contrast_enabled_(false),
-      screen_magnifier_enabled_(false),
-      screen_magnifier_type_(kDefaultMagnifierType),
-      large_cursor_enabled_(false),
-      num_exit_requests_(0),
+    : num_exit_requests_(0),
       multi_profiles_enabled_(false),
       test_session_state_delegate_(NULL) {
 }
@@ -38,6 +60,10 @@ TestShellDelegate::~TestShellDelegate() {
 
 bool TestShellDelegate::IsFirstRunAfterBoot() const {
   return false;
+}
+
+bool TestShellDelegate::IsIncognitoAllowed() const {
+  return true;
 }
 
 bool TestShellDelegate::IsMultiProfilesEnabled() const {
@@ -58,92 +84,14 @@ void TestShellDelegate::Exit() {
   num_exit_requests_++;
 }
 
-void TestShellDelegate::NewTab() {
-}
-
-void TestShellDelegate::NewWindow(bool incognito) {
-}
-
-void TestShellDelegate::ToggleMaximized() {
-  aura::Window* window = ash::wm::GetActiveWindow();
-  if (window)
-    ash::wm::ToggleMaximizedWindow(window);
-}
-
-void TestShellDelegate::ToggleFullscreen() {
-}
-
-void TestShellDelegate::OpenFileManager(bool as_dialog) {
-}
-
-void TestShellDelegate::OpenCrosh() {
-}
-
-void TestShellDelegate::RestoreTab() {
-}
-
-void TestShellDelegate::ShowKeyboardOverlay() {
-}
-
 keyboard::KeyboardControllerProxy*
     TestShellDelegate::CreateKeyboardControllerProxy() {
-  return NULL;
-}
-
-void TestShellDelegate::ShowTaskManager() {
+  return new KeyboardControllerProxyStub();
 }
 
 content::BrowserContext* TestShellDelegate::GetCurrentBrowserContext() {
   current_browser_context_.reset(new content::TestBrowserContext());
   return current_browser_context_.get();
-}
-
-void TestShellDelegate::ToggleSpokenFeedback(
-    AccessibilityNotificationVisibility notify) {
-  spoken_feedback_enabled_ = !spoken_feedback_enabled_;
-}
-
-bool TestShellDelegate::IsSpokenFeedbackEnabled() const {
-  return spoken_feedback_enabled_;
-}
-
-void TestShellDelegate::ToggleHighContrast() {
-  high_contrast_enabled_ = !high_contrast_enabled_;
-}
-
-bool TestShellDelegate::IsHighContrastEnabled() const {
-  return high_contrast_enabled_;
-}
-
-void TestShellDelegate::SetMagnifierEnabled(bool enabled) {
-  screen_magnifier_enabled_ = enabled;
-}
-
-void TestShellDelegate::SetMagnifierType(MagnifierType type) {
-  screen_magnifier_type_ = type;
-}
-
-bool TestShellDelegate::IsMagnifierEnabled() const {
-  return screen_magnifier_enabled_;
-}
-
-MagnifierType TestShellDelegate::GetMagnifierType() const {
-  return screen_magnifier_type_;
-}
-
-void TestShellDelegate::SetLargeCursorEnabled(bool enabled) {
-  large_cursor_enabled_ = enabled;
-}
-
-bool TestShellDelegate::IsLargeCursorEnabled() const {
-  return large_cursor_enabled_;
-}
-
-bool TestShellDelegate::ShouldAlwaysShowAccessibilityMenu() const {
-  return false;
-}
-
-void TestShellDelegate::SilenceSpokenFeedback() const {
 }
 
 app_list::AppListViewDelegate* TestShellDelegate::CreateAppListViewDelegate() {
@@ -156,11 +104,11 @@ LauncherDelegate* TestShellDelegate::CreateLauncherDelegate(
 }
 
 SystemTrayDelegate* TestShellDelegate::CreateSystemTrayDelegate() {
-  return NULL;
+  return new TestSystemTrayDelegate;
 }
 
 UserWallpaperDelegate* TestShellDelegate::CreateUserWallpaperDelegate() {
-  return NULL;
+  return new TestUserWallpaperDelegate();
 }
 
 CapsLockDelegate* TestShellDelegate::CreateCapsLockDelegate() {
@@ -173,41 +121,30 @@ SessionStateDelegate* TestShellDelegate::CreateSessionStateDelegate() {
   return test_session_state_delegate_;
 }
 
-aura::client::UserActionClient* TestShellDelegate::CreateUserActionClient() {
-  return NULL;
+AccessibilityDelegate* TestShellDelegate::CreateAccessibilityDelegate() {
+  return new internal::DefaultAccessibilityDelegate();
 }
 
-void TestShellDelegate::OpenFeedbackPage() {
+NewWindowDelegate* TestShellDelegate::CreateNewWindowDelegate() {
+  return new NewWindowDelegateImpl;
+}
+
+MediaDelegate* TestShellDelegate::CreateMediaDelegate() {
+  return new MediaDelegateImpl;
+}
+
+aura::client::UserActionClient* TestShellDelegate::CreateUserActionClient() {
+  return NULL;
 }
 
 void TestShellDelegate::RecordUserMetricsAction(UserMetricsAction action) {
 }
 
-void TestShellDelegate::HandleMediaNextTrack() {
-}
-
-void TestShellDelegate::HandleMediaPlayPause() {
-}
-
-void TestShellDelegate::HandleMediaPrevTrack() {
-}
-
-void TestShellDelegate::SaveScreenMagnifierScale(double scale) {
-}
-
-ui::MenuModel* TestShellDelegate::CreateContextMenu(aura::RootWindow* root) {
+ui::MenuModel* TestShellDelegate::CreateContextMenu(aura::Window* root) {
   return NULL;
 }
 
-double TestShellDelegate::GetSavedScreenMagnifierScale() {
-  return std::numeric_limits<double>::min();
-}
-
 RootWindowHostFactory* TestShellDelegate::CreateRootWindowHostFactory() {
-  // The ContextFactory must exist before any Compositors are created.
-  bool allow_test_contexts = true;
-  ui::Compositor::InitializeContextFactoryForTests(allow_test_contexts);
-
   return RootWindowHostFactory::Create();
 }
 

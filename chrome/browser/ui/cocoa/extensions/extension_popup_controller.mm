@@ -17,6 +17,7 @@
 #import "chrome/browser/ui/cocoa/browser_window_cocoa.h"
 #import "chrome/browser/ui/cocoa/extensions/extension_view_mac.h"
 #import "chrome/browser/ui/cocoa/info_bubble_window.h"
+#include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/devtools_manager.h"
 #include "content/public/browser/notification_details.h"
@@ -163,6 +164,7 @@ class DevtoolsNotificationBridge : public content::NotificationObserver {
                          anchoredAt:anchoredAt])) {
     host_.reset(host);
     beingInspected_ = devMode;
+    ignoreWindowDidResignKey_ = NO;
 
     InfoBubbleView* view = self.bubble;
     [view setArrowLocation:arrowLocation];
@@ -201,6 +203,20 @@ class DevtoolsNotificationBridge : public content::NotificationObserver {
   DevToolsWindow::OpenDevToolsWindow(host_->render_view_host());
 }
 
+- (void)close {
+  // |windowWillClose:| could have already been called. http://crbug.com/279505
+  if (host_) {
+    web_modal::WebContentsModalDialogManager* modalDialogManager =
+        web_modal::WebContentsModalDialogManager::FromWebContents(
+            host_->host_contents());
+    if (modalDialogManager &&
+        modalDialogManager->IsDialogActive()) {
+      return;
+    }
+  }
+  [super close];
+}
+
 - (void)windowWillClose:(NSNotification *)notification {
   [super windowWillClose:notification];
   gPopup = nil;
@@ -210,6 +226,25 @@ class DevtoolsNotificationBridge : public content::NotificationObserver {
 }
 
 - (void)windowDidResignKey:(NSNotification*)notification {
+  // |windowWillClose:| could have already been called. http://crbug.com/279505
+  if (host_) {
+    // When a modal dialog is opened on top of the popup and when it's closed,
+    // it steals key-ness from the popup. Don't close the popup when this
+    // happens. There's an extra windowDidResignKey: notification after the
+    // modal dialog closes that should also be ignored.
+    web_modal::WebContentsModalDialogManager* modalDialogManager =
+        web_modal::WebContentsModalDialogManager::FromWebContents(
+            host_->host_contents());
+    if (modalDialogManager &&
+        modalDialogManager->IsDialogActive()) {
+      ignoreWindowDidResignKey_ = YES;
+      return;
+    }
+    if (ignoreWindowDidResignKey_) {
+      ignoreWindowDidResignKey_ = NO;
+      return;
+    }
+  }
   if (!beingInspected_)
     [super windowDidResignKey:notification];
 }
@@ -314,11 +349,14 @@ class DevtoolsNotificationBridge : public content::NotificationObserver {
   // animation will continue after this frame is set, reverting the frame to
   // what it was when the animation started.
   NSWindow* window = [self window];
-  if ([window isVisible] && [[window animator] alphaValue] < 1.0) {
+  id animator = [window animator];
+  if ([window isVisible] &&
+      ([animator alphaValue] < 1.0 ||
+       !NSEqualRects([window frame], [animator frame]))) {
     [NSAnimationContext beginGrouping];
     [[NSAnimationContext currentContext] setDuration:kAnimationDuration];
-    [[window animator] setAlphaValue:1.0];
-    [[window animator] setFrame:frame display:YES];
+    [animator setAlphaValue:1.0];
+    [animator setFrame:frame display:YES];
     [NSAnimationContext endGrouping];
   } else {
     [window setFrame:frame display:YES];

@@ -12,6 +12,8 @@
 
 #include <vector>
 
+#import "media/video/capture/mac/platform_video_capturing_mac.h"
+
 namespace media {
   class VideoCaptureDeviceMac;
 }
@@ -19,12 +21,10 @@ namespace media {
 @class QTCaptureDeviceInput;
 @class QTCaptureSession;
 
-@interface VideoCaptureDeviceQTKit : NSObject {
+@interface VideoCaptureDeviceQTKit : NSObject<PlatformVideoCapturingMac> {
  @private
   // Settings.
   int frameRate_;
-  int frameWidth_;
-  int frameHeight_;
 
   NSLock *lock_;
   media::VideoCaptureDeviceMac *frameReceiver_;
@@ -59,6 +59,9 @@ namespace media {
 
 // Stops video capturing.
 - (void)stopCapture;
+
+// Handle any QTCaptureSessionRuntimeErrorNotifications.
+- (void)handleNotification:(NSNotification *)errorNotification;
 
 @end
 

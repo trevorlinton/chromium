@@ -39,6 +39,10 @@
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 
+#if defined(OS_CHROMEOS)
+#include "ash/system/chromeos/system_clock_observer.h"
+#endif
+
 namespace {
 
 const int kPaddingVertical = 19;
@@ -77,6 +81,7 @@ class DateDefaultView : public views::View,
     help_->SetTooltipText(l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_HELP));
     view->AddButton(help_);
 
+#if !defined(OS_WIN)
     if (login != ash::user::LOGGED_IN_LOCKED &&
         login != ash::user::LOGGED_IN_RETAIL_MODE) {
       shutdown_ = new ash::internal::TrayPopupHeaderButton(this,
@@ -101,9 +106,14 @@ class DateDefaultView : public views::View,
           l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_LOCK));
       view->AddButton(lock_);
     }
+#endif  // !defined(OS_WIN)
   }
 
   virtual ~DateDefaultView() {}
+
+  views::View* GetHelpButtonView() const {
+    return help_;
+  }
 
  private:
   // Overridden from views::ButtonListener.
@@ -140,12 +150,22 @@ namespace internal {
 
 TrayDate::TrayDate(SystemTray* system_tray)
     : SystemTrayItem(system_tray),
-      time_tray_(NULL) {
+      time_tray_(NULL),
+      default_view_(NULL) {
+#if defined(OS_CHROMEOS)
+  system_clock_observer_.reset(new SystemClockObserver());
+#endif
   Shell::GetInstance()->system_tray_notifier()->AddClockObserver(this);
 }
 
 TrayDate::~TrayDate() {
   Shell::GetInstance()->system_tray_notifier()->RemoveClockObserver(this);
+}
+
+views::View* TrayDate::GetHelpButtonView() const {
+  if (!default_view_)
+    return NULL;
+  return static_cast<DateDefaultView*>(default_view_)->GetHelpButtonView();
 }
 
 views::View* TrayDate::CreateTrayView(user::LoginStatus status) {
@@ -161,7 +181,8 @@ views::View* TrayDate::CreateTrayView(user::LoginStatus status) {
 }
 
 views::View* TrayDate::CreateDefaultView(user::LoginStatus status) {
-  return new DateDefaultView(status);
+  default_view_ = new DateDefaultView(status);
+  return default_view_;
 }
 
 views::View* TrayDate::CreateDetailedView(user::LoginStatus status) {
@@ -173,6 +194,7 @@ void TrayDate::DestroyTrayView() {
 }
 
 void TrayDate::DestroyDefaultView() {
+  default_view_ = NULL;
 }
 
 void TrayDate::DestroyDetailedView() {

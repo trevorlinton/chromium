@@ -19,6 +19,7 @@
 #include "content/public/common/media_stream_request.h"
 
 class AudioStreamIndicator;
+class DesktopStreamsRegistry;
 class MediaStreamCaptureIndicator;
 class Profile;
 
@@ -135,6 +136,8 @@ class MediaCaptureDevicesDispatcher : public content::MediaObserver,
 
   scoped_refptr<AudioStreamIndicator> GetAudioStreamIndicator();
 
+  DesktopStreamsRegistry* GetDesktopStreamsRegistry();
+
  private:
   friend struct DefaultSingletonTraits<MediaCaptureDevicesDispatcher>;
 
@@ -158,12 +161,22 @@ class MediaCaptureDevicesDispatcher : public content::MediaObserver,
                        const content::NotificationDetails& details) OVERRIDE;
 
   // Helpers for ProcessMediaAccessRequest().
+  void ProcessDesktopCaptureAccessRequest(
+      content::WebContents* web_contents,
+      const content::MediaStreamRequest& request,
+      const content::MediaResponseCallback& callback,
+      const extensions::Extension* extension);
   void ProcessScreenCaptureAccessRequest(
       content::WebContents* web_contents,
       const content::MediaStreamRequest& request,
       const content::MediaResponseCallback& callback,
       const extensions::Extension* extension);
-  void ProcessMediaAccessRequestFromExtension(
+  void ProcessTabCaptureAccessRequest(
+      content::WebContents* web_contents,
+      const content::MediaStreamRequest& request,
+      const content::MediaResponseCallback& callback,
+      const extensions::Extension* extension);
+  void ProcessMediaAccessRequestFromPlatformAppOrExtension(
       content::WebContents* web_contents,
       const content::MediaStreamRequest& request,
       const content::MediaResponseCallback& callback,
@@ -210,6 +223,8 @@ class MediaCaptureDevicesDispatcher : public content::MediaObserver,
   scoped_refptr<MediaStreamCaptureIndicator> media_stream_capture_indicator_;
 
   scoped_refptr<AudioStreamIndicator> audio_stream_indicator_;
+
+  scoped_ptr<DesktopStreamsRegistry> desktop_streams_registry_;
 
   content::NotificationRegistrar notifications_registrar_;
 

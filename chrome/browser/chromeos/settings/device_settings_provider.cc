@@ -8,6 +8,7 @@
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/command_line.h"
+#include "base/location.h"
 #include "base/logging.h"
 #include "base/metrics/histogram.h"
 #include "base/prefs/pref_service.h"
@@ -17,7 +18,6 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/policy/device_local_account.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/chromeos/settings/cros_settings_names.h"
 #include "chrome/browser/chromeos/settings/device_settings_cache.h"
 #include "chrome/browser/policy/browser_policy_connector.h"
 #include "chrome/browser/policy/cloud/cloud_policy_constants.h"
@@ -30,6 +30,8 @@
 #include "chromeos/network/network_event_log.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_state_handler.h"
+#include "chromeos/network/shill_property_util.h"
+#include "chromeos/settings/cros_settings_names.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 using google::protobuf::RepeatedField;
@@ -56,6 +58,7 @@ const char* kKnownSettings[] = {
   kAllowRedeemChromeOsRegistrationOffers,
   kAllowedConnectionTypesForUpdate,
   kAppPack,
+  kAttestationForContentProtectionEnabled,
   kDeviceAttestationEnabled,
   kDeviceOwner,
   kIdleLogoutTimeout,
@@ -67,6 +70,7 @@ const char* kKnownSettings[] = {
   kReportDeviceBootMode,
   kReportDeviceLocation,
   kReportDeviceNetworkInterfaces,
+  kReportDeviceUsers,
   kReportDeviceVersionInfo,
   kScreenSaverExtensionId,
   kScreenSaverTimeout,
@@ -79,9 +83,6 @@ const char* kKnownSettings[] = {
   kUpdateDisabled,
   kVariationsRestrictParameter,
 };
-
-// Legacy policy file location. Used to detect migration from pre v12 ChromeOS.
-const char kLegacyPolicyFile[] = "/var/lib/whitelist/preferences";
 
 bool HasOldMetricsFile() {
   // TODO(pastarmovj): Remove this once migration is not needed anymore.
@@ -109,6 +110,10 @@ DeviceSettingsProvider::DeviceSettingsProvider(
       ownership_status_(device_settings_service_->GetOwnershipStatus()),
       store_callback_factory_(this) {
   device_settings_service_->AddObserver(this);
+  if (NetworkHandler::IsInitialized()) {
+    NetworkHandler::Get()->network_state_handler()->AddObserver(this,
+                                                                FROM_HERE);
+  }
 
   if (!UpdateFromService()) {
     // Make sure we have at least the cache data immediately.
@@ -118,6 +123,10 @@ DeviceSettingsProvider::DeviceSettingsProvider(
 
 DeviceSettingsProvider::~DeviceSettingsProvider() {
   device_settings_service_->RemoveObserver(this);
+  if (NetworkHandler::IsInitialized()) {
+    NetworkHandler::Get()->network_state_handler()->RemoveObserver(this,
+                                                                   FROM_HERE);
+  }
 }
 
 // static
@@ -267,12 +276,6 @@ void DeviceSettingsProvider::SetInPolicy() {
                   &kiosk_app_id)) {
             account->mutable_kiosk_app()->set_app_id(kiosk_app_id);
           }
-          std::string kiosk_app_update_url;
-          if (entry_dict->GetStringWithoutPathExpansion(
-                  kAccountsPrefDeviceLocalAccountsKeyKioskAppUpdateURL,
-                  &kiosk_app_update_url)) {
-            account->mutable_kiosk_app()->set_update_url(kiosk_app_update_url);
-          }
         } else {
           NOTREACHED();
         }
@@ -386,6 +389,15 @@ void DeviceSettingsProvider::SetInPolicy() {
     } else {
       NOTREACHED();
     }
+  } else if (prop == kAttestationForContentProtectionEnabled) {
+    em::AttestationSettingsProto* attestation_settings =
+        device_settings_.mutable_attestation_settings();
+    bool setting_enabled;
+    if (value->GetAsBoolean(&setting_enabled)) {
+      attestation_settings->set_content_protection_enabled(setting_enabled);
+    } else {
+      NOTREACHED();
+    }
   } else {
     // The remaining settings don't support Set(), since they are not
     // intended to be customizable by the user:
@@ -401,6 +413,7 @@ void DeviceSettingsProvider::SetInPolicy() {
     //   kReportDeviceLocation
     //   kReportDeviceVersionInfo
     //   kReportDeviceNetworkInterfaces
+    //   kReportDeviceUsers
     //   kScreenSaverExtensionId
     //   kScreenSaverTimeout
     //   kStartUpUrls
@@ -509,11 +522,6 @@ void DeviceSettingsProvider::DecodeLoginPolicies(
           entry_dict->SetStringWithoutPathExpansion(
               kAccountsPrefDeviceLocalAccountsKeyKioskAppId,
               entry->kiosk_app().app_id());
-        }
-        if (entry->kiosk_app().has_update_url()) {
-          entry_dict->SetStringWithoutPathExpansion(
-              kAccountsPrefDeviceLocalAccountsKeyKioskAppUpdateURL,
-              entry->kiosk_app().update_url());
         }
       } else if (entry->has_deprecated_public_session_id()) {
         // Deprecated public session specification.
@@ -679,6 +687,11 @@ void DeviceSettingsProvider::DecodeReportingPolicies(
           kReportDeviceNetworkInterfaces,
           reporting_policy.report_network_interfaces());
     }
+    if (reporting_policy.has_report_users()) {
+      new_values_cache->SetBoolean(
+          kReportDeviceUsers,
+          reporting_policy.report_users());
+    }
   }
 }
 
@@ -741,6 +754,15 @@ void DeviceSettingsProvider::DecodeGenericPolicies(
   new_values_cache->SetBoolean(
       kDeviceAttestationEnabled,
       policy.attestation_settings().attestation_enabled());
+
+  if (policy.has_attestation_settings() &&
+      policy.attestation_settings().has_content_protection_enabled()) {
+    new_values_cache->SetBoolean(
+        kAttestationForContentProtectionEnabled,
+        policy.attestation_settings().content_protection_enabled());
+  } else {
+    new_values_cache->SetBoolean(kAttestationForContentProtectionEnabled, true);
+  }
 }
 
 void DeviceSettingsProvider::UpdateValuesCache(
@@ -807,10 +829,13 @@ void DeviceSettingsProvider::ApplyMetricsSetting(bool use_file,
 }
 
 void DeviceSettingsProvider::ApplyRoamingSetting(bool new_value) {
+  // TODO(pneubeck): Move this application of the roaming policy to
+  // NetworkConfigurationUpdater and ManagedNetworkConfigurationHandler. See
+  // http://crbug.com/323537 .
   // TODO(armansito): Look up the device by explicitly using the device path.
   const DeviceState* cellular =
-      NetworkHandler::Get()->network_state_handler()->
-          GetDeviceStateByType(flimflam::kTypeCellular);
+      NetworkHandler::Get()->network_state_handler()->GetDeviceStateByType(
+          NetworkTypePattern::Cellular());
   if (!cellular) {
     NET_LOG_DEBUG("No cellular device is available",
                   "Roaming is only supported by cellular devices.");
@@ -818,7 +843,7 @@ void DeviceSettingsProvider::ApplyRoamingSetting(bool new_value) {
   }
   bool current_value;
   if (!cellular->properties().GetBooleanWithoutPathExpansion(
-          flimflam::kCellularAllowRoamingProperty, &current_value)) {
+          shill::kCellularAllowRoamingProperty, &current_value)) {
     NET_LOG_ERROR("Could not get \"allow roaming\" property from cellular "
                   "device.", cellular->path());
     return;
@@ -832,10 +857,18 @@ void DeviceSettingsProvider::ApplyRoamingSetting(bool new_value) {
 
   NetworkHandler::Get()->network_device_handler()->SetDeviceProperty(
       cellular->path(),
-      flimflam::kCellularAllowRoamingProperty,
+      shill::kCellularAllowRoamingProperty,
       base::FundamentalValue(new_value),
       base::Bind(&base::DoNothing),
       base::Bind(&LogShillError));
+}
+
+void DeviceSettingsProvider::ApplyRoamingSettingFromProto(
+    const em::ChromeDeviceSettingsProto& settings) {
+  ApplyRoamingSetting(
+      settings.has_data_roaming_enabled() ?
+          settings.data_roaming_enabled().data_roaming_enabled() :
+          false);
 }
 
 void DeviceSettingsProvider::ApplySideEffects(
@@ -847,10 +880,7 @@ void DeviceSettingsProvider::ApplySideEffects(
     ApplyMetricsSetting(true, false);
 
   // Next set the roaming setting as needed.
-  ApplyRoamingSetting(
-      settings.has_data_roaming_enabled() ?
-          settings.data_roaming_enabled().data_roaming_enabled() :
-          false);
+  ApplyRoamingSettingFromProto(settings);
 }
 
 bool DeviceSettingsProvider::MitigateMissingPolicy() {
@@ -903,6 +933,10 @@ DeviceSettingsProvider::TrustedStatus
 
 bool DeviceSettingsProvider::HandlesSetting(const std::string& path) const {
   return IsDeviceSetting(path);
+}
+
+void DeviceSettingsProvider::DeviceListChanged() {
+  ApplyRoamingSettingFromProto(device_settings_);
 }
 
 DeviceSettingsProvider::TrustedStatus

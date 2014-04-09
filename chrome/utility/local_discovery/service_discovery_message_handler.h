@@ -17,6 +17,7 @@ class MDnsClient;
 }
 
 namespace base {
+struct FileDescriptor;
 class TaskRunner;
 class Thread;
 }
@@ -52,6 +53,8 @@ class ServiceDiscoveryMessageHandler : public chrome::UtilityMessageHandler {
                 const base::Closure& task);
 
   // IPC message handlers.
+  void OnSetSockets(const base::FileDescriptor& socket_v4,
+                    const base::FileDescriptor& socket_v6);
   void OnStartWatcher(uint64 id, const std::string& service_type);
   void OnDiscoverServices(uint64 id, bool force_update);
   void OnDestroyWatcher(uint64 id);
@@ -71,6 +74,9 @@ class ServiceDiscoveryMessageHandler : public chrome::UtilityMessageHandler {
                           net::AddressFamily address_family);
   void DestroyLocalDomainResolver(uint64 id);
 
+  void ShutdownLocalDiscovery();
+  void ShutdownOnIOThread();
+
   // Is called by ServiceWatcher as callback.
   void OnServiceUpdated(uint64 id,
                         ServiceWatcher::UpdateType update,
@@ -84,7 +90,10 @@ class ServiceDiscoveryMessageHandler : public chrome::UtilityMessageHandler {
   // Is called by LocalDomainResolver as callback.
   void OnLocalDomainResolved(uint64 id,
                              bool success,
-                             const net::IPAddressNumber& address);
+                             const net::IPAddressNumber& address_ipv4,
+                             const net::IPAddressNumber& address_ipv6);
+
+  void Send(IPC::Message* msg);
 
   ServiceWatchers service_watchers_;
   ServiceResolvers service_resolvers_;

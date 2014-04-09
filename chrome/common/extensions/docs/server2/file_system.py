@@ -2,7 +2,19 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+from future import Gettable, Future
+
+
 class FileNotFoundError(Exception):
+  '''Raised when a file isn't found for read or stat.
+  '''
+  def __init__(self, filename):
+    Exception.__init__(self, filename)
+
+class FileSystemError(Exception):
+  '''Raised on when there are errors reading or statting files, such as a
+  network timeout.
+  '''
   def __init__(self, filename):
     Exception.__init__(self, filename)
 
@@ -48,19 +60,32 @@ class FileSystem(object):
     If binary=False, the contents of each file will be unicode parsed as utf-8,
     and failing that as latin-1 (some extension docs use latin-1). If
     binary=True then the contents will be a str.
+
+    If any path cannot be found, raises a FileNotFoundError. This is guaranteed
+    to only happen once the Future has been resolved (Get() called).
+
+    For any other failure, raises a FileSystemError.
     '''
     raise NotImplementedError(self.__class__)
 
   def ReadSingle(self, path, binary=False):
-    '''Reads a single file from the FileSystem.
+    '''Reads a single file from the FileSystem. Returns a Future with the same
+    rules as Read().
     '''
-    return self.Read([path], binary=binary).Get()[path]
+    read_single = self.Read([path], binary=binary)
+    return Future(delegate=Gettable(lambda: read_single.Get()[path]))
+
+  def Refresh(self):
+    raise NotImplementedError(self.__class__)
 
   # TODO(cduvall): Allow Stat to take a list of paths like Read.
   def Stat(self, path):
     '''Returns a |StatInfo| object containing the version of |path|. If |path|
     is a directory, |StatInfo| will have the versions of all the children of
     the directory in |StatInfo.child_versions|.
+
+    If the path cannot be found, raises a FileNotFoundError.
+    For any other failure, raises a FileSystemError.
     '''
     raise NotImplementedError(self.__class__)
 
@@ -76,6 +101,9 @@ class FileSystem(object):
   def Walk(self, root):
     '''Recursively walk the directories in a file system, starting with root.
     Emulates os.walk from the standard os module.
+
+    If the root cannot be found, raises a FileNotFoundError.
+    For any other failure, raises a FileSystemError.
     '''
     basepath = root.rstrip('/') + '/'
 
@@ -85,7 +113,7 @@ class FileSystem(object):
 
       dirs, files = [], []
 
-      for f in self.ReadSingle(root):
+      for f in self.ReadSingle(root).Get():
         if f.endswith('/'):
           dirs.append(f)
         else:
@@ -99,3 +127,9 @@ class FileSystem(object):
 
     for walkinfo in walk(root):
       yield walkinfo
+
+  def __repr__(self):
+    return '<%s>' % type(self).__name__
+
+  def __str__(self):
+    return repr(self)

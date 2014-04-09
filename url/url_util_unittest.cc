@@ -202,7 +202,7 @@ TEST(URLUtilTest, TestEncodeURIComponent) {
     {"\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1A\x1B\x1C\x1D\x1E\x1F",
      "%10%11%12%13%14%15%16%17%18%19%1A%1B%1C%1D%1E%1F"},
     {" !\"#$%&'()*+,-./",
-     "%20!%22%23%24%25%26'()*%2B%2C-.%2F"},
+     "%20!%22%23%24%25%26%27()*%2B%2C-.%2F"},
     {"0123456789:;<=>?",
      "0123456789%3A%3B%3C%3D%3E%3F"},
     {"@ABCDEFGHIJKLMNO",
@@ -241,22 +241,32 @@ TEST(URLUtilTest, TestResolveRelativeWithNonStandardBase) {
       // A non-standard hierarchical base is resolved with path URL
       // canoncialization rules.
     {"data:/Blah:Blah/", "file.html", true, "data:/Blah:Blah/file.html"},
-    {"data:/Path/../part/part2", "file.html", true, "data:/Path/../part/file.html"},
+    {"data:/Path/../part/part2", "file.html", true,
+      "data:/Path/../part/file.html"},
       // Path URL canonicalization rules also apply to non-standard authority-
       // based URLs.
-    {"custom://Authority/", "file.html", true, "custom://Authority/file.html"},
+    {"custom://Authority/", "file.html", true,
+      "custom://Authority/file.html"},
     {"custom://Authority/", "other://Auth/", true, "other://Auth/"},
-    {"custom://Authority/", "../../file.html", true, "custom://Authority/file.html"},
-    {"custom://Authority/path/", "file.html", true, "custom://Authority/path/file.html"},
-    {"custom://Authority:NoCanon/path/", "file.html", true, "custom://Authority:NoCanon/path/file.html"},
+    {"custom://Authority/", "../../file.html", true,
+      "custom://Authority/file.html"},
+    {"custom://Authority/path/", "file.html", true,
+      "custom://Authority/path/file.html"},
+    {"custom://Authority:NoCanon/path/", "file.html", true,
+      "custom://Authority:NoCanon/path/file.html"},
       // It's still possible to get an invalid path URL.
     {"custom://Invalid:!#Auth/", "file.html", false, ""},
       // A path with an authority section gets canonicalized under standard URL
       // rules, even though the base was non-standard.
-    {"content://content.Provider/", "//other.Provider", true, "content://other.provider/"},
+    {"content://content.Provider/", "//other.Provider", true,
+      "content://other.provider/"},
       // Resolving an absolute URL doesn't cause canonicalization of the
       // result.
     {"about:blank", "custom://Authority", true, "custom://Authority"},
+      // Fragment URLs can be resolved against a non-standard base.
+    {"scheme://Authority/path", "#fragment", true,
+      "scheme://Authority/path#fragment"},
+    {"scheme://Authority/", "#fragment", true, "scheme://Authority/#fragment"},
       // Resolving should fail if the base URL is authority-based but is
       // missing a path component (the '/' at the end).
     {"scheme://Authority", "path", false, ""},

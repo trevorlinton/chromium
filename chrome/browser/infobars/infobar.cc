@@ -10,7 +10,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/infobars/infobar_container.h"
 #include "chrome/browser/infobars/infobar_service.h"
-#include "ui/base/animation/slide_animation.h"
+#include "ui/gfx/animation/slide_animation.h"
 
 SkColor GetInfoBarTopColor(InfoBarDelegate::Type infobar_type) {
   static const SkColor kWarningBackgroundColorTop =
@@ -30,9 +30,6 @@ SkColor GetInfoBarBottomColor(InfoBarDelegate::Type infobar_type) {
       kWarningBackgroundColorBottom : kPageActionBackgroundColorBottom;
 }
 
-// TODO(pkasting): Port Mac to use this.
-#if defined(TOOLKIT_VIEWS) || defined(TOOLKIT_GTK) || defined(OS_ANDROID)
-
 InfoBar::InfoBar(InfoBarService* owner, InfoBarDelegate* delegate)
     : owner_(owner),
       delegate_(delegate),
@@ -45,7 +42,7 @@ InfoBar::InfoBar(InfoBarService* owner, InfoBarDelegate* delegate)
       bar_target_height_(kDefaultBarTargetHeight) {
   DCHECK(owner_ != NULL);
   DCHECK(delegate_ != NULL);
-  animation_.SetTweenType(ui::Tween::LINEAR);
+  animation_.SetTweenType(gfx::Tween::LINEAR);
 }
 
 InfoBar::~InfoBar() {
@@ -91,7 +88,7 @@ void InfoBar::CloseSoon() {
   MaybeDelete();
 }
 
-void InfoBar::AnimationProgressed(const ui::Animation* animation) {
+void InfoBar::AnimationProgressed(const gfx::Animation* animation) {
   RecalculateHeights(false);
 }
 
@@ -121,7 +118,7 @@ int InfoBar::OffsetY(const gfx::Size& prefsize) const {
       (bar_target_height_ - bar_height_);
 }
 
-void InfoBar::AnimationEnded(const ui::Animation* animation) {
+void InfoBar::AnimationEnded(const gfx::Animation* animation) {
   // When the animation ends, we must ensure the container is notified even if
   // the heights haven't changed, lest it never get an "animation finished"
   // notification.  (If the browser doesn't get this notification, it will not
@@ -181,5 +178,3 @@ void InfoBar::MaybeDelete() {
     delegate_ = NULL;
   }
 }
-
-#endif  // TOOLKIT_VIEWS || TOOLKIT_GTK || OS_ANDROID

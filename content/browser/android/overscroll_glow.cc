@@ -65,13 +65,14 @@ gfx::Vector2dF ZeroSmallComponents(gfx::Vector2dF vector) {
 
 } // namespace
 
-scoped_ptr<OverscrollGlow> OverscrollGlow::Create(bool enabled) {
+scoped_ptr<OverscrollGlow> OverscrollGlow::Create(bool enabled,
+                                                  gfx::SizeF size) {
   const SkBitmap& edge = g_overscroll_resources.Get().edge_bitmap();
   const SkBitmap& glow = g_overscroll_resources.Get().glow_bitmap();
   if (edge.isNull() || glow.isNull())
     return scoped_ptr<OverscrollGlow>();
 
-  return make_scoped_ptr(new OverscrollGlow(enabled, edge, glow));
+  return make_scoped_ptr(new OverscrollGlow(enabled, size, edge, glow));
 }
 
 void OverscrollGlow::EnsureResources() {
@@ -79,9 +80,11 @@ void OverscrollGlow::EnsureResources() {
 }
 
 OverscrollGlow::OverscrollGlow(bool enabled,
+                               gfx::SizeF size,
                                const SkBitmap& edge,
                                const SkBitmap& glow)
   : enabled_(enabled),
+    size_(size),
     horizontal_overscroll_enabled_(true),
     vertical_overscroll_enabled_(true),
     root_layer_(cc::Layer::Create()) {
@@ -149,13 +152,6 @@ void OverscrollGlow::OnOverscrolled(base::TimeTicks current_time,
 
   old_velocity_ = velocity;
   old_overscroll_ = overscroll;
-}
-
-void OverscrollGlow::Release(base::TimeTicks current_time) {
-  for (size_t i = 0; i < EdgeEffect::EDGE_COUNT; ++i) {
-    edge_effects_[i]->Release(current_time);
-  }
-  old_overscroll_ = old_velocity_ = gfx::Vector2dF();
 }
 
 bool OverscrollGlow::Animate(base::TimeTicks current_time) {
@@ -244,6 +240,13 @@ void OverscrollGlow::Absorb(base::TimeTicks current_time,
     edge_effects_[i]->Absorb(current_time, std::abs(overscroll_velocities[i]));
     GetOppositeEdge(i)->Release(current_time);
   }
+}
+
+void OverscrollGlow::Release(base::TimeTicks current_time) {
+  for (size_t i = 0; i < EdgeEffect::EDGE_COUNT; ++i) {
+    edge_effects_[i]->Release(current_time);
+  }
+  old_overscroll_ = old_velocity_ = gfx::Vector2dF();
 }
 
 void OverscrollGlow::ReleaseAxis(Axis axis, base::TimeTicks current_time) {

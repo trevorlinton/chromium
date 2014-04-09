@@ -14,6 +14,7 @@
 #include "net/http/http_response_headers.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_fetcher_impl.h"
+#include "net/url_request/url_fetcher_response_writer.h"
 #include "net/url_request/url_request_status.h"
 
 namespace net {
@@ -147,6 +148,10 @@ void TestURLFetcher::SaveResponseToTemporaryFile(
     scoped_refptr<base::TaskRunner> file_task_runner) {
 }
 
+void TestURLFetcher::SaveResponseWithWriter(
+    scoped_ptr<URLFetcherResponseWriter> response_writer) {
+}
+
 HttpResponseHeaders* TestURLFetcher::GetResponseHeaders() const {
   return fake_response_headers_.get();
 }
@@ -184,11 +189,6 @@ int TestURLFetcher::GetResponseCode() const {
 
 const ResponseCookies& TestURLFetcher::GetCookies() const {
   return fake_cookies_;
-}
-
-bool TestURLFetcher::FileErrorOccurred(int* out_error_code) const {
-  NOTIMPLEMENTED();
-  return false;
 }
 
 void TestURLFetcher::ReceivedContentWasMalformed() {
@@ -283,13 +283,15 @@ void TestURLFetcherFactory::SetDelegateForTests(
 FakeURLFetcher::FakeURLFetcher(const GURL& url,
                                URLFetcherDelegate* d,
                                const std::string& response_data,
-                               bool success)
+                               HttpStatusCode response_code)
     : TestURLFetcher(0, url, d),
       weak_factory_(this) {
   set_status(URLRequestStatus(
-      success ? URLRequestStatus::SUCCESS : URLRequestStatus::FAILED,
+      // Status is FAILED for HTTP/5xx server errors, and SUCCESS otherwise.
+      response_code >= HTTP_INTERNAL_SERVER_ERROR ? URLRequestStatus::FAILED :
+                                                    URLRequestStatus::SUCCESS,
       0));
-  set_response_code(success ? 200 : 500);
+  set_response_code(response_code);
   SetResponseString(response_data);
 }
 
@@ -327,10 +329,12 @@ FakeURLFetcherFactory::FakeURLFetcherFactory(
 scoped_ptr<FakeURLFetcher> FakeURLFetcherFactory::DefaultFakeURLFetcherCreator(
       const GURL& url,
       URLFetcherDelegate* delegate,
-      const std::string& response,
-      bool success) {
-  return scoped_ptr<FakeURLFetcher>(new FakeURLFetcher(url, delegate,
-                                                       response, success));
+      const std::string& response_data,
+      HttpStatusCode response_code) {
+  return scoped_ptr<FakeURLFetcher>(new FakeURLFetcher(url,
+                                                       delegate,
+                                                       response_data,
+                                                       response_code));
 }
 
 FakeURLFetcherFactory::~FakeURLFetcherFactory() {}
@@ -357,11 +361,12 @@ URLFetcher* FakeURLFetcherFactory::CreateURLFetcher(
   return fake_fetcher.release();
 }
 
-void FakeURLFetcherFactory::SetFakeResponse(const std::string& url,
-                                            const std::string& response_data,
-                                            bool success) {
+void FakeURLFetcherFactory::SetFakeResponse(
+    const GURL& url,
+    const std::string& response_data,
+    HttpStatusCode response_code) {
   // Overwrite existing URL if it already exists.
-  fake_responses_[GURL(url)] = std::make_pair(response_data, success);
+  fake_responses_[url] = std::make_pair(response_data, response_code);
 }
 
 void FakeURLFetcherFactory::ClearFakeResponses() {

@@ -13,7 +13,6 @@
 #include "chrome/browser/chromeos/login/user_manager.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/chromeos/settings/cros_settings_names.h"
 #include "chrome/browser/policy/browser_policy_connector.h"
 #include "chrome/browser/ui/webui/help/help_utils_chromeos.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
@@ -21,6 +20,7 @@
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
+#include "chromeos/settings/cros_settings_names.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -52,9 +52,9 @@ NetworkStatus GetNetworkStatus(const chromeos::NetworkState* network) {
 
   // The connection type checking strategy must be the same as the one
   // used in update engine.
-  if (network->type() == flimflam::kTypeBluetooth)
+  if (network->type() == shill::kTypeBluetooth)
     return NETWORK_STATUS_DISALLOWED;
-  if (network->type() == flimflam::kTypeCellular &&
+  if (network->type() == shill::kTypeCellular &&
       !help_utils_chromeos::IsUpdateOverCellularAllowed()) {
     return NETWORK_STATUS_DISALLOWED;
   }

@@ -11,16 +11,17 @@
 #include "chrome/browser/chromeos/input_method/input_method_engine.h"
 #include "chromeos/dbus/ibus/ibus_engine_factory_service.h"
 #include "chromeos/dbus/ibus/ibus_engine_service.h"
+#include "chromeos/ime/ibus_bridge.h"
 #include "dbus/object_path.h"
 
 namespace chromeos {
 
 class IBusComponent;
-class IBusLookupTable;
 class IBusText;
 
 class IBusEngineService;
 namespace input_method {
+class CandidateWindow;
 struct KeyEventHandle;
 }  // namespace input_method
 
@@ -54,15 +55,14 @@ class InputMethodEngineIBus : public InputMethodEngine,
   virtual bool ClearComposition(int context_id, std::string* error) OVERRIDE;
   virtual bool CommitText(int context_id, const char* text,
                           std::string* error) OVERRIDE;
+  virtual const CandidateWindowProperty&
+    GetCandidateWindowProperty() const OVERRIDE;
+  virtual void SetCandidateWindowProperty(
+      const CandidateWindowProperty& property) OVERRIDE;
   virtual bool SetCandidateWindowVisible(bool visible,
                                          std::string* error) OVERRIDE;
-  virtual void SetCandidateWindowCursorVisible(bool visible) OVERRIDE;
-  virtual void SetCandidateWindowVertical(bool vertical) OVERRIDE;
-  virtual void SetCandidateWindowPageSize(int size) OVERRIDE;
   virtual void SetCandidateWindowAuxText(const char* text) OVERRIDE;
   virtual void SetCandidateWindowAuxTextVisible(bool visible) OVERRIDE;
-  virtual void SetCandidateWindowPosition(
-      CandidateWindowPosition position) OVERRIDE;
   virtual bool SetCandidates(int context_id,
                              const std::vector<Candidate>& candidates,
                              std::string* error) OVERRIDE;
@@ -79,13 +79,11 @@ class InputMethodEngineIBus : public InputMethodEngine,
                                      std::string* error) OVERRIDE;
 
   // IBusEngineHandlerInterface overrides.
-  virtual void FocusIn() OVERRIDE;
+  virtual void FocusIn(ibus::TextInputType text_input_type) OVERRIDE;
   virtual void FocusOut() OVERRIDE;
   virtual void Enable() OVERRIDE;
   virtual void Disable() OVERRIDE;
-  virtual void PropertyActivate(
-      const std::string& property_name,
-      ibus::IBusPropertyState property_state) OVERRIDE;
+  virtual void PropertyActivate(const std::string& property_name) OVERRIDE;
   virtual void PropertyShow(const std::string& property_name) OVERRIDE;
   virtual void PropertyHide(const std::string& property_name) OVERRIDE;
   virtual void SetCapability(IBusCapability capability) OVERRIDE;
@@ -107,8 +105,9 @@ class InputMethodEngineIBus : public InputMethodEngine,
   // Returns true if the connection to ibus-daemon is avaiable.
   bool IsConnected();
 
-  // Converts MenuItem to IBusProperty.
-  bool MenuItemToProperty(const MenuItem& item, IBusProperty* property);
+  // Converts MenuItem to InputMethodProperty.
+  void MenuItemToProperty(const MenuItem& item,
+                          input_method::InputMethodProperty* property);
 
   // Registers the engine component.
   void RegisterComponent();
@@ -163,8 +162,11 @@ class InputMethodEngineIBus : public InputMethodEngine,
   // The current engine component.
   scoped_ptr<IBusComponent> component_;
 
-  // The current lookup table.
-  scoped_ptr<IBusLookupTable> table_;
+  // The current candidate window.
+  scoped_ptr<input_method::CandidateWindow> candidate_window_;
+
+  // The current candidate window property.
+  CandidateWindowProperty candidate_window_property_;
 
   // Indicates whether the candidate window is visible.
   bool window_visible_;

@@ -44,6 +44,8 @@
         '../../url/url.gyp:url_lib',
         '../aura/aura.gyp:aura',
         '../compositor/compositor.gyp:compositor',
+        '../events/events.gyp:events',
+        '../gfx/gfx.gyp:gfx',
         '../ui.gyp:ui',
         'keyboard_resources',
       ],
@@ -83,8 +85,9 @@
         '../aura/aura.gyp:aura',
         '../aura/aura.gyp:aura_test_support',
         '../compositor/compositor.gyp:compositor',
-        '../ui.gyp:run_ui_unittests',
+        '../gfx/gfx.gyp:gfx',
         '../ui.gyp:ui',
+        '../ui_unittests.gyp:run_ui_unittests',
         'keyboard',
       ],
       'sources': [
@@ -92,14 +95,13 @@
         'keyboard_test_suite.cc',
       ],
       'conditions': [
-        [ 'os_posix == 1 and OS != "mac" and OS != "android" and OS != "ios"', {
-          'conditions': [
-            ['linux_use_tcmalloc==1', {
-              'dependencies': [
-                '../../base/allocator/allocator.gyp:allocator',
-              ],
-            }],
+        ['OS=="linux" and linux_use_tcmalloc==1', {
+          'dependencies': [
+            '<(DEPTH)/base/allocator/allocator.gyp:allocator',
           ],
+          'link_settings': {
+            'ldflags': ['-rdynamic'],
+          },
         }],
       ],
     },

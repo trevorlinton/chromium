@@ -6,8 +6,8 @@
 
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "ui/aura/root_window.h"
-#include "ui/base/events/event.h"
-#include "ui/base/events/event_utils.h"
+#include "ui/events/event.h"
+#include "ui/events/event_utils.h"
 #include "ui/gfx/transform.h"
 
 namespace {
@@ -16,16 +16,15 @@ void InjectTouchEvent(const gfx::Point& location,
                       ui::EventType type,
                       aura::Window* window) {
   gfx::Point screen_location = location;
+  aura::Window* root_window = window->GetRootWindow();
   // First convert the location from Window to RootWindow.
-  aura::RootWindow* root_window = window->GetRootWindow();
   aura::Window::ConvertPointToTarget(window, root_window, &screen_location);
   // Then convert the location from RootWindow to screen.
-  root_window->ConvertPointToHost(&screen_location);
+  aura::WindowEventDispatcher* dispatcher = root_window->GetDispatcher();
+  dispatcher->ConvertPointToHost(&screen_location);
   ui::TouchEvent touch(type, screen_location, 0, 0, ui::EventTimeForNow(),
                        1.0f, 1.0f, 1.0f, 1.0f);
-  aura::RootWindowHostDelegate* root_window_host_delegate =
-        root_window->AsRootWindowHostDelegate();
-  root_window_host_delegate->OnHostTouchEvent(&touch);
+  dispatcher->AsRootWindowHostDelegate()->OnHostTouchEvent(&touch);
 }
 
 }  // namespace
@@ -53,8 +52,8 @@ bool TouchSmoothScrollGestureAura::ForwardInputEvents(
     return false;
 
   RenderWidgetHostImpl* host_impl = RenderWidgetHostImpl::From(host);
-  double position_delta = smooth_scroll_calculator_.GetScrollDelta(now,
-      host_impl->GetSyntheticScrollMessageInterval());
+  float position_delta = synthetic_gesture_calculator_.GetDelta(now,
+      host_impl->GetSyntheticGestureMessageInterval());
 
   if (pixels_scrolled_ == 0) {
     InjectTouchEvent(location_, ui::ET_TOUCH_PRESSED, window_);

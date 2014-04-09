@@ -16,6 +16,11 @@
 #include "ppapi/host/resource_host.h"
 #include "third_party/WebKit/public/platform/WebCanvas.h"
 
+namespace cc {
+class SingleReleaseCallback;
+class TextureMailbox;
+}
+
 namespace gfx {
 class Point;
 class Rect;
@@ -57,9 +62,13 @@ class CONTENT_EXPORT PepperGraphics2DHost
              const gfx::Rect& plugin_rect,
              const gfx::Rect& paint_rect);
 
+  bool PrepareTextureMailbox(
+      cc::TextureMailbox* mailbox,
+      scoped_ptr<cc::SingleReleaseCallback>* release_callback);
+  void AttachedToNewLayer();
+
   // Notifications about the view's progress painting.  See PluginInstance.
   // These messages are used to send Flush callbacks to the plugin.
-  void ViewWillInitiatePaint();
   void ViewInitiatedPaint();
   void ViewFlushedPaint();
 
@@ -163,11 +172,11 @@ class CONTENT_EXPORT PepperGraphics2DHost
   // DIP
   float scale_;
 
-  base::WeakPtrFactory<PepperGraphics2DHost> weak_ptr_factory_;
-
   ppapi::host::ReplyMessageContext flush_reply_context_;
 
   bool is_running_in_process_;
+
+  bool texture_mailbox_modified_;
 
   friend class PepperGraphics2DHostTest;
   DISALLOW_COPY_AND_ASSIGN(PepperGraphics2DHost);

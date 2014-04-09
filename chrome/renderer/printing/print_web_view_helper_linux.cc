@@ -25,7 +25,6 @@
 namespace printing {
 
 using WebKit::WebFrame;
-using WebKit::WebNode;
 
 bool PrintWebViewHelper::RenderPreviewPage(
     int page_number,
@@ -59,7 +58,6 @@ bool PrintWebViewHelper::RenderPreviewPage(
 }
 
 bool PrintWebViewHelper::PrintPagesNative(WebKit::WebFrame* frame,
-                                          const WebKit::WebNode& node,
                                           int page_count,
                                           const gfx::Size& canvas_size) {
   NativeMetafile metafile;
@@ -167,8 +165,9 @@ void PrintWebViewHelper::PrintPageInternal(
   gfx::Rect canvas_area =
       params.params.display_header_footer ? gfx::Rect(page_size) : content_area;
 
-  SkDevice* device = metafile->StartPageForVectorCanvas(page_size, canvas_area,
-                                                        scale_factor);
+  SkBaseDevice* device = metafile->StartPageForVectorCanvas(page_size,
+                                                            canvas_area,
+                                                            scale_factor);
   if (!device)
     return;
 

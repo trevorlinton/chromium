@@ -15,6 +15,7 @@
 #include "net/base/net_export.h"
 #include "net/base/net_log.h"
 #include "net/base/rand_callback.h"
+#include "net/socket/socket_descriptor.h"
 #include "net/udp/datagram_socket.h"
 
 namespace net {
@@ -151,9 +152,12 @@ class NET_EXPORT UDPSocketLibevent : public base::NonThreadSafe {
   // other applications on the same host. See MSDN: http://goo.gl/6vqbj
   int SetMulticastLoopbackMode(bool loopback);
 
- private:
-  static const int kInvalidSocket = -1;
+  // Set the differentiated services flags on outgoing packets. May not
+  // do anything on some platforms.
+  // Return a network error code.
+  int SetDiffServCodePoint(DiffServCodePoint dscp);
 
+ private:
   enum SocketOptions {
     SOCKET_OPTION_REUSE_ADDRESS  = 1 << 0,
     SOCKET_OPTION_BROADCAST      = 1 << 1,

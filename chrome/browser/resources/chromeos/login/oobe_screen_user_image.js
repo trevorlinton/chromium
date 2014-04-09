@@ -188,18 +188,24 @@ cr.define('login', function() {
 
     /**
      * Handles selection change.
-     * @param {cr.Event} e Selection change event.
+     * @param {Event} e Selection change event.
      * @private
      */
     handleSelect_: function(e) {
       var imageGrid = $('user-image-grid');
-      if (imageGrid.selectionType == 'camera' && imageGrid.cameraLive) {
+      $('ok-button').disabled = false;
+
+      // Camera selection
+      if (imageGrid.selectionType == 'camera') {
+        $('flip-photo').tabIndex = 0;
         // No current image selected.
-        $('ok-button').disabled = true;
+        if (imageGrid.cameraLive)
+          $('ok-button').disabled = true;
+        else
+          this.notifyImageSelected_();
       } else {
-        $('ok-button').disabled = false;
-        chrome.send('selectImage',
-                    [imageGrid.selectedItemUrl, imageGrid.selectionType]);
+        $('flip-photo').tabIndex = -1;
+        this.notifyImageSelected_();
       }
       // Start/stop camera on (de)selection.
       if (!imageGrid.inProgramSelection &&
@@ -235,7 +241,7 @@ cr.define('login', function() {
 
     /**
      * Handle photo captured event.
-     * @param {cr.Event} e Event with 'dataURL' property containing a data URL.
+     * @param {Event} e Event with 'dataURL' property containing a data URL.
      */
     handlePhotoTaken_: function(e) {
       chrome.send('photoTaken', [e.dataURL]);
@@ -245,7 +251,7 @@ cr.define('login', function() {
 
     /**
      * Handle photo updated event.
-     * @param {cr.Event} e Event with 'dataURL' property containing a data URL.
+     * @param {Event} e Event with 'dataURL' property containing a data URL.
      */
     handlePhotoUpdated_: function(e) {
       chrome.send('photoTaken', [e.dataURL]);
@@ -384,7 +390,7 @@ cr.define('login', function() {
         item.author = data.author || '';
         item.website = data.website || '';
       }
-      this.classList.remove('loading');
+      chrome.send('screenReady');
     },
 
     /**
@@ -396,6 +402,15 @@ cr.define('login', function() {
       var imageGrid = $('user-image-grid');
       imageGrid.selectedItemUrl = url;
       imageGrid.focus();
+    },
+
+    /**
+     * Hides curtain with spinner.
+     * @private
+     */
+    hideCurtain_: function() {
+      this.classList.remove('loading');
+      Oobe.getInstance().updateScreenSize(this);
     },
 
     /**
@@ -422,7 +437,19 @@ cr.define('login', function() {
     updateProfileImageCaption_: function() {
       this.profileImageCaption = loadTimeData.getString(
         this.profileImageLoading_ ? 'profilePhotoLoading' : 'profilePhoto');
-    }
+    },
+
+    /**
+     * Notifies chrome about image selection.
+     * @private
+     */
+    notifyImageSelected_: function() {
+      var imageGrid = $('user-image-grid');
+      chrome.send('selectImage',
+                  [imageGrid.selectedItemUrl,
+                   imageGrid.selectionType,
+                   !imageGrid.inProgramSelection]);
+    },
   };
 
   // Forward public APIs to private implementations.
@@ -432,6 +459,7 @@ cr.define('login', function() {
     'setProfilePictureEnabled',
     'setProfileImage',
     'setSelectedImage',
+    'hideCurtain'
   ].forEach(function(name) {
     UserImageScreen[name] = function(value) {
       $('user-image')[name + '_'](value);

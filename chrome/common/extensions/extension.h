@@ -20,11 +20,10 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
-#include "chrome/common/extensions/extension_constants.h"
-#include "chrome/common/extensions/manifest.h"
-#include "chrome/common/extensions/permissions/api_permission.h"
 #include "extensions/common/extension_resource.h"
 #include "extensions/common/install_warning.h"
+#include "extensions/common/manifest.h"
+#include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/url_pattern.h"
 #include "extensions/common/url_pattern_set.h"
 #include "ui/base/accelerators/accelerator.h"
@@ -56,7 +55,6 @@ class Extension : public base::RefCountedThreadSafe<Extension> {
  public:
   struct ManifestData;
 
-  typedef std::vector<std::string> ScriptingWhitelist;
   typedef std::map<const std::string, linked_ptr<ManifestData> >
       ManifestDataMap;
 
@@ -89,6 +87,8 @@ class Extension : public base::RefCountedThreadSafe<Extension> {
     DISABLE_UNSUPPORTED_REQUIREMENT = 1 << 3,
     DISABLE_SIDELOAD_WIPEOUT = 1 << 4,
     DISABLE_UNKNOWN_FROM_SYNC = 1 << 5,
+    DISABLE_PERMISSIONS_CONSENT = 1 << 6,  // Unused - abandoned experiment.
+    DISABLE_KNOWN_DISABLED = 1 << 7,
   };
 
   enum InstallType {
@@ -145,6 +145,9 @@ class Extension : public base::RefCountedThreadSafe<Extension> {
     // |WAS_INSTALLED_BY_DEFAULT| installed by default when the profile was
     // created.
     WAS_INSTALLED_BY_DEFAULT = 1 << 7,
+
+    // Unused - was part of an abandoned experiment.
+    REQUIRE_PERMISSIONS_CONSENT = 1 << 8,
   };
 
   static scoped_refptr<Extension> Create(const base::FilePath& path,
@@ -167,10 +170,6 @@ class Extension : public base::RefCountedThreadSafe<Extension> {
 
   // Valid schemes for host permission URLPatterns.
   static const int kValidHostPermissionSchemes;
-
-#if defined(OS_WIN)
-  static const char kExtensionRegistryPath[];
-#endif
 
   // The mimetype used for extensions.
   static const char kMimeType[];
@@ -221,10 +220,6 @@ class Extension : public base::RefCountedThreadSafe<Extension> {
   // Returns the base extension url for a given |extension_id|.
   static GURL GetBaseURLFromExtensionId(const std::string& extension_id);
 
-  // Adds an extension to the scripting whitelist. Used for testing only.
-  static void SetScriptingWhitelist(const ScriptingWhitelist& whitelist);
-  static const ScriptingWhitelist* GetScriptingWhitelist();
-
   // DEPRECATED: These methods have been moved to PermissionsData.
   // TODO(rdevlin.cronin): remove these once all calls have been updated.
   bool HasAPIPermission(APIPermission::ID permission) const;
@@ -274,6 +269,7 @@ class Extension : public base::RefCountedThreadSafe<Extension> {
   const base::Version* version() const { return version_.get(); }
   const std::string VersionString() const;
   const std::string& name() const { return name_; }
+  const std::string& short_name() const { return short_name_; }
   const std::string& non_localized_name() const { return non_localized_name_; }
   // Base64-encoded version of the key used to sign this extension.
   // In pseudocode, returns
@@ -367,6 +363,7 @@ class Extension : public base::RefCountedThreadSafe<Extension> {
   bool LoadSharedFeatures(string16* error);
   bool LoadDescription(string16* error);
   bool LoadManifestVersion(string16* error);
+  bool LoadShortName(string16* error);
 
   bool CheckMinimumChromeVersion(string16* error) const;
 
@@ -379,6 +376,12 @@ class Extension : public base::RefCountedThreadSafe<Extension> {
   // A non-localized version of the extension's name. This is useful for
   // debug output.
   std::string non_localized_name_;
+
+  // A short version of the extension's name. This can be used as an alternative
+  // to the name where there is insufficient space to display the full name. If
+  // an extension has not explicitly specified a short name, the value of this
+  // member variable will be the full name rather than an empty string.
+  std::string short_name_;
 
   // The version of this extension's manifest. We increase the manifest
   // version when making breaking changes to the extension system.
@@ -484,14 +487,20 @@ struct InstalledExtensionInfo {
 };
 
 struct UnloadedExtensionInfo {
-  extension_misc::UnloadedExtensionReason reason;
+  enum Reason {
+    REASON_DISABLE,    // Extension is being disabled.
+    REASON_UPDATE,     // Extension is being updated to a newer version.
+    REASON_UNINSTALL,  // Extension is being uninstalled.
+    REASON_TERMINATE,  // Extension has terminated.
+    REASON_BLACKLIST,  // Extension has been blacklisted.
+  };
+
+  Reason reason;
 
   // The extension being unloaded - this should always be non-NULL.
   const Extension* extension;
 
-  UnloadedExtensionInfo(
-      const Extension* extension,
-      extension_misc::UnloadedExtensionReason reason);
+  UnloadedExtensionInfo(const Extension* extension, Reason reason);
 };
 
 // The details sent for EXTENSION_PERMISSIONS_UPDATED notifications.

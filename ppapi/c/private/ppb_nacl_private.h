@@ -3,7 +3,7 @@
  * found in the LICENSE file.
  */
 
-/* From private/ppb_nacl_private.idl modified Tue Aug  6 11:51:26 2013. */
+/* From private/ppb_nacl_private.idl modified Thu Oct 31 15:10:06 2013. */
 
 #ifndef PPAPI_C_PRIVATE_PPB_NACL_PRIVATE_H_
 #define PPAPI_C_PRIVATE_PPB_NACL_PRIVATE_H_
@@ -63,6 +63,9 @@ struct PPB_NaCl_Private_1_0 {
    * will be able to use dynamic code system calls (e.g., mmap with PROT_EXEC).
    * The |enable_exception_handling| flag indicates whether or not the nexe
    * will be able to use hardware exception handling.
+   * The |enable_crash_throttling| flag indicates whether or not crashes of
+   * the nexe contribute to crash throttling statisics and whether nexe starts
+   * are throttled by crash throttling.
    */
   PP_ExternalPluginResult (*LaunchSelLdr)(PP_Instance instance,
                                           const char* alleged_url,
@@ -71,6 +74,7 @@ struct PPB_NaCl_Private_1_0 {
                                           PP_Bool enable_ppapi_dev,
                                           PP_Bool enable_dyncode_syscalls,
                                           PP_Bool enable_exception_handling,
+                                          PP_Bool enable_crash_throttling,
                                           void* imc_handle,
                                           struct PP_Var* error_message);
   /* This function starts the IPC proxy so the nexe can communicate with the
@@ -102,13 +106,6 @@ struct PPB_NaCl_Private_1_0 {
                                    PP_FileHandle* target_handle,
                                    uint32_t desired_access,
                                    uint32_t options);
-  /* Check if PNaCl is installed and attempt to install if necessary.
-   * Callback is called when the check is done and PNaCl is already installed,
-   * or after an on-demand install is attempted. Called back with PP_OK if
-   * PNaCl is available. Called back with an error otherwise.
-   */
-  int32_t (*EnsurePnaclInstalled)(PP_Instance instance,
-                                  struct PP_CompletionCallback callback);
   /* Returns a read-only file descriptor of a file rooted in the Pnacl
    * component directory, or an invalid handle on failure.
    */
@@ -118,18 +115,19 @@ struct PPB_NaCl_Private_1_0 {
    * returns a posix handle to that temporary file.
    */
   PP_FileHandle (*CreateTemporaryFile)(PP_Instance instance);
-  /* Create a temporary file, which will be deleted by the time the last
-   * handle is closed (or earlier on POSIX systems), to use for the nexe
-   * with the cache information given by |pexe_url|, |abi_version|, |opt_level|,
-   * |last_modified|, and |etag|. If the nexe is already present
-   * in the cache, |is_hit| is set to PP_TRUE and the contents of the nexe
-   * will be copied into the temporary file. Otherwise |is_hit| is set to
-   * PP_FALSE and the temporary file will be writeable.
-   * Currently the implementation is a stub, which always sets is_hit to false
-   * and calls the implementation of CreateTemporaryFile. In a subsequent CL
-   * it will call into the browser which will remember the association between
-   * the cache key and the fd, and copy the nexe into the cache after the
-   * translation finishes.
+  /* Create a temporary file, which will be deleted by the time the
+   * last handle is closed (or earlier on POSIX systems), to use for
+   * the nexe with the cache information given by |pexe_url|,
+   * |abi_version|, |opt_level|, |last_modified|, |etag|, and
+   * |has_no_store_header|. If the nexe is already present in the
+   * cache, |is_hit| is set to PP_TRUE and the contents of the nexe
+   * will be copied into the temporary file. Otherwise |is_hit| is set
+   * to PP_FALSE and the temporary file will be writeable.  Currently
+   * the implementation is a stub, which always sets is_hit to false
+   * and calls the implementation of CreateTemporaryFile. In a
+   * subsequent CL it will call into the browser which will remember
+   * the association between the cache key and the fd, and copy the
+   * nexe into the cache after the translation finishes.
    */
   int32_t (*GetNexeFd)(PP_Instance instance,
                        const char* pexe_url,
@@ -137,6 +135,7 @@ struct PPB_NaCl_Private_1_0 {
                        uint32_t opt_level,
                        const char* last_modified,
                        const char* etag,
+                       PP_Bool has_no_store_header,
                        PP_Bool* is_hit,
                        PP_FileHandle* nexe_handle,
                        struct PP_CompletionCallback callback);
@@ -153,9 +152,6 @@ struct PPB_NaCl_Private_1_0 {
   /* Return true if we are off the record.
    */
   PP_Bool (*IsOffTheRecord)(void);
-  /* Return true if PNaCl is turned on.
-   */
-  PP_Bool (*IsPnaclEnabled)(void);
   /* Display a UI message to the user. */
   PP_ExternalPluginResult (*ReportNaClError)(PP_Instance instance,
                                              PP_NaClError message_id);

@@ -11,7 +11,6 @@ per-file *.sb=jeremy@chromium.org
 
 per-file *.isolate=csharp@chromium.org
 per-file *.isolate=maruel@chromium.org
-per-file content_gpu.gypi=apatrick@chromium.org
 per-file content_gpu.gypi=kbr@chromium.org
 per-file content_jni.gypi=bulach@chromium.org
 per-file content_jni.gypi=yfriedman@chromium.org
@@ -19,3 +18,4 @@ per-file content_renderer.gypi=jamesr@chromium.org
 per-file content_renderer.gypi=jochen@chromium.org
 per-file content_shell.gypi=jochen@chromium.org
 per-file content_tests.gypi=jochen@chromium.org
+per-file content_shell_and_tests.gyp=jochen@chromium.org

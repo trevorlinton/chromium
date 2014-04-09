@@ -4,9 +4,12 @@
 
 #include "cc/resources/prioritized_resource.h"
 
+#include <vector>
+
 #include "cc/resources/prioritized_resource_manager.h"
 #include "cc/resources/resource.h"
 #include "cc/test/fake_output_surface.h"
+#include "cc/test/fake_output_surface_client.h"
 #include "cc/test/fake_proxy.h"
 #include "cc/test/tiled_layer_test_common.h"
 #include "cc/trees/single_thread_proxy.h"  // For DebugScopedSetImplThread
@@ -18,10 +21,12 @@ class PrioritizedResourceTest : public testing::Test {
  public:
   PrioritizedResourceTest()
       : texture_size_(256, 256),
-        texture_format_(GL_RGBA),
-        output_surface_(CreateFakeOutputSurface()) {
+        texture_format_(RGBA_8888),
+        output_surface_(FakeOutputSurface::Create3d()) {
     DebugScopedSetImplThread impl_thread(&proxy_);
-    resource_provider_ = cc::ResourceProvider::Create(output_surface_.get(), 0);
+    CHECK(output_surface_->BindToClient(&output_surface_client_));
+    resource_provider_ =
+        ResourceProvider::Create(output_surface_.get(), NULL, 0, false, 1);
   }
 
   virtual ~PrioritizedResourceTest() {
@@ -48,7 +53,7 @@ class PrioritizedResourceTest : public testing::Test {
       texture->RequestLate();
     ResourceManagerAssertInvariants(texture->resource_manager());
     DebugScopedSetImplThreadAndMainThreadBlocked
-    impl_thread_and_main_thread_blocked(&proxy_);
+        impl_thread_and_main_thread_blocked(&proxy_);
     bool success = texture->can_acquire_backing_texture();
     if (success)
       texture->AcquireBackingTexture(ResourceProvider());
@@ -64,7 +69,7 @@ class PrioritizedResourceTest : public testing::Test {
   void ResourceManagerUpdateBackingsPriorities(
       PrioritizedResourceManager* resource_manager) {
     DebugScopedSetImplThreadAndMainThreadBlocked
-    impl_thread_and_main_thread_blocked(&proxy_);
+        impl_thread_and_main_thread_blocked(&proxy_);
     resource_manager->PushTexturePrioritiesToBackings();
   }
 
@@ -74,7 +79,7 @@ class PrioritizedResourceTest : public testing::Test {
       PrioritizedResourceManager* resource_manager) {
 #ifndef NDEBUG
     DebugScopedSetImplThreadAndMainThreadBlocked
-    impl_thread_and_main_thread_blocked(&proxy_);
+        impl_thread_and_main_thread_blocked(&proxy_);
     resource_manager->AssertInvariants();
 #endif
   }
@@ -88,11 +93,23 @@ class PrioritizedResourceTest : public testing::Test {
     return resource_manager->evicted_backings_.size();
   }
 
+  std::vector<unsigned> BackingResources(
+      PrioritizedResourceManager* resource_manager) {
+    std::vector<unsigned> resources;
+    for (PrioritizedResourceManager::BackingList::iterator it =
+             resource_manager->backings_.begin();
+         it != resource_manager->backings_.end();
+         ++it)
+      resources.push_back((*it)->id());
+    return resources;
+  }
+
  protected:
   FakeProxy proxy_;
   const gfx::Size texture_size_;
-  const GLenum texture_format_;
-  scoped_ptr<OutputSurface> output_surface_;
+  const ResourceFormat texture_format_;
+  FakeOutputSurfaceClient output_surface_client_;
+  scoped_ptr<cc::OutputSurface> output_surface_;
   scoped_ptr<cc::ResourceProvider> resource_provider_;
 };
 
@@ -140,7 +157,7 @@ TEST_F(PrioritizedResourceTest, RequestTextureExceedingMaxLimit) {
             resource_manager->MaxMemoryNeededBytes());
 
   DebugScopedSetImplThreadAndMainThreadBlocked
-  impl_thread_and_main_thread_blocked(&proxy_);
+      impl_thread_and_main_thread_blocked(&proxy_);
   resource_manager->ClearAllMemory(ResourceProvider());
 }
 
@@ -164,7 +181,7 @@ TEST_F(PrioritizedResourceTest, ChangeMemoryLimits) {
     ValidateTexture(textures[i].get(), false);
   {
     DebugScopedSetImplThreadAndMainThreadBlocked
-    impl_thread_and_main_thread_blocked(&proxy_);
+        impl_thread_and_main_thread_blocked(&proxy_);
     resource_manager->ReduceMemory(ResourceProvider());
   }
 
@@ -179,7 +196,7 @@ TEST_F(PrioritizedResourceTest, ChangeMemoryLimits) {
     EXPECT_EQ(ValidateTexture(textures[i].get(), false), i < 5);
   {
     DebugScopedSetImplThreadAndMainThreadBlocked
-    impl_thread_and_main_thread_blocked(&proxy_);
+        impl_thread_and_main_thread_blocked(&proxy_);
     resource_manager->ReduceMemory(ResourceProvider());
   }
 
@@ -196,7 +213,7 @@ TEST_F(PrioritizedResourceTest, ChangeMemoryLimits) {
     EXPECT_EQ(ValidateTexture(textures[i].get(), false), i < 4);
   {
     DebugScopedSetImplThreadAndMainThreadBlocked
-    impl_thread_and_main_thread_blocked(&proxy_);
+        impl_thread_and_main_thread_blocked(&proxy_);
     resource_manager->ReduceMemory(ResourceProvider());
   }
 
@@ -207,7 +224,157 @@ TEST_F(PrioritizedResourceTest, ChangeMemoryLimits) {
             resource_manager->MaxMemoryNeededBytes());
 
   DebugScopedSetImplThreadAndMainThreadBlocked
-  impl_thread_and_main_thread_blocked(&proxy_);
+      impl_thread_and_main_thread_blocked(&proxy_);
+  resource_manager->ClearAllMemory(ResourceProvider());
+}
+
+TEST_F(PrioritizedResourceTest, ReduceWastedMemory) {
+  const size_t kMaxTextures = 20;
+  scoped_ptr<PrioritizedResourceManager> resource_manager =
+      CreateManager(kMaxTextures);
+  scoped_ptr<PrioritizedResource> textures[kMaxTextures];
+
+  for (size_t i = 0; i < kMaxTextures; ++i) {
+    textures[i] =
+        resource_manager->CreateTexture(texture_size_, texture_format_);
+  }
+  for (size_t i = 0; i < kMaxTextures; ++i)
+    textures[i]->set_request_priority(100 + i);
+
+  // Set the memory limit to the max number of textures.
+  resource_manager->SetMaxMemoryLimitBytes(TexturesMemorySize(kMaxTextures));
+  PrioritizeTexturesAndBackings(resource_manager.get());
+
+  // Create backings and textures for all of the textures.
+  for (size_t i = 0; i < kMaxTextures; ++i) {
+    ValidateTexture(textures[i].get(), false);
+
+    {
+      DebugScopedSetImplThreadAndMainThreadBlocked
+          impl_thread_and_main_thread_blocked(&proxy_);
+      uint8_t image[4] = {0};
+      textures[i]->SetPixels(resource_provider_.get(),
+                             image,
+                             gfx::Rect(1, 1),
+                             gfx::Rect(1, 1),
+                             gfx::Vector2d());
+    }
+  }
+  {
+    DebugScopedSetImplThreadAndMainThreadBlocked
+        impl_thread_and_main_thread_blocked(&proxy_);
+    resource_manager->ReduceMemory(ResourceProvider());
+  }
+
+  // 20 textures have backings allocated.
+  EXPECT_EQ(TexturesMemorySize(20), resource_manager->MemoryUseBytes());
+
+  // Destroy one texture, not enough is wasted to cause cleanup.
+  textures[0] = scoped_ptr<PrioritizedResource>();
+  PrioritizeTexturesAndBackings(resource_manager.get());
+  {
+    DebugScopedSetImplThreadAndMainThreadBlocked
+        impl_thread_and_main_thread_blocked(&proxy_);
+    resource_manager->UpdateBackingsState(ResourceProvider());
+    resource_manager->ReduceWastedMemory(ResourceProvider());
+  }
+  EXPECT_EQ(TexturesMemorySize(20), resource_manager->MemoryUseBytes());
+
+  // Destroy half the textures, leaving behind the backings. Now a cleanup
+  // should happen.
+  for (size_t i = 0; i < kMaxTextures / 2; ++i)
+    textures[i] = scoped_ptr<PrioritizedResource>();
+  PrioritizeTexturesAndBackings(resource_manager.get());
+  {
+    DebugScopedSetImplThreadAndMainThreadBlocked
+        impl_thread_and_main_thread_blocked(&proxy_);
+    resource_manager->UpdateBackingsState(ResourceProvider());
+    resource_manager->ReduceWastedMemory(ResourceProvider());
+  }
+  EXPECT_GT(TexturesMemorySize(20), resource_manager->MemoryUseBytes());
+
+  DebugScopedSetImplThreadAndMainThreadBlocked
+      impl_thread_and_main_thread_blocked(&proxy_);
+  resource_manager->ClearAllMemory(ResourceProvider());
+}
+
+TEST_F(PrioritizedResourceTest, InUseNotWastedMemory) {
+  const size_t kMaxTextures = 20;
+  scoped_ptr<PrioritizedResourceManager> resource_manager =
+      CreateManager(kMaxTextures);
+  scoped_ptr<PrioritizedResource> textures[kMaxTextures];
+
+  for (size_t i = 0; i < kMaxTextures; ++i) {
+    textures[i] =
+        resource_manager->CreateTexture(texture_size_, texture_format_);
+  }
+  for (size_t i = 0; i < kMaxTextures; ++i)
+    textures[i]->set_request_priority(100 + i);
+
+  // Set the memory limit to the max number of textures.
+  resource_manager->SetMaxMemoryLimitBytes(TexturesMemorySize(kMaxTextures));
+  PrioritizeTexturesAndBackings(resource_manager.get());
+
+  // Create backings and textures for all of the textures.
+  for (size_t i = 0; i < kMaxTextures; ++i) {
+    ValidateTexture(textures[i].get(), false);
+
+    {
+      DebugScopedSetImplThreadAndMainThreadBlocked
+          impl_thread_and_main_thread_blocked(&proxy_);
+      uint8_t image[4] = {0};
+      textures[i]->SetPixels(resource_provider_.get(),
+                             image,
+                             gfx::Rect(1, 1),
+                             gfx::Rect(1, 1),
+                             gfx::Vector2d());
+    }
+  }
+  {
+    DebugScopedSetImplThreadAndMainThreadBlocked
+        impl_thread_and_main_thread_blocked(&proxy_);
+    resource_manager->ReduceMemory(ResourceProvider());
+  }
+
+  // 20 textures have backings allocated.
+  EXPECT_EQ(TexturesMemorySize(20), resource_manager->MemoryUseBytes());
+
+  // Send half the textures to a parent compositor.
+  ResourceProvider::ResourceIdArray to_send;
+  TransferableResourceArray transferable;
+  for (size_t i = 0; i < kMaxTextures / 2; ++i)
+    to_send.push_back(textures[i]->resource_id());
+  resource_provider_->PrepareSendToParent(to_send, &transferable);
+
+  // Destroy half the textures, leaving behind the backings. The backings are
+  // sent to a parent compositor though, so they should not be considered wasted
+  // and a cleanup should not happen.
+  for (size_t i = 0; i < kMaxTextures / 2; ++i)
+    textures[i] = scoped_ptr<PrioritizedResource>();
+  PrioritizeTexturesAndBackings(resource_manager.get());
+  {
+    DebugScopedSetImplThreadAndMainThreadBlocked
+        impl_thread_and_main_thread_blocked(&proxy_);
+    resource_manager->UpdateBackingsState(ResourceProvider());
+    resource_manager->ReduceWastedMemory(ResourceProvider());
+  }
+  EXPECT_EQ(TexturesMemorySize(20), resource_manager->MemoryUseBytes());
+
+  // Receive the textures back from the parent compositor. Now a cleanup should
+  // happen.
+  ReturnedResourceArray returns;
+  TransferableResource::ReturnResources(transferable, &returns);
+  resource_provider_->ReceiveReturnsFromParent(returns);
+  {
+    DebugScopedSetImplThreadAndMainThreadBlocked
+        impl_thread_and_main_thread_blocked(&proxy_);
+    resource_manager->UpdateBackingsState(ResourceProvider());
+    resource_manager->ReduceWastedMemory(ResourceProvider());
+  }
+  EXPECT_GT(TexturesMemorySize(20), resource_manager->MemoryUseBytes());
+
+  DebugScopedSetImplThreadAndMainThreadBlocked
+      impl_thread_and_main_thread_blocked(&proxy_);
   resource_manager->ClearAllMemory(ResourceProvider());
 }
 
@@ -234,7 +401,7 @@ TEST_F(PrioritizedResourceTest, ChangePriorityCutoff) {
     EXPECT_EQ(ValidateTexture(textures[i].get(), true), i < 6);
   {
     DebugScopedSetImplThreadAndMainThreadBlocked
-    impl_thread_and_main_thread_blocked(&proxy_);
+        impl_thread_and_main_thread_blocked(&proxy_);
     resource_manager->ReduceMemory(ResourceProvider());
   }
   EXPECT_EQ(TexturesMemorySize(6), resource_manager->MemoryAboveCutoffBytes());
@@ -248,17 +415,16 @@ TEST_F(PrioritizedResourceTest, ChangePriorityCutoff) {
     EXPECT_EQ(ValidateTexture(textures[i].get(), false), i < 4);
   {
     DebugScopedSetImplThreadAndMainThreadBlocked
-    impl_thread_and_main_thread_blocked(&proxy_);
+        impl_thread_and_main_thread_blocked(&proxy_);
     resource_manager->ReduceMemory(ResourceProvider());
   }
   EXPECT_EQ(TexturesMemorySize(4), resource_manager->MemoryAboveCutoffBytes());
 
   // Do a one-time eviction for one more texture based on priority cutoff
-  PrioritizedResourceManager::BackingList evicted_backings;
   resource_manager->UnlinkAndClearEvictedBackings();
   {
     DebugScopedSetImplThreadAndMainThreadBlocked
-    impl_thread_and_main_thread_blocked(&proxy_);
+        impl_thread_and_main_thread_blocked(&proxy_);
     resource_manager->ReduceMemoryOnImplThread(
         TexturesMemorySize(8), 104, ResourceProvider());
     EXPECT_EQ(0u, EvictedBackingCount(resource_manager.get()));
@@ -275,13 +441,156 @@ TEST_F(PrioritizedResourceTest, ChangePriorityCutoff) {
     EXPECT_EQ(ValidateTexture(textures[i].get(), false), i < 4);
   {
     DebugScopedSetImplThreadAndMainThreadBlocked
-    impl_thread_and_main_thread_blocked(&proxy_);
+        impl_thread_and_main_thread_blocked(&proxy_);
     resource_manager->ReduceMemory(ResourceProvider());
   }
   EXPECT_EQ(TexturesMemorySize(4), resource_manager->MemoryAboveCutoffBytes());
 
   DebugScopedSetImplThreadAndMainThreadBlocked
-  impl_thread_and_main_thread_blocked(&proxy_);
+      impl_thread_and_main_thread_blocked(&proxy_);
+  resource_manager->ClearAllMemory(ResourceProvider());
+}
+
+TEST_F(PrioritizedResourceTest, EvictingTexturesInParent) {
+  const size_t kMaxTextures = 8;
+  scoped_ptr<PrioritizedResourceManager> resource_manager =
+      CreateManager(kMaxTextures);
+  scoped_ptr<PrioritizedResource> textures[kMaxTextures];
+  unsigned texture_resource_ids[kMaxTextures];
+
+  for (size_t i = 0; i < kMaxTextures; ++i) {
+    textures[i] =
+        resource_manager->CreateTexture(texture_size_, texture_format_);
+    textures[i]->set_request_priority(100 + i);
+  }
+
+  PrioritizeTexturesAndBackings(resource_manager.get());
+  for (size_t i = 0; i < kMaxTextures; ++i) {
+    EXPECT_TRUE(ValidateTexture(textures[i].get(), true));
+
+    {
+      DebugScopedSetImplThreadAndMainThreadBlocked
+          impl_thread_and_main_thread_blocked(&proxy_);
+      uint8_t image[4] = {0};
+      textures[i]->SetPixels(resource_provider_.get(),
+                             image,
+                             gfx::Rect(1, 1),
+                             gfx::Rect(1, 1),
+                             gfx::Vector2d());
+    }
+  }
+  {
+    DebugScopedSetImplThreadAndMainThreadBlocked
+        impl_thread_and_main_thread_blocked(&proxy_);
+    resource_manager->ReduceMemory(ResourceProvider());
+  }
+  EXPECT_EQ(TexturesMemorySize(8), resource_manager->MemoryAboveCutoffBytes());
+
+  for (size_t i = 0; i < 8; ++i)
+    texture_resource_ids[i] = textures[i]->resource_id();
+
+  // Evict four textures. It will be the last four.
+  {
+    DebugScopedSetImplThreadAndMainThreadBlocked
+        impl_thread_and_main_thread_blocked(&proxy_);
+    resource_manager->ReduceMemoryOnImplThread(
+        TexturesMemorySize(4), 200, ResourceProvider());
+
+    EXPECT_EQ(4u, EvictedBackingCount(resource_manager.get()));
+
+    // The last four backings are evicted.
+    std::vector<unsigned> remaining = BackingResources(resource_manager.get());
+    EXPECT_TRUE(std::find(remaining.begin(),
+                          remaining.end(),
+                          texture_resource_ids[0]) != remaining.end());
+    EXPECT_TRUE(std::find(remaining.begin(),
+                          remaining.end(),
+                          texture_resource_ids[1]) != remaining.end());
+    EXPECT_TRUE(std::find(remaining.begin(),
+                          remaining.end(),
+                          texture_resource_ids[2]) != remaining.end());
+    EXPECT_TRUE(std::find(remaining.begin(),
+                          remaining.end(),
+                          texture_resource_ids[3]) != remaining.end());
+  }
+  resource_manager->UnlinkAndClearEvictedBackings();
+  EXPECT_EQ(TexturesMemorySize(4), resource_manager->MemoryUseBytes());
+
+  // Re-allocate the the texture after the eviction.
+  PrioritizeTexturesAndBackings(resource_manager.get());
+  for (size_t i = 0; i < kMaxTextures; ++i) {
+    EXPECT_TRUE(ValidateTexture(textures[i].get(), true));
+
+    {
+      DebugScopedSetImplThreadAndMainThreadBlocked
+          impl_thread_and_main_thread_blocked(&proxy_);
+      uint8_t image[4] = {0};
+      textures[i]->SetPixels(resource_provider_.get(),
+                             image,
+                             gfx::Rect(1, 1),
+                             gfx::Rect(1, 1),
+                             gfx::Vector2d());
+    }
+  }
+  {
+    DebugScopedSetImplThreadAndMainThreadBlocked
+        impl_thread_and_main_thread_blocked(&proxy_);
+    resource_manager->ReduceMemory(ResourceProvider());
+  }
+  EXPECT_EQ(TexturesMemorySize(8), resource_manager->MemoryAboveCutoffBytes());
+
+  // Send the last two of the textures to a parent compositor.
+  ResourceProvider::ResourceIdArray to_send;
+  TransferableResourceArray transferable;
+  for (size_t i = 6; i < 8; ++i)
+    to_send.push_back(textures[i]->resource_id());
+  resource_provider_->PrepareSendToParent(to_send, &transferable);
+
+  // Set the last two textures to be tied for prioity with the two
+  // before them. Being sent to the parent will break the tie.
+  textures[4]->set_request_priority(100 + 4);
+  textures[5]->set_request_priority(100 + 5);
+  textures[6]->set_request_priority(100 + 4);
+  textures[7]->set_request_priority(100 + 5);
+
+  for (size_t i = 0; i < 8; ++i)
+    texture_resource_ids[i] = textures[i]->resource_id();
+
+  // Drop all the textures. Now we have backings that can be recycled.
+  for (size_t i = 0; i < 8; ++i)
+    textures[0].reset();
+  PrioritizeTexturesAndBackings(resource_manager.get());
+
+  // The next commit finishes.
+  {
+    DebugScopedSetImplThreadAndMainThreadBlocked
+        impl_thread_and_main_thread_blocked(&proxy_);
+    resource_manager->UpdateBackingsState(ResourceProvider());
+  }
+
+  // Evict four textures. It would be the last four again, except that 2 of them
+  // are sent to the parent, so they are evicted last.
+  {
+    DebugScopedSetImplThreadAndMainThreadBlocked
+        impl_thread_and_main_thread_blocked(&proxy_);
+    resource_manager->ReduceMemoryOnImplThread(
+        TexturesMemorySize(4), 200, ResourceProvider());
+
+    EXPECT_EQ(4u, EvictedBackingCount(resource_manager.get()));
+    // The last 2 backings remain this time.
+    std::vector<unsigned> remaining = BackingResources(resource_manager.get());
+    EXPECT_TRUE(std::find(remaining.begin(),
+                          remaining.end(),
+                          texture_resource_ids[6]) == remaining.end());
+    EXPECT_TRUE(std::find(remaining.begin(),
+                          remaining.end(),
+                          texture_resource_ids[7]) == remaining.end());
+  }
+  resource_manager->UnlinkAndClearEvictedBackings();
+  EXPECT_EQ(TexturesMemorySize(4), resource_manager->MemoryUseBytes());
+
+  DebugScopedSetImplThreadAndMainThreadBlocked
+      impl_thread_and_main_thread_blocked(&proxy_);
   resource_manager->ClearAllMemory(ResourceProvider());
 }
 
@@ -344,7 +653,7 @@ TEST_F(PrioritizedResourceTest, ResourceManagerPartialUpdateTextures) {
   EXPECT_FALSE(textures[3]->have_backing_texture());
 
   DebugScopedSetImplThreadAndMainThreadBlocked
-  impl_thread_and_main_thread_blocked(&proxy_);
+      impl_thread_and_main_thread_blocked(&proxy_);
   resource_manager->ClearAllMemory(ResourceProvider());
 }
 
@@ -389,7 +698,7 @@ TEST_F(PrioritizedResourceTest, ResourceManagerPrioritiesAreEqual) {
             resource_manager->MemoryAboveCutoffBytes());
 
   DebugScopedSetImplThreadAndMainThreadBlocked
-  impl_thread_and_main_thread_blocked(&proxy_);
+      impl_thread_and_main_thread_blocked(&proxy_);
   resource_manager->ClearAllMemory(ResourceProvider());
 }
 
@@ -409,7 +718,7 @@ TEST_F(PrioritizedResourceTest, ResourceManagerDestroyedFirst) {
   EXPECT_TRUE(texture->have_backing_texture());
   {
     DebugScopedSetImplThreadAndMainThreadBlocked
-    impl_thread_and_main_thread_blocked(&proxy_);
+        impl_thread_and_main_thread_blocked(&proxy_);
     resource_manager->ClearAllMemory(ResourceProvider());
   }
   resource_manager.reset();
@@ -439,7 +748,7 @@ TEST_F(PrioritizedResourceTest, TextureMovedToNewManager) {
   texture->SetTextureManager(NULL);
   {
     DebugScopedSetImplThreadAndMainThreadBlocked
-    impl_thread_and_main_thread_blocked(&proxy_);
+        impl_thread_and_main_thread_blocked(&proxy_);
     resource_manager_one->ClearAllMemory(ResourceProvider());
   }
   resource_manager_one.reset();
@@ -456,7 +765,7 @@ TEST_F(PrioritizedResourceTest, TextureMovedToNewManager) {
   EXPECT_TRUE(texture->have_backing_texture());
 
   DebugScopedSetImplThreadAndMainThreadBlocked
-  impl_thread_and_main_thread_blocked(&proxy_);
+      impl_thread_and_main_thread_blocked(&proxy_);
   resource_manager_two->ClearAllMemory(ResourceProvider());
 }
 
@@ -513,7 +822,7 @@ TEST_F(PrioritizedResourceTest,
             resource_manager->MaxMemoryNeededBytes());
 
   DebugScopedSetImplThreadAndMainThreadBlocked
-  impl_thread_and_main_thread_blocked(&proxy_);
+      impl_thread_and_main_thread_blocked(&proxy_);
   resource_manager->ClearAllMemory(ResourceProvider());
 }
 
@@ -561,7 +870,7 @@ TEST_F(PrioritizedResourceTest,
             resource_manager->MaxMemoryNeededBytes());
 
   DebugScopedSetImplThreadAndMainThreadBlocked
-  impl_thread_and_main_thread_blocked(&proxy_);
+      impl_thread_and_main_thread_blocked(&proxy_);
   resource_manager->ClearAllMemory(ResourceProvider());
 }
 
@@ -613,7 +922,7 @@ TEST_F(PrioritizedResourceTest,
             resource_manager->MemoryAboveCutoffBytes());
 
   DebugScopedSetImplThreadAndMainThreadBlocked
-  impl_thread_and_main_thread_blocked(&proxy_);
+      impl_thread_and_main_thread_blocked(&proxy_);
   resource_manager->ClearAllMemory(ResourceProvider());
 }
 
@@ -665,7 +974,7 @@ TEST_F(PrioritizedResourceTest, RequestLateBackingsSorting) {
     EXPECT_FALSE(TextureBackingIsAbovePriorityCutoff(textures[i].get()));
 
   DebugScopedSetImplThreadAndMainThreadBlocked
-  impl_thread_and_main_thread_blocked(&proxy_);
+      impl_thread_and_main_thread_blocked(&proxy_);
   resource_manager->ClearAllMemory(ResourceProvider());
 }
 
@@ -691,7 +1000,7 @@ TEST_F(PrioritizedResourceTest, ClearUploadsToEvictedResources) {
 
   ResourceUpdateQueue queue;
   DebugScopedSetImplThreadAndMainThreadBlocked
-  impl_thread_and_main_thread_blocked(&proxy_);
+      impl_thread_and_main_thread_blocked(&proxy_);
   for (size_t i = 0; i < kMaxTextures; ++i) {
     const ResourceUpdate upload = ResourceUpdate::Create(
         textures[i].get(), NULL, gfx::Rect(), gfx::Rect(), gfx::Vector2d());
@@ -784,7 +1093,7 @@ TEST_F(PrioritizedResourceTest, UsageStatistics) {
   // Push priorities to backings, and verify we see the new values.
   {
     DebugScopedSetImplThreadAndMainThreadBlocked
-    impl_thread_and_main_thread_blocked(&proxy_);
+        impl_thread_and_main_thread_blocked(&proxy_);
     resource_manager->PushTexturePrioritiesToBackings();
     EXPECT_EQ(TexturesMemorySize(2), resource_manager->MemoryUseBytes());
     EXPECT_EQ(TexturesMemorySize(3), resource_manager->MemoryVisibleBytes());
@@ -793,7 +1102,7 @@ TEST_F(PrioritizedResourceTest, UsageStatistics) {
   }
 
   DebugScopedSetImplThreadAndMainThreadBlocked
-  impl_thread_and_main_thread_blocked(&proxy_);
+      impl_thread_and_main_thread_blocked(&proxy_);
   resource_manager->ClearAllMemory(ResourceProvider());
 }
 

@@ -108,6 +108,7 @@ void InputMethodTSF::OnTextInputTypeChanged(const TextInputClient* client) {
 void InputMethodTSF::OnCaretBoundsChanged(const TextInputClient* client) {
   if (IsTextInputClientFocused(client) && IsWindowFocused(client))
     ui::TSFBridge::GetInstance()->OnTextLayoutChanged();
+  InputMethodWin::OnCaretBoundsChanged(client);
 }
 
 void InputMethodTSF::CancelComposition(const TextInputClient* client) {
@@ -115,17 +116,9 @@ void InputMethodTSF::CancelComposition(const TextInputClient* client) {
     ui::TSFBridge::GetInstance()->CancelComposition();
 }
 
-void InputMethodTSF::SetFocusedTextInputClient(TextInputClient* client) {
-  if (IsWindowFocused(client)) {
-    ui::TSFBridge::GetInstance()->SetFocusedClient(
-        GetAttachedWindowHandle(client), client);
-  } else if (!client) {
-    // SetFocusedTextInputClient(NULL) must be interpreted as
-    // "Remove the attached client".
-    ui::TSFBridge::GetInstance()->RemoveFocusedClient(
-        ui::TSFBridge::GetInstance()->GetFocusedTextInputClient());
-  }
-  InputMethodWin::SetFocusedTextInputClient(client);
+void InputMethodTSF::DetachTextInputClient(TextInputClient* client) {
+  InputMethodWin::DetachTextInputClient(client);
+  ui::TSFBridge::GetInstance()->RemoveFocusedClient(client);
 }
 
 bool InputMethodTSF::IsCandidatePopupOpen() const {
@@ -142,9 +135,10 @@ void InputMethodTSF::OnWillChangeFocusedClient(TextInputClient* focused_before,
 
 void InputMethodTSF::OnDidChangeFocusedClient(TextInputClient* focused_before,
                                               TextInputClient* focused) {
-  if (IsWindowFocused(focused)) {
+  if (IsWindowFocused(focused) && IsTextInputClientFocused(focused)) {
     ui::TSFBridge::GetInstance()->SetFocusedClient(
         GetAttachedWindowHandle(focused), focused);
+
     // Force to update the input type since client's TextInputStateChanged()
     // function might not be called if text input types before the client loses
     // focus and after it acquires focus again are the same.
@@ -154,18 +148,12 @@ void InputMethodTSF::OnDidChangeFocusedClient(TextInputClient* focused_before,
     // bounds has not changed.
     OnCaretBoundsChanged(focused);
   }
+  InputMethodWin::OnDidChangeFocusedClient(focused_before, focused);
 }
 
 void InputMethodTSF::ConfirmCompositionText() {
   if (!IsTextInputTypeNone())
     ui::TSFBridge::GetInstance()->ConfirmComposition();
-}
-
-bool InputMethodTSF::IsWindowFocused(const TextInputClient* client) const {
-  if (!client)
-    return false;
-  HWND attached_window_handle = GetAttachedWindowHandle(client);
-  return attached_window_handle && GetFocus() == attached_window_handle;
 }
 
 }  // namespace ui

@@ -25,33 +25,30 @@
 
 namespace content {
 
-namespace {
-
-bool LooksLikeAGuid(const std::string& fsid) {
-  const size_t kExpectedFsIdSize = 32;
-  if (fsid.size() != kExpectedFsIdSize)
-    return false;
-  for (std::string::const_iterator it = fsid.begin(); it != fsid.end(); ++it) {
-    if (('A' <= *it && *it <= 'F') ||
-        ('0' <= *it && *it <= '9'))
-      continue;
-    return false;
-  }
-  return true;
-}
-
-}  // namespace
-
 PepperFileSystemHost::PepperFileSystemHost(RendererPpapiHost* host,
                                            PP_Instance instance,
                                            PP_Resource resource,
                                            PP_FileSystemType type)
     : ResourceHost(host->GetPpapiHost(), instance, resource),
       renderer_ppapi_host_(host),
-      weak_factory_(this),
       type_(type),
       opened_(false),
-      called_open_(false) {
+      called_open_(false),
+      weak_factory_(this) {
+}
+
+PepperFileSystemHost::PepperFileSystemHost(RendererPpapiHost* host,
+                                           PP_Instance instance,
+                                           PP_Resource resource,
+                                           const GURL& root_url,
+                                           PP_FileSystemType type)
+    : ResourceHost(host->GetPpapiHost(), instance, resource),
+      renderer_ppapi_host_(host),
+      type_(type),
+      opened_(true),
+      root_url_(root_url),
+      called_open_(true),
+      weak_factory_(this) {
 }
 
 PepperFileSystemHost::~PepperFileSystemHost() {
@@ -128,7 +125,7 @@ int32_t PepperFileSystemHost::OnHostMsgOpen(
   file_system_dispatcher->OpenFileSystem(
       GURL(plugin_instance->GetContainer()->element().document().url()).
           GetOrigin(),
-      file_system_type, expected_size, true /* create */,
+      file_system_type,
       base::Bind(&PepperFileSystemHost::DidOpenFileSystem,
                  weak_factory_.GetWeakPtr()),
       base::Bind(&PepperFileSystemHost::DidFailOpenFileSystem,
@@ -139,9 +136,12 @@ int32_t PepperFileSystemHost::OnHostMsgOpen(
 int32_t PepperFileSystemHost::OnHostMsgInitIsolatedFileSystem(
     ppapi::host::HostMessageContext* context,
     const std::string& fsid) {
+  // Do not allow multiple opens.
+  if (called_open_)
+    return PP_ERROR_INPROGRESS;
   called_open_ = true;
   // Do a sanity check.
-  if (!LooksLikeAGuid(fsid))
+  if (!fileapi::ValidateIsolatedFileSystemId(fsid))
     return PP_ERROR_BADARGUMENT;
   RenderView* view =
       renderer_ppapi_host_->GetRenderViewForInstance(pp_instance());

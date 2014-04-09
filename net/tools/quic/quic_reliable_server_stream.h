@@ -9,7 +9,7 @@
 
 #include "net/quic/quic_protocol.h"
 #include "net/quic/reliable_quic_stream.h"
-#include "net/tools/flip_server/balsa_headers.h"
+#include "net/tools/balsa/balsa_headers.h"
 
 namespace net {
 
@@ -48,6 +48,7 @@ class QuicReliableServerStream : public ReliableQuicStream {
   const BalsaHeaders& headers() { return headers_; }
 
   const string& body() { return body_; }
+
  protected:
   BalsaHeaders* mutable_headers() { return &headers_; }
   string* mutable_body() { return &body_; }

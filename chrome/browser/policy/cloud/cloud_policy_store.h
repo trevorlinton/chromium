@@ -80,12 +80,6 @@ class CloudPolicyStore {
     return validation_status_;
   }
 
-  // Returns true if the latest policy loaded was different from the previous
-  // policy.
-  bool policy_changed() const {
-    return policy_changed_;
-  }
-
   // Store a new policy blob. Pending load/store operations will be canceled.
   // The store operation may proceed asynchronously and observers are notified
   // once the operation finishes. If successful, OnStoreLoaded() will be invoked
@@ -124,6 +118,14 @@ class CloudPolicyStore {
   void SetExternalDataManager(
       base::WeakPtr<CloudExternalDataManager> external_data_manager);
 
+  // Replaces |policy_map_| and calls the registered observers, simulating a
+  // successful load of |policy_map| from persistent storage.
+  // TODO(bartfab): This override is only needed because there are no policies
+  // that reference external data and therefore, no ExternalDataFetchers in the
+  // |policy_map_|. Once the first such policy is added, use that policy in
+  // tests and remove the override.
+  void SetPolicyMapForTesting(const PolicyMap& policy_map);
+
  protected:
   // Invokes the corresponding callback on all registered observers.
   void NotifyStoreLoaded();
@@ -151,13 +153,6 @@ class CloudPolicyStore {
   // Whether the store has completed asynchronous initialization, which is
   // triggered by calling Load().
   bool is_initialized_;
-
-  // Whether latest policy loaded was different from the previous policy.
-  bool policy_changed_;
-
-  // The hash value of the current policy. This is used to determine when the
-  // policy changes.
-  uint32 hash_value_;
 
   ObserverList<Observer, true> observers_;
 

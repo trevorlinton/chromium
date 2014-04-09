@@ -15,11 +15,16 @@
 #include "content/public/renderer/render_view_observer.h"
 #include "content/public/test/test_utils.h"
 #include "content/renderer/savable_resources.h"
-#include "content/shell/shell.h"
+#include "content/shell/browser/shell.h"
 #include "content/test/content_browser_test.h"
 #include "content/test/content_browser_test_utils.h"
 #include "net/base/net_util.h"
 #include "net/url_request/url_request_context.h"
+#include "third_party/WebKit/public/platform/WebCString.h"
+#include "third_party/WebKit/public/platform/WebData.h"
+#include "third_party/WebKit/public/platform/WebString.h"
+#include "third_party/WebKit/public/platform/WebURL.h"
+#include "third_party/WebKit/public/platform/WebVector.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebElement.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
@@ -29,11 +34,6 @@
 #include "third_party/WebKit/public/web/WebPageSerializer.h"
 #include "third_party/WebKit/public/web/WebPageSerializerClient.h"
 #include "third_party/WebKit/public/web/WebView.h"
-#include "third_party/WebKit/public/platform/WebCString.h"
-#include "third_party/WebKit/public/platform/WebData.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/platform/WebVector.h"
 
 using WebKit::WebCString;
 using WebKit::WebData;
@@ -269,18 +269,18 @@ class DomSerializerTests : public ContentBrowserTest,
     // Find corresponding WebFrame according to page_url.
     WebFrame* web_frame = FindSubFrameByURL(GetWebView(), page_url);
     ASSERT_TRUE(web_frame != NULL);
-    // Add input file URl to links_.
-    links_.assign(&page_url,1);
-    // Add dummy file path to local_path_.
+    WebVector<WebURL> links;
+    links.assign(&page_url, 1);
     WebString file_path =
         base::FilePath(FILE_PATH_LITERAL("c:\\dummy.htm")).AsUTF16Unsafe();
-    local_paths_.assign(&file_path, 1);
+    WebVector<WebString> local_paths;
+    local_paths.assign(&file_path, 1);
     // Start serializing DOM.
     bool result = WebPageSerializer::serialize(web_frame,
        recursive_serialization,
        static_cast<WebPageSerializerClient*>(this),
-       links_,
-       local_paths_,
+       links,
+       local_paths,
        local_directory_name_.AsUTF16Unsafe());
     ASSERT_TRUE(result);
     ASSERT_TRUE(serialized_);
@@ -770,11 +770,6 @@ class DomSerializerTests : public ContentBrowserTest,
   SerializationFinishStatusMap serialization_finish_status_;
   // Flag indicates whether the process of serializing DOM is finished or not.
   bool serialized_;
-  // The links_ contain dummy original URLs of all saved links.
-  WebVector<WebURL> links_;
-  // The local_paths_ contain dummy corresponding local file paths of all saved
-  // links, which matched links_ one by one.
-  WebVector<WebString> local_paths_;
   // The local_directory_name_ is dummy relative path of directory which
   // contain all saved auxiliary files included all sub frames and resources.
   const base::FilePath local_directory_name_;
@@ -820,7 +815,7 @@ IN_PROC_BROWSER_TEST_F(DomSerializerTests, SerializeXMLDocWithBuiltInEntities) {
   base::FilePath xml_file_path = GetTestFilePath("dom_serializer", "note.xml");
   // Read original contents for later comparison.
   std::string original_contents;
-  ASSERT_TRUE(file_util::ReadFileToString(xml_file_path, &original_contents));
+  ASSERT_TRUE(base::ReadFileToString(xml_file_path, &original_contents));
   // Get file URL.
   GURL file_url = net::FilePathToFileURL(page_file_path);
   GURL xml_file_url = net::FilePathToFileURL(xml_file_path);
@@ -840,7 +835,7 @@ IN_PROC_BROWSER_TEST_F(DomSerializerTests, SerializeHTMLDOMWithAddingMOTW) {
       GetTestFilePath("dom_serializer", "youtube_2.htm");
   // Read original contents for later comparison .
   std::string original_contents;
-  ASSERT_TRUE(file_util::ReadFileToString(page_file_path, &original_contents));
+  ASSERT_TRUE(base::ReadFileToString(page_file_path, &original_contents));
   // Get file URL.
   GURL file_url = net::FilePathToFileURL(page_file_path);
   ASSERT_TRUE(file_url.SchemeIsFile());

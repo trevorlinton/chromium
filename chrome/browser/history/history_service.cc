@@ -84,6 +84,12 @@ void RunWithFaviconResults(
   callback.Run(*bitmap_results);
 }
 
+void RunWithFaviconResult(
+    const FaviconService::FaviconRawCallback& callback,
+    chrome::FaviconBitmapResult* bitmap_result) {
+  callback.Run(*bitmap_result);
+}
+
 // Extract history::URLRows into GURLs for VisitedLinkMaster.
 class URLIteratorFromURLRows
     : public visitedlink::VisitedLinkMaster::URLIterator {
@@ -175,13 +181,6 @@ class HistoryService::BackendDelegate : public HistoryBackend::Delegate {
                    backend_id));
   }
 
-  virtual void StartTopSitesMigration(int backend_id) OVERRIDE {
-    service_task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&HistoryService::StartTopSitesMigration,
-                   history_service_, backend_id));
-  }
-
   virtual void NotifyVisitDBObserversOnAddVisit(
       const history::BriefVisitInfo& info) OVERRIDE {
     service_task_runner_->PostTask(
@@ -206,8 +205,7 @@ HistoryService::HistoryService()
       backend_loaded_(false),
       current_backend_id_(-1),
       bookmark_service_(NULL),
-      no_db_(false),
-      needs_top_sites_migration_(false) {
+      no_db_(false) {
 }
 
 HistoryService::HistoryService(Profile* profile)
@@ -219,8 +217,7 @@ HistoryService::HistoryService(Profile* profile)
       backend_loaded_(false),
       current_backend_id_(-1),
       bookmark_service_(NULL),
-      no_db_(false),
-      needs_top_sites_migration_(false) {
+      no_db_(false) {
   DCHECK(profile_);
   registrar_.Add(this, chrome::NOTIFICATION_HISTORY_URLS_DELETED,
                  content::Source<Profile>(profile_));
@@ -405,6 +402,12 @@ HistoryService::Handle HistoryService::GetMostRecentKeywordSearchTerms(
                   consumer,
                   new history::GetMostRecentKeywordSearchTermsRequest(callback),
                   keyword_id, prefix, max_count);
+}
+
+void HistoryService::DeleteKeywordSearchTermForURL(const GURL& url) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  ScheduleAndForget(PRIORITY_UI, &HistoryBackend::DeleteKeywordSearchTermForURL,
+                    url);
 }
 
 void HistoryService::URLsNoLongerBookmarked(const std::set<GURL>& urls) {
@@ -593,15 +596,6 @@ void HistoryService::AddPagesWithDetails(const history::URLRows& info,
                     &HistoryBackend::AddPagesWithDetails, info, visit_source);
 }
 
-HistoryService::Handle HistoryService::GetPageThumbnail(
-    const GURL& page_url,
-    CancelableRequestConsumerBase* consumer,
-    const ThumbnailDataCallback& callback) {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  return Schedule(PRIORITY_NORMAL, &HistoryBackend::GetPageThumbnail, consumer,
-                  new history::GetPageThumbnailRequest(callback), page_url);
-}
-
 void HistoryService::SetPageContents(const GURL& url,
                                      const string16& contents) {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -660,6 +654,28 @@ CancelableTaskTracker::TaskId HistoryService::GetFaviconsForURL(
                  desired_scale_factors,
                  results),
       base::Bind(&RunWithFaviconResults, callback, base::Owned(results)));
+}
+
+CancelableTaskTracker::TaskId HistoryService::GetLargestFaviconForURL(
+    const GURL& page_url,
+    const std::vector<int>& icon_types,
+    int minimum_size_in_pixels,
+    const FaviconService::FaviconRawCallback& callback,
+    CancelableTaskTracker* tracker) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  LoadBackendIfNecessary();
+
+  chrome::FaviconBitmapResult* result = new chrome::FaviconBitmapResult();
+  return tracker->PostTaskAndReply(
+      thread_->message_loop_proxy().get(),
+      FROM_HERE,
+      base::Bind(&HistoryBackend::GetLargestFaviconForURL,
+                 history_backend_.get(),
+                 page_url,
+                 icon_types,
+                 minimum_size_in_pixels,
+                 result),
+      base::Bind(&RunWithFaviconResult, callback, base::Owned(result)));
 }
 
 CancelableTaskTracker::TaskId HistoryService::GetFaviconForID(
@@ -1012,9 +1028,11 @@ bool HistoryService::CanAddURL(const GURL& url) {
   // TODO: We should allow kChromeUIScheme URLs if they have been explicitly
   // typed.  Right now, however, these are marked as typed even when triggered
   // by a shortcut or menu action.
-  if (url.SchemeIs(chrome::kJavaScriptScheme) ||
+  if (url.SchemeIs(content::kJavaScriptScheme) ||
       url.SchemeIs(chrome::kChromeDevToolsScheme) ||
+      url.SchemeIs(chrome::kChromeNativeScheme) ||
       url.SchemeIs(chrome::kChromeUIScheme) ||
+      url.SchemeIs(chrome::kChromeSearchScheme) ||
       url.SchemeIs(content::kViewSourceScheme) ||
       url.SchemeIs(chrome::kChromeInternalScheme))
     return false;
@@ -1238,39 +1256,12 @@ void HistoryService::OnDBLoaded(int backend_id) {
       chrome::NOTIFICATION_HISTORY_LOADED,
       content::Source<Profile>(profile_),
       content::Details<HistoryService>(this));
-  if (thread_ && profile_) {
-    // We don't want to force creation of TopSites.
-    history::TopSites* ts = profile_->GetTopSitesWithoutCreating();
-    if (ts)
-      ts->HistoryLoaded();
-  }
 }
 
 bool HistoryService::GetRowForURL(const GURL& url, history::URLRow* url_row) {
   DCHECK(thread_checker_.CalledOnValidThread());
   history::URLDatabase* db = InMemoryDatabase();
   return db && (db->GetRowForURL(url, url_row) != 0);
-}
-
-void HistoryService::StartTopSitesMigration(int backend_id) {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  if (!history_backend_.get() || current_backend_id_ != backend_id) {
-    DVLOG(1) << "Message from obsolete backend";
-    return;
-  }
-  needs_top_sites_migration_ = true;
-  if (thread_ && profile_) {
-    // We don't want to force creation of TopSites.
-    history::TopSites* ts = profile_->GetTopSitesWithoutCreating();
-    if (ts)
-      ts->MigrateFromHistory();
-  }
-}
-
-void HistoryService::OnTopSitesReady() {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  ScheduleAndForget(PRIORITY_NORMAL,
-                    &HistoryBackend::MigrateThumbnailsDatabase);
 }
 
 void HistoryService::AddVisitDatabaseObserver(

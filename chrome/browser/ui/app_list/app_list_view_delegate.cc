@@ -4,27 +4,35 @@
 
 #include "chrome/browser/ui/app_list/app_list_view_delegate.h"
 
+#include <vector>
+
 #include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/stl_util.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/feedback/feedback_util.h"
+#include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/app_list/app_list_controller_delegate.h"
-#include "chrome/browser/ui/app_list/apps_model_builder.h"
-#include "chrome/browser/ui/app_list/chrome_app_list_item.h"
-#include "chrome/browser/ui/app_list/chrome_signin_delegate.h"
+#include "chrome/browser/ui/app_list/extension_app_model_builder.h"
 #include "chrome/browser/ui/app_list/search/search_controller.h"
+#include "chrome/browser/ui/app_list/start_page_service.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/host_desktop.h"
+#include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/browser/ui/web_applications/web_app_ui.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/notification_service.h"
+#include "content/public/browser/notification_source.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/user_metrics.h"
+#include "ui/app_list/search_box_model.h"
 
 #if defined(USE_ASH)
 #include "chrome/browser/ui/ash/app_list/app_sync_ui_state_watcher.h"
@@ -49,49 +57,118 @@ void CreateShortcutInWebAppDir(
 }
 #endif
 
-}  // namespace
+void PopulateUsers(const ProfileInfoCache& profile_info,
+                   const base::FilePath& active_profile_path,
+                   app_list::AppListModel::Users* users) {
+  const size_t count = profile_info.GetNumberOfProfiles();
+  for (size_t i = 0; i < count; ++i) {
+    // Don't display managed users.
+    if (profile_info.ProfileIsManagedAtIndex(i))
+      continue;
 
-AppListViewDelegate::AppListViewDelegate(AppListControllerDelegate* controller,
-                                         Profile* profile)
-    : controller_(controller),
-      profile_(profile) {}
-
-AppListViewDelegate::~AppListViewDelegate() {}
-
-void AppListViewDelegate::SetModel(app_list::AppListModel* model) {
-  if (model) {
-    apps_builder_.reset(new AppsModelBuilder(profile_,
-                                             model->apps(),
-                                             controller_.get()));
-    apps_builder_->Build();
-
-    search_controller_.reset(new app_list::SearchController(
-        profile_, model->search_box(), model->results(), controller_.get()));
-
-    signin_delegate_.reset(new ChromeSigninDelegate(profile_));
-
-#if defined(USE_ASH)
-    app_sync_ui_state_watcher_.reset(new AppSyncUIStateWatcher(profile_,
-                                                               model));
-#endif
-  } else {
-    apps_builder_.reset();
-    search_controller_.reset();
-#if defined(USE_ASH)
-    app_sync_ui_state_watcher_.reset();
-#endif
+    app_list::AppListModel::User user;
+    user.name = profile_info.GetNameOfProfileAtIndex(i);
+    user.email = profile_info.GetUserNameOfProfileAtIndex(i);
+    user.profile_path = profile_info.GetPathOfProfileAtIndex(i);
+    user.active = active_profile_path == user.profile_path;
+    users->push_back(user);
   }
 }
 
-app_list::SigninDelegate* AppListViewDelegate::GetSigninDelegate() {
-  return signin_delegate_.get();
+}  // namespace
+
+AppListViewDelegate::AppListViewDelegate(
+    scoped_ptr<AppListControllerDelegate> controller,
+    Profile* profile)
+    : controller_(controller.Pass()),
+      profile_(profile),
+      model_(NULL) {
+  CHECK(controller_);
+  RegisterForNotifications();
+  g_browser_process->profile_manager()->GetProfileInfoCache().AddObserver(this);
 }
 
-void AppListViewDelegate::ActivateAppListItem(
-    app_list::AppListItemModel* item,
-    int event_flags) {
-  content::RecordAction(content::UserMetricsAction("AppList_ClickOnApp"));
-  static_cast<ChromeAppListItem*>(item)->Activate(event_flags);
+AppListViewDelegate::~AppListViewDelegate() {
+  g_browser_process->
+      profile_manager()->GetProfileInfoCache().RemoveObserver(this);
+}
+
+void AppListViewDelegate::RegisterForNotifications() {
+  registrar_.RemoveAll();
+  DCHECK(profile_);
+
+  registrar_.Add(this, chrome::NOTIFICATION_GOOGLE_SIGNIN_SUCCESSFUL,
+                 content::NotificationService::AllSources());
+  registrar_.Add(this, chrome::NOTIFICATION_GOOGLE_SIGNIN_FAILED,
+                 content::NotificationService::AllSources());
+  registrar_.Add(this, chrome::NOTIFICATION_GOOGLE_SIGNED_OUT,
+                 content::NotificationService::AllSources());
+}
+
+void AppListViewDelegate::OnProfileChanged() {
+  CHECK(controller_);
+  search_controller_.reset(new app_list::SearchController(
+      profile_, model_->search_box(), model_->results(), controller_.get()));
+
+  signin_delegate_.SetProfile(profile_);
+
+#if defined(USE_ASH)
+  app_sync_ui_state_watcher_.reset(new AppSyncUIStateWatcher(profile_, model_));
+#endif
+
+  model_->SetSignedIn(!GetSigninDelegate()->NeedSignin());
+
+  // Don't populate the app list users if we are on the ash desktop.
+  chrome::HostDesktopType desktop = chrome::GetHostDesktopTypeForNativeWindow(
+      controller_->GetAppListWindow());
+  if (desktop == chrome::HOST_DESKTOP_TYPE_ASH)
+    return;
+
+  // Populate the app list users.
+  app_list::AppListModel::Users users;
+  PopulateUsers(g_browser_process->profile_manager()->GetProfileInfoCache(),
+                profile_->GetPath(), &users);
+  model_->SetUsers(users);
+}
+
+bool AppListViewDelegate::ForceNativeDesktop() const {
+  return controller_->ForceNativeDesktop();
+}
+
+void AppListViewDelegate::SetProfileByPath(const base::FilePath& profile_path) {
+  DCHECK(model_);
+
+  // The profile must be loaded before this is called.
+  profile_ =
+      g_browser_process->profile_manager()->GetProfileByPath(profile_path);
+  DCHECK(profile_);
+
+  RegisterForNotifications();
+
+  apps_builder_->SwitchProfile(profile_);
+
+  OnProfileChanged();
+
+  // Clear search query.
+  model_->search_box()->SetText(base::string16());
+}
+
+void AppListViewDelegate::InitModel(app_list::AppListModel* model) {
+  DCHECK(!model_);
+  DCHECK(model);
+  model_ = model;
+
+  // Initialize apps model.
+  apps_builder_.reset(new ExtensionAppModelBuilder(profile_,
+                                                   model,
+                                                   controller_.get()));
+
+  // Initialize the profile information in the app list menu.
+  OnProfileChanged();
+}
+
+app_list::SigninDelegate* AppListViewDelegate::GetSigninDelegate() {
+  return &signin_delegate_;
 }
 
 void AppListViewDelegate::GetShortcutPathForApp(
@@ -122,12 +199,12 @@ void AppListViewDelegate::GetShortcutPathForApp(
 }
 
 void AppListViewDelegate::StartSearch() {
-  if (search_controller_.get())
+  if (search_controller_)
     search_controller_->Start();
 }
 
 void AppListViewDelegate::StopSearch() {
-  if (search_controller_.get())
+  if (search_controller_)
     search_controller_->Stop();
 }
 
@@ -152,32 +229,8 @@ void AppListViewDelegate::ViewClosing() {
   controller_->ViewClosing();
 }
 
-void AppListViewDelegate::ViewActivationChanged(bool active) {
-  controller_->ViewActivationChanged(active);
-}
-
 gfx::ImageSkia AppListViewDelegate::GetWindowIcon() {
   return controller_->GetWindowIcon();
-}
-
-string16 AppListViewDelegate::GetCurrentUserName() {
-  ProfileInfoCache& cache =
-      g_browser_process->profile_manager()->GetProfileInfoCache();
-  size_t profile_index = cache.GetIndexOfProfileWithPath(profile_->GetPath());
-  if (profile_index != std::string::npos)
-    return cache.GetNameOfProfileAtIndex(profile_index);
-
-  return string16();
-}
-
-string16 AppListViewDelegate::GetCurrentUserEmail()  {
-  ProfileInfoCache& cache =
-      g_browser_process->profile_manager()->GetProfileInfoCache();
-  size_t profile_index = cache.GetIndexOfProfileWithPath(profile_->GetPath());
-  if (profile_index != std::string::npos)
-    return cache.GetUserNameOfProfileAtIndex(profile_index);
-
-  return string16();
 }
 
 void AppListViewDelegate::OpenSettings() {
@@ -186,26 +239,64 @@ void AppListViewDelegate::OpenSettings() {
   const extensions::Extension* extension = service->GetInstalledExtension(
       extension_misc::kSettingsAppId);
   DCHECK(extension);
-  controller_->ActivateApp(profile_, extension, 0);
+  controller_->ActivateApp(profile_,
+                           extension,
+                           AppListControllerDelegate::LAUNCH_FROM_UNKNOWN,
+                           0);
 }
 
 void AppListViewDelegate::OpenHelp() {
   chrome::HostDesktopType desktop = chrome::GetHostDesktopTypeForNativeWindow(
       controller_->GetAppListWindow());
-  Browser* browser = chrome::FindOrCreateTabbedBrowser(
-      profile_, desktop);
-  browser->OpenURL(content::OpenURLParams(GURL(chrome::kAppLauncherHelpURL),
-                                          content::Referrer(),
-                                          NEW_FOREGROUND_TAB,
-                                          content::PAGE_TRANSITION_LINK,
-                                          false));
+  chrome::ScopedTabbedBrowserDisplayer displayer(profile_, desktop);
+  content::OpenURLParams params(GURL(chrome::kAppLauncherHelpURL),
+                                content::Referrer(),
+                                NEW_FOREGROUND_TAB,
+                                content::PAGE_TRANSITION_LINK,
+                                false);
+  displayer.browser()->OpenURL(params);
 }
 
 void AppListViewDelegate::OpenFeedback() {
   chrome::HostDesktopType desktop = chrome::GetHostDesktopTypeForNativeWindow(
       controller_->GetAppListWindow());
-  Browser* browser = chrome::FindOrCreateTabbedBrowser(
-      profile_, desktop);
+  Browser* browser = chrome::FindTabbedBrowser(profile_, false, desktop);
   chrome::ShowFeedbackPage(browser, std::string(),
                            chrome::kAppLauncherCategoryTag);
+}
+
+void AppListViewDelegate::ShowForProfileByPath(
+    const base::FilePath& profile_path) {
+  controller_->ShowForProfileByPath(profile_path);
+}
+
+void AppListViewDelegate::Observe(
+    int type,
+    const content::NotificationSource& source,
+    const content::NotificationDetails& details) {
+  OnProfileChanged();
+}
+
+void AppListViewDelegate::OnProfileAdded(const base::FilePath& profile_path) {
+  OnProfileChanged();
+}
+
+void AppListViewDelegate::OnProfileWasRemoved(
+    const base::FilePath& profile_path, const base::string16& profile_name) {
+  OnProfileChanged();
+}
+
+void AppListViewDelegate::OnProfileNameChanged(
+    const base::FilePath& profile_path,
+    const base::string16& old_profile_name) {
+  OnProfileChanged();
+}
+
+content::WebContents* AppListViewDelegate::GetStartPageContents() {
+  app_list::StartPageService* service =
+      app_list::StartPageService::Get(profile_);
+  if (!service)
+    return NULL;
+
+  return service->contents();
 }

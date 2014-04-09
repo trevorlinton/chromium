@@ -62,7 +62,9 @@ class ClientSideDetectionService : public net::URLFetcherDelegate,
  public:
   // void(GURL phishing_url, bool is_phishing).
   typedef base::Callback<void(GURL, bool)> ClientReportPhishingRequestCallback;
-  typedef base::Callback<void(GURL, bool)> ClientReportMalwareRequestCallback;
+  // void(GURL original_url, GURL malware_url, bool is_malware).
+  typedef base::Callback<void(GURL, GURL, bool)>
+      ClientReportMalwareRequestCallback;
 
   virtual ~ClientSideDetectionService();
 
@@ -284,7 +286,7 @@ class ClientSideDetectionService : public net::URLFetcherDelegate,
   static bool ModelHasValidHashIds(const ClientSideModel& model);
 
   // Returns the URL that will be used for phishing requests.
-  static std::string GetClientReportUrl(const std::string& report_url);
+  static GURL GetClientReportUrl(const std::string& report_url);
 
   // Whether the service is running or not.  When the service is not running,
   // it won't download the model nor report detected phishing URLs.
@@ -300,7 +302,10 @@ class ClientSideDetectionService : public net::URLFetcherDelegate,
   struct ClientReportInfo;
   std::map<const net::URLFetcher*, ClientReportInfo*>
       client_phishing_reports_;
-  std::map<const net::URLFetcher*, ClientReportInfo*>
+  // Map of client malware ip request to the corresponding callback that
+  // has to be invoked when the request is done.
+  struct ClientMalwareReportInfo;
+  std::map<const net::URLFetcher*, ClientMalwareReportInfo*>
       client_malware_reports_;
 
   // Cache of completed requests. Used to satisfy requests for the same urls
@@ -338,6 +343,6 @@ class ClientSideDetectionService : public net::URLFetcherDelegate,
 
   DISALLOW_COPY_AND_ASSIGN(ClientSideDetectionService);
 };
-}  // namepsace safe_browsing
+}  // namespace safe_browsing
 
 #endif  // CHROME_BROWSER_SAFE_BROWSING_CLIENT_SIDE_DETECTION_SERVICE_H_

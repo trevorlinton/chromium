@@ -74,6 +74,40 @@ class UDPSocket : public Socket {
   std::vector<std::string> multicast_groups_;
 };
 
+// UDP Socket instances from the "sockets.udp" namespace. These are regular
+// socket objects with additional properties related to the behavior defined in
+// the "sockets.udp" namespace.
+class ResumableUDPSocket : public UDPSocket {
+ public:
+  explicit ResumableUDPSocket(const std::string& owner_extension_id);
+
+  // Overriden from ApiResource
+  virtual bool IsPersistent() const OVERRIDE;
+
+  const std::string& name() const { return name_; }
+  void set_name(const std::string& name) { name_ = name; }
+
+  bool persistent() const { return persistent_; }
+  void set_persistent(bool persistent) { persistent_ = persistent; }
+
+  int buffer_size() const { return buffer_size_; }
+  void set_buffer_size(int buffer_size) { buffer_size_ = buffer_size; }
+
+ private:
+  friend class ApiResourceManager<ResumableUDPSocket>;
+  static const char* service_name() {
+    return "ResumableUDPSocketManager";
+  }
+
+  // Application-defined string - see sockets_udp.idl.
+  std::string name_;
+  // Flag indicating whether the socket is left open when the application is
+  // suspended - see sockets_udp.idl.
+  bool persistent_;
+  // The size of the buffer used to receive data - see sockets_udp.idl.
+  int buffer_size_;
+};
+
 }  //  namespace extensions
 
 #endif  // CHROME_BROWSER_EXTENSIONS_API_SOCKET_UDP_SOCKET_H_

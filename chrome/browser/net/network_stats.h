@@ -142,11 +142,14 @@ class NetworkStats {
   void OnWriteComplete(int result);
 
   // Read data from server until an error or IO blocking occurs or reading is
-  // complete.
-  void ReadData();
+  // complete. Return the result value from socket reading and 0 if |socket_|
+  // is Null.
+  int ReadData();
 
   // Send data contained in |str| to server.
-  void SendData(const std::string& str);
+  // Return a negative value if IO blocking occurs or there is an error.
+  // Otherwise return net::OK.
+  int SendData(const std::string& str);
 
   // Update the send buffer (telling it that |bytes_sent| has been sent).
   // And reset |write_buffer_|.

@@ -48,8 +48,6 @@ _REVISION_NEGATIVE_FILTER['HEAD'] = [
     'ExecutingJavascriptTest.testShouldThrowAnExceptionWithMessageAndStacktraceWhenTheJavascriptIsBad',
     'FormHandlingTest.testShouldNotBeAbleToSubmitAFormThatDoesNotExist',
     'FrameSwitchingTest.testShouldNotBeAbleToDoAnythingTheFrameIsDeletedFromUnderUs',
-    # Disabled until https://code.google.com/p/chromedriver/issues/detail?id=345 is fixed.
-    'I18nTest.*',
     'I18nTest.testShouldBeAbleToActivateIMEEngine',
     # Broken because AddWebStorage.java is broken.
     'LocalStorageTest.*',
@@ -86,21 +84,14 @@ _REVISION_NEGATIVE_FILTER['HEAD'] = [
     'VisibilityTest.testElementHiddenByOverflowYIsNotVisible',
     'VisibilityTest.tooSmallAWindowWithOverflowHiddenIsNotAProblem',
     'WindowTest.*',
-    # https://code.google.com/p/chromedriver/issues/detail?id=412
-    'ClickTest.testCanClickOnAnElementWithTopSetToANegativeNumber',
-    'ClickTest.testShouldBeAbleToClickOnAnElementInTheViewport',
-    'ExecutingAsyncJavascriptTest.shouldBeAbleToExecuteAsynchronousScripts',
-    'FormHandlingTest.testShouldClickOnSubmitInputElements',
-    'FrameSwitchingTest.testShouldBeAbleToClickInAFrame',
-    'FrameSwitchingTest.testShouldBeAbleToSwitchToTheTopIfTheFrameIsDeletedFromUnderUs',
-    'FrameSwitchingTest.testShouldAllowTheUserToSwitchToAnIFrameAndRemainFocusedOnIt',
-    'FrameSwitchingTest.testShouldBeAbleToClickInASubFrame',
-    'FrameSwitchingTest.testShouldNotSwitchMagicallyToTheTopWindow',
-    'ImplicitWaitTest.testShouldImplicitlyWaitUntilAtLeastOneElementIsFoundWhenSearchingForMany',
-    'ImplicitWaitTest.testShouldImplicitlyWaitForAnElementToBeVisibleBeforeInteracting',
-    'ImplicitWaitTest.testShouldReturnAfterFirstAttemptToFindManyAfterDisablingImplicitWaits',
-    'ImplicitWaitTest.testShouldImplicitlyWaitForASingleElement',
-    'XPathElementFindingTest.testShouldBeAbleToSearchForMultipleAttributes',
+    # Flaky: https://code.google.com/p/chromedriver/issues/detail?id=528
+    'PageLoadingTest.testShouldDoNothingIfThereIsNothingToGoBackTo',
+]
+_REVISION_NEGATIVE_FILTER['31'] = _REVISION_NEGATIVE_FILTER['HEAD'] + [
+    'I18nTest.*',  # This was fixed in a later version of 31 than we use.
+]
+_REVISION_NEGATIVE_FILTER['30'] = _REVISION_NEGATIVE_FILTER['HEAD'] + [
+    'I18nTest.*',
 ]
 
 
@@ -161,10 +152,11 @@ _OS_NEGATIVE_FILTER['android'] = [
     # http://crbug.com/156390
     'DragAndDropTest.*',
 
-    # Touch events are not yet supported.
+    # Flick touch events are not yet implemented.
     'TouchFlickTest.*',
+
+    # Scrolling touch events are not supported.
     'TouchScrollTest.*',
-    'TouchSingleTapTest.*',
 
     # These tests start multiple sessions, which is not supported on a single
     # Android device.
@@ -179,6 +171,19 @@ _OS_NEGATIVE_FILTER['android'] = [
 
     # Flaky: https://code.google.com/p/chromedriver/issues/detail?id=441
     'PageLoadingTest.testShouldBeAbleToNavigateBackInTheBrowserHistory',
+    'PageLoadingTest.testShouldBeAbleToNavigateForwardsInTheBrowserHistory',
+    # Flaky: https://code.google.com/p/chromedriver/issues/detail?id=528
+    'PageLoadingTest.testShouldDoNothingIfThereIsNothingToGoBackTo',
+
+    # https://code.google.com/p/chromedriver/issues/detail?id=526
+    'ElementFindingTest.testShouldNotBeAbleToLocateASingleElementOnABlankPage',
+    'ElementFindingTest.testShouldBeAbleToFindAnElementByBooleanAttributeUsingShortCssSelector',
+
+    # https://code.google.com/p/chromedriver/issues/detail?id=527
+    'ClickTest.testCanClickOnALinkThatContainsEmbeddedBlockElements',
+
+    # https://code.google.com/p/chromedriver/issues/detail?id=604
+    'I18nTest.*',
 ]
 
 

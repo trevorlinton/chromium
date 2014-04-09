@@ -70,7 +70,6 @@
 #include "chrome/common/automation_messages.h"
 #include "chrome/common/content_settings_types.h"
 #include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/manifest.h"
 #include "content/public/browser/dom_operation_notification_details.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/notification_service.h"
@@ -78,6 +77,7 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/process_type.h"
+#include "extensions/common/manifest.h"
 #include "extensions/common/view_type.h"
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/rect.h"
@@ -1123,7 +1123,7 @@ void DomOperationObserver::Observe(
     if (dom_op_details->automation_id == automation_id_)
       OnDomOperationCompleted(dom_op_details->json);
   } else if (type == chrome::NOTIFICATION_APP_MODAL_DIALOG_SHOWN) {
-    OnModalDialogShown();
+    OnJavascriptBlocked();
   } else {
     DCHECK_EQ(chrome::NOTIFICATION_WEB_CONTENT_SETTINGS_CHANGED, type);
     WebContents* web_contents = content::Source<WebContents>(source).ptr();
@@ -1164,14 +1164,6 @@ void DomOperationMessageSender::OnDomOperationCompleted(
     }
   }
   delete this;
-}
-
-void DomOperationMessageSender::OnModalDialogShown() {
-  if (automation_.get() && use_json_interface_) {
-    AutomationJSONReply(automation_.get(), reply_message_.release())
-        .SendErrorCode(automation::kBlockedByModalDialog);
-    delete this;
-  }
 }
 
 void DomOperationMessageSender::OnJavascriptBlocked() {
@@ -1559,7 +1551,7 @@ AutomationProviderGetPasswordsObserver::
 
 void AutomationProviderGetPasswordsObserver::OnPasswordStoreRequestDone(
     CancelableRequestProvider::Handle handle,
-    const std::vector<content::PasswordForm*>& result) {
+    const std::vector<autofill::PasswordForm*>& result) {
   if (!provider_.get()) {
     delete this;
     return;
@@ -1568,10 +1560,10 @@ void AutomationProviderGetPasswordsObserver::OnPasswordStoreRequestDone(
   scoped_ptr<DictionaryValue> return_value(new DictionaryValue);
 
   ListValue* passwords = new ListValue;
-  for (std::vector<content::PasswordForm*>::const_iterator it =
+  for (std::vector<autofill::PasswordForm*>::const_iterator it =
            result.begin(); it != result.end(); ++it) {
     DictionaryValue* password_val = new DictionaryValue;
-    content::PasswordForm* password_form = *it;
+    autofill::PasswordForm* password_form = *it;
     password_val->SetString("username_value", password_form->username_value);
     password_val->SetString("password_value", password_form->password_value);
     password_val->SetString("signon_realm", password_form->signon_realm);
@@ -1595,7 +1587,7 @@ void AutomationProviderGetPasswordsObserver::OnPasswordStoreRequestDone(
 }
 
 void AutomationProviderGetPasswordsObserver::OnGetPasswordStoreResults(
-    const std::vector<content::PasswordForm*>& results) {
+    const std::vector<autofill::PasswordForm*>& results) {
   // TODO(kaiwang): Implement when I refactor
   // PasswordManager::GetAutofillableLogins.
   NOTIMPLEMENTED();

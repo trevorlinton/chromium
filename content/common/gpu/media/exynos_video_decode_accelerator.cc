@@ -104,6 +104,13 @@ struct ExynosVideoDecodeAccelerator::EGLSyncKHRRef {
   EGLSyncKHR egl_sync;
 };
 
+struct ExynosVideoDecodeAccelerator::PictureRecord {
+  PictureRecord(bool cleared, const media::Picture& picture);
+  ~PictureRecord();
+  bool cleared;  // Whether the texture is cleared and safe to render from.
+  media::Picture picture;  // The decoded picture.
+};
+
 ExynosVideoDecodeAccelerator::BitstreamBufferRef::BitstreamBufferRef(
     base::WeakPtr<Client>& client,
     scoped_refptr<base::MessageLoopProxy>& client_message_loop_proxy,
@@ -195,21 +202,32 @@ ExynosVideoDecodeAccelerator::GscOutputRecord::GscOutputRecord()
       fd(-1),
       egl_image(EGL_NO_IMAGE_KHR),
       egl_sync(EGL_NO_SYNC_KHR),
-      picture_id(-1) {
-}
+      picture_id(-1),
+      cleared(false) {}
 
 ExynosVideoDecodeAccelerator::GscOutputRecord::~GscOutputRecord() {
 }
+
+ExynosVideoDecodeAccelerator::PictureRecord::PictureRecord(
+    bool cleared,
+    const media::Picture& picture)
+    : cleared(cleared), picture(picture) {}
+
+ExynosVideoDecodeAccelerator::PictureRecord::~PictureRecord() {}
 
 ExynosVideoDecodeAccelerator::ExynosVideoDecodeAccelerator(
     EGLDisplay egl_display,
     EGLContext egl_context,
     Client* client,
-    const base::Callback<bool(void)>& make_context_current)
+    const base::WeakPtr<Client>& io_client,
+    const base::Callback<bool(void)>& make_context_current,
+    const scoped_refptr<base::MessageLoopProxy>& io_message_loop_proxy)
     : child_message_loop_proxy_(base::MessageLoopProxy::current()),
+      io_message_loop_proxy_(io_message_loop_proxy),
       weak_this_(base::AsWeakPtr(this)),
       client_ptr_factory_(client),
       client_(client_ptr_factory_.GetWeakPtr()),
+      io_client_(io_client),
       decoder_thread_("ExynosDecoderThread"),
       decoder_state_(kUninitialized),
       decoder_delay_bitstream_buffer_id_(-1),
@@ -232,13 +250,13 @@ ExynosVideoDecodeAccelerator::ExynosVideoDecodeAccelerator(
       gsc_input_buffer_queued_count_(0),
       gsc_output_streamon_(false),
       gsc_output_buffer_queued_count_(0),
+      picture_clearing_count_(0),
       device_poll_thread_("ExynosDevicePollThread"),
       device_poll_interrupt_fd_(-1),
       make_context_current_(make_context_current),
       egl_display_(egl_display),
       egl_context_(egl_context),
-      video_profile_(media::VIDEO_CODEC_PROFILE_UNKNOWN) {
-}
+      video_profile_(media::VIDEO_CODEC_PROFILE_UNKNOWN) {}
 
 ExynosVideoDecodeAccelerator::~ExynosVideoDecodeAccelerator() {
   DCHECK(!decoder_thread_.IsRunning());
@@ -415,23 +433,12 @@ void ExynosVideoDecodeAccelerator::Decode(
     const media::BitstreamBuffer& bitstream_buffer) {
   DVLOG(1) << "Decode(): input_id=" << bitstream_buffer.id()
            << ", size=" << bitstream_buffer.size();
-  DCHECK(child_message_loop_proxy_->BelongsToCurrentThread());
-
-  scoped_ptr<BitstreamBufferRef> bitstream_record(new BitstreamBufferRef(
-      client_, child_message_loop_proxy_,
-      new base::SharedMemory(bitstream_buffer.handle(), true),
-      bitstream_buffer.size(), bitstream_buffer.id()));
-  if (!bitstream_record->shm->Map(bitstream_buffer.size())) {
-    DLOG(ERROR) << "Decode(): could not map bitstream_buffer";
-    NOTIFY_ERROR(UNREADABLE_INPUT);
-    return;
-  }
-  DVLOG(3) << "Decode(): mapped to addr=" << bitstream_record->shm->memory();
+  DCHECK(io_message_loop_proxy_->BelongsToCurrentThread());
 
   // DecodeTask() will take care of running a DecodeBufferTask().
   decoder_thread_.message_loop()->PostTask(FROM_HERE, base::Bind(
       &ExynosVideoDecodeAccelerator::DecodeTask, base::Unretained(this),
-      base::Passed(&bitstream_record)));
+      bitstream_buffer));
 }
 
 void ExynosVideoDecodeAccelerator::AssignPictureBuffers(
@@ -445,14 +452,6 @@ void ExynosVideoDecodeAccelerator::AssignPictureBuffers(
       gsc_output_buffer_map_.size() << ")";
     NOTIFY_ERROR(INVALID_ARGUMENT);
     return;
-  }
-
-  for (size_t i = 0; i < buffers.size(); ++i) {
-    if (buffers[i].size() != frame_buffer_size_) {
-      DLOG(ERROR) << "AssignPictureBuffers(): invalid buffer size";
-      NOTIFY_ERROR(INVALID_ARGUMENT);
-      return;
-    }
   }
 
   if (!make_context_current_.Run()) {
@@ -471,12 +470,16 @@ void ExynosVideoDecodeAccelerator::AssignPictureBuffers(
   Display* x_display = base::MessagePumpForUI::GetDefaultXDisplay();
   gfx::ScopedTextureBinder bind_restore(GL_TEXTURE_2D, 0);
   for (size_t i = 0; i < pic_buffers_ref->picture_buffers.size(); ++i) {
+    DCHECK(buffers[i].size() == frame_buffer_size_);
     PictureBufferArrayRef::PictureBufferRef& buffer =
         pic_buffers_ref->picture_buffers[i];
     // Create the X pixmap and then create an EGLImageKHR from it, so we can
     // get dma_buf backing.
-    Pixmap pixmap = XCreatePixmap(x_display, RootWindow(x_display, 0),
-        buffers[i].size().width(), buffers[i].size().height(), 32);
+    Pixmap pixmap = XCreatePixmap(x_display,
+                                  RootWindow(x_display, 0),
+                                  frame_buffer_size_.width(),
+                                  frame_buffer_size_.height(),
+                                  32);
     if (!pixmap) {
       DLOG(ERROR) << "AssignPictureBuffers(): could not create X pixmap";
       NOTIFY_ERROR(PLATFORM_FAILURE);
@@ -576,6 +579,8 @@ void ExynosVideoDecodeAccelerator::Destroy() {
   delete this;
 }
 
+bool ExynosVideoDecodeAccelerator::CanDecodeOnIOThread() { return true; }
+
 // static
 void ExynosVideoDecodeAccelerator::PreSandboxInitialization() {
   DVLOG(3) << "PreSandboxInitialization()";
@@ -610,12 +615,23 @@ bool ExynosVideoDecodeAccelerator::PostSandboxInitialization() {
 }
 
 void ExynosVideoDecodeAccelerator::DecodeTask(
-    scoped_ptr<BitstreamBufferRef> bitstream_record) {
-  DVLOG(3) << "DecodeTask(): input_id=" << bitstream_record->input_id;
+    const media::BitstreamBuffer& bitstream_buffer) {
+  DVLOG(3) << "DecodeTask(): input_id=" << bitstream_buffer.id();
   DCHECK_EQ(decoder_thread_.message_loop(), base::MessageLoop::current());
   DCHECK_NE(decoder_state_, kUninitialized);
   TRACE_EVENT1("Video Decoder", "EVDA::DecodeTask", "input_id",
-               bitstream_record->input_id);
+               bitstream_buffer.id());
+
+  scoped_ptr<BitstreamBufferRef> bitstream_record(new BitstreamBufferRef(
+      io_client_, io_message_loop_proxy_,
+      new base::SharedMemory(bitstream_buffer.handle(), true),
+      bitstream_buffer.size(), bitstream_buffer.id()));
+  if (!bitstream_record->shm->Map(bitstream_buffer.size())) {
+    DLOG(ERROR) << "Decode(): could not map bitstream_buffer";
+    NOTIFY_ERROR(UNREADABLE_INPUT);
+    return;
+  }
+  DVLOG(3) << "Decode(): mapped to addr=" << bitstream_record->shm->memory();
 
   if (decoder_state_ == kResetting || decoder_flushing_) {
     // In the case that we're resetting or flushing, we need to delay decoding
@@ -1051,6 +1067,7 @@ void ExynosVideoDecodeAccelerator::AssignPictureBuffersTask(
     DCHECK_EQ(output_record.egl_image, EGL_NO_IMAGE_KHR);
     DCHECK_EQ(output_record.egl_sync, EGL_NO_SYNC_KHR);
     DCHECK_EQ(output_record.picture_id, -1);
+    DCHECK_EQ(output_record.cleared, false);
     PictureBufferArrayRef::PictureBufferRef& buffer =
         pic_buffers->picture_buffers[i];
     output_record.fd = buffer.egl_image_fd;
@@ -1193,7 +1210,7 @@ void ExynosVideoDecodeAccelerator::EnqueueMfc() {
 
 void ExynosVideoDecodeAccelerator::DequeueMfcEvents() {
   DCHECK_EQ(decoder_thread_.message_loop(), base::MessageLoop::current());
-  DCHECK_EQ(decoder_state_, kDecoding);
+  DCHECK_NE(decoder_state_, kUninitialized);
   DVLOG(3) << "DequeueMfcEvents()";
 
   struct v4l2_event ev;
@@ -1414,9 +1431,11 @@ void ExynosVideoDecodeAccelerator::DequeueGsc() {
     gsc_output_buffer_queued_count_--;
     DVLOG(3) << "DequeueGsc(): returning input_id=" << dqbuf.timestamp.tv_sec
              << " as picture_id=" << output_record.picture_id;
-    child_message_loop_proxy_->PostTask(FROM_HERE, base::Bind(
-        &Client::PictureReady, client_, media::Picture(
-            output_record.picture_id, dqbuf.timestamp.tv_sec)));
+    const media::Picture& picture =
+        media::Picture(output_record.picture_id, dqbuf.timestamp.tv_sec);
+    pending_picture_ready_.push(PictureRecord(output_record.cleared, picture));
+    SendPictureReady();
+    output_record.cleared = true;
     decoder_frames_at_client_++;
   }
 
@@ -1612,8 +1631,8 @@ void ExynosVideoDecodeAccelerator::FlushTask() {
   if (decoder_state_ == kInitialized || decoder_state_ == kAfterReset) {
     // There's nothing in the pipe, so return done immediately.
     DVLOG(3) << "FlushTask(): returning flush";
-    child_message_loop_proxy_->PostTask(FROM_HERE, base::Bind(
-      &Client::NotifyFlushDone, client_));
+    child_message_loop_proxy_->PostTask(
+        FROM_HERE, base::Bind(&Client::NotifyFlushDone, client_));
     return;
   } else if (decoder_state_ == kError) {
     DVLOG(2) << "FlushTask(): early out: kError state";
@@ -1625,9 +1644,10 @@ void ExynosVideoDecodeAccelerator::FlushTask() {
 
   // Queue up an empty buffer -- this triggers the flush.
   decoder_input_queue_.push_back(linked_ptr<BitstreamBufferRef>(
-      new BitstreamBufferRef(client_, child_message_loop_proxy_, NULL, 0,
+      new BitstreamBufferRef(io_client_, io_message_loop_proxy_, NULL, 0,
                              kFlushBufferId)));
   decoder_flushing_ = true;
+  SendPictureReady();  // Send all pending PictureReady.
 
   ScheduleDecodeBufferTaskIfNeeded();
 }
@@ -1673,8 +1693,8 @@ void ExynosVideoDecodeAccelerator::NotifyFlushDoneIfNeeded() {
   decoder_delay_bitstream_buffer_id_ = -1;
   decoder_flushing_ = false;
   DVLOG(3) << "NotifyFlushDoneIfNeeded(): returning flush";
-  child_message_loop_proxy_->PostTask(FROM_HERE, base::Bind(
-    &Client::NotifyFlushDone, client_));
+  child_message_loop_proxy_->PostTask(
+      FROM_HERE, base::Bind(&Client::NotifyFlushDone, client_));
 
   // While we were flushing, we early-outed DecodeBufferTask()s.
   ScheduleDecodeBufferTaskIfNeeded();
@@ -1706,9 +1726,6 @@ void ExynosVideoDecodeAccelerator::ResetTask() {
   if (!StopDevicePoll(false))
     return;
 
-  DequeueMfcEvents();
-
-  resolution_change_pending_ = false;
   decoder_current_bitstream_buffer_.reset();
   decoder_input_queue_.clear();
 
@@ -1721,6 +1738,7 @@ void ExynosVideoDecodeAccelerator::ResetTask() {
   // Mark that we're resetting, then enqueue a ResetDoneTask().  All intervening
   // jobs will early-out in the kResetting state.
   decoder_state_ = kResetting;
+  SendPictureReady();  // Send all pending PictureReady.
   decoder_thread_.message_loop()->PostTask(FROM_HERE, base::Bind(
       &ExynosVideoDecodeAccelerator::ResetDoneTask, base::Unretained(this)));
 }
@@ -1734,6 +1752,12 @@ void ExynosVideoDecodeAccelerator::ResetDoneTask() {
     DVLOG(2) << "ResetDoneTask(): early out: kError state";
     return;
   }
+
+  // We might have received a resolution change event while we were waiting
+  // for the reset to finish. The codec will not post another event if the
+  // resolution after reset remains the same as the one to which were just
+  // about to switch, so preserve the event across reset so we can address
+  // it after resuming.
 
   // Reset format-specific bits.
   if (video_profile_ >= media::H264PROFILE_MIN &&
@@ -2447,6 +2471,55 @@ void ExynosVideoDecodeAccelerator::ResolutionChangeDestroyBuffers() {
   decoder_thread_.message_loop()->PostTask(FROM_HERE, base::Bind(
       &ExynosVideoDecodeAccelerator::FinishResolutionChange,
       base::Unretained(this)));
+}
+
+void ExynosVideoDecodeAccelerator::SendPictureReady() {
+  DCHECK_EQ(decoder_thread_.message_loop(), base::MessageLoop::current());
+  bool resetting_or_flushing =
+      (decoder_state_ == kResetting || decoder_flushing_);
+  while (pending_picture_ready_.size() > 0) {
+    bool cleared = pending_picture_ready_.front().cleared;
+    const media::Picture& picture = pending_picture_ready_.front().picture;
+    if (cleared && picture_clearing_count_ == 0) {
+      // This picture is cleared. Post it to IO thread to reduce latency. This
+      // should be the case after all pictures are cleared at the beginning.
+      io_message_loop_proxy_->PostTask(
+          FROM_HERE, base::Bind(&Client::PictureReady, io_client_, picture));
+      pending_picture_ready_.pop();
+    } else if (!cleared || resetting_or_flushing) {
+      DVLOG(3) << "SendPictureReady()"
+               << ". cleared=" << pending_picture_ready_.front().cleared
+               << ", decoder_state_=" << decoder_state_
+               << ", decoder_flushing_=" << decoder_flushing_
+               << ", picture_clearing_count_=" << picture_clearing_count_;
+      // If the picture is not cleared, post it to the child thread because it
+      // has to be cleared in the child thread. A picture only needs to be
+      // cleared once. If the decoder is resetting or flushing, send all
+      // pictures to ensure PictureReady arrive before reset or flush done.
+      child_message_loop_proxy_->PostTaskAndReply(
+          FROM_HERE,
+          base::Bind(&Client::PictureReady, client_, picture),
+          // Unretained is safe. If Client::PictureReady gets to run, |this| is
+          // alive. Destroy() will wait the decode thread to finish.
+          base::Bind(&ExynosVideoDecodeAccelerator::PictureCleared,
+                     base::Unretained(this)));
+      picture_clearing_count_++;
+      pending_picture_ready_.pop();
+    } else {
+      // This picture is cleared. But some pictures are about to be cleared on
+      // the child thread. To preserve the order, do not send this until those
+      // pictures are cleared.
+      break;
+    }
+  }
+}
+
+void ExynosVideoDecodeAccelerator::PictureCleared() {
+  DVLOG(3) << "PictureCleared(). clearing count=" << picture_clearing_count_;
+  DCHECK_EQ(decoder_thread_.message_loop(), base::MessageLoop::current());
+  DCHECK_GT(picture_clearing_count_, 0);
+  picture_clearing_count_--;
+  SendPictureReady();
 }
 
 }  // namespace content

@@ -14,8 +14,8 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_view.h"
-#include "ui/base/events/event.h"
-#include "ui/base/keycodes/keyboard_codes.h"
+#include "ui/events/event.h"
+#include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/views/focus/external_focus_tracker.h"
 #include "ui/views/focus/view_storage.h"
 #include "ui/views/widget/root_view.h"
@@ -130,8 +130,18 @@ void FindBarHost::MoveWindowIfNecessary(const gfx::Rect& selection_rect,
   view()->SchedulePaint();
 }
 
-void FindBarHost::SetFindText(const string16& find_text) {
-  find_bar_view()->SetFindText(find_text);
+void FindBarHost::SetFindTextAndSelectedRange(
+    const string16& find_text,
+    const gfx::Range& selected_range) {
+  find_bar_view()->SetFindTextAndSelectedRange(find_text, selected_range);
+}
+
+string16 FindBarHost::GetFindText() {
+  return find_bar_view()->GetFindText();
+}
+
+gfx::Range FindBarHost::GetSelectedRange() {
+  return find_bar_view()->GetSelectedRange();
 }
 
 void FindBarHost::UpdateUIForFindResult(const FindNotificationDetails& result,
@@ -233,10 +243,6 @@ bool FindBarHost::GetFindBarWindowInfo(gfx::Point* position,
   if (fully_visible)
     *fully_visible = IsVisible() && !IsAnimating();
   return true;
-}
-
-string16 FindBarHost::GetFindText() {
-  return find_bar_view()->GetFindText();
 }
 
 string16 FindBarHost::GetFindSelectedText() {
@@ -364,8 +370,4 @@ void FindBarHost::GetWidgetPositionNative(gfx::Rect* avoid_overlapping_rect) {
       find_bar_controller_->web_contents()->GetView();
   gfx::Rect webcontents_rect = tab_view->GetViewBounds();
   avoid_overlapping_rect->Offset(0, webcontents_rect.y() - frame_rect.y());
-}
-
-FindBarView* FindBarHost::find_bar_view() {
-  return static_cast<FindBarView*>(view());
 }

@@ -48,6 +48,8 @@
             'src/processor/stackwalker_amd64.h',
             'src/processor/stackwalker_arm.cc',
             'src/processor/stackwalker_arm.h',
+            'src/processor/stackwalker_mips.cc',
+            'src/processor/stackwalker_mips.h',
             'src/processor/stackwalker_ppc.cc',
             'src/processor/stackwalker_ppc.h',
             'src/processor/stackwalker_ppc64.cc',
@@ -502,13 +504,17 @@
                 'src/common/android/breakpad_getcontext.S',
               ],
             }],
+            ['OS!="android"', {
+              'link_settings': {
+                'libraries': [
+                  # In case of Android, '-ldl' is added in common.gypi, since it
+                  # is needed for stlport_static. For LD, the order of libraries
+                  # is important, and thus we skip to add it here.
+                  '-ldl',
+                ],
+              },
+            }],
           ],
-
-          'link_settings': {
-            'libraries': [
-              '-ldl',
-            ],
-          },
 
           'include_dirs': [
             'src',
@@ -618,6 +624,13 @@
           'include_dirs': [
             'src',
             '..',
+          ],
+          'conditions': [
+            ['target_arch=="mipsel" and OS=="android"', {
+              'include_dirs': [
+                'src/common/android/include',
+              ],
+            }],
           ],
         },
         {

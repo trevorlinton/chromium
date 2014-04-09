@@ -9,8 +9,8 @@
 #include "chrome/browser/bookmarks/bookmark_model.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/bookmarks/bookmark_node_data.h"
+#include "chrome/browser/bookmarks/bookmark_test_helpers.h"
 #include "chrome/test/base/testing_profile.h"
-#include "chrome/test/base/ui_test_utils.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
@@ -64,6 +64,8 @@ TEST_F(BookmarkNodeDataTest, JustURL) {
   EXPECT_TRUE(drag_data.elements[0].is_url);
   EXPECT_EQ(url, drag_data.elements[0].url);
   EXPECT_EQ(title, drag_data.elements[0].title);
+  EXPECT_TRUE(drag_data.elements[0].date_added.is_null());
+  EXPECT_TRUE(drag_data.elements[0].date_folder_modified.is_null());
   EXPECT_EQ(0, drag_data.elements[0].children.size());
 }
 
@@ -73,7 +75,7 @@ TEST_F(BookmarkNodeDataTest, URL) {
   profile.SetID(L"id");
   profile.CreateBookmarkModel(false);
   BookmarkModel* model = BookmarkModelFactory::GetForProfile(&profile);
-  ui_test_utils::WaitForBookmarkModelToLoad(model);
+  test::WaitForBookmarkModelToLoad(model);
   const BookmarkNode* root = model->bookmark_bar_node();
   GURL url(GURL("http://foo.com"));
   const string16 title(ASCIIToUTF16("foo.com"));
@@ -84,6 +86,9 @@ TEST_F(BookmarkNodeDataTest, URL) {
   EXPECT_TRUE(drag_data.elements[0].is_url);
   EXPECT_EQ(url, drag_data.elements[0].url);
   EXPECT_EQ(title, drag_data.elements[0].title);
+  EXPECT_EQ(node->date_added(), drag_data.elements[0].date_added);
+  EXPECT_EQ(node->date_folder_modified(),
+            drag_data.elements[0].date_folder_modified);
   ui::OSExchangeData data;
   drag_data.Write(&profile, &data);
 
@@ -96,6 +101,8 @@ TEST_F(BookmarkNodeDataTest, URL) {
   EXPECT_TRUE(read_data.elements[0].is_url);
   EXPECT_EQ(url, read_data.elements[0].url);
   EXPECT_EQ(title, read_data.elements[0].title);
+  EXPECT_TRUE(read_data.elements[0].date_added.is_null());
+  EXPECT_TRUE(read_data.elements[0].date_folder_modified.is_null());
   EXPECT_TRUE(read_data.GetFirstNode(&profile) == node);
 
   // Make sure asking for the node with a different profile returns NULL.
@@ -117,7 +124,7 @@ TEST_F(BookmarkNodeDataTest, Folder) {
   profile.CreateBookmarkModel(false);
 
   BookmarkModel* model = BookmarkModelFactory::GetForProfile(&profile);
-  ui_test_utils::WaitForBookmarkModelToLoad(model);
+  test::WaitForBookmarkModelToLoad(model);
 
   const BookmarkNode* root = model->bookmark_bar_node();
   const BookmarkNode* g1 = model->AddFolder(root, 0, ASCIIToUTF16("g1"));
@@ -129,6 +136,9 @@ TEST_F(BookmarkNodeDataTest, Folder) {
   ASSERT_EQ(1, drag_data.elements.size());
   EXPECT_EQ(g12->GetTitle(), drag_data.elements[0].title);
   EXPECT_FALSE(drag_data.elements[0].is_url);
+  EXPECT_EQ(g12->date_added(), drag_data.elements[0].date_added);
+  EXPECT_EQ(g12->date_folder_modified(),
+            drag_data.elements[0].date_folder_modified);
 
   ui::OSExchangeData data;
   drag_data.Write(&profile, &data);
@@ -141,6 +151,8 @@ TEST_F(BookmarkNodeDataTest, Folder) {
   ASSERT_EQ(1, read_data.elements.size());
   EXPECT_EQ(g12->GetTitle(), read_data.elements[0].title);
   EXPECT_FALSE(read_data.elements[0].is_url);
+  EXPECT_TRUE(read_data.elements[0].date_added.is_null());
+  EXPECT_TRUE(read_data.elements[0].date_folder_modified.is_null());
 
   // We should get back the same node when asking for the same profile.
   const BookmarkNode* r_g12 = read_data.GetFirstNode(&profile);
@@ -158,7 +170,7 @@ TEST_F(BookmarkNodeDataTest, FolderWithChild) {
   profile.CreateBookmarkModel(false);
 
   BookmarkModel* model = BookmarkModelFactory::GetForProfile(&profile);
-  ui_test_utils::WaitForBookmarkModelToLoad(model);
+  test::WaitForBookmarkModelToLoad(model);
 
   const BookmarkNode* root = model->bookmark_bar_node();
   const BookmarkNode* folder = model->AddFolder(root, 0, ASCIIToUTF16("g1"));
@@ -185,6 +197,8 @@ TEST_F(BookmarkNodeDataTest, FolderWithChild) {
   EXPECT_TRUE(read_child.is_url);
   EXPECT_EQ(title, read_child.title);
   EXPECT_EQ(url, read_child.url);
+  EXPECT_TRUE(read_data.elements[0].date_added.is_null());
+  EXPECT_TRUE(read_data.elements[0].date_folder_modified.is_null());
   EXPECT_TRUE(read_child.is_url);
 
   // And make sure we get the node back.
@@ -199,7 +213,7 @@ TEST_F(BookmarkNodeDataTest, MultipleNodes) {
   profile.CreateBookmarkModel(false);
 
   BookmarkModel* model = BookmarkModelFactory::GetForProfile(&profile);
-  ui_test_utils::WaitForBookmarkModelToLoad(model);
+  test::WaitForBookmarkModelToLoad(model);
 
   const BookmarkNode* root = model->bookmark_bar_node();
   const BookmarkNode* folder = model->AddFolder(root, 0, ASCIIToUTF16("g1"));
@@ -224,6 +238,8 @@ TEST_F(BookmarkNodeDataTest, MultipleNodes) {
   EXPECT_TRUE(read_data.is_valid());
   ASSERT_EQ(2, read_data.elements.size());
   ASSERT_EQ(1, read_data.elements[0].children.size());
+  EXPECT_TRUE(read_data.elements[0].date_added.is_null());
+  EXPECT_TRUE(read_data.elements[0].date_folder_modified.is_null());
 
   const BookmarkNodeData::Element& read_folder = read_data.elements[0];
   EXPECT_FALSE(read_folder.is_url);

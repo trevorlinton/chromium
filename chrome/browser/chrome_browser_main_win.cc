@@ -22,6 +22,7 @@
 #include "base/win/windows_version.h"
 #include "base/win/wrapped_window_proc.h"
 #include "chrome/browser/browser_util_win.h"
+#include "chrome/browser/install_module_verifier_win.h"
 #include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/profiles/profile_shortcut_manager.h"
 #include "chrome/browser/shell_integration.h"
@@ -30,6 +31,7 @@
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_result_codes.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/chrome_version_info.h"
 #include "chrome/common/env_vars.h"
 #include "chrome/installer/launcher_support/chrome_launcher_support.h"
 #include "chrome/installer/util/browser_distribution.h"
@@ -37,6 +39,7 @@
 #include "chrome/installer/util/install_util.h"
 #include "chrome/installer/util/l10n_string_util.h"
 #include "chrome/installer/util/shell_util.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/common/main_function_params.h"
 #include "grit/app_locale_settings.h"
 #include "grit/chromium_strings.h"
@@ -48,6 +51,7 @@
 #include "ui/base/ui_base_switches.h"
 #include "ui/base/win/message_box_win.h"
 #include "ui/gfx/platform_font_win.h"
+#include "ui/gfx/switches.h"
 
 namespace {
 
@@ -82,6 +86,10 @@ class TranslationDelegate : public installer::TranslationDelegate {
  public:
   virtual string16 GetLocalizedString(int installer_string_id) OVERRIDE;
 };
+
+bool IsSafeModeStart() {
+  return ::GetEnvironmentVariableA(chrome::kSafeModeEnvVar, NULL, 0) != 0;
+}
 
 }  // namespace
 
@@ -141,11 +149,26 @@ int DoUninstallTasks(bool chrome_still_running) {
   return result;
 }
 
+void MaybeEnableHighResolutionTimeEverywhere() {
+  chrome::VersionInfo::Channel channel = chrome::VersionInfo::GetChannel();
+  bool user_enabled = CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kEnableHighResolutionTime);
+  if (user_enabled || channel == chrome::VersionInfo::CHANNEL_CANARY) {
+    bool is_enabled = base::TimeTicks::SetNowIsHighResNowIfSupported();
+    if (is_enabled && !user_enabled) {
+      // Ensure that all of the renderers will enable it too.
+      CommandLine::ForCurrentProcess()->AppendSwitch(
+          switches::kEnableHighResolutionTime);
+    }
+  }
+}
+
 // ChromeBrowserMainPartsWin ---------------------------------------------------
 
 ChromeBrowserMainPartsWin::ChromeBrowserMainPartsWin(
     const content::MainFunctionParams& parameters)
     : ChromeBrowserMainParts(parameters) {
+  MaybeEnableHighResolutionTimeEverywhere();
   if (base::win::IsMetroProcess()) {
     typedef const wchar_t* (*GetMetroSwitches)(void);
     GetMetroSwitches metro_switches_proc = reinterpret_cast<GetMetroSwitches>(
@@ -190,6 +213,13 @@ void ChromeBrowserMainPartsWin::PreMainMessageLoopStart() {
 int ChromeBrowserMainPartsWin::PreCreateThreads() {
   int rv = ChromeBrowserMainParts::PreCreateThreads();
 
+  if (IsSafeModeStart()) {
+    // TODO(cpu): disable other troublesome features for safe mode.
+    CommandLine::ForCurrentProcess()->AppendSwitch(
+        switches::kDisableGpu);
+    CommandLine::ForCurrentProcess()->AppendSwitchASCII(
+        switches::kHighDPISupport, "0");
+  }
   // TODO(viettrungluu): why don't we run this earlier?
   if (!parsed_command_line().HasSwitch(switches::kNoErrorDialogs) &&
       base::win::GetVersion() < base::win::VERSION_XP) {
@@ -206,6 +236,18 @@ void ChromeBrowserMainPartsWin::ShowMissingLocaleMessageBox() {
   ui::MessageBox(NULL, ASCIIToUTF16(chrome_browser::kMissingLocaleDataMessage),
                  ASCIIToUTF16(chrome_browser::kMissingLocaleDataTitle),
                  MB_OK | MB_ICONERROR | MB_TOPMOST);
+}
+
+void ChromeBrowserMainPartsWin::PostBrowserStart() {
+  ChromeBrowserMainParts::PostBrowserStart();
+
+  // Set up a task to verify installed modules in the current process. Use a
+  // delay to reduce the impact on startup time.
+  content::BrowserThread::GetMessageLoopProxyForThread(
+      content::BrowserThread::UI)->PostDelayedTask(
+          FROM_HERE,
+          base::Bind(&BeginModuleVerification),
+          base::TimeDelta::FromSeconds(45));
 }
 
 // static

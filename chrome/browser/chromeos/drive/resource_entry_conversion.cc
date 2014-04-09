@@ -33,8 +33,10 @@ bool HasSharedWithMeLabel(const google_apis::ResourceEntry& entry) {
 }  // namespace
 
 bool ConvertToResourceEntry(const google_apis::ResourceEntry& input,
-                            ResourceEntry* output) {
-  DCHECK(output);
+                            ResourceEntry* out_entry,
+                            std::string* out_parent_resource_id) {
+  DCHECK(out_entry);
+  DCHECK(out_parent_resource_id);
 
   ResourceEntry converted;
 
@@ -46,20 +48,20 @@ bool ConvertToResourceEntry(const google_apis::ResourceEntry& input,
   converted.set_base_name(util::NormalizeFileName(converted.title()));
   converted.set_resource_id(input.resource_id());
 
-  // Sets parent Resource ID. On drive.google.com, a file can have multiple
+  // Gets parent Resource ID. On drive.google.com, a file can have multiple
   // parents or no parent, but we are forcing a tree-shaped structure (i.e. no
   // multi-parent or zero-parent entries). Therefore the first found "parent" is
   // used for the entry and if the entry has no parent, we assign a special ID
   // which represents no-parent entries. Tracked in http://crbug.com/158904.
+  std::string parent_resource_id;
   const google_apis::Link* parent_link =
       input.GetLinkByType(google_apis::Link::LINK_PARENT);
-  if (parent_link) {
-    converted.set_parent_resource_id(util::ExtractResourceIdFromUrl(
-        parent_link->href()));
-  }
+  if (parent_link)
+    parent_resource_id = util::ExtractResourceIdFromUrl(parent_link->href());
+
   // Apply mapping from an empty parent to the special dummy directory.
-  if (converted.parent_resource_id().empty())
-    converted.set_parent_resource_id(util::kDriveOtherDirSpecialResourceId);
+  if (parent_resource_id.empty())
+    parent_resource_id = util::kDriveOtherDirSpecialResourceId;
 
   converted.set_deleted(input.deleted());
   converted.set_shared_with_me(HasSharedWithMeLabel(input));
@@ -99,15 +101,22 @@ bool ConvertToResourceEntry(const google_apis::ResourceEntry& input,
     file_specific_info->set_content_mime_type(input.content_mime_type());
     file_specific_info->set_is_hosted_document(input.is_hosted_document());
 
-    const google_apis::Link* thumbnail_link =
-        input.GetLinkByType(google_apis::Link::LINK_THUMBNAIL);
-    if (thumbnail_link)
-      file_specific_info->set_thumbnail_url(thumbnail_link->href().spec());
-
     const google_apis::Link* alternate_link =
         input.GetLinkByType(google_apis::Link::LINK_ALTERNATE);
     if (alternate_link)
       file_specific_info->set_alternate_url(alternate_link->href().spec());
+
+    const int64 image_width = input.image_width();
+    if (image_width != -1)
+      file_specific_info->set_image_width(image_width);
+
+    const int64 image_height = input.image_height();
+    if (image_height != -1)
+      file_specific_info->set_image_height(image_height);
+
+    const int64 image_rotation = input.image_rotation();
+    if (image_rotation != -1)
+      file_specific_info->set_image_rotation(image_rotation);
   } else if (input.is_folder()) {
     file_info->set_is_directory(true);
   } else {
@@ -122,7 +131,8 @@ bool ConvertToResourceEntry(const google_apis::ResourceEntry& input,
       return false;
   }
 
-  output->Swap(&converted);
+  out_entry->Swap(&converted);
+  swap(*out_parent_resource_id, parent_resource_id);
   return true;
 }
 

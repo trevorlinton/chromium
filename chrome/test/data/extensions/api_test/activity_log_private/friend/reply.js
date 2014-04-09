@@ -9,11 +9,32 @@ var defaultUrl = 'http://www.google.com';
 // a new tab in the current window.  Alternatively, whether to use incognito
 // can be specified as a second argument which overrides the global setting.
 var useIncognito = false;
+
+// For the automated tests a port needs to be specified for the URLs in order to
+// contact the embedded test server. The manual tests do not use an embedded
+// test server so the port will remain undefined for manual testing and no
+// modifications will be made to the URLs.
+var testServerPort = undefined;
+
+chrome.test.getConfig(function(config) {
+  // config is undefined in manual mode, this check required to stop crashes in
+  // manual mode.
+  if (config != undefined)
+    testServerPort = config.testServer.port;
+});
+
+function getURLWithPort(url) {
+  if (testServerPort == undefined || url.substring(0, 4) != 'http')
+    return url;
+  return url + ':' + testServerPort;
+}
+
 function openTab(url, incognito) {
+  var testUrl = getURLWithPort(url);
   if (incognito == undefined ? useIncognito : incognito) {
-    chrome.windows.create({'url': url, 'incognito': true});
+    chrome.windows.create({'url': testUrl, 'incognito': true});
   } else {
-    window.open(url);
+    window.open(testUrl);
   }
 }
 
@@ -55,16 +76,6 @@ function checkAppCalls() {
   var b = chrome.app.isInstalled;
   var c = chrome.app.installState(callback);
   appendCompleted('checkAppCalls');
-}
-
-// Makes an API call that the extension doesn't have permission for.
-// Don't add the bookmarks permission or this test won't test the code path.
-function makeBlockedApiCall() {
-  resetStatus();
-  try {
-    var allExtensions = chrome.bookmarks.getTree();
-  } catch (err) { }
-  appendCompleted('makeBlockedApiCall');
 }
 
 function callObjectMethod() {
@@ -317,8 +328,9 @@ function executeDOMChangesOnTabUpdated() {
           'var testContext = testCanvas.getContext("2d");';
 
   // Does an XHR from inside a content script.
+  var cnnUrl = getURLWithPort('http://www.cnn.com');
   code += 'var request = new XMLHttpRequest(); ' +
-          'request.open("POST", "http://www.cnn.com", false); ' +
+          'request.open("POST", "' + cnnUrl + '", false); ' +
           'request.setRequestHeader("Content-type", ' +
           '                         "text/plain;charset=UTF-8"); ' +
           'request.send(); ' +
@@ -362,13 +374,26 @@ function executeDOMChangesOnTabUpdated() {
   openTab(defaultUrl);
 }
 
+function executeDOMFullscreen() {
+  resetStatus();
+  appendCompleted('Switching to fullscreen...');
+  $('status').webkitRequestFullscreen();
+  setTimeout(
+      function() {document.webkitExitFullscreen(); window.close()}, 100);
+}
+
+// Opens the extensions options page and then runs the executeDOMFullscreen
+// test.
+function launchDOMFullscreenTest() {
+  openTab(chrome.extension.getURL('/options.html#dom_fullscreen'));
+}
+
 // ADD TESTS CASES TO THE MAP HERE.
 var fnMap = {};
 fnMap['api_call'] = makeApiCall;
 fnMap['special_call'] = makeSpecialApiCalls;
 fnMap['double'] = checkNoDoubleLogging;
 fnMap['app_bindings'] = checkAppCalls;
-fnMap['blocked_call'] = makeBlockedApiCall;
 fnMap['object_methods'] = callObjectMethod;
 fnMap['message_self'] = sendMessageToSelf;
 fnMap['message_other'] = sendMessageToOther;
@@ -378,27 +403,34 @@ fnMap['webrequest'] = doWebRequestModifications;
 fnMap['tab_ids'] = tabIdTranslation;
 fnMap['dom_tab_updated'] = executeDOMChangesOnTabUpdated;
 fnMap['api_tab_updated'] = executeApiCallsOnTabUpdated;
+fnMap['dom_fullscreen'] = executeDOMFullscreen;
+fnMap['launch_dom_fullscreen'] = launchDOMFullscreenTest;
 
-// Setup function mapping for the automated tests.
-try {
-  chrome.runtime.onMessageExternal.addListener(
-      function(message, sender, response) {
-        useIncognito = false;
-        if (message.match(/_incognito$/)) {
-          // Enable incognito windows for this test, then strip the _incognito
-          // suffix for the lookup below.
-          useIncognito = true;
-          message = message.slice(0, -10);
+// Setup function mapping for the automated tests, except when running on the
+// options page.
+if (window.location.pathname !== '/options.html') {
+  try {
+    chrome.runtime.onMessageExternal.addListener(
+        function(message, sender, response) {
+          useIncognito = false;
+          if (message.match(/_incognito$/)) {
+            // Enable incognito windows for this test, then strip the
+            // _incognito suffix for the lookup below.
+            useIncognito = true;
+            message = message.slice(0, -10);
+          }
+          if (fnMap.hasOwnProperty(message)) {
+            fnMap[message]();
+          } else {
+            console.log('UNKNOWN METHOD: ' + message);
+          }
         }
-        if (fnMap.hasOwnProperty(message)) {
-          fnMap[message]();
-        } else {
-          console.log('UNKNOWN METHOD: ' + message);
-        }
-      }
-      );
-} catch (err) {
-  console.log('Error while adding listeners: ' + err);
+        );
+  } catch (err) {
+    console.log('Error while adding listeners: ' + err);
+  }
+} else {
+  console.log('Not installing extension message listener on options.html');
 }
 
 // Convenience functions for the manual run mode.
@@ -432,7 +464,10 @@ function appendError(str) {
   }
 }
 
-// Set up the event listeners for use in manual run mode.
+// Set up the event listeners for use in manual run mode.  Then, if the URL
+// contains a test name in the URL fragment
+// (chrome-extension://pkn.../options.html#dom_fullscreen), launch that test
+// automatically.
 function setupEvents() {
   for (var key in fnMap) {
     if (fnMap.hasOwnProperty(key) && key != '' && $(key) != null) {
@@ -446,5 +481,13 @@ function setupEvents() {
   }
   completed = 0;
   appendCompleted('setup events');
+
+  // Automatically launch a requested test if specified in the URL.
+  if (window.location.hash) {
+    var requestedTest = window.location.hash.substr(1);
+    if (fnMap.hasOwnProperty(requestedTest)) {
+      fnMap[requestedTest]();
+    }
+  }
 }
 document.addEventListener('DOMContentLoaded', setupEvents);

@@ -4,9 +4,6 @@
 
 #include "build/build_config.h"
 
-// TODO(pkasting): Port Mac to use this.
-#if defined(TOOLKIT_VIEWS) || defined(TOOLKIT_GTK) || defined(OS_ANDROID)
-
 #include "chrome/browser/infobars/infobar_container.h"
 
 #include <algorithm>
@@ -18,7 +15,7 @@
 #include "chrome/browser/infobars/infobar_service.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
-#include "ui/base/animation/slide_animation.h"
+#include "ui/gfx/animation/slide_animation.h"
 
 InfoBarContainer::Delegate::~Delegate() {
 }
@@ -109,11 +106,6 @@ void InfoBarContainer::RemoveAllInfoBarsForDestruction() {
   // this point |delegate_| may be shutting down, and it's at best unimportant
   // and at worst disastrous to call that.
   delegate_ = NULL;
-
-  // TODO(pkasting): Remove this once InfoBarService calls CloseSoon().
-  for (size_t i = infobars_.size(); i > 0; --i)
-    infobars_[i - 1]->CloseSoon();
-
   ChangeInfoBarService(NULL);
 }
 
@@ -224,7 +216,7 @@ int InfoBarContainer::ArrowTargetHeightForInfoBar(size_t infobar_index) const {
     return 0;
   if (infobar_index == 0)
     return top_arrow_target_height_;
-  const ui::SlideAnimation& first_infobar_animation =
+  const gfx::SlideAnimation& first_infobar_animation =
       const_cast<const InfoBar*>(infobars_.front())->animation();
   if ((infobar_index > 1) || first_infobar_animation.IsShowing())
     return InfoBar::kDefaultArrowTargetHeight;
@@ -235,5 +227,3 @@ int InfoBarContainer::ArrowTargetHeightForInfoBar(size_t infobar_index) const {
       (InfoBar::kDefaultArrowTargetHeight - top_arrow_target_height_) *
           first_infobar_animation.GetCurrentValue());
 }
-
-#endif  // TOOLKIT_VIEWS || defined(TOOLKIT_GTK) || defined(OS_ANDROID)

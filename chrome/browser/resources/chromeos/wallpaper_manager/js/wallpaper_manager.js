@@ -243,8 +243,7 @@ function WallpaperManager(dialogDom) {
       });
 
       window.addEventListener('offline', function() {
-        chrome.wallpaperPrivate.getOfflineWallpaperList(
-            Constants.WallpaperSourceEnum.Online, function(lists) {
+        chrome.wallpaperPrivate.getOfflineWallpaperList(function(lists) {
           if (!self.downloadedListMap_)
             self.downloadedListMap_ = {};
           for (var i = 0; i < lists.length; i++) {
@@ -274,6 +273,8 @@ function WallpaperManager(dialogDom) {
     });
     this.document_.defaultView.addEventListener(
         'resize', this.onResize_.bind(this));
+    this.document_.defaultView.addEventListener(
+        'keydown', this.onKeyDown_.bind(this));
     $('learn-more').href = LearnMoreURL;
     $('close-error').addEventListener('click', function() {
       $('error-container').hidden = true;
@@ -393,8 +394,7 @@ function WallpaperManager(dialogDom) {
       // If device is offline, gets the available offline wallpaper list first.
       // Wallpapers which are not in the list will display a grayscaled
       // thumbnail.
-      chrome.wallpaperPrivate.getOfflineWallpaperList(
-          Constants.WallpaperSourceEnum.Online, function(lists) {
+      chrome.wallpaperPrivate.getOfflineWallpaperList(function(lists) {
         if (!self.downloadedListMap_)
           self.downloadedListMap_ = {};
         for (var i = 0; i < lists.length; i++)
@@ -481,6 +481,14 @@ function WallpaperManager(dialogDom) {
         this.wallpaperDirs_.getDirectory(WallpaperDirNameEnum.ORIGINAL,
                                          success, errorHandler);
         break;
+      case Constants.WallpaperSourceEnum.OEM:
+        // Resets back to default wallpaper.
+        chrome.wallpaperPrivate.resetWallpaper();
+        this.currentWallpaper_ = selectedItem.baseURL;
+        this.wallpaperGrid_.activeItem = selectedItem;
+        WallpaperUtil.saveWallpaperInfo(wallpaperURL, selectedItem.layout,
+                                        selectedItem.source);
+        break;
       case Constants.WallpaperSourceEnum.Online:
         var wallpaperURL = selectedItem.baseURL +
             Constants.HighResolutionSuffix;
@@ -488,7 +496,6 @@ function WallpaperManager(dialogDom) {
 
         chrome.wallpaperPrivate.setWallpaperIfExists(wallpaperURL,
                                                      selectedItem.layout,
-                                                     selectedItem.source,
                                                      function(exists) {
           if (exists) {
             self.currentWallpaper_ = wallpaperURL;
@@ -615,7 +622,10 @@ function WallpaperManager(dialogDom) {
    * @private
    */
   WallpaperManager.prototype.setWallpaperAttribution_ = function(selectedItem) {
-    if (selectedItem) {
+    // Only online wallpapers have author and website attributes. All other type
+    // of wallpapers should not show attributions.
+    if (selectedItem &&
+        selectedItem.source == Constants.WallpaperSourceEnum.Online) {
       $('author-name').textContent = selectedItem.author;
       $('author-website').textContent = $('author-website').href =
           selectedItem.authorWebsite;
@@ -650,6 +660,25 @@ function WallpaperManager(dialogDom) {
   WallpaperManager.prototype.onResize_ = function() {
     this.wallpaperGrid_.redraw();
     this.categoriesList_.redraw();
+  };
+
+  /**
+   * Close the last opened overlay on pressing the Escape key.
+   * @param {Event} event A keydown event.
+   */
+  WallpaperManager.prototype.onKeyDown_ = function(event) {
+    if (event.keyCode == 27) {
+      // The last opened overlay coincides with the first match of querySelector
+      // because the Error Container is declared in the DOM before the Wallpaper
+      // Selection Container.
+      // TODO(bshe): Make the overlay selection not dependent on the DOM.
+      var closeButtonSelector = '.overlay-container:not([hidden]) .close';
+      var closeButton = this.document_.querySelector(closeButtonSelector);
+      if (closeButton) {
+        closeButton.click();
+        event.preventDefault();
+      }
+    }
   };
 
   /**
@@ -920,14 +949,25 @@ function WallpaperManager(dialogDom) {
                 source: Constants.WallpaperSourceEnum.Custom,
                 availableOffline: true
           };
-          if (self.currentWallpaper_ == entry.name)
-            selectedItem = wallpaperInfo;
           wallpapersDataModel.push(wallpaperInfo);
+        }
+        if (loadTimeData.getBoolean('isOEMDefaultWallpaper')) {
+          var oemDefaultWallpaperElement = {
+              baseURL: 'OemDefaultWallpaper',
+              layout: 'CENTER_CROPPED',
+              source: Constants.WallpaperSourceEnum.OEM,
+              availableOffline: true
+          };
+          wallpapersDataModel.push(oemDefaultWallpaperElement);
+        }
+        for (var i = 0; i < wallpapersDataModel.length; i++) {
+          if (self.currentWallpaper_ == wallpapersDataModel.item(i).baseURL)
+            selectedItem = wallpapersDataModel.item(i);
         }
         var lastElement = {
             baseURL: '',
             layout: '',
-            source: 'ADDNEW',
+            source: Constants.WallpaperSourceEnum.AddNew,
             availableOffline: true
         };
         wallpapersDataModel.push(lastElement);

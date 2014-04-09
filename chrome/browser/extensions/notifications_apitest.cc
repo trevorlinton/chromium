@@ -41,7 +41,10 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, NotificationsNoPermission) {
 
 // This test verifies that on RichNotification-enabled platforms HTML
 // notificaitons are disabled.
-#if defined(RUN_MESSAGE_CENTER_TESTS)
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS) && defined(USE_AURA)
+// TODO(erg): linux_aura bringup: http://crbug.com/163931
+#define MAYBE_NoHTMLNotifications DISABLED_NoHTMLNotifications
+#elif defined(RUN_MESSAGE_CENTER_TESTS)
 #define MAYBE_NoHTMLNotifications NoHTMLNotifications
 #else
 #define MAYBE_NoHTMLNotifications DISABLED_NoHTMLNotifications
@@ -74,5 +77,5 @@ IN_PROC_BROWSER_TEST_F(NotificationIdleTest, MAYBE_NotificationsAllowUnload) {
   // Lazy Background Page has been shut down.
   ExtensionProcessManager* pm =
       extensions::ExtensionSystem::Get(profile())->process_manager();
-  EXPECT_FALSE(pm->GetBackgroundHostForExtension(last_loaded_extension_id_));
+  EXPECT_FALSE(pm->GetBackgroundHostForExtension(last_loaded_extension_id()));
 }

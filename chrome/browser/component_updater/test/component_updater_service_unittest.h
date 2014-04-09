@@ -9,16 +9,16 @@
 #include <map>
 #include <string>
 #include <utility>
+#include <vector>
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "chrome/browser/component_updater/component_updater_service.h"
 #include "chrome/browser/component_updater/test/component_patcher_mock.h"
 #include "chrome/browser/component_updater/test/url_request_post_interceptor.h"
-#include "content/public/test/test_browser_thread.h"
+#include "content/public/test/test_browser_thread_bundle.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -58,6 +58,8 @@ class TestConfigurator : public ComponentUpdateService::Configurator {
 
   virtual int StepDelay() OVERRIDE;
 
+  virtual int StepDelayMedium() OVERRIDE;
+
   virtual int MinimumReCheckWait() OVERRIDE;
 
   virtual int OnDemandDelay() OVERRIDE;
@@ -85,18 +87,18 @@ class TestConfigurator : public ComponentUpdateService::Configurator {
 
   void SetOnDemandTime(int seconds);
 
-  void AddComponentToCheck(CrxComponent* com, int at_loop_iter);
-
   void SetComponentUpdateService(ComponentUpdateService* cus);
+
+  void SetQuitClosure(const base::Closure& quit_closure);
 
  private:
   int times_;
   int recheck_time_;
   int ondemand_time_;
 
-  std::list<CheckAtLoopCount> components_to_check_;
   ComponentUpdateService* cus_;
   scoped_refptr<net::TestURLRequestContextGetter> context_;
+  base::Closure quit_closure_;
 };
 
 class ComponentUpdaterTest : public testing::Test {
@@ -124,15 +126,15 @@ class ComponentUpdaterTest : public testing::Test {
                                                    TestComponents component,
                                                    const Version& version,
                                                    TestInstaller* installer);
+
  protected:
-  base::MessageLoop message_loop_;
+  void RunThreads();
+  void RunThreadsUntilIdle();
 
  private:
   TestConfigurator* test_config_;
   base::FilePath test_data_dir_;
-  content::TestBrowserThread ui_thread_;
-  content::TestBrowserThread file_thread_;
-  content::TestBrowserThread io_thread_;
+  content::TestBrowserThreadBundle thread_bundle_;
   scoped_ptr<ComponentUpdateService> component_updater_;
 };
 
@@ -153,8 +155,10 @@ class PingChecker : public RequestCounter {
   int NumMisses() const {
     return num_misses_;
   }
+  std::string GetPings() const;
 
  private:
+  std::vector<std::string> pings_;
   int num_hits_;
   int num_misses_;
   const std::map<std::string, std::string> attributes_;
@@ -166,6 +170,12 @@ class MockComponentObserver : public ComponentObserver {
   MockComponentObserver();
   ~MockComponentObserver();
   MOCK_METHOD2(OnEvent, void(Events event, int extra));
+};
+
+class OnDemandTester {
+ public:
+  static ComponentUpdateService::Status OnDemand(
+      ComponentUpdateService* cus, const std::string& component_id);
 };
 
 #endif  // CHROME_BROWSER_COMPONENT_UPDATER_TEST_COMPONENT_UPDATER_SERVICE_UNITTEST_H_

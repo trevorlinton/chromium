@@ -12,6 +12,7 @@
 #include "base/i18n/case_conversion.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/common/url_constants.h"
+#include "net/base/net_util.h"
 #include "sql/statement.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
@@ -31,24 +32,12 @@ URLDatabase::URLEnumeratorBase::~URLEnumeratorBase() {
 URLDatabase::URLEnumerator::URLEnumerator() {
 }
 
-URLDatabase::IconMappingEnumerator::IconMappingEnumerator() {
-}
-
 bool URLDatabase::URLEnumerator::GetNextURL(URLRow* r) {
   if (statement_.Step()) {
     FillURLRow(statement_, r);
     return true;
   }
   return false;
-}
-
-bool URLDatabase::IconMappingEnumerator::GetNextIconMapping(IconMapping* r) {
-  if (!statement_.Step())
-    return false;
-
-  r->page_url = GURL(statement_.ColumnString(0));
-  r->icon_id =  statement_.ColumnInt64(1);
-  return true;
 }
 
 URLDatabase::URLDatabase()
@@ -188,14 +177,7 @@ bool URLDatabase::DeleteURLRow(URLID id) {
     return false;
 
   // And delete any keyword visits.
-  if (!has_keyword_search_terms_)
-    return true;
-
-  sql::Statement del_keyword_visit(GetDB().GetCachedStatement(SQL_FROM_HERE,
-                          "DELETE FROM keyword_search_terms WHERE url_id=?"));
-  del_keyword_visit.BindInt64(0, id);
-
-  return del_keyword_visit.Run();
+  return !has_keyword_search_terms_ || DeleteKeywordSearchTermForURL(id);
 }
 
 bool URLDatabase::CreateTemporaryURLTable() {
@@ -254,15 +236,6 @@ bool URLDatabase::InitURLEnumeratorForSignificant(URLEnumerator* enumerator) {
   return enumerator->statement_.is_valid();
 }
 
-bool URLDatabase::InitIconMappingEnumeratorForEverything(
-    IconMappingEnumerator* enumerator) {
-  DCHECK(!enumerator->initialized_);
-  enumerator->statement_.Assign(GetDB().GetUniqueStatement(
-      "SELECT url, favicon_id FROM urls WHERE favicon_id <> 0"));
-  enumerator->initialized_ = enumerator->statement_.is_valid();
-  return enumerator->statement_.is_valid();
-}
-
 bool URLDatabase::AutocompleteForPrefix(const std::string& prefix,
                                         size_t max_results,
                                         bool typed_only,
@@ -311,8 +284,8 @@ bool URLDatabase::AutocompleteForPrefix(const std::string& prefix,
 
 bool URLDatabase::IsTypedHost(const std::string& host) {
   const char* schemes[] = {
-    chrome::kHttpScheme,
-    chrome::kHttpsScheme,
+    content::kHttpScheme,
+    content::kHttpsScheme,
     chrome::kFtpScheme
   };
   URLRows dummy;
@@ -371,6 +344,16 @@ bool URLDatabase::GetTextMatches(const string16& query,
     std::vector<QueryWord> query_words;
     string16 url = base::i18n::ToLower(statement.ColumnString16(1));
     query_parser_.ExtractQueryWords(url, &query_words);
+    GURL gurl(url);
+    if (gurl.is_valid()) {
+      // Decode punycode to match IDN.
+      // |query_words| won't be shown to user - therefore we can use empty
+      // |languages| to reduce dependency (no need to call PrefService).
+      string16 ascii = base::ASCIIToUTF16(gurl.host());
+      string16 utf = net::IDNToUnicode(gurl.host(), std::string());
+      if (ascii != utf)
+        query_parser_.ExtractQueryWords(utf, &query_words);
+    }
     string16 title = base::i18n::ToLower(statement.ColumnString16(2));
     query_parser_.ExtractQueryWords(title, &query_words);
 
@@ -545,6 +528,13 @@ bool URLDatabase::DeleteKeywordSearchTerm(const string16& term) {
       "DELETE FROM keyword_search_terms WHERE term=?"));
   statement.BindString16(0, term);
 
+  return statement.Run();
+}
+
+bool URLDatabase::DeleteKeywordSearchTermForURL(URLID url_id) {
+  sql::Statement statement(GetDB().GetCachedStatement(
+      SQL_FROM_HERE, "DELETE FROM keyword_search_terms WHERE url_id=?"));
+  statement.BindInt64(0, url_id);
   return statement.Run();
 }
 

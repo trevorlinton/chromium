@@ -41,6 +41,10 @@
 #include "ui/aura/window.h"
 #endif
 
+#if defined(OS_WIN)
+#include "ui/base/win/shell.h"
+#endif
+
 using content::WebContents;
 
 // These functions allow certain chrome platforms to override the default hung
@@ -325,6 +329,16 @@ bool HungRendererDialogView::Accept(bool window_closing) {
   return true;
 }
 
+
+bool HungRendererDialogView::UseNewStyleForThisDialog() const {
+#if defined(OS_WIN)
+  // Use the old dialog style without Aero glass, otherwise the dialog will be
+  // visually constrained to browser window bounds. See http://crbug.com/323278
+  return ui::win::IsAeroGlassEnabled();
+#endif
+  return views::DialogDelegateView::UseNewStyleForThisDialog();
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // HungRendererDialogView, views::ButtonListener implementation:
 
@@ -442,8 +456,17 @@ namespace chrome {
 void ShowHungRendererDialog(WebContents* contents) {
   if (!logging::DialogsAreSuppressed() &&
       !PlatformShowCustomHungRendererDialog(contents)) {
+    gfx::NativeView toplevel_view =
+        platform_util::GetTopLevel(contents->GetView()->GetNativeView());
+#if defined(USE_AURA)
+    // Don't show the dialog if there is no root window for the renderer,
+    // because it's invisible to the user (happens when the renderer is for
+    // prerendering for example).
+    if (!toplevel_view->GetRootWindow())
+      return;
+#endif
     HungRendererDialogView* view = HungRendererDialogView::Create(
-        platform_util::GetTopLevel(contents->GetView()->GetNativeView()));
+        toplevel_view);
     view->ShowForWebContents(contents);
   }
 }

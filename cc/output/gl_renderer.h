@@ -33,17 +33,21 @@ class PictureDrawQuad;
 class ScopedResource;
 class StreamVideoDrawQuad;
 class TextureDrawQuad;
+class TextureMailboxDeleter;
 class GeometryBinding;
 class ScopedEnsureFramebufferAllocation;
 
 // Class that handles drawing of composited render layers using GL.
 class CC_EXPORT GLRenderer : public DirectRenderer {
  public:
-  static scoped_ptr<GLRenderer> Create(RendererClient* client,
-                                       OutputSurface* output_surface,
-                                       ResourceProvider* resource_provider,
-                                       int highp_threshold_min,
-                                       bool use_skia_gpu_backend);
+  static scoped_ptr<GLRenderer> Create(
+      RendererClient* client,
+      const LayerTreeSettings* settings,
+      OutputSurface* output_surface,
+      ResourceProvider* resource_provider,
+      TextureMailboxDeleter* texture_mailbox_deleter,
+      int highp_threshold_min,
+      bool use_skia_gpu_backend);
 
   virtual ~GLRenderer();
 
@@ -69,20 +73,19 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
                                       size_t bytes_visible_and_nearby,
                                       size_t bytes_allocated) OVERRIDE;
 
-  virtual void SetDiscardBackBufferWhenNotVisible(bool discard) OVERRIDE;
-
   static void DebugGLCall(WebKit::WebGraphicsContext3D* context,
                           const char* command,
                           const char* file,
                           int line);
 
   bool CanUseSkiaGPUBackend() const;
-  void LazyLabelOffscreenContext();
 
  protected:
   GLRenderer(RendererClient* client,
+             const LayerTreeSettings* settings,
              OutputSurface* output_surface,
              ResourceProvider* resource_provider,
+             TextureMailboxDeleter* texture_mailbox_deleter,
              int highp_threshold_min);
 
   bool IsBackbufferDiscarded() const { return is_backbuffer_discarded_; }
@@ -97,7 +100,7 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
   void GetFramebufferPixelsAsync(gfx::Rect rect,
                                  scoped_ptr<CopyOutputRequest> request);
   void GetFramebufferTexture(unsigned texture_id,
-                             unsigned texture_format,
+                             ResourceFormat texture_format,
                              gfx::Rect device_rect);
   void ReleaseRenderPassTextures();
 
@@ -112,7 +115,10 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
                                         gfx::Rect target_rect) OVERRIDE;
   virtual void SetDrawViewport(gfx::Rect window_space_viewport) OVERRIDE;
   virtual void SetScissorTestRect(gfx::Rect scissor_rect) OVERRIDE;
-  virtual void ClearFramebuffer(DrawingFrame* frame) OVERRIDE;
+  virtual void DiscardPixels(bool has_external_stencil_test,
+                             bool draw_rect_covers_full_surface) OVERRIDE;
+  virtual void ClearFramebuffer(DrawingFrame* frame,
+                                bool has_external_stencil_test) OVERRIDE;
   virtual void DoDrawQuad(DrawingFrame* frame, const class DrawQuad*) OVERRIDE;
   virtual void BeginDrawingFrame(DrawingFrame* frame) OVERRIDE;
   virtual void FinishDrawingFrame(DrawingFrame* frame) OVERRIDE;
@@ -123,6 +129,17 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
       DrawingFrame* frame,
       scoped_ptr<CopyOutputRequest> request) OVERRIDE;
   virtual void FinishDrawingQuadList() OVERRIDE;
+
+  // Check if quad needs antialiasing and if so, inflate the quad and
+  // fill edge array for fragment shader.  local_quad is set to
+  // inflated quad if antialiasing is required, otherwise it is left
+  // unchanged.  edge array is filled with inflated quad's edge data
+  // if antialiasing is required, otherwise it is left unchanged.
+  // Returns true if quad requires antialiasing and false otherwise.
+  static bool SetupQuadForAntialiasing(const gfx::Transform& device_transform,
+                                       const DrawQuad* quad,
+                                       gfx::QuadF* local_quad,
+                                       float edge[24]);
 
  private:
   friend class GLRendererShaderPixelTest;
@@ -174,17 +191,6 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
                                 const gfx::Transform& draw_matrix,
                                 bool flip_vertically);
 
-  // Check if quad needs antialiasing and if so, inflate the quad and
-  // fill edge array for fragment shader.  local_quad is set to
-  // inflated quad if antialiasing is required, otherwise it is left
-  // unchanged.  edge array is filled with inflated quad's edge data
-  // if antialiasing is required, otherwise it is left unchanged.
-  // Returns true if quad requires antialiasing and false otherwise.
-  bool SetupQuadForAntialiasing(const gfx::Transform& device_transform,
-                                const DrawQuad* quad,
-                                gfx::QuadF* local_quad,
-                                float edge[24]) const;
-
   bool UseScopedTexture(DrawingFrame* frame,
                         const ScopedResource* resource,
                         gfx::Rect viewport_rect);
@@ -211,16 +217,6 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
                       scoped_ptr<SkAutoLockPixels> lock,
                       scoped_ptr<CopyOutputRequest> request,
                       bool success);
-
-  static void DeleteTextureReleaseCallback(
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-      base::WeakPtr<GLRenderer> gl_renderer,
-      unsigned texture_id,
-      unsigned sync_point,
-      bool lost_resource);
-  void DeleteTextureReleaseCallbackOnImplThread(unsigned texture_id,
-                                                unsigned sync_point,
-                                                bool lost_resource);
 
   void ReinitializeGrCanvas();
   void ReinitializeGLState();
@@ -429,15 +425,17 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
   scoped_ptr<SolidColorProgramAA> solid_color_program_aa_;
 
   WebKit::WebGraphicsContext3D* context_;
+  gpu::ContextSupport* context_support_;
 
   skia::RefPtr<GrContext> gr_context_;
   skia::RefPtr<SkCanvas> sk_canvas_;
+
+  TextureMailboxDeleter* texture_mailbox_deleter_;
 
   gfx::Rect swap_buffer_rect_;
   gfx::Rect scissor_rect_;
   gfx::Rect viewport_;
   bool is_backbuffer_discarded_;
-  bool discard_backbuffer_when_not_visible_;
   bool is_using_bind_uniform_;
   bool visible_;
   bool is_scissor_enabled_;
@@ -447,7 +445,6 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
   TexturedQuadDrawCache draw_cache_;
   int highp_threshold_min_;
   int highp_threshold_cache_;
-  bool offscreen_context_labelled_;
 
   struct PendingAsyncReadPixels;
   ScopedPtrVector<PendingAsyncReadPixels> pending_async_read_pixels_;
@@ -458,8 +455,6 @@ class CC_EXPORT GLRenderer : public DirectRenderer {
 
   SkBitmap on_demand_tile_raster_bitmap_;
   ResourceProvider::ResourceId on_demand_tile_raster_resource_id_;
-
-  base::WeakPtrFactory<GLRenderer> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(GLRenderer);
 };

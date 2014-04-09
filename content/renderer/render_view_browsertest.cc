@@ -7,6 +7,7 @@
 #include "base/memory/shared_memory.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/win/windows_version.h"
 #include "content/common/ssl_status_serialization.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/native_web_keyboard_event.h"
@@ -20,8 +21,8 @@
 #include "content/public/renderer/navigation_state.h"
 #include "content/public/test/render_view_test.h"
 #include "content/renderer/render_view_impl.h"
+#include "content/shell/browser/shell_content_browser_client.h"
 #include "content/shell/common/shell_content_client.h"
-#include "content/shell/shell_content_browser_client.h"
 #include "content/test/mock_keyboard.h"
 #include "net/base/net_errors.h"
 #include "net/cert/cert_status_flags.h"
@@ -34,30 +35,32 @@
 #include "third_party/WebKit/public/web/WebDataSource.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
 #include "third_party/WebKit/public/web/WebHistoryItem.h"
+#include "third_party/WebKit/public/web/WebRuntimeFeatures.h"
 #include "third_party/WebKit/public/web/WebView.h"
 #include "third_party/WebKit/public/web/WebWindowFeatures.h"
-#include "ui/base/keycodes/keyboard_codes.h"
-#include "ui/base/range/range.h"
+#include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/codec/jpeg_codec.h"
+#include "ui/gfx/range/range.h"
 
 #if defined(OS_LINUX) && !defined(USE_AURA)
 #include "ui/base/gtk/event_synthesis_gtk.h"
 #endif
 
 #if defined(USE_AURA)
-#include "ui/base/events/event.h"
+#include "ui/events/event.h"
 #endif
 
 #if defined(USE_AURA) && defined(USE_X11)
 #include <X11/Xlib.h>
-#include "ui/base/events/event_constants.h"
-#include "ui/base/keycodes/keyboard_code_conversion.h"
-#include "ui/base/x/x11_util.h"
+#include "ui/events/event_constants.h"
+#include "ui/events/keycodes/keyboard_code_conversion.h"
+#include "ui/events/x/events_x_utils.h"
 #endif
 
 using WebKit::WebFrame;
 using WebKit::WebInputEvent;
 using WebKit::WebMouseEvent;
+using WebKit::WebRuntimeFeatures;
 using WebKit::WebString;
 using WebKit::WebTextDirection;
 using WebKit::WebURLError;
@@ -117,6 +120,17 @@ class RenderViewImplTest : public RenderViewTest {
   RenderViewImplTest() {
     // Attach a pseudo keyboard device to this object.
     mock_keyboard_.reset(new MockKeyboard());
+  }
+
+  virtual ~RenderViewImplTest() {}
+
+  virtual void SetUp() OVERRIDE {
+    RenderViewTest::SetUp();
+    // This test depends on Blink flag InputModeAttribute, which is enabled
+    // under only test. Content browser test doesn't enable the feature so we
+    // need enable it manually.
+    // TODO(yoichio): Remove this if InputMode feature is enabled by default.
+    WebRuntimeFeatures::enableInputModeAttribute(true);
   }
 
   RenderViewImpl* view() {
@@ -771,10 +785,7 @@ TEST_F(RenderViewImplTest, DontIgnoreBackAfterNavEntryLimit) {
 
 // Test that our IME backend sends a notification message when the input focus
 // changes.
-// crbug.com/276821:
-// Because Blink change cause this test failed, we first disabled this test and
-// fix later.
-TEST_F(RenderViewImplTest, DISABLED_OnImeTypeChanged) {
+TEST_F(RenderViewImplTest, OnImeTypeChanged) {
   // Enable our IME backend code.
   view()->OnSetInputMethodActive(true);
 
@@ -845,8 +856,8 @@ TEST_F(RenderViewImplTest, DISABLED_OnImeTypeChanged) {
     ui::TextInputMode input_mode = ui::TEXT_INPUT_MODE_DEFAULT;
     ViewHostMsg_TextInputTypeChanged::Read(msg,
                                            &type,
-                                           &can_compose_inline,
-                                           &input_mode);
+                                           &input_mode,
+                                           &can_compose_inline);
     EXPECT_EQ(ui::TEXT_INPUT_TYPE_TEXT, type);
     EXPECT_EQ(true, can_compose_inline);
 
@@ -864,8 +875,8 @@ TEST_F(RenderViewImplTest, DISABLED_OnImeTypeChanged) {
     EXPECT_EQ(ViewHostMsg_TextInputTypeChanged::ID, msg->type());
     ViewHostMsg_TextInputTypeChanged::Read(msg,
                                            &type,
-                                           &can_compose_inline,
-                                           &input_mode);
+                                           &input_mode,
+                                           &can_compose_inline);
     EXPECT_EQ(ui::TEXT_INPUT_TYPE_PASSWORD, type);
 
     for (size_t i = 0; i < ARRAYSIZE_UNSAFE(kInputModeTestCases); i++) {
@@ -887,8 +898,8 @@ TEST_F(RenderViewImplTest, DISABLED_OnImeTypeChanged) {
       EXPECT_EQ(ViewHostMsg_TextInputTypeChanged::ID, msg->type());
       ViewHostMsg_TextInputTypeChanged::Read(msg,
                                             &type,
-                                            &can_compose_inline,
-                                            &input_mode);
+                                            &input_mode,
+                                            &can_compose_inline);
       EXPECT_EQ(test_case->expected_mode, input_mode);
     }
   }
@@ -1004,7 +1015,7 @@ TEST_F(RenderViewImplTest, ImeComposition) {
       case IME_CONFIRMCOMPOSITION:
         view()->OnImeConfirmComposition(
             WideToUTF16Hack(ime_message->ime_string),
-            ui::Range::InvalidRange(),
+            gfx::Range::InvalidRange(),
             false);
         break;
 
@@ -1750,6 +1761,13 @@ TEST_F(RenderViewImplTest, TestBackForward) {
 
 #if defined(OS_MACOSX) || defined(OS_WIN) || defined(USE_AURA)
 TEST_F(RenderViewImplTest, GetCompositionCharacterBoundsTest) {
+
+#if defined(OS_WIN)
+  // http://crbug.com/304193
+  if (base::win::GetVersion() < base::win::VERSION_VISTA)
+    return;
+#endif
+
   LoadHTML("<textarea id=\"test\"></textarea>");
   ExecuteJavaScript("document.getElementById('test').focus();");
 
@@ -1767,7 +1785,7 @@ TEST_F(RenderViewImplTest, GetCompositionCharacterBoundsTest) {
   for (size_t i = 0; i < bounds.size(); ++i)
     EXPECT_LT(0, bounds[i].width());
   view()->OnImeConfirmComposition(
-      empty_string, ui::Range::InvalidRange(), false);
+      empty_string, gfx::Range::InvalidRange(), false);
 
   // Non surrogate pair unicode character.
   const string16 unicode_composition = UTF8ToUTF16(
@@ -1778,7 +1796,7 @@ TEST_F(RenderViewImplTest, GetCompositionCharacterBoundsTest) {
   for (size_t i = 0; i < bounds.size(); ++i)
     EXPECT_LT(0, bounds[i].width());
   view()->OnImeConfirmComposition(
-      empty_string, ui::Range::InvalidRange(), false);
+      empty_string, gfx::Range::InvalidRange(), false);
 
   // Surrogate pair character.
   const string16 surrogate_pair_char = UTF8ToUTF16("\xF0\xA0\xAE\x9F");
@@ -1791,7 +1809,7 @@ TEST_F(RenderViewImplTest, GetCompositionCharacterBoundsTest) {
   EXPECT_LT(0, bounds[0].width());
   EXPECT_EQ(0, bounds[1].width());
   view()->OnImeConfirmComposition(
-      empty_string, ui::Range::InvalidRange(), false);
+      empty_string, gfx::Range::InvalidRange(), false);
 
   // Mixed string.
   const string16 surrogate_pair_mixed_composition =
@@ -1814,7 +1832,7 @@ TEST_F(RenderViewImplTest, GetCompositionCharacterBoundsTest) {
     }
   }
   view()->OnImeConfirmComposition(
-      empty_string, ui::Range::InvalidRange(), false);
+      empty_string, gfx::Range::InvalidRange(), false);
 }
 #endif
 
@@ -1938,6 +1956,97 @@ TEST_F(RenderViewImplTest, GetSSLStatusOfFrame) {
           SerializeSecurityInfo(0, net::CERT_STATUS_ALL_ERRORS, 0, 0));
   ssl_status = view()->GetSSLStatusOfFrame(frame);
   EXPECT_TRUE(net::IsCertStatusError(ssl_status.cert_status));
+}
+
+class SuppressErrorPageTest : public RenderViewTest {
+ public:
+  virtual void SetUp() OVERRIDE {
+    SetRendererClientForTesting(&client_);
+    RenderViewTest::SetUp();
+  }
+
+  RenderViewImpl* view() {
+    return static_cast<RenderViewImpl*>(view_);
+  }
+
+ private:
+  class TestContentRendererClient : public ContentRendererClient {
+   public:
+    virtual bool ShouldSuppressErrorPage(const GURL& url) OVERRIDE {
+      return url == GURL("http://example.com/suppress");
+    }
+
+    virtual void GetNavigationErrorStrings(
+        WebKit::WebFrame* frame,
+        const WebKit::WebURLRequest& failed_request,
+        const WebKit::WebURLError& error,
+        const std::string& accept_languages,
+        std::string* error_html,
+        string16* error_description) OVERRIDE {
+      if (error_html)
+        *error_html = "A suffusion of yellow.";
+    }
+  };
+
+  TestContentRendererClient client_;
+};
+
+#if defined(OS_ANDROID)
+// Crashing on Android: http://crbug.com/311341
+#define MAYBE_Suppresses DISABLED_Suppresses
+#else
+#define MAYBE_Suppresses Suppresses
+#endif
+
+TEST_F(SuppressErrorPageTest, MAYBE_Suppresses) {
+  WebURLError error;
+  error.domain = WebString::fromUTF8(net::kErrorDomain);
+  error.reason = net::ERR_FILE_NOT_FOUND;
+  error.unreachableURL = GURL("http://example.com/suppress");
+  WebFrame* web_frame = GetMainFrame();
+
+  // Start a load that will reach provisional state synchronously,
+  // but won't complete synchronously.
+  ViewMsg_Navigate_Params params;
+  params.page_id = -1;
+  params.navigation_type = ViewMsg_Navigate_Type::NORMAL;
+  params.url = GURL("data:text/html,test data");
+  view()->OnNavigate(params);
+
+  // An error occurred.
+  view()->didFailProvisionalLoad(web_frame, error);
+  const int kMaxOutputCharacters = 22;
+  EXPECT_EQ("", UTF16ToASCII(web_frame->contentAsText(kMaxOutputCharacters)));
+}
+
+#if defined(OS_ANDROID)
+// Crashing on Android: http://crbug.com/311341
+#define MAYBE_DoesNotSuppress DISABLED_DoesNotSuppress
+#else
+#define MAYBE_DoesNotSuppress DoesNotSuppress
+#endif
+
+TEST_F(SuppressErrorPageTest, MAYBE_DoesNotSuppress) {
+  WebURLError error;
+  error.domain = WebString::fromUTF8(net::kErrorDomain);
+  error.reason = net::ERR_FILE_NOT_FOUND;
+  error.unreachableURL = GURL("http://example.com/dont-suppress");
+  WebFrame* web_frame = GetMainFrame();
+
+  // Start a load that will reach provisional state synchronously,
+  // but won't complete synchronously.
+  ViewMsg_Navigate_Params params;
+  params.page_id = -1;
+  params.navigation_type = ViewMsg_Navigate_Type::NORMAL;
+  params.url = GURL("data:text/html,test data");
+  view()->OnNavigate(params);
+
+  // An error occurred.
+  view()->didFailProvisionalLoad(web_frame, error);
+  ProcessPendingMessages();
+  const int kMaxOutputCharacters = 22;
+  EXPECT_EQ("A suffusion of yellow.",
+            UTF16ToASCII(web_frame->contentAsText(kMaxOutputCharacters)));
 }
 
 }  // namespace content

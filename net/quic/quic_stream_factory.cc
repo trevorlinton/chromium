@@ -11,11 +11,14 @@
 #include "base/message_loop/message_loop_proxy.h"
 #include "base/rand_util.h"
 #include "base/stl_util.h"
+#include "base/strings/string_util.h"
 #include "base/values.h"
 #include "net/base/net_errors.h"
 #include "net/cert/cert_verifier.h"
 #include "net/dns/host_resolver.h"
 #include "net/dns/single_request_host_resolver.h"
+#include "net/http/http_server_properties.h"
+#include "net/quic/congestion_control/tcp_receiver.h"
 #include "net/quic/crypto/proof_verifier_chromium.h"
 #include "net/quic/crypto/quic_random.h"
 #include "net/quic/quic_client_session.h"
@@ -23,6 +26,7 @@
 #include "net/quic/quic_connection.h"
 #include "net/quic/quic_connection_helper.h"
 #include "net/quic/quic_crypto_client_stream_factory.h"
+#include "net/quic/quic_default_packet_writer.h"
 #include "net/quic/quic_http_stream.h"
 #include "net/quic/quic_protocol.h"
 #include "net/socket/client_socket_factory.h"
@@ -147,25 +151,16 @@ void QuicStreamFactory::Job::OnIOComplete(int rv) {
 int QuicStreamFactory::Job::DoResolveHost() {
   io_state_ = STATE_RESOLVE_HOST_COMPLETE;
   return host_resolver_.Resolve(
-      HostResolver::RequestInfo(host_port_proxy_pair_.first), &address_list_,
-      base::Bind(&QuicStreamFactory::Job::OnIOComplete,
-                 base::Unretained(this)),
+      HostResolver::RequestInfo(host_port_proxy_pair_.first),
+      DEFAULT_PRIORITY,
+      &address_list_,
+      base::Bind(&QuicStreamFactory::Job::OnIOComplete, base::Unretained(this)),
       net_log_);
 }
 
 int QuicStreamFactory::Job::DoResolveHostComplete(int rv) {
   if (rv != OK)
     return rv;
-
-  // TODO(rch): remove this code!
-  AddressList::iterator it = address_list_.begin();
-  while (it != address_list_.end()) {
-    if (it->GetFamily() == ADDRESS_FAMILY_IPV6) {
-      it = address_list_.erase(it);
-    } else {
-      it++;
-    }
-  }
 
   DCHECK(!factory_->HasActiveSession(host_port_proxy_pair_));
   io_state_ = STATE_CONNECT;
@@ -226,6 +221,7 @@ int QuicStreamFactory::Job::DoConnect() {
                                      cert_verifier_, address_list_, net_log_);
   session_->StartReading();
   int rv = session_->CryptoConnect(
+      factory_->require_confirmation() || is_https_,
       base::Bind(&QuicStreamFactory::Job::OnIOComplete,
                  base::Unretained(this)));
   return rv;
@@ -244,11 +240,14 @@ int QuicStreamFactory::Job::DoConnectComplete(int rv) {
 QuicStreamFactory::QuicStreamFactory(
     HostResolver* host_resolver,
     ClientSocketFactory* client_socket_factory,
+    base::WeakPtr<HttpServerProperties> http_server_properties,
     QuicCryptoClientStreamFactory* quic_crypto_client_stream_factory,
     QuicRandom* random_generator,
     QuicClock* clock)
-    : host_resolver_(host_resolver),
+    : require_confirmation_(true),
+      host_resolver_(host_resolver),
       client_socket_factory_(client_socket_factory),
+      http_server_properties_(http_server_properties),
       quic_crypto_client_stream_factory_(quic_crypto_client_stream_factory),
       random_generator_(random_generator),
       clock_(clock),
@@ -260,6 +259,7 @@ QuicStreamFactory::QuicStreamFactory(
 }
 
 QuicStreamFactory::~QuicStreamFactory() {
+  CloseAllSessions(ERR_ABORTED);
   STLDeleteElements(&all_sessions_);
   STLDeleteValues(&active_jobs_);
   STLDeleteValues(&all_crypto_configs_);
@@ -301,6 +301,8 @@ int QuicStreamFactory::Create(const HostPortProxyPair& host_port_proxy_pair,
 
 void QuicStreamFactory::OnJobComplete(Job* job, int rv) {
   if (rv == OK) {
+    require_confirmation_ = false;
+
     // Create all the streams, but do not notify them yet.
     for (RequestSet::iterator it = job_requests_map_[job].begin();
          it != job_requests_map_[job].end() ; ++it) {
@@ -337,23 +339,35 @@ scoped_ptr<QuicHttpStream> QuicStreamFactory::CreateIfSessionExists(
 
   QuicClientSession* session = active_sessions_[host_port_proxy_pair];
   DCHECK(session);
-  return scoped_ptr<QuicHttpStream>(new QuicHttpStream(session->GetWeakPtr()));
+  return scoped_ptr<QuicHttpStream>(
+      new QuicHttpStream(session->GetWeakPtr()));
 }
 
 void QuicStreamFactory::OnIdleSession(QuicClientSession* session) {
 }
 
-void QuicStreamFactory::OnSessionClose(QuicClientSession* session) {
-  DCHECK_EQ(0u, session->GetNumOpenStreams());
+void QuicStreamFactory::OnSessionGoingAway(QuicClientSession* session) {
   const AliasSet& aliases = session_aliases_[session];
   for (AliasSet::const_iterator it = aliases.begin(); it != aliases.end();
        ++it) {
     DCHECK(active_sessions_.count(*it));
     DCHECK_EQ(session, active_sessions_[*it]);
     active_sessions_.erase(*it);
+    if (!session->IsCryptoHandshakeConfirmed() && http_server_properties_) {
+      // TODO(rch):  In the special case where the session has received no
+      // packets from the peer, we should consider blacklisting this
+      // differently so that we still race TCP but we don't consider the
+      // session connected until the handshake has been confirmed.
+      http_server_properties_->SetBrokenAlternateProtocol(it->first);
+    }
   }
-  all_sessions_.erase(session);
   session_aliases_.erase(session);
+}
+
+void QuicStreamFactory::OnSessionClosed(QuicClientSession* session) {
+  DCHECK_EQ(0u, session->GetNumOpenStreams());
+  OnSessionGoingAway(session);
+  all_sessions_.erase(session);
   delete session;
 }
 
@@ -393,6 +407,7 @@ base::Value* QuicStreamFactory::QuicStreamFactoryInfoToValue() const {
 
 void QuicStreamFactory::OnIPAddressChanged() {
   CloseAllSessions(ERR_NETWORK_CHANGED);
+  require_confirmation_ = true;
 }
 
 bool QuicStreamFactory::HasActiveSession(
@@ -408,46 +423,43 @@ QuicClientSession* QuicStreamFactory::CreateSession(
     const BoundNetLog& net_log) {
   QuicGuid guid = random_generator_->RandUint64();
   IPEndPoint addr = *address_list.begin();
-  DatagramClientSocket* socket =
+  scoped_ptr<DatagramClientSocket> socket(
       client_socket_factory_->CreateDatagramClientSocket(
           DatagramSocket::DEFAULT_BIND, base::Bind(&base::RandInt),
-          net_log.net_log(), net_log.source());
+          net_log.net_log(), net_log.source()));
   socket->Connect(addr);
 
   // We should adaptively set this buffer size, but for now, we'll use a size
-  // that is more than large enough for a 100 packet congestion window, and yet
+  // that is more than large enough for a full receive window, and yet
   // does not consume "too much" memory.  If we see bursty packet loss, we may
   // revisit this setting and test for its impact.
-  const int32 kSocketBufferSize(kMaxPacketSize * 100);  // Support 100 packets.
+  const int32 kSocketBufferSize(TcpReceiver::kReceiveWindowTCP);
   socket->SetReceiveBufferSize(kSocketBufferSize);
-  // TODO(jar): What should the UDP send buffer be set to?  If the send buffer
-  // is too large, then we might(?) wastefully queue packets in the OS, when
-  // we'd rather construct packets just in time. We do however expect that the
-  // calculated send rate (paced, or ack clocked), will be well below the egress
-  // rate of the local machine, so that *shouldn't* be a problem.
-  // If the buffer setting is too small, then we will starve our outgoing link
-  // on a fast connection, because we won't respond fast enough to the many
-  // async callbacks to get data from us.  On the other hand, until we have real
-  // pacing support (beyond ack-clocked pacing), we get a bit of adhoc-pacing by
-  // requiring the application to refill this OS buffer (ensuring that we don't
-  // blast a pile of packets at the kernel's max egress rate).
-  // socket->SetSendBufferSize(????);
+  // Set a buffer large enough to contain the initial CWND's worth of packet
+  // to work around the problem with CHLO packets being sent out with the
+  // wrong encryption level, when the send buffer is full.
+  socket->SetSendBufferSize(kMaxPacketSize * 20); // Support 20 packets.
 
-  QuicConnectionHelper* helper = new QuicConnectionHelper(
-      base::MessageLoop::current()->message_loop_proxy().get(),
-      clock_.get(),
-      random_generator_,
-      socket);
+  scoped_ptr<QuicDefaultPacketWriter> writer(
+      new QuicDefaultPacketWriter(socket.get()));
 
-  QuicConnection* connection = new QuicConnection(guid, addr, helper, false,
-                                                  QuicVersionMax());
+  if (!helper_.get()) {
+    helper_.reset(new QuicConnectionHelper(
+        base::MessageLoop::current()->message_loop_proxy().get(),
+        clock_.get(), random_generator_));
+  }
+
+  QuicConnection* connection = new QuicConnection(guid, addr, helper_.get(),
+                                                  writer.get(), false,
+                                                  QuicSupportedVersions());
+  writer->SetConnection(connection);
 
   QuicCryptoClientConfig* crypto_config =
       GetOrCreateCryptoConfig(host_port_proxy_pair);
   DCHECK(crypto_config);
 
   QuicClientSession* session =
-      new QuicClientSession(connection, socket, this,
+      new QuicClientSession(connection, socket.Pass(), writer.Pass(), this,
                             quic_crypto_client_stream_factory_,
                             host_port_proxy_pair.first.host(), config_,
                             crypto_config, net_log.net_log());
@@ -475,15 +487,53 @@ void QuicStreamFactory::ActivateSession(
 QuicCryptoClientConfig* QuicStreamFactory::GetOrCreateCryptoConfig(
     const HostPortProxyPair& host_port_proxy_pair) {
   QuicCryptoClientConfig* crypto_config;
+
   if (ContainsKey(all_crypto_configs_, host_port_proxy_pair)) {
     crypto_config = all_crypto_configs_[host_port_proxy_pair];
     DCHECK(crypto_config);
   } else {
+    // TODO(rtenneti): if two quic_sessions for the same host_port_proxy_pair
+    // share the same crypto_config, will it cause issues?
     crypto_config = new QuicCryptoClientConfig();
     crypto_config->SetDefaults();
     all_crypto_configs_[host_port_proxy_pair] = crypto_config;
+    PopulateFromCanonicalConfig(host_port_proxy_pair, crypto_config);
   }
   return crypto_config;
+}
+
+void QuicStreamFactory::PopulateFromCanonicalConfig(
+    const HostPortProxyPair& host_port_proxy_pair,
+    QuicCryptoClientConfig* crypto_config) {
+  const string server_hostname = host_port_proxy_pair.first.host();
+  const string kYouTubeSuffix(".c.youtube.com");
+  if (!EndsWith(server_hostname, kYouTubeSuffix, false)) {
+    return;
+  }
+
+  HostPortPair canonical_host_port(kYouTubeSuffix,
+                                   host_port_proxy_pair.first.port());
+  if (!ContainsKey(canonical_hostname_to_origin_map_, canonical_host_port)) {
+    // This is the first host we've seen which matches the suffix, so make it
+    // canonical.
+    canonical_hostname_to_origin_map_[canonical_host_port] =
+        host_port_proxy_pair;
+    return;
+  }
+
+  const HostPortProxyPair& canonical_host_port_proxy_pair =
+      canonical_hostname_to_origin_map_[canonical_host_port];
+  QuicCryptoClientConfig* canonical_crypto_config =
+      all_crypto_configs_[canonical_host_port_proxy_pair];
+  DCHECK(canonical_crypto_config);
+
+  // Copy the CachedState for the canonical server from canonical_crypto_config
+  // as the initial CachedState for the server_hostname in crypto_config.
+  crypto_config->InitializeFrom(server_hostname,
+                                canonical_host_port_proxy_pair.first.host(),
+                                canonical_crypto_config);
+  // Update canonical version to point at the "most recent" crypto_config.
+  canonical_hostname_to_origin_map_[canonical_host_port] = host_port_proxy_pair;
 }
 
 }  // namespace net

@@ -19,9 +19,9 @@
 #include "content/public/browser/user_metrics.h"
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
-#include "ui/base/keycodes/keyboard_codes.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/views/bubble/bubble_frame_view.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/combobox/combobox.h"
@@ -46,46 +46,15 @@ const int kControlBorderWidth = 2;
 
 }  // namespace
 
-// Declared in browser_dialogs.h so callers don't have to depend on our header.
-
-namespace chrome {
-
-void ShowBookmarkBubbleView(views::View* anchor_view,
-                            BookmarkBubbleViewObserver* observer,
-                            scoped_ptr<BookmarkBubbleDelegate> delegate,
-                            Profile* profile,
-                            const GURL& url,
-                            bool newly_bookmarked) {
-  BookmarkBubbleView::ShowBubble(anchor_view,
-                                 observer,
-                                 delegate.Pass(),
-                                 profile,
-                                 url,
-                                 newly_bookmarked);
-}
-
-void HideBookmarkBubbleView() {
-  BookmarkBubbleView::Hide();
-}
-
-bool IsBookmarkBubbleViewShowing() {
-  return BookmarkBubbleView::IsShowing();
-}
-
-}  // namespace chrome
-
-// BookmarkBubbleView ---------------------------------------------------------
-
 BookmarkBubbleView* BookmarkBubbleView::bookmark_bubble_ = NULL;
 
 // static
-void BookmarkBubbleView::ShowBubble(
-    views::View* anchor_view,
-    BookmarkBubbleViewObserver* observer,
-    scoped_ptr<BookmarkBubbleDelegate> delegate,
-    Profile* profile,
-    const GURL& url,
-    bool newly_bookmarked) {
+void BookmarkBubbleView::ShowBubble(views::View* anchor_view,
+                                    BookmarkBubbleViewObserver* observer,
+                                    scoped_ptr<BookmarkBubbleDelegate> delegate,
+                                    Profile* profile,
+                                    const GURL& url,
+                                    bool newly_bookmarked) {
   if (IsShowing())
     return;
 
@@ -123,6 +92,9 @@ BookmarkBubbleView::~BookmarkBubbleView() {
     if (node)
       model->Remove(node->parent(), node->parent()->GetIndexOf(node));
   }
+  // |parent_combobox_| needs to be destroyed before |parent_model_| as it
+  // uses |parent_model_| in its destructor.
+  delete parent_combobox_;
 }
 
 views::View* BookmarkBubbleView::GetInitiallyFocusedView() {
@@ -160,8 +132,8 @@ void BookmarkBubbleView::Init() {
       l10n_util::GetStringUTF16(
           newly_bookmarked_ ? IDS_BOOKMARK_BUBBLE_PAGE_BOOKMARKED :
                               IDS_BOOKMARK_BUBBLE_PAGE_BOOKMARK));
-  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
-  title_label->SetFont(rb.GetFont(ui::ResourceBundle::MediumFont));
+  ui::ResourceBundle* rb = &ui::ResourceBundle::GetSharedInstance();
+  title_label->SetFont(rb->GetFont(ui::ResourceBundle::MediumFont));
 
   remove_button_ = new views::LabelButton(this, l10n_util::GetStringUTF16(
       IDS_BOOKMARK_BUBBLE_REMOVE_BOOKMARK));
@@ -296,7 +268,7 @@ BookmarkBubbleView::BookmarkBubbleView(
   set_background(views::Background::CreateSolidBackground(background_color));
   set_margins(gfx::Insets(views::kPanelVertMargin, 0, 0, 0));
   // Compensate for built-in vertical padding in the anchor view's image.
-  set_anchor_view_insets(gfx::Insets(7, 0, 7, 0));
+  set_anchor_view_insets(gfx::Insets(2, 0, 2, 0));
 }
 
 string16 BookmarkBubbleView::GetTitle() {

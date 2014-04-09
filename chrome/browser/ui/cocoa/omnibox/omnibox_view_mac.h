@@ -23,7 +23,6 @@ class OmniboxViewMac : public OmniboxView,
                        public AutocompleteTextFieldObserver {
  public:
   OmniboxViewMac(OmniboxEditController* controller,
-                 ToolbarModel* toolbar_model,
                  Profile* profile,
                  CommandUpdater* command_updater,
                  AutocompleteTextField* field);
@@ -31,8 +30,8 @@ class OmniboxViewMac : public OmniboxView,
 
   // OmniboxView:
   virtual void SaveStateToTab(content::WebContents* tab) OVERRIDE;
-  virtual void Update(
-      const content::WebContents* tab_for_state_restoring) OVERRIDE;
+  virtual void OnTabChanged(const content::WebContents* web_contents) OVERRIDE;
+  virtual void Update() OVERRIDE;
   virtual string16 GetText() const OVERRIDE;
   virtual void SetWindowTextAndCaretPos(const string16& text,
                                         size_t caret_pos,
@@ -71,9 +70,9 @@ class OmniboxViewMac : public OmniboxView,
   virtual void OnControlKeyChanged(bool pressed) OVERRIDE;
   virtual bool CanCopy() OVERRIDE;
   virtual void CopyToPasteboard(NSPasteboard* pboard) OVERRIDE;
-  virtual void CopyURLToPasteboard(NSPasteboard* pboard) OVERRIDE;
+  virtual bool ShouldEnableShowURL() OVERRIDE;
+  virtual void ShowURL() OVERRIDE;
   virtual void OnPaste() OVERRIDE;
-  virtual bool ShouldEnableCopyURL() OVERRIDE;
   virtual bool CanPasteAndGo() OVERRIDE;
   virtual int GetPasteActionStringId() OVERRIDE;
   virtual void OnPasteAndGo() OVERRIDE;
@@ -87,6 +86,7 @@ class OmniboxViewMac : public OmniboxView,
   virtual void OnSetFocus(bool control_down) OVERRIDE;
   virtual void OnKillFocus() OVERRIDE;
   virtual void OnMouseDown(NSInteger button_number) OVERRIDE;
+  virtual bool ShouldSelectAllOnMouseDown() OVERRIDE;
 
   // Helper for LocationBarViewMac.  Optionally selects all in |field_|.
   void FocusLocation(bool select_all);

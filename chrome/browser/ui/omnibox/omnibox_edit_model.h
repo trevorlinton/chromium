@@ -57,6 +57,7 @@ class OmniboxEditModel {
           const string16& gray_text,
           const string16& keyword,
           bool is_keyword_hint,
+          bool search_term_replacement_enabled,
           OmniboxFocusState focus_state,
           FocusSource focus_source);
     ~State();
@@ -66,6 +67,7 @@ class OmniboxEditModel {
     const string16 gray_text;
     const string16 keyword;
     const bool is_keyword_hint;
+    bool search_term_replacement_enabled;
     OmniboxFocusState focus_state;
     FocusSource focus_source;
   };
@@ -99,8 +101,9 @@ class OmniboxEditModel {
   // the internal state appropriately.
   const State GetStateForTabSwitch();
 
-  // Restores local state from the saved |state|.
-  void RestoreState(const State& state);
+  // Resets the tab state, then restores local state from the saved |state|.
+  // |state| may be NULL if there is no saved state.
+  void RestoreState(const State* state);
 
   // Returns the match for the current text. If the user has not edited the text
   // this is the match corresponding to the permanent text. Returns the
@@ -137,10 +140,11 @@ class OmniboxEditModel {
   // that state has changed.
   void SetInputInProgress(bool in_progress);
 
-  // Updates permanent_text_ to |new_permanent_text|.  Returns true if this
-  // change should be immediately user-visible, because either the user is not
-  // editing or the edit does not have focus.
-  bool UpdatePermanentText(const string16& new_permanent_text);
+  // Updates permanent_text_ to the current permanent text from the toolbar
+  // model.  Returns true if the permanent text changed and the change should be
+  // immediately user-visible, because either the user is not editing or the
+  // edit does not have focus.
+  bool UpdatePermanentText();
 
   // Returns the URL corresponding to the permanent text.
   GURL PermanentURL();

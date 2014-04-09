@@ -110,6 +110,15 @@ PictureLayerTiling* PictureLayerTilingSet::AddTiling(float contents_scale) {
   return appended;
 }
 
+int PictureLayerTilingSet::NumHighResTilings() const {
+  int num_high_res = 0;
+  for (size_t i = 0; i < tilings_.size(); ++i) {
+    if (tilings_[i]->resolution() == HIGH_RESOLUTION)
+      num_high_res++;
+  }
+  return num_high_res;
+}
+
 PictureLayerTiling* PictureLayerTilingSet::TilingAtScale(float scale) const {
   for (size_t i = 0; i < tilings_.size(); ++i) {
     if (tilings_[i]->contents_scale() == scale)
@@ -332,6 +341,11 @@ void PictureLayerTilingSet::UpdateTilePriorities(
 void PictureLayerTilingSet::DidBecomeActive() {
   for (size_t i = 0; i < tilings_.size(); ++i)
     tilings_[i]->DidBecomeActive();
+}
+
+void PictureLayerTilingSet::DidBecomeRecycled() {
+  for (size_t i = 0; i < tilings_.size(); ++i)
+    tilings_[i]->DidBecomeRecycled();
 }
 
 scoped_ptr<base::Value> PictureLayerTilingSet::AsValue() const {

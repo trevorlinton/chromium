@@ -8,6 +8,9 @@
 
 #include "chrome/browser/history/history_service.h"
 #include "chrome/browser/history/history_service_factory.h"
+#if !defined(OS_ANDROID)
+#include "chrome/browser/network_time/navigation_time_helper.h"
+#endif
 #include "chrome/browser/prerender/prerender_contents.h"
 #include "chrome/browser/prerender/prerender_manager.h"
 #include "chrome/browser/prerender/prerender_manager_factory.h"
@@ -15,9 +18,6 @@
 #include "chrome/common/render_messages.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
-#include "content/public/browser/notification_details.h"
-#include "content/public/browser/notification_source.h"
-#include "content/public/browser/notification_types.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/common/frame_navigate_params.h"
@@ -35,8 +35,6 @@ DEFINE_WEB_CONTENTS_USER_DATA_KEY(HistoryTabHelper);
 HistoryTabHelper::HistoryTabHelper(WebContents* web_contents)
     : content::WebContentsObserver(web_contents),
       received_page_title_(false) {
-  registrar_.Add(this, content::NOTIFICATION_WEB_CONTENTS_TITLE_UPDATED,
-                 content::Source<WebContents>(web_contents));
 }
 
 HistoryTabHelper::~HistoryTabHelper() {
@@ -106,13 +104,21 @@ void HistoryTabHelper::DidNavigateAnyFrame(
   if (!params.should_update_history)
     return;
 
+#if !defined(OS_ANDROID)
+  base::Time navigation_time =
+      NavigationTimeHelper::FromWebContents(web_contents())->GetNavigationTime(
+          details.entry);
+#else
+  base::Time navigation_time = details.entry->GetTimestamp();
+#endif
+
   // Most of the time, the displayURL matches the loaded URL, but for about:
   // URLs, we use a data: URL as the real value.  We actually want to save the
   // about: URL to the history db and keep the data: URL hidden. This is what
   // the WebContents' URL getter does.
   const history::HistoryAddPageArgs& add_page_args =
       CreateHistoryAddPageArgs(
-          web_contents()->GetURL(), details.entry->GetTimestamp(),
+          web_contents()->GetURL(), navigation_time,
           details.did_replace_entry, params);
 
   prerender::PrerenderManager* prerender_manager =
@@ -137,20 +143,13 @@ void HistoryTabHelper::DidNavigateAnyFrame(
   UpdateHistoryForNavigation(add_page_args);
 }
 
-void HistoryTabHelper::Observe(int type,
-                               const content::NotificationSource& source,
-                               const content::NotificationDetails& details) {
-  DCHECK(type == content::NOTIFICATION_WEB_CONTENTS_TITLE_UPDATED);
-  std::pair<content::NavigationEntry*, bool>* title =
-      content::Details<std::pair<content::NavigationEntry*, bool> >(
-          details).ptr();
-
+void HistoryTabHelper::TitleWasSet(NavigationEntry* entry, bool explicit_set) {
   if (received_page_title_)
     return;
 
-  if (title->first) {
-    UpdateHistoryPageTitle(*title->first);
-    received_page_title_ = title->second;
+  if (entry) {
+    UpdateHistoryPageTitle(*entry);
+    received_page_title_ = explicit_set;
   }
 }
 

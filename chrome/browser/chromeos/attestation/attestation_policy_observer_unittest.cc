@@ -10,12 +10,12 @@
 #include "chrome/browser/chromeos/attestation/attestation_key_payload.pb.h"
 #include "chrome/browser/chromeos/attestation/attestation_policy_observer.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/chromeos/settings/cros_settings_names.h"
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
 #include "chrome/browser/chromeos/settings/stub_cros_settings_provider.h"
 #include "chrome/browser/policy/cloud/mock_cloud_policy_client.h"
 #include "chromeos/attestation/mock_attestation_flow.h"
 #include "chromeos/dbus/mock_cryptohome_client.h"
+#include "chromeos/settings/cros_settings_names.h"
 #include "content/public/test/test_browser_thread.h"
 #include "crypto/rsa_private_key.h"
 #include "net/cert/x509_certificate.h"
@@ -148,20 +148,20 @@ class AttestationPolicyObserverTest : public ::testing::Test {
     bool key_exists = (mock_options & MOCK_KEY_EXISTS);
     // Setup expected key / cert queries.
     if (key_exists) {
-      EXPECT_CALL(cryptohome_client_, TpmAttestationDoesKeyExist(_, _, _))
-          .WillRepeatedly(WithArgs<2>(Invoke(DBusCallbackTrue)));
-      EXPECT_CALL(cryptohome_client_, TpmAttestationGetCertificate(_, _, _))
-          .WillRepeatedly(WithArgs<2>(Invoke(FakeDBusData(certificate))));
+      EXPECT_CALL(cryptohome_client_, TpmAttestationDoesKeyExist(_, _, _, _))
+          .WillRepeatedly(WithArgs<3>(Invoke(DBusCallbackTrue)));
+      EXPECT_CALL(cryptohome_client_, TpmAttestationGetCertificate(_, _, _, _))
+          .WillRepeatedly(WithArgs<3>(Invoke(FakeDBusData(certificate))));
     } else {
-      EXPECT_CALL(cryptohome_client_, TpmAttestationDoesKeyExist(_, _, _))
-          .WillRepeatedly(WithArgs<2>(Invoke(DBusCallbackFalse)));
+      EXPECT_CALL(cryptohome_client_, TpmAttestationDoesKeyExist(_, _, _, _))
+          .WillRepeatedly(WithArgs<3>(Invoke(DBusCallbackFalse)));
     }
 
     // Setup expected key payload queries.
     bool key_uploaded = (mock_options & MOCK_KEY_UPLOADED);
     std::string payload = CreatePayload();
-    EXPECT_CALL(cryptohome_client_, TpmAttestationGetKeyPayload(_, _, _))
-        .WillRepeatedly(WithArgs<2>(Invoke(
+    EXPECT_CALL(cryptohome_client_, TpmAttestationGetKeyPayload(_, _, _, _))
+        .WillRepeatedly(WithArgs<3>(Invoke(
             FakeDBusData(key_uploaded ? payload : ""))));
 
     // Setup expected key uploads.  Use WillOnce() so StrictMock will trigger an
@@ -175,16 +175,16 @@ class AttestationPolicyObserverTest : public ::testing::Test {
                   UploadCertificate(new_key ? "fake_cert" : certificate, _))
           .WillOnce(WithArgs<1>(Invoke(StatusCallbackSuccess)));
       EXPECT_CALL(cryptohome_client_,
-                  TpmAttestationSetKeyPayload(_, _, payload, _))
-          .WillOnce(WithArgs<3>(Invoke(DBusCallbackTrue)));
+                  TpmAttestationSetKeyPayload(_, _, _, payload, _))
+          .WillOnce(WithArgs<4>(Invoke(DBusCallbackTrue)));
     }
 
     // Setup expected key generations.  Again use WillOnce().  Key generation is
     // another costly operation and if it gets triggered more than once during
     // a single pass this indicates a logical problem in the observer.
     if (new_key) {
-      EXPECT_CALL(attestation_flow_, GetCertificate(_, _, _))
-          .WillOnce(WithArgs<2>(Invoke(CertCallbackSuccess)));
+      EXPECT_CALL(attestation_flow_, GetCertificate(_, _, _, _, _))
+          .WillOnce(WithArgs<4>(Invoke(CertCallbackSuccess)));
     }
   }
 
@@ -227,6 +227,7 @@ class AttestationPolicyObserverTest : public ::testing::Test {
     if (!test_key.get())
       return false;
     return net::x509_util::CreateSelfSignedCert(test_key.get(),
+                                                net::x509_util::DIGEST_SHA256,
                                                 "CN=subject",
                                                 12345,
                                                 valid_start,
@@ -297,9 +298,9 @@ TEST_F(AttestationPolicyObserverTest, IgnoreUnknownCertFormat) {
 TEST_F(AttestationPolicyObserverTest, DBusFailureRetry) {
   SetupMocks(MOCK_NEW_KEY, "");
   // Simulate a DBus failure.
-  EXPECT_CALL(cryptohome_client_, TpmAttestationDoesKeyExist(_, _, _))
-      .WillOnce(WithArgs<2>(Invoke(DBusCallbackError)))
-      .WillRepeatedly(WithArgs<2>(Invoke(DBusCallbackFalse)));
+  EXPECT_CALL(cryptohome_client_, TpmAttestationDoesKeyExist(_, _, _, _))
+      .WillOnce(WithArgs<3>(Invoke(DBusCallbackError)))
+      .WillRepeatedly(WithArgs<3>(Invoke(DBusCallbackFalse)));
   Run();
 }
 

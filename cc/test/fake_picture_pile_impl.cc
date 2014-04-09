@@ -7,7 +7,6 @@
 #include <limits>
 #include <utility>
 
-#include "cc/test/fake_rendering_stats_instrumentation.h"
 #include "cc/test/impl_side_painting_settings.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -63,22 +62,13 @@ void FakePicturePileImpl::AddRecordingAt(int x, int y) {
   gfx::Rect bounds(tiling().TileBounds(x, y));
   bounds.Inset(-buffer_pixels(), -buffer_pixels());
 
-  FakeRenderingStatsInstrumentation stats_instrumentation;
-
   scoped_refptr<Picture> picture(Picture::Create(bounds));
-  picture->Record(&client_, tile_grid_info_, &stats_instrumentation);
-  picture->GatherPixelRefs(tile_grid_info_, &stats_instrumentation);
-  picture_list_map_[std::pair<int, int>(x, y)].push_back(picture);
+  picture->Record(&client_, tile_grid_info_);
+  picture->GatherPixelRefs(tile_grid_info_);
+  picture_map_[std::pair<int, int>(x, y)].picture = picture;
   EXPECT_TRUE(HasRecordingAt(x, y));
 
   UpdateRecordedRegion();
-}
-
-void FakePicturePileImpl::AddPictureToRecording(
-    int x,
-    int y,
-    scoped_refptr<Picture> picture) {
-  picture_list_map_[std::pair<int, int>(x, y)].push_back(picture);
 }
 
 void FakePicturePileImpl::RemoveRecordingAt(int x, int y) {
@@ -89,7 +79,7 @@ void FakePicturePileImpl::RemoveRecordingAt(int x, int y) {
 
   if (!HasRecordingAt(x, y))
     return;
-  picture_list_map_.erase(std::pair<int, int>(x, y));
+  picture_map_.erase(std::pair<int, int>(x, y));
   EXPECT_FALSE(HasRecordingAt(x, y));
 
   UpdateRecordedRegion();

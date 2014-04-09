@@ -13,11 +13,12 @@
 #include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
+#include "ui/base/dragdrop/drop_target_event.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/base/dragdrop/os_exchange_data_provider_aurax11.h"
-#include "ui/base/events/event.h"
 #include "ui/base/x/selection_utils.h"
 #include "ui/base/x/x11_util.h"
+#include "ui/events/event.h"
 #include "ui/views/widget/desktop_aura/desktop_native_cursor_manager.h"
 
 using aura::client::DragDropDelegate;
@@ -236,14 +237,13 @@ DesktopDragDropClientAuraX11::X11DragContext::X11DragContext(
   if (!client) {
     // The window doesn't have a DesktopDragDropClientAuraX11, that means it's
     // created by some other process. Listen for messages on it.
-    base::MessagePumpAuraX11::Current()->AddDispatcherForWindow(
+    base::MessagePumpX11::Current()->AddDispatcherForWindow(
         this, source_window_);
-    XSelectInput(base::MessagePumpAuraX11::GetDefaultXDisplay(),
-                 source_window_, PropertyChangeMask);
+    XSelectInput(gfx::GetXDisplay(), source_window_, PropertyChangeMask);
 
     // We must perform a full sync here because we could be racing
     // |source_window_|.
-    XSync(base::MessagePumpAuraX11::GetDefaultXDisplay(), False);
+    XSync(gfx::GetXDisplay(), False);
   } else {
     // This drag originates from an aura window within our process. This means
     // that we can shortcut the X11 server and ask the owning SelectionOwner
@@ -260,7 +260,7 @@ DesktopDragDropClientAuraX11::X11DragContext::~X11DragContext() {
       DesktopDragDropClientAuraX11::GetForWindow(source_window_);
   if (!client) {
     // Unsubscribe from message events.
-    base::MessagePumpAuraX11::Current()->RemoveDispatcherForWindow(
+    base::MessagePumpX11::Current()->RemoveDispatcherForWindow(
         source_window_);
   }
 }
@@ -289,7 +289,7 @@ void DesktopDragDropClientAuraX11::X11DragContext::RequestNextTarget() {
   ::Atom target = unfetched_targets_.back();
   unfetched_targets_.pop_back();
 
-  XConvertSelection(base::MessagePumpAuraX11::GetDefaultXDisplay(),
+  XConvertSelection(gfx::GetXDisplay(),
                     atom_cache_->GetAtom(kXdndSelection),
                     target,
                     atom_cache_->GetAtom(kChromiumDragReciever),
@@ -366,7 +366,7 @@ bool DesktopDragDropClientAuraX11::X11DragContext::Dispatch(
 ///////////////////////////////////////////////////////////////////////////////
 
 DesktopDragDropClientAuraX11::DesktopDragDropClientAuraX11(
-    aura::RootWindow* root_window,
+    aura::Window* root_window,
     views::DesktopNativeCursorManager* cursor_manager,
     Display* xdisplay,
     ::Window xwindow)
@@ -562,7 +562,7 @@ void DesktopDragDropClientAuraX11::OnSelectionNotify(
 
 int DesktopDragDropClientAuraX11::StartDragAndDrop(
     const ui::OSExchangeData& data,
-    aura::RootWindow* root_window,
+    aura::Window* root_window,
     aura::Window* source_window,
     const gfx::Point& root_location,
     int operation,
@@ -681,7 +681,7 @@ void DesktopDragDropClientAuraX11::DragTranslate(
     scoped_ptr<ui::DropTargetEvent>* event,
     aura::client::DragDropDelegate** delegate) {
   gfx::Point root_location = root_window_location;
-  root_window_->ConvertPointFromNativeScreen(&root_location);
+  root_window_->GetDispatcher()->ConvertPointFromNativeScreen(&root_location);
   aura::Window* target_window =
       root_window_->GetEventHandlerForPoint(root_location);
   bool target_window_changed = false;

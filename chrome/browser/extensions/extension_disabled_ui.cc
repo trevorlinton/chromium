@@ -29,11 +29,12 @@
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_icon_set.h"
 #include "chrome/common/extensions/manifest_handlers/icons_handler.h"
-#include "chrome/common/extensions/permissions/permission_set.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_source.h"
+#include "extensions/common/permissions/permission_message_provider.h"
+#include "extensions/common/permissions/permission_set.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
 #include "grit/theme_resources.h"
@@ -134,7 +135,7 @@ void ExtensionDisabledDialogDelegate::InstallUIAbort(bool user_initiated) {
 
 // ExtensionDisabledGlobalError -----------------------------------------------
 
-class ExtensionDisabledGlobalError : public GlobalError,
+class ExtensionDisabledGlobalError : public GlobalErrorWithStandardBubble,
                                      public content::NotificationObserver,
                                      public ExtensionUninstallDialog::Delegate {
  public:
@@ -149,7 +150,6 @@ class ExtensionDisabledGlobalError : public GlobalError,
   virtual int MenuItemCommandID() OVERRIDE;
   virtual string16 MenuItemLabel() OVERRIDE;
   virtual void ExecuteMenuItem(Browser* browser) OVERRIDE;
-  virtual bool HasBubbleView() OVERRIDE;
   virtual gfx::Image GetBubbleViewIcon() OVERRIDE;
   virtual string16 GetBubbleViewTitle() OVERRIDE;
   virtual std::vector<string16> GetBubbleViewMessages() OVERRIDE;
@@ -243,10 +243,6 @@ void ExtensionDisabledGlobalError::ExecuteMenuItem(Browser* browser) {
   ShowBubbleView(browser);
 }
 
-bool ExtensionDisabledGlobalError::HasBubbleView() {
-   return true;
-}
-
 gfx::Image ExtensionDisabledGlobalError::GetBubbleViewIcon() {
   return icon_;
 }
@@ -265,8 +261,8 @@ std::vector<string16> ExtensionDisabledGlobalError::GetBubbleViewMessages() {
   messages.push_back(l10n_util::GetStringUTF16(
       IDS_EXTENSION_PROMPT_WILL_NOW_HAVE_ACCESS_TO));
   std::vector<string16> permission_warnings =
-      extension_->GetActivePermissions()->GetWarningMessages(
-          extension_->GetType());
+      extensions::PermissionMessageProvider::Get()->GetWarningMessages(
+          extension_->GetActivePermissions(), extension_->GetType());
   for (size_t i = 0; i < permission_warnings.size(); ++i) {
     messages.push_back(l10n_util::GetStringFUTF16(
         IDS_EXTENSION_PERMISSION_LINE, permission_warnings[i]));

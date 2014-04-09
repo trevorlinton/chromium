@@ -22,10 +22,7 @@
 #include "native_client/src/trusted/validator/nacl_file_info.h"
 
 #include "ppapi/c/private/ppb_nacl_private.h"
-#include "ppapi/cpp/private/var_private.h"
-// for pp::VarPrivate
 #include "ppapi/cpp/private/instance_private.h"
-#include "ppapi/cpp/rect.h"
 #include "ppapi/cpp/url_loader.h"
 #include "ppapi/cpp/var.h"
 #include "ppapi/cpp/view.h"
@@ -36,21 +33,14 @@
 #include "ppapi/native_client/src/trusted/plugin/service_runtime.h"
 #include "ppapi/native_client/src/trusted/plugin/utility.h"
 
-struct NaClSrpcChannel;
-
 namespace nacl {
 class DescWrapper;
 class DescWrapperFactory;
 }  // namespace nacl
 
 namespace pp {
-class Find_Dev;
-class MouseLock;
-class Printing_Dev;
-class Selection_Dev;
 class URLLoader;
 class URLUtil_Dev;
-class Zoom_Dev;
 }
 
 namespace ppapi_proxy {
@@ -106,6 +96,7 @@ class Plugin : public pp::InstancePrivate {
   bool LoadNaClModule(nacl::DescWrapper* wrapper, ErrorInfo* error_info,
                       bool enable_dyncode_syscalls,
                       bool enable_exception_handling,
+                      bool enable_crash_throttling,
                       const pp::CompletionCallback& init_done_cb,
                       const pp::CompletionCallback& crash_cb);
 
@@ -177,13 +168,6 @@ class Plugin : public pp::InstancePrivate {
   // Report nexe death after load to JS and shut down the proxy.
   void ReportDeadNexe();
 
-  // The embed/object tag argument list.
-  int argc() const { return argc_; }
-  char** argn() const { return argn_; }
-  char** argv() const { return argv_; }
-
-  Plugin* plugin() const { return const_cast<Plugin*>(this); }
-
   // URL resolution support.
   // plugin_base_url is the URL used for resolving relative URLs used in
   // src="...".
@@ -217,10 +201,6 @@ class Plugin : public pp::InstancePrivate {
     // interaction with the page.
     DONE = 4
   };
-  ReadyState nacl_ready_state() const { return nacl_ready_state_; }
-  void set_nacl_ready_state(ReadyState nacl_ready_state) {
-    nacl_ready_state_ = nacl_ready_state;
-  }
   bool nexe_error_reported() const { return nexe_error_reported_; }
   void set_nexe_error_reported(bool val) {
     nexe_error_reported_ = val;
@@ -310,7 +290,7 @@ class Plugin : public pp::InstancePrivate {
   // pointer to this object, not from base's Delete().
   ~Plugin();
 
-  bool Init(int argc, char* argn[], char* argv[]);
+  bool EarlyInit(int argc, const char* argn[], const char* argv[]);
   // Shuts down socket connection, service runtime, and receive thread,
   // in this order, for the main nacl subprocess.
   void ShutDownSubprocesses();

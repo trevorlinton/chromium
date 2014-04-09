@@ -12,11 +12,11 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/extension_manifest_constants.h"
 #include "chrome/common/extensions/permissions/permissions_data.h"
 #include "content/public/common/url_constants.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/extension_resource.h"
+#include "extensions/common/manifest_constants.h"
 #include "extensions/common/url_pattern.h"
 #include "extensions/common/url_pattern_set.h"
 #include "grit/generated_resources.h"
@@ -25,9 +25,9 @@
 
 namespace extensions {
 
-namespace keys = extension_manifest_keys;
-namespace values = extension_manifest_values;
-namespace errors = extension_manifest_errors;
+namespace keys = extensions::manifest_keys;
+namespace values = manifest_values;
+namespace errors = manifest_errors;
 
 namespace {
 
@@ -297,7 +297,7 @@ static bool IsScriptValid(const base::FilePath& path,
                           std::string* error) {
   std::string content;
   if (!base::PathExists(path) ||
-      !file_util::ReadFileToString(path, &content)) {
+      !base::ReadFileToString(path, &content)) {
     *error = l10n_util::GetStringFUTF8(
         message_id,
         relative_path.LossyDisplayName());

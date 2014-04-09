@@ -8,6 +8,7 @@
 #include "content/browser/streams/stream_registry.h"
 #include "content/browser/streams/stream_url_request_job.h"
 #include "content/browser/streams/stream_write_observer.h"
+#include "net/base/request_priority.h"
 #include "net/http/http_response_headers.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
@@ -73,7 +74,8 @@ class StreamURLRequestJobTest : public testing::Test {
                    int expected_status_code,
                    const std::string& expected_response) {
     net::TestDelegate delegate;
-    request_.reset(url_request_context_.CreateRequest(url, &delegate));
+    request_ = url_request_context_.CreateRequest(
+        url, net::DEFAULT_PRIORITY, &delegate);
     request_->set_method(method);
     if (!extra_headers.IsEmpty())
       request_->SetExtraRequestHeaders(extra_headers);
@@ -83,6 +85,7 @@ class StreamURLRequestJobTest : public testing::Test {
 
     // Verify response.
     EXPECT_TRUE(request_->status().is_success());
+    ASSERT_TRUE(request_->response_headers());
     EXPECT_EQ(expected_status_code,
               request_->response_headers()->response_code());
     EXPECT_EQ(expected_response, delegate.data_received());
@@ -129,7 +132,8 @@ TEST_F(StreamURLRequestJobTest, TestGetLargeStreamRequest) {
 
 TEST_F(StreamURLRequestJobTest, TestGetNonExistentStreamRequest) {
   net::TestDelegate delegate;
-  request_.reset(url_request_context_.CreateRequest(kStreamURL, &delegate));
+  request_ = url_request_context_.CreateRequest(
+      kStreamURL, net::DEFAULT_PRIORITY, &delegate);
   request_->set_method("GET");
   request_->Start();
 

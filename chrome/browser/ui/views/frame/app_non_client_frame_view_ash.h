@@ -12,6 +12,10 @@ namespace aura {
 class Window;
 }
 
+namespace ash {
+class FrameCaptionButtonContainerView;
+}
+
 // NonClientFrameViewAsh implementation for maximized apps.
 class AppNonClientFrameViewAsh : public BrowserNonClientFrameView {
  public:
@@ -46,7 +50,6 @@ class AppNonClientFrameViewAsh : public BrowserNonClientFrameView {
   virtual void OnBoundsChanged(const gfx::Rect& previous_bounds) OVERRIDE;
 
  private:
-  class ControlView;
   class FrameObserver;
 
   gfx::Rect GetControlBounds() const;
@@ -55,7 +58,7 @@ class AppNonClientFrameViewAsh : public BrowserNonClientFrameView {
   void CloseControlWidget();
 
   // The View containing the restore and close buttons.
-  ControlView* control_view_;
+  ash::FrameCaptionButtonContainerView* control_view_;
   // The widget holding the control_view_.
   views::Widget* control_widget_;
   // Observer for browser frame close.

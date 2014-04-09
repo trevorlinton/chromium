@@ -61,20 +61,10 @@ ScopedAppGLStateRestore::ScopedAppGLStateRestore(CallMode mode) : mode_(mode) {
 
   switch(mode_) {
     case MODE_DRAW:
-      // TODO(boliu): These should always be 0 in draw case. When we have
-      // guarantee that we are no longer making GL calls outside of draw, DCHECK
-      // these are 0 here.
-      LOG_IF(ERROR, vertex_array_buffer_binding_)
-          << "GL_ARRAY_BUFFER_BINDING not zero in draw: "
-          << vertex_array_buffer_binding_;
-      LOG_IF(ERROR, index_array_buffer_binding_)
-          << "GL_ELEMENT_ARRAY_BUFFER_BINDING not zero in draw: "
-          << index_array_buffer_binding_;
-
-      vertex_array_buffer_binding_ = 0;
-      index_array_buffer_binding_ = 0;
+      DCHECK_EQ(0, vertex_array_buffer_binding_);
+      DCHECK_EQ(0, index_array_buffer_binding_);
       break;
-    case MODE_DETACH_FROM_WINDOW:
+    case MODE_RESOURCE_MANAGEMENT:
       glGetBooleanv(GL_BLEND, &blend_enabled_);
       glGetIntegerv(GL_BLEND_SRC_RGB, &blend_src_rgb_);
       glGetIntegerv(GL_BLEND_SRC_ALPHA, &blend_src_alpha_);
@@ -215,17 +205,22 @@ ScopedAppGLStateRestore::~ScopedAppGLStateRestore() {
                   enable_sample_alpha_to_coverage_);
   GLEnableDisable(GL_SAMPLE_COVERAGE, enable_sample_coverage_);
 
-  if (mode_ == MODE_DETACH_FROM_WINDOW) {
-    GLEnableDisable(GL_BLEND, blend_enabled_);
-    glBlendFuncSeparate(
-        blend_src_rgb_, blend_dest_rgb_, blend_src_alpha_, blend_dest_alpha_);
+  switch(mode_) {
+    case MODE_DRAW:
+      // No-op.
+      break;
+    case MODE_RESOURCE_MANAGEMENT:
+      GLEnableDisable(GL_BLEND, blend_enabled_);
+      glBlendFuncSeparate(
+          blend_src_rgb_, blend_dest_rgb_, blend_src_alpha_, blend_dest_alpha_);
 
-    glViewport(viewport_[0], viewport_[1], viewport_[2], viewport_[3]);
+      glViewport(viewport_[0], viewport_[1], viewport_[2], viewport_[3]);
 
-    GLEnableDisable(GL_SCISSOR_TEST, scissor_test_);
+      GLEnableDisable(GL_SCISSOR_TEST, scissor_test_);
 
-    glScissor(
-        scissor_box_[0], scissor_box_[1], scissor_box_[2], scissor_box_[3]);
+      glScissor(
+          scissor_box_[0], scissor_box_[1], scissor_box_[2], scissor_box_[3]);
+      break;
   }
 
   GLEnableDisable(GL_STENCIL_TEST, stencil_test_);

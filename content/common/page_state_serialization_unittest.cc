@@ -47,11 +47,12 @@ void ExpectEquality(const ExplodedHttpBodyElement& a,
   EXPECT_EQ(a.type, b.type);
   EXPECT_EQ(a.data, b.data);
   EXPECT_EQ(a.file_path, b.file_path);
-  EXPECT_EQ(a.url, b.url);
+  EXPECT_EQ(a.filesystem_url, b.filesystem_url);
   EXPECT_EQ(a.file_start, b.file_start);
   EXPECT_EQ(a.file_length, b.file_length);
   if (!(isnan(a.file_modification_time) && isnan(b.file_modification_time)))
     EXPECT_DOUBLE_EQ(a.file_modification_time, b.file_modification_time);
+  EXPECT_EQ(a.blob_uuid, b.blob_uuid);
 }
 
 template <>
@@ -69,18 +70,13 @@ void ExpectEquality(const ExplodedFrameState& a, const ExplodedFrameState& b) {
   EXPECT_EQ(a.original_url_string, b.original_url_string);
   EXPECT_EQ(a.referrer, b.referrer);
   EXPECT_EQ(a.target, b.target);
-  EXPECT_EQ(a.parent, b.parent);
-  EXPECT_EQ(a.title, b.title);
-  EXPECT_EQ(a.alternate_title, b.alternate_title);
   EXPECT_EQ(a.state_object, b.state_object);
   ExpectEquality(a.document_state, b.document_state);
   EXPECT_EQ(a.scroll_offset, b.scroll_offset);
   EXPECT_EQ(a.item_sequence_number, b.item_sequence_number);
   EXPECT_EQ(a.document_sequence_number, b.document_sequence_number);
-  EXPECT_EQ(a.visit_count, b.visit_count);
-  EXPECT_EQ(a.visited_time, b.visited_time);
+  EXPECT_EQ(a.target_frame_id, b.target_frame_id);
   EXPECT_EQ(a.page_scale_factor, b.page_scale_factor);
-  EXPECT_EQ(a.is_target_item, b.is_target_item);
   ExpectEquality(a.http_body, b.http_body);
   ExpectEquality(a.children, b.children);
 }
@@ -100,9 +96,6 @@ class PageStateSerializationTest : public testing::Test {
     frame_state->original_url_string = frame_state->url_string;
     frame_state->referrer = NS16("https://www.google.com/search?q=dev.chromium.org");
     frame_state->target = NS16("foo");
-    frame_state->parent = NS16("bar");
-    frame_state->title = NS16("The Chromium Projects");
-    frame_state->alternate_title = NS16(NULL);
     frame_state->state_object = NS16(NULL);
     frame_state->document_state.push_back(NS16("1"));
     frame_state->document_state.push_back(NS16("q"));
@@ -111,10 +104,8 @@ class PageStateSerializationTest : public testing::Test {
     frame_state->scroll_offset = gfx::Point(0, 100);
     frame_state->item_sequence_number = 1;
     frame_state->document_sequence_number = 2;
-    frame_state->visit_count = 10;
-    frame_state->visited_time = 12345.0;
+    frame_state->target_frame_id = 3;
     frame_state->page_scale_factor = 2.0;
-    frame_state->is_target_item = true;
   }
 
   void PopulateHttpBody(ExplodedHttpBody* http_body,
@@ -148,16 +139,11 @@ class PageStateSerializationTest : public testing::Test {
     frame_state->referrer = NS16("http://google.com/");
     if (!is_child)
       frame_state->target = NS16("target");
-    frame_state->parent = NS16("parent");
-    frame_state->title = NS16("title");
-    frame_state->alternate_title = NS16("alternateTitle");
     frame_state->scroll_offset = gfx::Point(42, -42);
     frame_state->item_sequence_number = 123;
     frame_state->document_sequence_number = 456;
-    frame_state->visit_count = 42*42;
-    frame_state->visited_time = 13.37;
+    frame_state->target_frame_id = 0;
     frame_state->page_scale_factor = 2.0f;
-    frame_state->is_target_item = true;
 
     frame_state->document_state.push_back(
         NS16("\n\r?% WebKit serialized form state version 8 \n\r=&"));
@@ -216,7 +202,7 @@ class PageStateSerializationTest : public testing::Test {
         base::StringPrintf("serialized_v%d%s.dat", version, suffix));
 
     std::string file_contents;
-    if (!file_util::ReadFileToString(path, &file_contents)) {
+    if (!base::ReadFileToString(path, &file_contents)) {
       ADD_FAILURE() << "File not found: " << path.value();
       return;
     }
@@ -425,6 +411,14 @@ TEST_F(PageStateSerializationTest, BackwardsCompat_v13) {
 
 TEST_F(PageStateSerializationTest, BackwardsCompat_v14) {
   TestBackwardsCompat(14);
+}
+
+TEST_F(PageStateSerializationTest, BackwardsCompat_v15) {
+  TestBackwardsCompat(15);
+}
+
+TEST_F(PageStateSerializationTest, BackwardsCompat_v16) {
+  TestBackwardsCompat(16);
 }
 
 }  // namespace

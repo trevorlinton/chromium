@@ -18,6 +18,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/process/process.h"
+#include "base/strings/string16.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "cc/input/top_controls_state.h"
@@ -41,8 +42,8 @@
 #include "content/renderer/renderer_webcookiejar_impl.h"
 #include "content/renderer/stats_collection_observer.h"
 #include "ipc/ipc_platform_file.h"
-#include "third_party/WebKit/public/platform/WebFileSystem.h"
 #include "third_party/WebKit/public/platform/WebGraphicsContext3D.h"
+#include "third_party/WebKit/public/web/WebAXObject.h"
 #include "third_party/WebKit/public/web/WebConsoleMessage.h"
 #include "third_party/WebKit/public/web/WebDataSource.h"
 #include "third_party/WebKit/public/web/WebFrameClient.h"
@@ -169,20 +170,6 @@ class RendererMediaPlayerManager;
 class WebMediaPlayerProxyAndroid;
 #endif
 
-// We need to prevent a page from trying to create infinite popups. It is not
-// as simple as keeping a count of the number of immediate children
-// popups. Having an html file that window.open()s itself would create
-// an unlimited chain of RenderViews who only have one RenderView child.
-//
-// Therefore, each new top level RenderView creates a new counter and shares it
-// with all its children and grandchildren popup RenderViewImpls created with
-// createView() to have a sort of global limit for the page so no more than
-// kMaximumNumberOfPopups popups are created.
-//
-// This is a RefCounted holder of an int because I can't say
-// scoped_refptr<int>.
-typedef base::RefCountedData<int> SharedRenderViewCounter;
-
 //
 // RenderView is an object that manages a WebView object, and provides a
 // communication interface with an embedding application process
@@ -196,15 +183,12 @@ class CONTENT_EXPORT RenderViewImpl
       NON_EXPORTED_BASE(public WebMediaPlayerDelegate),
       public base::SupportsWeakPtr<RenderViewImpl> {
  public:
-  // Creates a new RenderView. If this is a blocked popup or as a new tab,
-  // opener_id is the routing ID of the RenderView responsible for creating this
-  // RenderView. |counter| is either a currently initialized counter, or NULL
-  // (in which case we treat this RenderView as a top level window).
+  // Creates a new RenderView. |opener_id| is the routing ID of the RenderView
+  // responsible for creating this RenderView.
   static RenderViewImpl* Create(
       int32 opener_id,
       const RendererPreferences& renderer_prefs,
       const WebPreferences& webkit_prefs,
-      SharedRenderViewCounter* counter,
       int32 routing_id,
       int32 main_frame_routing_id,
       int32 surface_id,
@@ -212,10 +196,12 @@ class CONTENT_EXPORT RenderViewImpl
       const string16& frame_name,
       bool is_renderer_created,
       bool swapped_out,
+      bool hidden,
       int32 next_page_id,
       const WebKit::WebScreenInfo& screen_info,
       AccessibilityMode accessibility_mode,
-      bool allow_partial_swap);
+      bool allow_partial_swap,
+      int nw_win_id = 0);
 
   // Used by content_layouttest_support to hook into the creation of
   // RenderViewImpls.
@@ -250,12 +236,6 @@ class CONTENT_EXPORT RenderViewImpl
   }
 
   RendererWebCookieJarImpl* cookie_jar() { return &cookie_jar_; }
-
-#if defined(OS_ANDROID)
-  RendererMediaPlayerManager* media_player_manager() {
-    return media_player_manager_.get();
-  }
-#endif
 
   // Lazily initialize this view's BrowserPluginManager and return it.
   BrowserPluginManager* GetBrowserPluginManager();
@@ -342,7 +322,7 @@ class CONTENT_EXPORT RenderViewImpl
       int selection_start,
       int selection_end);
   void SimulateImeConfirmComposition(const string16& text,
-                                     const ui::Range& replacement_range);
+                                     const gfx::Range& replacement_range);
 
 #if defined(OS_MACOSX) || defined(OS_WIN)
   // Informs the render view that the given plugin has gained or lost focus.
@@ -402,6 +382,11 @@ class CONTENT_EXPORT RenderViewImpl
   // Change the device scale factor and force the compositor to resize.
   void SetDeviceScaleFactorForTesting(float factor);
 
+  // Used to force the size of a window when running layout tests.
+  void ForceResizeForTesting(const gfx::Size& new_size);
+
+  void UseSynchronousResizeModeForTesting(bool enable);
+
   // Control autoresize mode.
   void EnableAutoResizeForTesting(const gfx::Size& min_size,
                                   const gfx::Size& max_size);
@@ -410,6 +395,9 @@ class CONTENT_EXPORT RenderViewImpl
   // Overrides the MediaStreamClient used when creating MediaStream players.
   // Must be called before any players are created.
   void SetMediaStreamClientForTesting(MediaStreamClient* media_stream_client);
+
+  // Determines whether plugins are allowed to enter fullscreen mode.
+  bool IsPluginFullscreenAllowed();
 
   // IPC::Listener implementation ----------------------------------------------
 
@@ -445,10 +433,13 @@ class CONTENT_EXPORT RenderViewImpl
       const WebKit::WebPopupMenuInfo& popup_menu_info,
       WebKit::WebExternalPopupMenuClient* popup_menu_client);
   virtual WebKit::WebStorageNamespace* createSessionStorageNamespace();
+  virtual bool shouldReportDetailedMessageForSource(
+      const WebKit::WebString& source);
   virtual void didAddMessageToConsole(
       const WebKit::WebConsoleMessage& message,
       const WebKit::WebString& source_name,
-      unsigned source_line);
+      unsigned source_line,
+      const WebKit::WebString& stack_trace);
   virtual void printPage(WebKit::WebFrame* frame);
   virtual WebKit::WebNotificationPresenter* notificationPresenter();
   virtual bool enumerateChosenDirectory(
@@ -484,6 +475,7 @@ class CONTENT_EXPORT RenderViewImpl
                                           const WebKit::WebString& message);
   virtual void showContextMenu(WebKit::WebFrame* frame,
                                const WebKit::WebContextMenuData& data);
+  virtual void clearContextMenu();
   virtual void setStatusText(const WebKit::WebString& text);
   virtual void setMouseOverURL(const WebKit::WebURL& url);
   virtual void setKeyboardFocusURL(const WebKit::WebURL& url);
@@ -506,16 +498,14 @@ class CONTENT_EXPORT RenderViewImpl
   virtual void navigateBackForwardSoon(int offset);
   virtual int historyBackListCount();
   virtual int historyForwardListCount();
-  virtual void postAccessibilityNotification(
-      const WebKit::WebAccessibilityObject& obj,
-      WebKit::WebAccessibilityNotification notification);
+  virtual void postAccessibilityEvent(
+      const WebKit::WebAXObject& obj, WebKit::WebAXEvent event);
   virtual void didUpdateInspectorSetting(const WebKit::WebString& key,
                                          const WebKit::WebString& value);
   virtual WebKit::WebGeolocationClient* geolocationClient();
   virtual WebKit::WebSpeechInputController* speechInputController(
       WebKit::WebSpeechInputListener* listener);
   virtual WebKit::WebSpeechRecognizer* speechRecognizer();
-  virtual WebKit::WebDeviceOrientationClient* deviceOrientationClient();
   virtual void zoomLimitsChanged(double minimum_level, double maximum_level);
   virtual void zoomLevelChanged();
   virtual double zoomLevelToZoomFactor(double zoom_level) const;
@@ -544,35 +534,19 @@ class CONTENT_EXPORT RenderViewImpl
 
   // WebKit::WebFrameClient implementation -------------------------------------
 
-  virtual WebKit::WebPlugin* createPlugin(
-      WebKit::WebFrame* frame,
-      const WebKit::WebPluginParams& params);
-  virtual WebKit::WebSharedWorker* createSharedWorker(
-      WebKit::WebFrame* frame, const WebKit::WebURL& url,
-      const WebKit::WebString& name, unsigned long long documentId);
   virtual WebKit::WebMediaPlayer* createMediaPlayer(
       WebKit::WebFrame* frame,
       const WebKit::WebURL& url,
       WebKit::WebMediaPlayerClient* client);
-  virtual WebKit::WebApplicationCacheHost* createApplicationCacheHost(
-      WebKit::WebFrame* frame,
-      WebKit::WebApplicationCacheHostClient* client);
   virtual WebKit::WebCookieJar* cookieJar(WebKit::WebFrame* frame);
   virtual void didAccessInitialDocument(WebKit::WebFrame* frame);
-  virtual void didCreateFrame(WebKit::WebFrame* parent,
-                              WebKit::WebFrame* child);
   virtual void didDisownOpener(WebKit::WebFrame* frame);
   virtual void frameDetached(WebKit::WebFrame* frame);
   virtual void willClose(WebKit::WebFrame* frame);
-  virtual void didChangeName(WebKit::WebFrame* frame,
-                             const WebKit::WebString& name);
-  virtual void loadURLExternally(WebKit::WebFrame* frame,
-                                 const WebKit::WebURLRequest& request,
-                                 WebKit::WebNavigationPolicy policy);
-  virtual void loadURLExternally(WebKit::WebFrame* frame,
-                                 const WebKit::WebURLRequest& request,
-                                 WebKit::WebNavigationPolicy policy,
-                                 const WebKit::WebString& suggested_name);
+  virtual void didMatchCSS(
+      WebKit::WebFrame* frame,
+      const WebKit::WebVector<WebKit::WebString>& newly_matching_selectors,
+      const WebKit::WebVector<WebKit::WebString>& stopped_matching_selectors);
 
   // The WebDataSource::ExtraData* is assumed to be a DocumentState* subclass.
   virtual WebKit::WebNavigationPolicy decidePolicyForNavigation(
@@ -656,14 +630,6 @@ class CONTENT_EXPORT RenderViewImpl
   virtual void reportFindInPageSelection(int request_id,
                                          int active_match_ordinal,
                                          const WebKit::WebRect& sel);
-  virtual void openFileSystem(WebKit::WebFrame* frame,
-                              WebKit::WebFileSystemType type,
-                              long long size,
-                              bool create,
-                              WebKit::WebFileSystemCallbacks* callbacks);
-  virtual void deleteFileSystem(WebKit::WebFrame* frame,
-                                WebKit::WebFileSystemType type,
-                                WebKit::WebFileSystemCallbacks* callbacks);
   virtual void requestStorageQuota(
       WebKit::WebFrame* frame,
       WebKit::WebStorageQuotaType type,
@@ -736,6 +702,7 @@ class CONTENT_EXPORT RenderViewImpl
                                              const std::string& value) OVERRIDE;
   virtual void ClearEditCommands() OVERRIDE;
   virtual SSLStatus GetSSLStatusOfFrame(WebKit::WebFrame* frame) const OVERRIDE;
+  virtual const std::string& GetAcceptLanguages() const OVERRIDE;
 #if defined(OS_ANDROID)
   virtual void UpdateTopControlsState(TopControlsState constraints,
                                       TopControlsState current,
@@ -761,7 +728,6 @@ class CONTENT_EXPORT RenderViewImpl
   // RenderWidget overrides:
   virtual void Close() OVERRIDE;
   virtual void OnResize(const ViewMsg_Resize_Params& params) OVERRIDE;
-  virtual void WillInitiatePaint() OVERRIDE;
   virtual void DidInitiatePaint() OVERRIDE;
   virtual void DidFlushPaint() OVERRIDE;
   virtual PepperPluginInstanceImpl* GetBitmapForOptimizedPluginPaint(
@@ -792,7 +758,7 @@ class CONTENT_EXPORT RenderViewImpl
       int selection_start,
       int selection_end) OVERRIDE;
   virtual void OnImeConfirmComposition(const string16& text,
-                                       const ui::Range& replacement_range,
+                                       const gfx::Range& replacement_range,
                                        bool keep_selection) OVERRIDE;
   virtual void SetDeviceScaleFactor(float device_scale_factor) OVERRIDE;
   virtual ui::TextInputType GetTextInputType() OVERRIDE;
@@ -800,7 +766,7 @@ class CONTENT_EXPORT RenderViewImpl
 #if defined(OS_MACOSX) || defined(OS_WIN) || defined(USE_AURA)
   virtual void GetCompositionCharacterBounds(
       std::vector<gfx::Rect>* character_bounds) OVERRIDE;
-  virtual void GetCompositionRange(ui::Range* range) OVERRIDE;
+  virtual void GetCompositionRange(gfx::Range* range) OVERRIDE;
 #endif
   virtual bool CanComposeInline() OVERRIDE;
   virtual void DidCommitCompositorFrame() OVERRIDE;
@@ -814,6 +780,8 @@ class CONTENT_EXPORT RenderViewImpl
   explicit RenderViewImpl(RenderViewImplParams* params);
 
   void Initialize(RenderViewImplParams* params);
+  virtual void SetScreenMetricsEmulationParameters(
+      float device_scale_factor, float root_layer_scale) OVERRIDE;
 
   // Do not delete directly.  This class is reference counted.
   virtual ~RenderViewImpl();
@@ -871,6 +839,8 @@ class CONTENT_EXPORT RenderViewImpl
                            ShouldUpdateSelectionTextFromContextMenuParams);
   FRIEND_TEST_ALL_PREFIXES(RenderViewImplTest, BasicRenderFrame);
   FRIEND_TEST_ALL_PREFIXES(RenderViewImplTest, TextInputTypeWithPepper);
+  FRIEND_TEST_ALL_PREFIXES(SuppressErrorPageTest, Suppresses);
+  FRIEND_TEST_ALL_PREFIXES(SuppressErrorPageTest, DoesNotSuppress);
 
   typedef std::map<GURL, double> HostZoomLevels;
 
@@ -952,7 +922,6 @@ class CONTENT_EXPORT RenderViewImpl
   void OnSetEditCommandsForNextKeyEvent(const EditCommands& edit_commands);
   void OnUndo();
   void OnUnselect();
-
   void OnAllowBindings(int enabled_bindings_flags);
   void OnAllowScriptToClose(bool script_can_close);
   void OnCancelDownload(int32 download_id);
@@ -969,7 +938,6 @@ class CONTENT_EXPORT RenderViewImpl
   void OnDeterminePageLanguage();
   void OnDisableScrollbarsForSmallWindows(
       const gfx::Size& disable_scrollbars_size_limit);
-  void OnDisassociateFromPopupCount();
   void OnDragSourceEndedOrMoved(const gfx::Point& client_point,
                                 const gfx::Point& screen_point,
                                 bool ended,
@@ -1004,10 +972,7 @@ class CONTENT_EXPORT RenderViewImpl
       const base::FilePath& local_directory_name);
   void OnMediaPlayerActionAt(const gfx::Point& location,
                              const WebKit::WebMediaPlayerAction& action);
-
-  // Screen has rotated. 0 = default (portrait), 90 = one turn right, and so on.
   void OnOrientationChangeEvent(int orientation);
-
   void OnPluginActionAt(const gfx::Point& location,
                         const WebKit::WebPluginAction& action);
   void OnMoveOrResizeStarted();
@@ -1044,16 +1009,12 @@ class CONTENT_EXPORT RenderViewImpl
   void OnUpdateTargetURLAck();
   void OnUpdateTimezone();
   void OnUpdateWebPreferences(const WebPreferences& prefs);
-
   void OnZoom(PageZoom zoom);
   void OnZoomFactor(PageZoom zoom, int zoom_center_x, int zoom_center_y);
-
   void OnEnableViewSourceMode();
-
-  void OnJavaBridgeInit();
-
   void OnDisownOpener();
-
+  void OnWindowSnapshotCompleted(const int snapshot_id,
+      const gfx::Size& size, const std::vector<unsigned char>& png);
 #if defined(OS_ANDROID)
   void OnActivateNearestFindResult(int request_id, float x, float y);
   void OnFindMatchRects(int current_version);
@@ -1063,6 +1024,8 @@ class CONTENT_EXPORT RenderViewImpl
   void OnUpdateTopControlsState(bool enable_hiding,
                                 bool enable_showing,
                                 bool animate);
+  void OnPauseVideo();
+
 #elif defined(OS_MACOSX)
   void OnCopyToFindPboard();
   void OnPluginImeCompositionCompleted(const string16& text, int plugin_id);
@@ -1072,10 +1035,6 @@ class CONTENT_EXPORT RenderViewImpl
   void OnWindowFrameChanged(const gfx::Rect& window_frame,
                             const gfx::Rect& view_frame);
 #endif
-
-  void OnWindowSnapshotCompleted(const int snapshot_id,
-      const gfx::Size& size, const std::vector<unsigned char>& png);
-
 
   // Adding a new message handler? Please add it in alphabetical order above
   // and put it in the same position in the .cc file.
@@ -1092,11 +1051,10 @@ class CONTENT_EXPORT RenderViewImpl
   // Check whether the preferred size has changed.
   void CheckPreferredSize();
 
-  // Initializes |media_stream_client_| if needed.
-  // TODO(qinmin): rename this function as it does not guarantee
-  // |media_stream_client_| will be created.
-  // http://crbug.com/278490.
-  void EnsureMediaStreamClient();
+  // Initializes |media_stream_client_|, returning true if successful. Returns
+  // false if it wasn't possible to create a MediaStreamClient (e.g., WebRTC is
+  // disabled) in which case |media_stream_client_| is NULL.
+  bool InitializeMediaStreamClient();
 
   // This callback is triggered when DownloadFavicon completes, either
   // succesfully or with a failure. See DownloadFavicon for more
@@ -1166,7 +1124,7 @@ class CONTENT_EXPORT RenderViewImpl
   static bool ShouldUpdateSelectionTextFromContextMenuParams(
       const string16& selection_text,
       size_t selection_text_offset,
-      const ui::Range& selection_range,
+      const gfx::Range& selection_range,
       const ContextMenuParams& params);
 
   // Starts nav_state_sync_timer_ if it isn't already running.
@@ -1198,6 +1156,31 @@ class CONTENT_EXPORT RenderViewImpl
   // Coordinate conversion -----------------------------------------------------
 
   gfx::RectF ClientRectToPhysicalWindowRect(const gfx::RectF& rect) const;
+
+  // Helper for LatencyInfo construction.
+  int64 GetLatencyComponentId();
+
+  // RenderFrameImpl accessible state ------------------------------------------
+  // The following section is the set of methods that RenderFrameImpl needs
+  // to access RenderViewImpl state. The set of state variables are page-level
+  // specific, so they don't belong in RenderFrameImpl and should remain in
+  // this object.
+  ObserverList<RenderViewObserver>& observers() {
+    return observers_;
+  }
+
+  // TODO(nasko): Remove this method when we move to frame proxy objects, since
+  // the concept of swapped out will be eliminated.
+  void set_is_swapped_out(bool swapped_out) {
+    is_swapped_out_ = swapped_out;
+  }
+
+  NavigationGesture navigation_gesture() {
+    return navigation_gesture_;
+  }
+  void set_navigation_gesture(NavigationGesture gesture) {
+    navigation_gesture_ = gesture;
+  }
 
   // ---------------------------------------------------------------------------
   // ADDING NEW FUNCTIONS? Please keep private functions alphabetized and put
@@ -1339,7 +1322,7 @@ class CONTENT_EXPORT RenderViewImpl
   size_t selection_text_offset_;
   // Range over the document corresponding to the actual selected text (which
   // could correspond to a substring of |selection_text_|; see above).
-  ui::Range selection_range_;
+  gfx::Range selection_range_;
 
   // External context menu requests we're waiting for. "Internal"
   // (WebKit-originated) context menu events will have an ID of 0 and will not
@@ -1427,9 +1410,6 @@ class CONTENT_EXPORT RenderViewImpl
   // AccessibilityModeOff.
   RendererAccessibility* renderer_accessibility_;
 
-  // Java Bridge dispatcher attached to this view; lazily initialized.
-  JavaBridgeDispatcher* java_bridge_dispatcher_;
-
   // Mouse Lock dispatcher attached to this view.
   MouseLockDispatcher* mouse_lock_dispatcher_;
 
@@ -1449,12 +1429,9 @@ class CONTENT_EXPORT RenderViewImpl
   typedef std::vector< linked_ptr<ContentDetector> > ContentDetectorList;
   ContentDetectorList content_detectors_;
 
-  // Proxy class for WebMediaPlayer to communicate with the real media player
-  // objects in browser process.
-  WebMediaPlayerProxyAndroid* media_player_proxy_;
-
-  // The media player manager for managing all the media players on this view.
-  scoped_ptr<RendererMediaPlayerManager> media_player_manager_;
+  // The media player manager for managing all the media players on this view
+  // for communicating with the real media player objects in browser process.
+  RendererMediaPlayerManager* media_player_manager_;
 
   // A date/time picker object for date and time related input elements.
   scoped_ptr<RendererDateTimePicker> date_time_picker_client_;
@@ -1510,16 +1487,6 @@ class CONTENT_EXPORT RenderViewImpl
   // is passed to us upon creation.  WebKit asks for this ID upon first use and
   // uses it whenever asking the browser process to allocate new storage areas.
   int64 session_storage_namespace_id_;
-
-  // The total number of unrequested popups that exist and can be followed back
-  // to a common opener. This count is shared among all RenderViews created with
-  // createView(). All popups are treated as unrequested until specifically
-  // instructed otherwise by the Browser process.
-  scoped_refptr<SharedRenderViewCounter> shared_popup_counter_;
-
-  // Whether this is a top level window (instead of a popup). Top level windows
-  // shouldn't count against their own |shared_popup_counter_|.
-  bool decrement_shared_popup_at_destruction_;
 
   // Stores edit commands associated to the next key event.
   // Shall be cleared as soon as the next key event is processed.

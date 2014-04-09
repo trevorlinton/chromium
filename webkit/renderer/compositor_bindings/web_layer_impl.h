@@ -5,9 +5,13 @@
 #ifndef WEBKIT_RENDERER_COMPOSITOR_BINDINGS_WEB_LAYER_IMPL_H_
 #define WEBKIT_RENDERER_COMPOSITOR_BINDINGS_WEB_LAYER_IMPL_H_
 
+#include <string>
+
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
+#include "cc/layers/layer_client.h"
 #include "third_party/WebKit/public/platform/WebAnimation.h"
+#include "third_party/WebKit/public/platform/WebCString.h"
 #include "third_party/WebKit/public/platform/WebColor.h"
 #include "third_party/WebKit/public/platform/WebCompositingReasons.h"
 #include "third_party/WebKit/public/platform/WebFloatPoint.h"
@@ -35,7 +39,7 @@ namespace webkit {
 
 class WebToCCAnimationDelegateAdapter;
 
-class WebLayerImpl : public WebKit::WebLayer {
+class WebLayerImpl : public WebKit::WebLayer, public cc::LayerClient {
  public:
   WEBKIT_COMPOSITOR_BINDINGS_EXPORT WebLayerImpl();
   WEBKIT_COMPOSITOR_BINDINGS_EXPORT explicit WebLayerImpl(
@@ -80,10 +84,8 @@ class WebLayerImpl : public WebKit::WebLayer {
   virtual void setUseParentBackfaceVisibility(bool visible);
   virtual void setBackgroundColor(WebKit::WebColor color);
   virtual WebKit::WebColor backgroundColor() const;
-  virtual void setFilter(SkImageFilter* filter);
   virtual void setFilters(const WebKit::WebFilterOperations& filters);
   virtual void setBackgroundFilters(const WebKit::WebFilterOperations& filters);
-  virtual void setDebugName(WebKit::WebString name);
   virtual void setCompositingReasons(WebKit::WebCompositingReasons);
   virtual void setAnimationDelegate(WebKit::WebAnimationDelegate* delegate);
   virtual bool addAnimation(WebKit::WebAnimation* animation);
@@ -91,8 +93,6 @@ class WebLayerImpl : public WebKit::WebLayer {
   virtual void removeAnimation(int animation_id,
                                WebKit::WebAnimation::TargetProperty);
   virtual void pauseAnimation(int animation_id, double time_offset);
-  virtual void suspendAnimations(double monotonic_time);
-  virtual void resumeAnimations(double monotonic_time);
   virtual bool hasActiveAnimation();
   virtual void setForceRenderSurface(bool force);
   virtual void setScrollPosition(WebKit::WebPoint position);
@@ -101,6 +101,9 @@ class WebLayerImpl : public WebKit::WebLayer {
   virtual WebKit::WebSize maxScrollPosition() const;
   virtual void setScrollable(bool scrollable);
   virtual bool scrollable() const;
+  virtual void setUserScrollable(bool horizontal, bool vertical);
+  virtual bool userScrollableHorizontal() const;
+  virtual bool userScrollableVertical() const;
   virtual void setHaveWheelEventHandlers(bool have_wheel_event_handlers);
   virtual bool haveWheelEventHandlers() const;
   virtual void setShouldScrollOnMainThread(bool scroll_on_main);
@@ -119,6 +122,12 @@ class WebLayerImpl : public WebKit::WebLayer {
   virtual void setScrollClient(WebKit::WebLayerScrollClient* client);
   virtual bool isOrphan() const;
   virtual void setWebLayerClient(WebKit::WebLayerClient* client);
+
+  // LayerClient implementation.
+  virtual std::string DebugName() OVERRIDE;
+
+  virtual void setScrollParent(WebKit::WebLayer* parent);
+  virtual void setClipParent(WebKit::WebLayer* parent);
 
  protected:
   scoped_refptr<cc::Layer> layer_;

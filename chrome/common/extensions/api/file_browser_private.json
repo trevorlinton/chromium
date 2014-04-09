@@ -5,7 +5,11 @@
 [
   {
     "namespace":"fileBrowserPrivate",
+    "compiler_options": {
+      "implemented_in": "chrome/browser/chromeos/extensions/file_manager/file_browser_private_api_functions.h"
+    },
     "description": "none",
+    "platforms": ["chromeos"],
     "types": [
       {
         "id": "FileTask",
@@ -24,78 +28,9 @@
             "type": "string",
             "description": "Task icon url (from chrome://extension-icon/...)"
           },
-          "driveApp": {
-            "type": "boolean",
-            "description": "True if this is Drive App."
-          },
           "isDefault": {
             "type": "boolean",
             "description": "True if this task is a default task for the selected files."
-          }
-        }
-      },
-      {
-        "id": "VolumeInfo",
-        "type": "object",
-        "description": "Mounted disk volume information.",
-        "properties": {
-          "mountPath": {
-            "type": "string",
-            "description": "Disk volume mount point path. The value corresponds to its Entry.fullPath in File API."
-          },
-          "devicePath": {
-            "type": "string",
-            "description": "Disk volume device path."
-          },
-          "label": {
-            "type": "string",
-            "description": "Volume label."
-          },
-          "deviceType": {
-            "type": "string",
-            "enum": ["sd", "usb", "optical", "mobile", "unknown"],
-            "description": "Device type."
-          },
-          "readOnly": {
-            "type": "boolean",
-            "description": "Flag that specifies if volume is mounted in read-only mode."
-          },
-          "totalSize": {
-            "type": "number",
-            "description": "Approximated total disk volume size in bytes."
-          }
-        }
-      },
-      {
-        "id": "DriveWebApp",
-        "type": "object",
-        "description": "Drive WebApp properties.",
-        "properties": {
-          "appId": {
-            "type": "string",
-            "description": "WebApp ID."
-          },
-          "appName": {
-            "type": "string",
-            "description": "WebApp name."
-          },
-          "appIcon": {
-            "type": "string",
-            "optional": true,
-            "description": "URL to the Drive application icon for this application."
-          },
-          "docIcon": {
-            "type": "string",
-            "optional": true,
-            "description": "URL to the Drive document icon for documents associated with this application."
-          },
-          "objectType": {
-            "type": "string",
-            "description": "Object (file) type description."
-          },
-          "isPrimary": {
-            "type": "boolean",
-            "description": "True if this WebApp is the primary (default) open action for this file."
           }
         }
       },
@@ -104,15 +39,25 @@
         "type": "object",
         "description": "Drive file properties.",
         "properties": {
-          "fileUrl": {
-            "type": "string",
-            "optional": true,
-            "description": "the URL given for this file."
-          },
           "thumbnailUrl": {
             "type": "string",
             "optional": true,
             "description": "URL to the Drive thumbnail image for this file."
+          },
+          "imageWidth": {
+            "type": "integer",
+            "optional": true,
+            "description": "Width, if the entry is an image."
+          },
+          "imageHeight": {
+            "type": "integer",
+            "optional": true,
+            "description": "Height, if the entry is an image."
+          },
+          "imageRotation": {
+            "type": "integer",
+            "optional": true,
+            "description": "Rotation in clockwise degrees, if the entry is an image."
           },
           "isPinned": {
             "type": "boolean",
@@ -124,26 +69,15 @@
             "optional": true,
             "description": "True if the file is present in Drive cache."
           },
-          "isDirty": {
-            "type": "boolean",
-            "optional": true,
-            "description": "True if the file is awaiting upload in Drive cache."
-          },
           "isHosted": {
             "type": "boolean",
             "optional": true,
             "description": "True if the file is hosted on a Drive server instead of local."
           },
-          "errorCode": {
-            "type": "integer",
+          "customIconUrl": {
+            "type": "string",
             "optional": true,
-            "description": "The error code (from base::PlatformFileError) if fetching the properties for this file had an error."
-          },
-          "driveApps" : {
-            "type": "array",
-            "optional": true,
-            "items": {"$ref": "DriveWebApp"},
-            "description": "An array of WebApps capable of opening this file."
+            "description": "URL to the custom icon for this file."
           },
           "contentMimeType": {
             "type": "string",
@@ -154,31 +88,6 @@
             "type": "boolean",
             "optional": true,
             "description": "True if the entry is labeled as shared-with-me."
-          }
-        }
-      },
-      {
-        "id": "MountPointInfo",
-        "type": "object",
-        "description": "Mounted point information.",
-        "properties": {
-          "mountPath": {
-            "type": "string",
-            "optional": true,
-            "description": "Disk volume mount point path. The value corresponds to its Entry.fullPath in File API."
-          },
-          "sourcePath": {
-            "type": "string",
-            "description": "The path to the mounted device, archive file or network resource."
-          },
-          "mountType": {
-            "type": "string",
-            "enum": ["device", "file", "network"],
-            "description": "Type of the mount."
-          },
-          "mountCondition": {
-            "type": "string",
-            "description": "Additional data about mount, for example, that the filesystem is not supported."
           }
         }
       },
@@ -206,66 +115,31 @@
             "type": "string",
             "description": "Disk volume mount point path."
           },
-          "devicePath": {
+          "sourcePath": {
             "type": "string",
-            "description": "Disk volume device path."
+            "optional": true,
+            "description": "The path to the mounted device, archive file or network resource."
           },
-          "systemPath": {
+          "volumeType": {
             "type": "string",
-            "description": "Disk volume system path."
-          },
-          "filePath": {
-            "type": "string",
-            "description": "Disk volume file path."
-          },
-          "deviceLabel": {
-            "type": "string",
-            "description": "Volume label."
-          },
-          "driveLabel": {
-            "type": "string",
-            "description": "Volume's disk label."
+            "enum": ["drive", "downloads", "removable", "archive"],
+            "description": "Type of the mounted volume."
           },
           "deviceType": {
             "type": "string",
+            "optional": true,
             "enum": ["usb", "sd", "optical", "mobile", "unknown"],
-            "description": "Device type."
-          },
-          "isParent": {
-            "type": "boolean",
-            "description": "Flag that specifies if volume is a parent device."
+            "description": "Device type. Available if this is removable volume."
           },
           "isReadOnly": {
             "type": "boolean",
             "description": "Flag that specifies if volume is mounted in read-only mode."
           },
-          "hasMedia": {
-            "type": "boolean",
-            "description": "Flag that specifies if volume has any media."
-          },
-          "isOnBootDevice": {
-            "type": "boolean",
-            "description": "Flag that specifies if volume is on boot device."
-          },
-          "totalSize": {
-            "type": "integer",
-            "description": "Total disk volume size."
-          }
-        }
-      },
-      {
-        "id": "MountEvent",
-        "type": "object",
-        "description": "Payload data for disk mount / unmount event.",
-        "properties": {
-          "eventType": {
+          "mountCondition": {
             "type": "string",
-            "enum": ["added", "removed"],
-            "description": "Event type that tells listeners which disk volume even was raised."
-          },
-          "volumeInfo": {
-            "$ref": "VolumeInfo",
-            "description":"Volume information that this mount event applies to."
+            "optional": true,
+            "enum": ["unknown", "unsupported"],
+            "description": "Additional data about mount, for example, that the filesystem is not supported."
           }
         }
       },
@@ -295,19 +169,9 @@
                      "error_path_unmounted"],
             "description": "Event type that tells listeners if mount was successful or an error occurred. It also specifies the error."
           },
-          "sourcePath": {
-            "type": "string",
-            "description": "Path that has been mounted."
-          },
-          "mountPath": {
-            "type": "string",
-            "optional": true,
-            "description": "Path that sourcePath was mounted to."
-          },
-          "mountType": {
-            "type": "string",
-            "enum": ["device", "file", "network", "drive"],
-            "description": "Type of the mount."
+          "volumeMetadata": {
+            "$ref": "VolumeMetadata",
+            "description": "Metadata of the mounted volume."
           }
         }
       },
@@ -343,6 +207,38 @@
         }
       },
       {
+        "id": "CopyProgressStatus",
+        "type": "object",
+        "description": "Payload data for copy status progress updates.",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["begin_copy_entry", "end_copy_entry", "progress", "success", "error"],
+            "description": "The type of the progress event. \"begin_copy_entry\" is fired for each entry (file or directory) before starting the copy operation, \"end_copy_entry\" is fired for each entry (file or directory) after ending the copy operation. \"progress\" is fired periodically to report progress of a file copy (not directory). \"success\" is fired after all entries are copied. \"error\" is fired when an error occurs."
+          },
+          "sourceUrl": {
+            "type": "string",
+            "optional": true,
+            "description": "URL for the entry currently being copied. This field is particularly useful when a directory copy is initiated with startCopy(). The field tells what file/directory in that directory is now being copied."
+          },
+          "destinationUrl": {
+            "type": "string",
+            "optional": true,
+            "description": "URL for the entry currently being created. This field is particularly useful when a directory copy is initiated with startCopy(). The field tells what file/directory in that directory is being created. Available only for end_copy_entry and success."
+          },
+          "size": {
+            "type": "number",
+            "optional": true,
+            "description": "Number of processed bytes for the file currently being copied. Available only for \"progress\" event. To show the progress bar, a caller needs to pre-compute the size of files being copied for the file (not directory)."
+          },
+          "error": {
+            "type": "integer",
+            "optional": true,
+            "description": "FileError's code of the error. Available only for ERROR event."
+          }
+        }
+      },
+      {
         "id": "FileTransferCancelStatus",
         "type": "object",
         "description": "Payload data for file transfer cancel response.",
@@ -370,26 +266,6 @@
           "directoryUrl": {
             "type": "string",
             "description": "URL of watched directory."
-          },
-          "changedEntries": {
-            "type": "array",
-            "items": {"$ref": "FileWatchChangedEntry"}
-          }
-        }
-      },
-      {
-        "id": "FileWatchChangedEntry",
-        "type": "object",
-        "description": "Information about changed file or directory",
-        "properties": {
-          "changeType": {
-            "type": "string",
-            "enum": ["added", "deleted", "updated"],
-            "description": "Specifies type of the change."
-          },
-          "fileUrl": {
-            "type": "string",
-            "description": "URL of the changed file."
           }
         }
       }
@@ -417,7 +293,7 @@
             "description": "The unique identifier of task to execute."
           },
           {
-            "name": "fileURLs",
+            "name": "fileUrls",
             "type": "array",
             "description": "Array of file URLs",
             "items": { "type": "string" }
@@ -447,7 +323,7 @@
             "description": "The unique identifier of task to mark as default."
           },
           {
-            "name": "fileURLs",
+            "name": "fileUrls",
             "type": "array",
             "description": "Array of selected file URLs to extract suffixes from.",
             "items": { "type": "string" }
@@ -472,7 +348,7 @@
         "description": "Gets the list of tasks that can be performed over selected files.",
         "parameters": [
           {
-            "name": "fileURLs",
+            "name": "fileUrls",
             "type": "array",
             "description": "Array of selected file URLs",
             "items": { "type": "string" }
@@ -566,6 +442,11 @@
         "description": "Requests access to the file system specially set up for Files.app. The filesystem has multiple mount points which provide access to the user's Downloadsfolder, removal media like SD cards, and Drive. See comments at CrosDiskMountPorivder for details.",
         "parameters": [
           {
+            "name": "fileSystemId",
+            "type": "string",
+            "description": "The ID of the file system to request. The file system ID is delivered to JavaScript as part of VolumeMetadata (This is not yet implemented). By specifying \"compatible\", this function behaves in the compatible mode, where the returned FileSystem object gives access to all file systems (i.e. all file systems are provided inside the single FileSystem object). In the new \"multi FileSystem object model\", a separate FileSystem object is created for each file system. \"compatible\" parameter will be removed once Files.app is switched to the multi FileSystem object model. crbug.com/284963"
+          },
+          {
             "name": "callback",
             "type": "function",
             "parameters": [
@@ -573,6 +454,7 @@
                 "name" : "fileSystem",
                 "type": "object",
                 "optional": true,
+                "additionalProperties": { "type": "any" },
                 "description": "A DOMFileSystem instance for local file system access. null if the caller has no appropriate permissions."
               }
             ]
@@ -631,30 +513,6 @@
             "name": "callback",
             "type": "function",
             "parameters": []
-          }
-        ]
-      },
-      {
-        "name": "viewFiles",
-        "type": "function",
-        "description": "Views multiple files.",
-        "parameters": [
-          {
-            "name": "fileUrls",
-            "type": "array",
-            "description": "Array of selected paths",
-            "items": {"type": "string"}
-          },
-          {
-            "name": "callback",
-            "type": "function",
-            "parameters": [
-              {
-                "name" : "success",
-                "type": "boolean",
-                "description": "True if the selected files can be viewed by the browser."
-              }
-            ]
           }
         ]
       },
@@ -728,29 +586,6 @@
         ]
       },
       {
-        "name": "getVolumeMetadata",
-        "description": "Requests volume's metadata",
-        "parameters": [
-          {
-            "name": "mountUrl",
-            "type": "string",
-            "description": "Mount url of the volume."
-          },
-          {
-            "name": "callback",
-            "type": "function",
-            "parameters": [
-              {
-                "name" : "volumeMetadata",
-                "$ref": "VolumeMetadata",
-                "optional": true,
-                "description": "A requested metadata dictionary object. undefined if there is no volume with selected devicePath"
-              }
-            ]
-          }
-        ]
-      },
-      {
         "name": "addMount",
         "description": "Mount a resource or a file.",
         "parameters": [
@@ -758,17 +593,6 @@
             "name": "source",
             "type": "string",
             "description": "Mount point source. For compressed files it is relative file path within external file system"
-          },
-          {
-            "name": "mountType",
-            "type": "string",
-            "enum": ["device", "file", "network", "drive"],
-            "description": "Mount point type. 'file' for compressed files"
-          },
-          {
-            "name": "options",
-            "type": "object",
-            "description": "Name/value pairs for source specific options"
           },
           {
             "name": "callback",
@@ -795,18 +619,18 @@
         ]
       },
       {
-        "name": "getMountPoints",
-        "description": "Get the list of mount points.",
+        "name": "getVolumeMetadataList",
+        "description": "Get the list of mounted volumes.",
         "parameters": [
           {
             "name": "callback",
             "type": "function",
             "parameters": [
               {
-                "name" : "mountPoints",
+                "name" : "volumeMetadataList",
                 "type": "array",
-                "items": {"$ref": "MountPointInfo"},
-                "description": "The list of MountPointInfo representing mounted devices."
+                "items": {"$ref": "VolumeMetadata"},
+                "description": "The list of VolumeMetadata representing mounted volumes."
               }
             ]
           }
@@ -837,24 +661,52 @@
         ]
       },
       {
-        "name": "setLastModified",
-        "description": "Updates last modified to specified time in seconds",
+        "name": "startCopy",
+        "description": "Starts to copy an entry. If the source is a directory, the copy is done recursively.",
         "parameters": [
           {
-            "name": "fileUrl",
+            "name": "sourceUrl",
             "type": "string",
-            "description": "File url from the local file system."
+            "description": "URL of the source entry to be copied."
           },
           {
-            "name": "lastModified",
+            "name": "parent",
             "type": "string",
-            "description": "Date to set as last modification date in ms. Should be passed to C++ as string, since 'long' type isn't supported"
+            "description": "URL of the destination directory."
+          },
+          {
+            "name": "newName",
+            "type": "string",
+            "description": "Name of the new entry. It shouldn't contain '/'."
+          },
+          {
+            "name": "callback",
+            "type": "function",
+            "description": "Completion callback.",
+            "parameters": [
+              {
+                "name": "copyId",
+                "type": "integer",
+                "description": "ID of the copy task. Can be used to identify the progress, and to cancel the task."
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "cancelCopy",
+        "description": "Cancels the running copy task.",
+        "parameters": [
+          {
+            "name": "copyId",
+            "type": "integer",
+            "description": "ID of the copy task to be cancelled."
           },
           {
             "name": "callback",
             "type": "function",
             "optional": true,
-            "description": "Completion callback. $ref:runtime.lastError will be set if there was an error.",
+            "description": "Completion callback of the cancel.",
             "parameters": []
           }
         ]
@@ -941,12 +793,10 @@
             "properties": {
               "query": {
                 "type": "string",
-                "optional": true,
                 "description": "Search query."
               },
               "nextFeed": {
                 "type": "string",
-                "optional": true,
                 "description": "ID of the search feed that should be fetched next. Value passed here should be gotten from previous searchDrive call. It can be empty for the initial search request."
               }
             }
@@ -961,6 +811,7 @@
                 "items": {
                   "type": "object",
                   "isInstanceOf": "Entry",
+                  "additionalProperties": { "type": "any" },
                   "description": "An Entry object which represents a Drive file. The conversion into a kind of FileEntry object is done in file_browser_handler_custom_bindings.cc. For filesystem API's Entry interface, see <a href='http://www.w3.org/TR/file-system-api/#the-entry-interface'>The Entry interface</a>."
                 }
               },
@@ -984,18 +835,15 @@
             "properties": {
               "query": {
                 "type": "string",
-                "optional": true,
                 "description": "Search query. It can be empty. Any filename matches to an empty query."
               },
               "types": {
                 "type": "string",
                 "enum": ["EXCLUDE_DIRECTORIES", "SHARED_WITH_ME", "OFFLINE", "ALL"],
-                "optional": true,
                 "description": "The type of entry that is needed. Default to ALL."
               },
               "maxResults": {
                 "type": "integer",
-                "optional": true,
                 "description": "Maximum number of results."
               }
             }
@@ -1013,6 +861,7 @@
                     "entry": {
                       "type": "object",
                       "isInstanceOf": "Entry",
+                      "additionalProperties": { "type": "any" },
                       "description": "A dictionary object which represents a Drive file. This will be converted into a kind of FileEntry object. See file_browser_handler_custom_bindings.cc for details. For filesystem API's Entry interface, see <a href='http://www.w3.org/TR/file-system-api/#the-entry-interface'>The Entry interface</a>."
                     },
                     "highlightedBaseName": {
@@ -1042,7 +891,7 @@
             "description": "URL of the directory containing the selected files."
           },
           {
-            "name": "selectionURLs",
+            "name": "selectionUrls",
             "type": "array",
             "description": "URLs of the selected files. The files must be under the directory specified by dirURL.",
             "items": { "type": "string" }
@@ -1153,6 +1002,23 @@
         ]
       },
       {
+        "name": "requestWebStoreAccessToken",
+        "description": "Requests a Webstore API OAuth2 access token.",
+        "parameters": [
+          {
+            "name": "callback",
+            "type": "function",
+            "parameters": [
+              {
+                "name": "accessToken",
+                "type": "string",
+                "description": "OAuth2 access token, or an empty string if failed to fetch."
+              }
+            ]
+          }
+        ]
+      },
+      {
         "name": "getShareUrl",
         "description": "Requests a share dialog url for the specified file.",
         "parameters": [
@@ -1171,6 +1037,23 @@
                 "description": "Share Url for the sharing dialog."
               }
             ]
+          }
+        ]
+      },
+      {
+        "name": "installWebstoreItem",
+        "type": "function",
+        "description": "Requests to install a webstore item.",
+        "parameters": [
+          {
+            "name": "item_id",
+            "type": "string",
+            "description": "The id of the item to install."
+          },
+          {
+            "name": "callback",
+            "type": "function",
+            "parameters": []
           }
         ]
       }
@@ -1198,6 +1081,50 @@
             "items": {"$ref": "FileTransferStatus"},
             "name": "event",
             "description": "List of ongoing file statuses for ongoing transfer operations."
+          }
+        ]
+      },
+      // Here is an example of onCopyProgress:
+      // Suppose a/b/c.txt (100bytes) and a/b/d.txt (200bytes), and trying to
+      // copy a to x recursively. The events will be:
+      //
+      // begin_copy_entry "a"
+      // <create empty directory x/a>
+      // end_copy_entry "a" "x/a"
+      //
+      // begin_copy_entry "a/b"
+      // <create empty directory x/a/b>
+      // end_copy_entry "a/b" "x/a/b"
+      //
+      // begin_copy_entry "a/b/c.txt"
+      // progress "a/b/c.txt" 0
+      // progress "a/b/c.txt" 10
+      //     :
+      // progress "a/b/c.txt" 100
+      // end_copy_entry "a/b/c.txt" "x/a/b/c.txt"
+      //
+      // begin_copy_entry "a/b/d.txt"
+      // progress "a/b/d.txt" 0
+      // progress "a/b/d.txt" 10
+      //     :
+      // progress "a/b/d.txt" 200
+      // end_copy_entry "a/b/d.txt" "x/a/b/d.txt"
+      //
+      // success "a" "x/a"
+      {
+        "name": "onCopyProgress",
+        "type": "function",
+        "description": "Periodically fired during a copy task to report its progress update.",
+        "parameters": [
+          {
+            "type": "integer",
+            "name": "copyId",
+            "description": "Id of the copy task of this progress update."
+          },
+          {
+            "$ref": "CopyProgressStatus",
+            "name": "status",
+            "description": "Progress update status."
           }
         ]
       },

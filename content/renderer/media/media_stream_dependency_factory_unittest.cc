@@ -49,34 +49,23 @@ class MediaStreamDependencyFactoryTest : public ::testing::Test {
     dependency_factory_.reset(new MockMediaStreamDependencyFactory());
   }
 
-  virtual void TearDown() OVERRIDE {
-    // TODO(tommyw): Remove this once WebKit::MediaStreamSource::Owner has been
-    // implemented to fully avoid a circular dependency.
-    for (size_t i = 0; i < audio_sources_.size(); ++i)
-      audio_sources_[i].setExtraData(NULL);
-
-    for (size_t i = 0; i < video_sources_.size(); ++i)
-      video_sources_[i].setExtraData(NULL);
-  }
-
   WebKit::WebMediaStream CreateWebKitMediaStream(bool audio, bool video) {
     WebKit::WebVector<WebKit::WebMediaStreamSource> audio_sources(
         audio ? static_cast<size_t>(1) : 0);
     WebKit::WebVector<WebKit::WebMediaStreamSource> video_sources(
         video ? static_cast<size_t>(1) : 0);
+    MediaStreamSourceExtraData::SourceStopCallback dummy_callback;
 
     if (audio) {
       StreamDeviceInfo info;
       info.device.type = content::MEDIA_DEVICE_AUDIO_CAPTURE;
       info.device.name = "audio";
-      info.device.sample_rate = 0;
-      info.device.channel_layout = 0;
       info.session_id = 99;
       audio_sources[0].initialize("audio",
                                   WebKit::WebMediaStreamSource::TypeAudio,
                                   "audio");
       audio_sources[0].setExtraData(
-          new MediaStreamSourceExtraData(info, audio_sources[0]));
+          new MediaStreamSourceExtraData(info, dummy_callback));
       audio_sources_.assign(audio_sources);
     }
     if (video) {
@@ -88,7 +77,7 @@ class MediaStreamDependencyFactoryTest : public ::testing::Test {
                                   WebKit::WebMediaStreamSource::TypeVideo,
                                   "video");
       video_sources[0].setExtraData(
-          new MediaStreamSourceExtraData(info, video_sources[0]));
+          new MediaStreamSourceExtraData(info, dummy_callback));
       video_sources_.assign(video_sources);
     }
     WebKit::WebMediaStream stream_desc;

@@ -14,7 +14,6 @@
 #include "base/threading/thread_checker.h"
 #include "chrome/browser/chromeos/input_method/candidate_window_controller.h"
 #include "chrome/browser/chromeos/input_method/ibus_controller.h"
-#include "chrome/browser/chromeos/input_method/input_method_manager_impl_ll.h"
 #include "chrome/browser/chromeos/input_method/input_method_util.h"
 #include "chromeos/ime/ibus_daemon_controller.h"
 #include "chromeos/ime/input_method_manager.h"
@@ -68,15 +67,6 @@ class InputMethodManagerImpl : public InputMethodManager,
       const std::vector<std::string>& new_active_input_method_ids) OVERRIDE;
   virtual bool EnableInputMethod(const std::string& new_active_input_method_id)
       OVERRIDE;
-  virtual bool MigrateOldInputMethods(
-      std::vector<std::string>* input_method_ids) OVERRIDE;
-  virtual bool MigrateKoreanKeyboard(
-      const std::string& keyboard_id,
-      std::vector<std::string>* input_method_ids) OVERRIDE;
-  virtual bool SetInputMethodConfig(
-      const std::string& section,
-      const std::string& config_name,
-      const InputMethodConfigValue& value) OVERRIDE;
   virtual void ChangeInputMethod(const std::string& input_method_id) OVERRIDE;
   virtual void ActivateInputMethodProperty(const std::string& key) OVERRIDE;
   virtual void AddInputMethodExtension(
@@ -102,7 +92,7 @@ class InputMethodManagerImpl : public InputMethodManager,
   virtual InputMethodUtil* GetInputMethodUtil() OVERRIDE;
   virtual ComponentExtensionIMEManager*
       GetComponentExtensionIMEManager() OVERRIDE;
-  virtual bool IsFullLatinKeyboard(const std::string& layout) const OVERRIDE;
+  virtual bool IsLoginKeyboard(const std::string& layout) const OVERRIDE;
 
   // Sets |ibus_controller_|.
   void SetIBusControllerForTesting(IBusController* ibus_controller);
@@ -239,10 +229,6 @@ class InputMethodManagerImpl : public InputMethodManager,
   base::ThreadChecker thread_checker_;
 
   base::WeakPtrFactory<InputMethodManagerImpl> weak_ptr_factory_;
-
-  // Check if input method id allows full latin input (for entering passwords on
-  // login screen)
-  FullLatinKeyboardLayoutChecker full_latin_keyboard_checker;
 
   DISALLOW_COPY_AND_ASSIGN(InputMethodManagerImpl);
 };

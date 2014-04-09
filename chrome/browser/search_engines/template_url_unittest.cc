@@ -4,6 +4,7 @@
 
 #include "base/base_paths.h"
 #include "base/command_line.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
@@ -38,7 +39,7 @@ class TestSearchTermsData : public SearchTermsData {
 };
 
 TestSearchTermsData::TestSearchTermsData(const std::string& google_base_url)
-    : google_base_url_(google_base_url)  {
+    : google_base_url_(google_base_url) {
 }
 
 std::string TestSearchTermsData::GoogleBaseURLValue() const {
@@ -175,7 +176,7 @@ TEST_F(TemplateURLTest, URLRefTestImageURLWithPOST) {
   const char kValidPostParamsString[] =
       "image_content={google:imageThumbnail},image_url={google:imageURL},"
       "sbisrc={google:imageSearchSource},language={language},empty_param=,"
-      "constant_param=constant";
+      "constant_param=constant,width={google:imageOriginalWidth}";
   const char KImageSearchURL[] = "http://foo.com/sbi";
 
   TemplateURLData data;
@@ -203,6 +204,7 @@ TEST_F(TemplateURLTest, URLRefTestImageURLWithPOST) {
   TemplateURLRef::SearchTermsArgs search_args(ASCIIToUTF16("X"));
   search_args.image_thumbnail_content = "dummy-image-thumbnail";
   search_args.image_url = GURL("http://dummyimage.com/dummy.jpg");
+  search_args.image_original_size = gfx::Size(10, 10);
   // Replacement operation with no post_data buffer should still return
   // the parsed URL.
   GURL result(url.image_url_ref().ReplaceSearchTerms(search_args));
@@ -222,7 +224,7 @@ TEST_F(TemplateURLTest, URLRefTestImageURLWithPOST) {
       url.image_url_ref().replacements_;
   const TemplateURLRef::PostParams& post_params =
       url.image_url_ref().post_params_;
-  EXPECT_EQ(6U, post_params.size());
+  EXPECT_EQ(7U, post_params.size());
   for (TemplateURLRef::PostParams::const_iterator i = post_params.begin();
        i != post_params.end(); ++i) {
     TemplateURLRef::Replacements::const_iterator j = replacements.begin();
@@ -230,6 +232,12 @@ TEST_F(TemplateURLTest, URLRefTestImageURLWithPOST) {
       if (j->is_post_param && j->index ==
           static_cast<size_t>(i - post_params.begin())) {
         switch (j->type) {
+          case TemplateURLRef::GOOGLE_IMAGE_ORIGINAL_WIDTH:
+            EXPECT_EQ("width", i->first);
+            EXPECT_EQ(
+                base::IntToString(search_args.image_original_size.width()),
+                i->second);
+            break;
           case TemplateURLRef::GOOGLE_IMAGE_THUMBNAIL:
             EXPECT_EQ("image_content", i->first);
             EXPECT_EQ(search_args.image_thumbnail_content, i->second);
@@ -1134,6 +1142,36 @@ TEST_F(TemplateURLTest, ReplaceSearchTermsInURL) {
   EXPECT_EQ(GURL("http://google.com/alt/?q=#q=Bob Morane"), result);
 }
 
+// Test the |suggest_query_params| field of SearchTermsArgs.
+TEST_F(TemplateURLTest, SuggestQueryParams) {
+  UIThreadSearchTermsData::SetGoogleBaseURL("http://www.google.com/");
+  TemplateURLData data;
+  // Pick a URL with replacements before, during, and after the query, to ensure
+  // we don't goof up any of them.
+  data.SetURL("{google:baseURL}search?q={searchTerms}"
+      "#{google:originalQueryForSuggestion}x");
+  TemplateURL url(NULL, data);
+
+  // Baseline: no |suggest_query_params| field.
+  TemplateURLRef::SearchTermsArgs search_terms(ASCIIToUTF16("abc"));
+  search_terms.original_query = ASCIIToUTF16("def");
+  search_terms.accepted_suggestion = 0;
+  EXPECT_EQ("http://www.google.com/search?q=abc#oq=def&x",
+            url.url_ref().ReplaceSearchTerms(search_terms));
+
+  // Set the suggest_query_params.
+  search_terms.suggest_query_params = "pq=xyz";
+  EXPECT_EQ("http://www.google.com/search?pq=xyz&q=abc#oq=def&x",
+            url.url_ref().ReplaceSearchTerms(search_terms));
+
+  // Add extra_query_params in the mix, and ensure it works.
+  search_terms.append_extra_query_params = true;
+  CommandLine::ForCurrentProcess()->AppendSwitchASCII(
+      switches::kExtraSearchQueryParams, "a=b");
+  EXPECT_EQ("http://www.google.com/search?a=b&pq=xyz&q=abc#oq=def&x",
+            url.url_ref().ReplaceSearchTerms(search_terms));
+}
+
 // Test the |append_extra_query_params| field of SearchTermsArgs.
 TEST_F(TemplateURLTest, ExtraQueryParams) {
   UIThreadSearchTermsData::SetGoogleBaseURL("http://www.google.com/");
@@ -1187,7 +1225,7 @@ TEST_F(TemplateURLTest, ReplacePageClassification) {
   EXPECT_EQ("http://www.google.com/?pgcl=1&q=foo", result);
 
   search_terms_args.page_classification =
-      AutocompleteInput::HOMEPAGE;
+      AutocompleteInput::HOME_PAGE;
   result = url.url_ref().ReplaceSearchTerms(search_terms_args);
   EXPECT_EQ("http://www.google.com/?pgcl=3&q=foo", result);
 }
@@ -1197,6 +1235,7 @@ TEST_F(TemplateURLTest, IsSearchResults) {
   TemplateURLData data;
   data.SetURL("http://bar/search?q={searchTerms}");
   data.instant_url = "http://bar/instant#q={searchTerms}";
+  data.new_tab_url = "http://bar/newtab";
   data.alternate_urls.push_back("http://bar/?q={searchTerms}");
   data.alternate_urls.push_back("http://bar/#q={searchTerms}");
   data.alternate_urls.push_back("http://bar/search#q{searchTerms}");
@@ -1216,10 +1255,37 @@ TEST_F(TemplateURLTest, IsSearchResults) {
     { "http://bar/url?url=http://www.foo.com/&q=foo#ref=bar", false, },
     { "http://bar/", false, },
     { "http://foo/", false, },
+    { "http://bar/newtab", false, },
   };
 
   for (size_t i = 0; i < ARRAYSIZE_UNSAFE(url_data); ++i) {
     EXPECT_EQ(url_data[i].result,
               search_provider.IsSearchURL(GURL(url_data[i].url)));
   }
+}
+
+TEST_F(TemplateURLTest, ReflectsBookmarkBarPinned) {
+  TemplateURLData data;
+  data.input_encodings.push_back("UTF-8");
+  data.SetURL("{google:baseURL}?{google:bookmarkBarPinned}q={searchTerms}");
+  TemplateURL url(NULL, data);
+  EXPECT_TRUE(url.url_ref().IsValid());
+  ASSERT_TRUE(url.url_ref().SupportsReplacement());
+  TemplateURLRef::SearchTermsArgs search_terms_args(ASCIIToUTF16("foo"));
+
+  // Do not add the param when InstantExtended is suppressed on SRPs.
+  url.url_ref_.showing_search_terms_ = false;
+  std::string result = url.url_ref().ReplaceSearchTerms(search_terms_args);
+  EXPECT_EQ("http://www.google.com/?q=foo", result);
+
+  // Add the param when InstantExtended is not suppressed on SRPs.
+  url.url_ref_.showing_search_terms_ = true;
+  search_terms_args.bookmark_bar_pinned = false;
+  result = url.url_ref().ReplaceSearchTerms(search_terms_args);
+  EXPECT_EQ("http://www.google.com/?bmbp=0&q=foo", result);
+
+  url.url_ref_.showing_search_terms_ = true;
+  search_terms_args.bookmark_bar_pinned = true;
+  result = url.url_ref().ReplaceSearchTerms(search_terms_args);
+  EXPECT_EQ("http://www.google.com/?bmbp=1&q=foo", result);
 }

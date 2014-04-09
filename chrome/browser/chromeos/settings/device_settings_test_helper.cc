@@ -63,6 +63,7 @@ void DeviceSettingsTestHelper::FlushRetrieve() {
   for (device_local_account_state = device_local_account_policy_.begin();
        device_local_account_state != device_local_account_policy_.end();
        ++device_local_account_state) {
+    std::vector<RetrievePolicyCallback> callbacks;
     callbacks.swap(device_local_account_state->second.retrieve_callbacks_);
     for (std::vector<RetrievePolicyCallback>::iterator cb(callbacks.begin());
          cb != callbacks.end(); ++cb) {
@@ -96,6 +97,8 @@ bool DeviceSettingsTestHelper::HasPendingOperations() const {
   return false;
 }
 
+void DeviceSettingsTestHelper::Init(dbus::Bus* bus) {}
+
 void DeviceSettingsTestHelper::AddObserver(Observer* observer) {}
 
 void DeviceSettingsTestHelper::RemoveObserver(Observer* observer) {}
@@ -111,8 +114,6 @@ void DeviceSettingsTestHelper::EmitLoginPromptVisible() {}
 void DeviceSettingsTestHelper::RestartJob(int pid,
                                           const std::string& command_line) {}
 
-void DeviceSettingsTestHelper::RestartEntd() {}
-
 void DeviceSettingsTestHelper::StartSession(const std::string& user_email) {}
 
 void DeviceSettingsTestHelper::StopSession() {}
@@ -122,8 +123,6 @@ void DeviceSettingsTestHelper::StartDeviceWipe() {}
 void DeviceSettingsTestHelper::RequestLockScreen() {}
 
 void DeviceSettingsTestHelper::NotifyLockScreenShown() {}
-
-void DeviceSettingsTestHelper::RequestUnlockScreen() {}
 
 void DeviceSettingsTestHelper::NotifyLockScreenDismissed() {}
 

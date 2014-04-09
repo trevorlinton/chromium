@@ -44,7 +44,6 @@
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_messages.h"
-#include "chrome/common/extensions/features/feature.h"
 #include "chrome/common/extensions/permissions/permissions_data.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/browser_message_filter.h"
@@ -54,6 +53,7 @@
 #include "content/public/browser/user_metrics.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/event_filtering_info.h"
+#include "extensions/common/features/feature.h"
 #include "extensions/common/url_pattern.h"
 #include "grit/generated_resources.h"
 #include "net/base/auth.h"
@@ -93,10 +93,10 @@ const char kWebView[] = "webview";
 // List of all the webRequest events.
 const char* const kWebRequestEvents[] = {
   keys::kOnBeforeRedirectEvent,
-  keys::kOnBeforeRequestEvent,
+  web_request::OnBeforeRequest::kEventName,
   keys::kOnBeforeSendHeadersEvent,
   keys::kOnCompletedEvent,
-  keys::kOnErrorOccurredEvent,
+  web_request::OnErrorOccurred::kEventName,
   keys::kOnSendHeadersEvent,
   keys::kOnAuthRequiredEvent,
   keys::kOnResponseStartedEvent,
@@ -397,7 +397,6 @@ struct ExtensionWebRequestEventRouter::EventListener {
   RequestFilter filter;
   int extra_info_spec;
   int embedder_process_id;
-  int embedder_routing_id;
   int webview_instance_id;
   base::WeakPtr<IPC::Sender> ipc_sender;
   mutable std::set<uint64> blocked_requests;
@@ -631,13 +630,13 @@ int ExtensionWebRequestEventRouter::OnBeforeRequest(
 
   initialize_blocked_requests |=
       ProcessDeclarativeRules(profile, extension_info_map,
-                              keys::kOnBeforeRequestEvent, request,
+                              web_request::OnBeforeRequest::kEventName, request,
                               extensions::ON_BEFORE_REQUEST, NULL);
 
   int extra_info_spec = 0;
   std::vector<const EventListener*> listeners =
       GetMatchingListeners(profile, extension_info_map,
-                           keys::kOnBeforeRequestEvent, request,
+                           web_request::OnBeforeRequest::kEventName, request,
                            &extra_info_spec);
   if (!listeners.empty() &&
       !GetAndSetSignaled(request->identifier(), kOnBeforeRequest)) {
@@ -1057,7 +1056,7 @@ void ExtensionWebRequestEventRouter::OnErrorOccurred(
   int extra_info_spec = 0;
   std::vector<const EventListener*> listeners =
       GetMatchingListeners(profile, extension_info_map,
-                           keys::kOnErrorOccurredEvent, request,
+                           web_request::OnErrorOccurred::kEventName, request,
                            &extra_info_spec);
   if (listeners.empty())
     return;
@@ -1121,11 +1120,17 @@ bool ExtensionWebRequestEventRouter::DispatchEvent(
     if ((*it)->extra_info_spec &
         (ExtraInfoSpec::BLOCKING | ExtraInfoSpec::ASYNC_BLOCKING)) {
       (*it)->blocked_requests.insert(request->identifier());
+      // If this is the first delegate blocking the request, go ahead and log
+      // it.
+      if (num_handlers_blocking == 0) {
+        std::string delegate_info =
+            l10n_util::GetStringFUTF8(IDS_LOAD_STATE_PARAMETER_EXTENSION,
+                                      UTF8ToUTF16((*it)->extension_name));
+        request->SetDelegateInfo(
+            delegate_info.c_str(),
+            net::URLRequest::DELEGATE_INFO_DISPLAY_TO_USER);
+      }
       ++num_handlers_blocking;
-
-      request->SetLoadStateParam(
-          l10n_util::GetStringFUTF16(IDS_LOAD_STATE_PARAMETER_EXTENSION,
-                                     UTF8ToUTF16((*it)->extension_name)));
     }
   }
 
@@ -1173,7 +1178,6 @@ bool ExtensionWebRequestEventRouter::AddEventListener(
     const RequestFilter& filter,
     int extra_info_spec,
     int embedder_process_id,
-    int embedder_routing_id,
     int webview_instance_id,
     base::WeakPtr<IPC::Sender> ipc_sender) {
 
@@ -1188,7 +1192,6 @@ bool ExtensionWebRequestEventRouter::AddEventListener(
   listener.extra_info_spec = extra_info_spec;
   listener.ipc_sender = ipc_sender;
   listener.embedder_process_id = embedder_process_id;
-  listener.embedder_routing_id = embedder_routing_id;
   listener.webview_instance_id = webview_instance_id;
   if (listener.webview_instance_id)
     RecordAction(content::UserMetricsAction("WebView.WebRequest.AddListener"));
@@ -1374,7 +1377,6 @@ void ExtensionWebRequestEventRouter::GetMatchingListenersImpl(
 
     if (is_guest &&
         (it->embedder_process_id != webview_info.embedder_process_id ||
-         it->embedder_routing_id != webview_info.embedder_routing_id ||
          it->webview_instance_id != webview_info.instance_id))
       continue;
 
@@ -1672,14 +1674,12 @@ void ExtensionWebRequestEventRouter::DecrementBlockCount(
     helpers::EventResponseDelta* delta =
         CalculateDelta(&blocked_request, response);
 
-    if (extensions::ActivityLog::IsLogEnabledOnAnyProfile()) {
-      LogExtensionActivity(profile,
-                           blocked_request.is_incognito,
-                           extension_id,
-                           blocked_request.request->url(),
-                           event_name,
-                           SummarizeResponseDelta(event_name, *delta));
-    }
+    LogExtensionActivity(profile,
+                         blocked_request.is_incognito,
+                         extension_id,
+                         blocked_request.request->url(),
+                         event_name,
+                         SummarizeResponseDelta(event_name, *delta));
 
     blocked_request.response_deltas.push_back(
         linked_ptr<helpers::EventResponseDelta>(delta));
@@ -1697,20 +1697,25 @@ void ExtensionWebRequestEventRouter::DecrementBlockCount(
   }
 
   if (num_handlers_blocking == 0) {
+    blocked_request.request->SetDelegateInfo(
+        NULL, net::URLRequest::DELEGATE_INFO_DEBUG_ONLY);
     ExecuteDeltas(profile, request_id, true);
   } else {
-    // Update the URLRequest to indicate it is now blocked on a different
-    // extension.
+    // Update the URLRequest to make sure it's tagged with an extension that's
+    // still blocking it.  This may end up being the same extension as before.
     std::set<EventListener>& listeners = listeners_[profile][event_name];
 
     for (std::set<EventListener>::iterator it = listeners.begin();
          it != listeners.end(); ++it) {
-      if (it->blocked_requests.count(request_id)) {
-        blocked_request.request->SetLoadStateParam(
-            l10n_util::GetStringFUTF16(IDS_LOAD_STATE_PARAMETER_EXTENSION,
-                                       UTF8ToUTF16(it->extension_name)));
-        break;
-      }
+      if (it->blocked_requests.count(request_id) == 0)
+        continue;
+      std::string delegate_info =
+          l10n_util::GetStringFUTF8(IDS_LOAD_STATE_PARAMETER_EXTENSION,
+                                    UTF8ToUTF16(it->extension_name));
+      blocked_request.request->SetDelegateInfo(
+          delegate_info.c_str(),
+          net::URLRequest::DELEGATE_INFO_DISPLAY_TO_USER);
+      break;
     }
   }
 }
@@ -2085,7 +2090,6 @@ bool WebRequestAddEventListener::RunImpl() {
 
   int embedder_process_id =
       ipc_sender.get() ? ipc_sender->render_process_id() : -1;
-  int embedder_routing_id = routing_id();
 
   const Extension* extension =
       extension_info_map()->extensions().GetByID(extension_id());
@@ -2120,8 +2124,7 @@ bool WebRequestAddEventListener::RunImpl() {
       ExtensionWebRequestEventRouter::GetInstance()->AddEventListener(
           profile_id(), extension_id(), extension_name,
           event_name, sub_event_name, filter, extra_info_spec,
-          embedder_process_id, embedder_routing_id, webview_instance_id,
-          ipc_sender_weak());
+          embedder_process_id, webview_instance_id, ipc_sender_weak());
   EXTENSION_FUNCTION_VALIDATE(success);
 
   helpers::ClearCacheOnNavigation();

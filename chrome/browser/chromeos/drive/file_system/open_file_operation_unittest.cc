@@ -9,6 +9,7 @@
 #include "base/file_util.h"
 #include "base/files/file_path.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/task_runner_util.h"
 #include "chrome/browser/chromeos/drive/drive.pb.h"
 #include "chrome/browser/chromeos/drive/file_errors.h"
 #include "chrome/browser/chromeos/drive/file_system/operation_test_base.h"
@@ -20,7 +21,7 @@ namespace file_system {
 
 class OpenFileOperationTest : public OperationTestBase {
  protected:
-  virtual void SetUp() {
+  virtual void SetUp() OVERRIDE {
     OperationTestBase::SetUp();
 
     operation_.reset(new OpenFileOperation(
@@ -44,6 +45,7 @@ TEST_F(OpenFileOperationTest, OpenExistingFile) {
   operation_->OpenFile(
       file_in_root,
       OPEN_FILE,
+      std::string(),  // mime_type
       google_apis::test_util::CreateCopyResultCallback(
           &error, &file_path, &close_callback));
   test_util::RunBlockingPoolTask();
@@ -58,7 +60,7 @@ TEST_F(OpenFileOperationTest, OpenExistingFile) {
   close_callback.Run();
   EXPECT_EQ(
       1U,
-      observer()->upload_needed_resource_ids().count(src_entry.resource_id()));
+      observer()->upload_needed_local_ids().count(src_entry.local_id()));
 }
 
 TEST_F(OpenFileOperationTest, OpenNonExistingFile) {
@@ -71,6 +73,7 @@ TEST_F(OpenFileOperationTest, OpenNonExistingFile) {
   operation_->OpenFile(
       file_in_root,
       OPEN_FILE,
+      std::string(),  // mime_type
       google_apis::test_util::CreateCopyResultCallback(
           &error, &file_path, &close_callback));
   test_util::RunBlockingPoolTask();
@@ -90,6 +93,7 @@ TEST_F(OpenFileOperationTest, CreateExistingFile) {
   operation_->OpenFile(
       file_in_root,
       CREATE_FILE,
+      std::string(),  // mime_type
       google_apis::test_util::CreateCopyResultCallback(
           &error, &file_path, &close_callback));
   test_util::RunBlockingPoolTask();
@@ -108,9 +112,13 @@ TEST_F(OpenFileOperationTest, CreateNonExistingFile) {
   operation_->OpenFile(
       file_in_root,
       CREATE_FILE,
+      std::string(),  // mime_type
       google_apis::test_util::CreateCopyResultCallback(
           &error, &file_path, &close_callback));
   test_util::RunBlockingPoolTask();
+
+  EXPECT_EQ(1U, observer()->get_changed_paths().size());
+  EXPECT_TRUE(observer()->get_changed_paths().count(file_in_root.DirName()));
 
   EXPECT_EQ(FILE_ERROR_OK, error);
   ASSERT_TRUE(base::PathExists(file_path));
@@ -120,9 +128,9 @@ TEST_F(OpenFileOperationTest, CreateNonExistingFile) {
 
   ASSERT_FALSE(close_callback.is_null());
   close_callback.Run();
-  // Here we don't know about the resource id, so just make sure
-  // OnCacheFileUploadNeededByOperation is called actually.
-  EXPECT_EQ(1U, observer()->upload_needed_resource_ids().size());
+  EXPECT_EQ(
+      1U,
+      observer()->upload_needed_local_ids().count(GetLocalId(file_in_root)));
 }
 
 TEST_F(OpenFileOperationTest, OpenOrCreateExistingFile) {
@@ -138,9 +146,14 @@ TEST_F(OpenFileOperationTest, OpenOrCreateExistingFile) {
   operation_->OpenFile(
       file_in_root,
       OPEN_OR_CREATE_FILE,
+      std::string(),  // mime_type
       google_apis::test_util::CreateCopyResultCallback(
           &error, &file_path, &close_callback));
   test_util::RunBlockingPoolTask();
+
+  // Notified because 'available offline' status of the existing file changes.
+  EXPECT_EQ(1U, observer()->get_changed_paths().size());
+  EXPECT_TRUE(observer()->get_changed_paths().count(file_in_root.DirName()));
 
   EXPECT_EQ(FILE_ERROR_OK, error);
   ASSERT_TRUE(base::PathExists(file_path));
@@ -152,7 +165,22 @@ TEST_F(OpenFileOperationTest, OpenOrCreateExistingFile) {
   close_callback.Run();
   EXPECT_EQ(
       1U,
-      observer()->upload_needed_resource_ids().count(src_entry.resource_id()));
+      observer()->upload_needed_local_ids().count(src_entry.local_id()));
+
+  bool success = false;
+  FileCacheEntry cache_entry;
+  base::PostTaskAndReplyWithResult(
+      blocking_task_runner(),
+      FROM_HERE,
+      base::Bind(&internal::FileCache::GetCacheEntry,
+                 base::Unretained(cache()),
+                 src_entry.local_id(),
+                 &cache_entry),
+      google_apis::test_util::CreateCopyResultCallback(&success));
+  test_util::RunBlockingPoolTask();
+  EXPECT_TRUE(success);
+  EXPECT_TRUE(cache_entry.is_present());
+  EXPECT_TRUE(cache_entry.is_dirty());
 }
 
 TEST_F(OpenFileOperationTest, OpenOrCreateNonExistingFile) {
@@ -165,6 +193,7 @@ TEST_F(OpenFileOperationTest, OpenOrCreateNonExistingFile) {
   operation_->OpenFile(
       file_in_root,
       OPEN_OR_CREATE_FILE,
+      std::string(),  // mime_type
       google_apis::test_util::CreateCopyResultCallback(
           &error, &file_path, &close_callback));
   test_util::RunBlockingPoolTask();
@@ -177,9 +206,9 @@ TEST_F(OpenFileOperationTest, OpenOrCreateNonExistingFile) {
 
   ASSERT_FALSE(close_callback.is_null());
   close_callback.Run();
-  // Here we don't know about the resource id, so just make sure
-  // OnCacheFileUploadNeededByOperation is called actually.
-  EXPECT_EQ(1U, observer()->upload_needed_resource_ids().size());
+  EXPECT_EQ(
+      1U,
+      observer()->upload_needed_local_ids().count(GetLocalId(file_in_root)));
 }
 
 TEST_F(OpenFileOperationTest, OpenFileTwice) {
@@ -195,6 +224,7 @@ TEST_F(OpenFileOperationTest, OpenFileTwice) {
   operation_->OpenFile(
       file_in_root,
       OPEN_FILE,
+      std::string(),  // mime_type
       google_apis::test_util::CreateCopyResultCallback(
           &error, &file_path, &close_callback));
   test_util::RunBlockingPoolTask();
@@ -211,6 +241,7 @@ TEST_F(OpenFileOperationTest, OpenFileTwice) {
   operation_->OpenFile(
       file_in_root,
       OPEN_FILE,
+      std::string(),  // mime_type
       google_apis::test_util::CreateCopyResultCallback(
           &error, &file_path, &close_callback2));
   test_util::RunBlockingPoolTask();
@@ -227,14 +258,14 @@ TEST_F(OpenFileOperationTest, OpenFileTwice) {
 
   // There still remains a client opening the file, so it shouldn't be
   // uploaded yet.
-  EXPECT_TRUE(observer()->upload_needed_resource_ids().empty());
+  EXPECT_TRUE(observer()->upload_needed_local_ids().empty());
 
   close_callback2.Run();
 
   // Here, all the clients close the file, so it should be uploaded then.
   EXPECT_EQ(
       1U,
-      observer()->upload_needed_resource_ids().count(src_entry.resource_id()));
+      observer()->upload_needed_local_ids().count(src_entry.local_id()));
 }
 
 }  // namespace file_system

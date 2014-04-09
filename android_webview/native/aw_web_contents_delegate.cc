@@ -176,15 +176,11 @@ void AwWebContentsDelegate::ActivateContents(WebContents* contents) {
   }
 }
 
-void AwWebContentsDelegate::UpdatePreferredSize(
-    WebContents* web_contents,
-    const gfx::Size& pref_size) {
-  JNIEnv* env = AttachCurrentThread();
-  ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
-  if (obj.is_null())
-    return;
-  return Java_AwWebContentsDelegate_updatePreferredSize(
-      env, obj.obj(), pref_size.width(), pref_size.height());
+void AwWebContentsDelegate::RequestProtectedMediaIdentifierPermission(
+    const content::WebContents* web_contents,
+    const GURL& frame_url,
+    const base::Callback<void(bool)>& callback) {
+  NOTIMPLEMENTED();
 }
 
 static void FilesSelectedInChooser(

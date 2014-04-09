@@ -85,9 +85,6 @@ class GPU_EXPORT GpuControlList {
   // If yes, we should create a gl context and do a full gpu info collection.
   bool needs_more_info() const { return needs_more_info_; }
 
-  // Check if any entries contain unknown fields.  This is only for tests.
-  bool contains_unknown_fields() const { return contains_unknown_fields_; }
-
   // Returns the number of entries.  This is only for tests.
   size_t num_entries() const;
 
@@ -95,6 +92,13 @@ class GPU_EXPORT GpuControlList {
   void AddSupportedFeature(const std::string& feature_name, int feature_id);
   // Register whether "all" is recognized as all features.
   void set_supports_feature_type_all(bool supported);
+
+  // Enables logging of control list decisions.
+  void enable_control_list_logging(
+      const std::string& control_list_logging_name) {
+    control_list_logging_enabled_ = true;
+    control_list_logging_name_ = control_list_logging_name;
+  }
 
  private:
   friend class GpuControlListEntryTest;
@@ -292,6 +296,11 @@ class GPU_EXPORT GpuControlList {
         const FeatureMap& feature_map,
         bool supports_feature_type_all);
 
+    // Logs a control list match for this rule in the list identified by
+    // |control_list_logging_name|.
+    void LogControlListMatch(
+        const std::string& control_list_logging_name) const;
+
     // Determines if a given os/gc/machine_model/driver is included in the
     // Entry set.
     bool Contains(OsType os_type, const std::string& os_version,
@@ -319,15 +328,6 @@ class GPU_EXPORT GpuControlList {
 
     // Returns the blacklisted features in this entry.
     const std::set<int>& features() const;
-
-    // Returns true if an unknown field is encountered.
-    bool contains_unknown_fields() const {
-      return contains_unknown_fields_;
-    }
-    // Returns true if an unknown blacklist feature is encountered.
-    bool contains_unknown_features() const {
-      return contains_unknown_features_;
-    }
 
    private:
     friend class base::RefCounted<GpuControlListEntry>;
@@ -457,8 +457,6 @@ class GPU_EXPORT GpuControlList {
     scoped_ptr<IntInfo> gpu_count_info_;
     std::set<int> features_;
     std::vector<ScopedGpuControlListEntry> exceptions_;
-    bool contains_unknown_fields_;
-    bool contains_unknown_features_;
   };
 
   // Gets the current OS type.
@@ -488,13 +486,14 @@ class GPU_EXPORT GpuControlList {
 
   uint32 max_entry_id_;
 
-  bool contains_unknown_fields_;
-
   bool needs_more_info_;
 
   // The features a GpuControlList recognizes and handles.
   FeatureMap feature_map_;
   bool supports_feature_type_all_;
+
+  bool control_list_logging_enabled_;
+  std::string control_list_logging_name_;
 };
 
 }  // namespace gpu

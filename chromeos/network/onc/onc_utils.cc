@@ -24,6 +24,8 @@
 #define ONC_LOG_WARNING(message) NET_LOG_WARNING("ONC", message)
 #define ONC_LOG_ERROR(message) NET_LOG_ERROR("ONC", message)
 
+using namespace ::onc;
+
 namespace chromeos {
 namespace onc {
 
@@ -171,7 +173,7 @@ std::string GetSourceAsString(ONCSource source) {
   return "unknown";
 }
 
-void ExpandField(const std::string fieldname,
+void ExpandField(const std::string& fieldname,
                  const StringSubstitution& substitution,
                  base::DictionaryValue* onc_object) {
   std::string user_string;
@@ -348,9 +350,11 @@ bool ParseAndValidateOncForImport(const std::string& onc_blob,
                                   ONCSource onc_source,
                                   const std::string& passphrase,
                                   base::ListValue* network_configs,
+                                  base::DictionaryValue* global_network_config,
                                   base::ListValue* certificates) {
-  certificates->Clear();
   network_configs->Clear();
+  global_network_config->Clear();
+  certificates->Clear();
   if (onc_blob.empty())
     return true;
 
@@ -429,6 +433,13 @@ bool ParseAndValidateOncForImport(const std::string& onc_blob,
 
     ResolveServerCertRefsInNetworks(server_and_ca_certs, validated_networks);
     network_configs->Swap(validated_networks);
+  }
+
+  base::DictionaryValue* validated_global_config = NULL;
+  if (toplevel_onc->GetDictionaryWithoutPathExpansion(
+          toplevel_config::kGlobalNetworkConfiguration,
+          &validated_global_config)) {
+    global_network_config->Swap(validated_global_config);
   }
 
   return success;

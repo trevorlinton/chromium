@@ -8,9 +8,9 @@
 
 #include "ash/desktop_background/user_wallpaper_delegate.h"
 #include "ash/root_window_controller.h"
+#include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
 #include "ash/shell_delegate.h"
-#include "ash/wm/property_util.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/prefs/pref_service.h"
@@ -37,11 +37,11 @@ bool MenuItemHasLauncherContext(const extensions::MenuItem* item) {
 
 LauncherContextMenu::LauncherContextMenu(ChromeLauncherController* controller,
                                          const ash::LauncherItem* item,
-                                         aura::RootWindow* root)
+                                         aura::Window* root)
     : ui::SimpleMenuModel(NULL),
       controller_(controller),
       item_(*item),
-      launcher_alignment_menu_(root),
+      shelf_alignment_menu_(root),
       root_window_(root) {
   DCHECK(item);
   DCHECK(root_window_);
@@ -49,11 +49,11 @@ LauncherContextMenu::LauncherContextMenu(ChromeLauncherController* controller,
 }
 
 LauncherContextMenu::LauncherContextMenu(ChromeLauncherController* controller,
-                                         aura::RootWindow* root)
+                                         aura::Window* root)
     : ui::SimpleMenuModel(NULL),
       controller_(controller),
       item_(ash::LauncherItem()),
-      launcher_alignment_menu_(root),
+      shelf_alignment_menu_(root),
       extension_items_(new extensions::ContextMenuMatcher(
           controller->profile(), this, this,
           base::Bind(MenuItemHasLauncherContext))),
@@ -94,16 +94,14 @@ void LauncherContextMenu::Init() {
         AddCheckItemWithStringId(
             LAUNCH_TYPE_PINNED_TAB,
             IDS_APP_CONTEXT_MENU_OPEN_PINNED);
-        if (!ash::Shell::IsForcedMaximizeMode()) {
-          AddCheckItemWithStringId(
-              LAUNCH_TYPE_WINDOW,
-              IDS_APP_CONTEXT_MENU_OPEN_WINDOW);
-          // Even though the launch type is Full Screen it is more accurately
-          // described as Maximized in Ash.
-          AddCheckItemWithStringId(
-              LAUNCH_TYPE_FULLSCREEN,
-              IDS_APP_CONTEXT_MENU_OPEN_MAXIMIZED);
-        }
+        AddCheckItemWithStringId(
+            LAUNCH_TYPE_WINDOW,
+            IDS_APP_CONTEXT_MENU_OPEN_WINDOW);
+        // Even though the launch type is Full Screen it is more accurately
+        // described as Maximized in Ash.
+        AddCheckItemWithStringId(
+            LAUNCH_TYPE_FULLSCREEN,
+            IDS_APP_CONTEXT_MENU_OPEN_MAXIMIZED);
       }
     } else if (item_.type == ash::TYPE_BROWSER_SHORTCUT) {
       AddItem(MENU_NEW_WINDOW,
@@ -140,15 +138,15 @@ void LauncherContextMenu::Init() {
   // the type of fullscreen. Do not show the auto-hide menu item while in
   // fullscreen because it is confusing when the preference appears not to
   // apply.
-  if (!IsFullScreenMode()) {
+  if (!IsFullScreenMode() &&
+        controller_->CanUserModifyShelfAutoHideBehavior(root_window_)) {
     AddCheckItemWithStringId(MENU_AUTO_HIDE,
-                             IDS_ASH_SHELF_CONTEXT_MENU_AUTO_HIDE);
+                              IDS_ASH_SHELF_CONTEXT_MENU_AUTO_HIDE);
   }
-  if (CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kShowShelfAlignmentMenu)) {
+  if (ash::ShelfWidget::ShelfAlignmentAllowed()) {
     AddSubMenuWithStringId(MENU_ALIGNMENT_MENU,
                            IDS_ASH_SHELF_CONTEXT_MENU_POSITION,
-                           &launcher_alignment_menu_);
+                           &shelf_alignment_menu_);
   }
 #if defined(OS_CHROMEOS)
   AddItem(MENU_CHANGE_WALLPAPER,
@@ -206,8 +204,7 @@ bool LauncherContextMenu::IsCommandIdChecked(int command_id) const {
 bool LauncherContextMenu::IsCommandIdEnabled(int command_id) const {
   switch (command_id) {
     case MENU_PIN:
-      return item_.type == ash::TYPE_PLATFORM_APP ||
-          controller_->IsPinnable(item_.id);
+      return controller_->IsPinnable(item_.id);
 #if defined(OS_CHROMEOS)
     case MENU_CHANGE_WALLPAPER:
       return ash::Shell::GetInstance()->user_wallpaper_delegate()->

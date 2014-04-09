@@ -11,6 +11,10 @@
 #include "content/public/browser/resource_controller.h"
 #include "url/gurl.h"
 
+namespace net {
+class URLRequest;
+}
+
 namespace content {
 
 class ResourceThrottle;
@@ -22,8 +26,7 @@ class ThrottlingResourceHandler : public LayeredResourceHandler,
  public:
   // Takes ownership of the ResourceThrottle instances.
   ThrottlingResourceHandler(scoped_ptr<ResourceHandler> next_handler,
-                            int child_id,
-                            int request_id,
+                            net::URLRequest* request,
                             ScopedVector<ResourceThrottle> throttles);
   virtual ~ThrottlingResourceHandler();
 
@@ -55,8 +58,6 @@ class ThrottlingResourceHandler : public LayeredResourceHandler,
     DEFERRED_RESPONSE
   };
   DeferredStage deferred_stage_;
-
-  int request_id_;
 
   ScopedVector<ResourceThrottle> throttles_;
   size_t index_;

@@ -58,6 +58,7 @@
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
+#include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
 #include "chrome/browser/extensions/updater/extension_updater.h"
 #include "chrome/browser/history/history_service_factory.h"
@@ -108,7 +109,6 @@
 #include "chrome/browser/ui/search_engines/keyword_editor_controller.h"
 #include "chrome/browser/ui/startup/startup_types.h"
 #include "chrome/common/automation_constants.h"
-#include "chrome/common/automation_id.h"
 #include "chrome/common/automation_messages.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
@@ -116,7 +116,6 @@
 #include "chrome/common/extensions/background_info.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/extensions/manifest_url_handler.h"
-#include "chrome/common/extensions/permissions/permission_set.h"
 #include "chrome/common/extensions/permissions/permissions_data.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/render_messages.h"
@@ -140,13 +139,14 @@
 #include "content/public/common/ssl_status.h"
 #include "content/public/common/webplugininfo.h"
 #include "extensions/browser/view_type_utils.h"
+#include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/url_pattern.h"
 #include "extensions/common/url_pattern_set.h"
 #include "net/cookies/cookie_store.h"
 #include "third_party/WebKit/public/web/WebInputEvent.h"
-#include "ui/base/events/event_constants.h"
-#include "ui/base/keycodes/keyboard_codes.h"
 #include "ui/base/ui_base_types.h"
+#include "ui/events/event_constants.h"
+#include "ui/events/keycodes/keyboard_codes.h"
 
 #if defined(ENABLE_CONFIGURATION_POLICY)
 #include "chrome/browser/policy/policy_service.h"
@@ -161,16 +161,6 @@
 #include <mach/mach_vm.h>
 #endif
 
-#if !defined(NO_TCMALLOC) && (defined(OS_LINUX) || defined(OS_CHROMEOS))
-#include "third_party/tcmalloc/chromium/src/gperftools/heap-profiler.h"
-#endif  // !defined(NO_TCMALLOC) && (defined(OS_LINUX) || defined(OS_CHROMEOS))
-
-#if defined(ENABLE_FULL_PRINTING)
-#include "chrome/browser/printing/print_preview_dialog_controller.h"
-#endif
-
-using automation::Error;
-using automation::ErrorCode;
 using automation_util::SendErrorIfModalDialogActive;
 using content::BrowserChildProcessHostIterator;
 using content::BrowserContext;
@@ -1647,12 +1637,8 @@ void TestingAutomationProvider::BuildJSONHandlerMaps() {
 
   handler_map_["GetTabIds"] =
       &TestingAutomationProvider::GetTabIds;
-  handler_map_["GetViews"] =
-      &TestingAutomationProvider::GetViews;
   handler_map_["IsTabIdValid"] =
       &TestingAutomationProvider::IsTabIdValid;
-  handler_map_["DoesAutomationObjectExist"] =
-      &TestingAutomationProvider::DoesAutomationObjectExist;
   handler_map_["CloseTab"] =
       &TestingAutomationProvider::CloseTabJSON;
   handler_map_["SetViewBounds"] =
@@ -1685,8 +1671,6 @@ void TestingAutomationProvider::BuildJSONHandlerMaps() {
       &TestingAutomationProvider::ActionOnSSLBlockingPage;
   handler_map_["GetSecurityState"] =
       &TestingAutomationProvider::GetSecurityState;
-  handler_map_["GetChromeDriverAutomationVersion"] =
-      &TestingAutomationProvider::GetChromeDriverAutomationVersion;
   handler_map_["IsPageActionVisible"] =
       &TestingAutomationProvider::IsPageActionVisible;
   handler_map_["CreateNewAutomationProvider"] =
@@ -1758,32 +1742,6 @@ void TestingAutomationProvider::BuildJSONHandlerMaps() {
 
   handler_map_["GetBatteryInfo"] = &TestingAutomationProvider::GetBatteryInfo;
 
-  handler_map_["GetNetworkInfo"] = &TestingAutomationProvider::GetNetworkInfo;
-  handler_map_["NetworkScan"] = &TestingAutomationProvider::NetworkScan;
-  handler_map_["ToggleNetworkDevice"] =
-      &TestingAutomationProvider::ToggleNetworkDevice;
-  handler_map_["ConnectToCellularNetwork"] =
-      &TestingAutomationProvider::ConnectToCellularNetwork;
-  handler_map_["DisconnectFromCellularNetwork"] =
-      &TestingAutomationProvider::DisconnectFromCellularNetwork;
-  handler_map_["ConnectToWifiNetwork"] =
-      &TestingAutomationProvider::ConnectToWifiNetwork;
-  handler_map_["ConnectToHiddenWifiNetwork"] =
-      &TestingAutomationProvider::ConnectToHiddenWifiNetwork;
-  handler_map_["DisconnectFromWifiNetwork"] =
-      &TestingAutomationProvider::DisconnectFromWifiNetwork;
-  handler_map_["ForgetWifiNetwork"] =
-      &TestingAutomationProvider::ForgetWifiNetwork;
-
-  handler_map_["AddPrivateNetwork"] =
-      &TestingAutomationProvider::AddPrivateNetwork;
-  handler_map_["GetPrivateNetworkInfo"] =
-      &TestingAutomationProvider::GetPrivateNetworkInfo;
-  handler_map_["ConnectToPrivateNetwork"] =
-      &TestingAutomationProvider::ConnectToPrivateNetwork;
-  handler_map_["DisconnectFromPrivateNetwork"] =
-      &TestingAutomationProvider::DisconnectFromPrivateNetwork;
-
   handler_map_["EnableSpokenFeedback"] =
       &TestingAutomationProvider::EnableSpokenFeedback;
   handler_map_["IsSpokenFeedbackEnabled"] =
@@ -1799,10 +1757,6 @@ void TestingAutomationProvider::BuildJSONHandlerMaps() {
   handler_map_["SetMute"] = &TestingAutomationProvider::SetMute;
 
   handler_map_["OpenCrosh"] = &TestingAutomationProvider::OpenCrosh;
-  handler_map_["SetProxySettings"] =
-      &TestingAutomationProvider::SetProxySettings;
-  handler_map_["SetSharedProxies"] =
-      &TestingAutomationProvider::SetSharedProxies;
 
   browser_handler_map_["GetTimeInfo"] =
       &TestingAutomationProvider::GetTimeInfo;
@@ -2828,10 +2782,10 @@ void TestingAutomationProvider::PerformActionOnSearchEngine(
 void TestingAutomationProvider::GetLocalStatePrefsInfo(
     DictionaryValue* args,
     IPC::Message* reply_message) {
-  DictionaryValue* items = g_browser_process->local_state()->
-      GetPreferenceValues();
+  scoped_ptr<DictionaryValue> items(
+      g_browser_process->local_state()->GetPreferenceValues());
   scoped_ptr<DictionaryValue> return_value(new DictionaryValue);
-  return_value->Set("prefs", items);  // return_value owns items.
+  return_value->Set("prefs", items.release());  // return_value owns items.
   AutomationJSONReply(this, reply_message).SendSuccess(return_value.get());
 }
 
@@ -2875,11 +2829,11 @@ void TestingAutomationProvider::GetPrefsInfo(DictionaryValue* args,
     reply.SendError(error_msg);
     return;
   }
-  DictionaryValue* items = browser->profile()->GetPrefs()->
-      GetPreferenceValues();
+  scoped_ptr<DictionaryValue> items(
+      browser->profile()->GetPrefs()->GetPreferenceValues());
 
   scoped_ptr<DictionaryValue> return_value(new DictionaryValue);
-  return_value->Set("prefs", items);  // return_value owns items.
+  return_value->Set("prefs", items.release());  // return_value owns items.
   reply.SendSuccess(return_value.get());
 }
 
@@ -3195,7 +3149,7 @@ void TestingAutomationProvider::SaveTabContents(
 namespace {
 
 // Translates a dictionary password to a PasswordForm struct.
-content::PasswordForm GetPasswordFormFromDict(
+autofill::PasswordForm GetPasswordFormFromDict(
     const DictionaryValue& password_dict) {
 
   // If the time is specified, change time to the specified time.
@@ -3235,7 +3189,7 @@ content::PasswordForm GetPasswordFormFromDict(
   GURL origin_gurl(origin_url_text);
   GURL action_target(action_target_text);
 
-  content::PasswordForm password_form;
+  autofill::PasswordForm password_form;
   password_form.signon_realm = signon_realm;
   password_form.username_value = username_value;
   password_form.password_value = password_value;
@@ -3274,7 +3228,7 @@ void TestingAutomationProvider::AddSavedPassword(
     return;
   }
 
-  content::PasswordForm new_password =
+  autofill::PasswordForm new_password =
       GetPasswordFormFromDict(*password_dict);
 
   // Use IMPLICIT_ACCESS since new passwords aren't added in incognito mode.
@@ -3320,7 +3274,7 @@ void TestingAutomationProvider::RemoveSavedPassword(
         "Password must include a value for 'signon_realm.'");
     return;
   }
-  content::PasswordForm to_remove =
+  autofill::PasswordForm to_remove =
       GetPasswordFormFromDict(*password_dict);
 
   // Use EXPLICIT_ACCESS since passwords can be removed in incognito mode.
@@ -3619,7 +3573,7 @@ void TestingAutomationProvider::GetExtensionsInfo(DictionaryValue* args,
         Manifest::IsUnpackedLocation(location));
     extension_value->SetBoolean("is_enabled", service->IsExtensionEnabled(id));
     extension_value->SetBoolean("allowed_in_incognito",
-                                service->IsIncognitoEnabled(id));
+        extension_util::IsIncognitoEnabled(id, service));
     extension_value->SetBoolean(
         "has_page_action",
         extension_action_manager->GetPageAction(*extension) != NULL);
@@ -3727,7 +3681,8 @@ void TestingAutomationProvider::SetExtensionStateById(
     AutomationJSONReply(this, reply_message).SendSuccess(NULL);
   }
 
-  service->SetIsIncognitoEnabled(extension->id(), allow_in_incognito);
+  extension_util::SetIsIncognitoEnabled(
+      extension->id(), service, allow_in_incognito);
 }
 
 // See TriggerPageActionById() in chrome/test/pyautolib/pyauto.py
@@ -4228,11 +4183,11 @@ namespace {
 
 // Gets the active JavaScript modal dialog, or NULL if none.
 JavaScriptAppModalDialog* GetActiveJavaScriptModalDialog(
-    ErrorCode* error_code) {
+    std::string* error_msg) {
   AppModalDialogQueue* dialog_queue = AppModalDialogQueue::GetInstance();
   if (!dialog_queue->HasActiveDialog() ||
       !dialog_queue->active_dialog()->IsJavaScriptModalDialog()) {
-    *error_code = automation::kNoJavaScriptModalDialogOpen;
+    *error_msg = "No JavaScriptModalDialog open";
     return NULL;
   }
   return static_cast<JavaScriptAppModalDialog*>(dialog_queue->active_dialog());
@@ -4243,10 +4198,10 @@ JavaScriptAppModalDialog* GetActiveJavaScriptModalDialog(
 void TestingAutomationProvider::GetAppModalDialogMessage(
     DictionaryValue* args, IPC::Message* reply_message) {
   AutomationJSONReply reply(this, reply_message);
-  ErrorCode code;
-  JavaScriptAppModalDialog* dialog = GetActiveJavaScriptModalDialog(&code);
+  std::string error_msg;
+  JavaScriptAppModalDialog* dialog = GetActiveJavaScriptModalDialog(&error_msg);
   if (!dialog) {
-    reply.SendErrorCode(code);
+    reply.SendError(error_msg);
     return;
   }
   DictionaryValue result_dict;
@@ -4263,10 +4218,10 @@ void TestingAutomationProvider::AcceptOrDismissAppModalDialog(
     return;
   }
 
-  ErrorCode code;
-  JavaScriptAppModalDialog* dialog = GetActiveJavaScriptModalDialog(&code);
+  std::string error_msg;
+  JavaScriptAppModalDialog* dialog = GetActiveJavaScriptModalDialog(&error_msg);
   if (!dialog) {
-    reply.SendErrorCode(code);
+    reply.SendError(error_msg);
     return;
   }
   if (accept) {
@@ -4320,11 +4275,11 @@ void TestingAutomationProvider::LaunchApp(
     return;
   }
 
-  chrome::AppLaunchParams launch_params(profile(), extension, CURRENT_TAB);
+  AppLaunchParams launch_params(profile(), extension, CURRENT_TAB);
   // This observer will delete itself.
   new AppLaunchObserver(&old_contents->GetController(), this, reply_message,
                         launch_params.container);
-  chrome::OpenApplication(launch_params);
+  OpenApplication(launch_params);
 }
 
 // Sample JSON input: { "command": "SetAppLaunchType",
@@ -4770,8 +4725,7 @@ void TestingAutomationProvider::ExecuteJavascriptJSON(
   std::string error;
   RenderViewHost* render_view;
   if (!GetRenderViewFromJSONArgs(args, profile(), &render_view, &error)) {
-    AutomationJSONReply(this, reply_message).SendError(
-        Error(automation::kInvalidId, error));
+    AutomationJSONReply(this, reply_message).SendError(error);
     return;
   }
   if (!args->GetString("frame_xpath", &frame_xpath)) {
@@ -5253,58 +5207,6 @@ void TestingAutomationProvider::GetTabIds(
   AutomationJSONReply(this, reply_message).SendSuccess(&dict);
 }
 
-void TestingAutomationProvider::GetViews(
-    DictionaryValue* args, IPC::Message* reply_message) {
-  ListValue* view_list = new ListValue();
-#if defined(ENABLE_FULL_PRINTING)
-  printing::PrintPreviewDialogController* preview_controller =
-      printing::PrintPreviewDialogController::GetInstance();
-#endif
-  for (chrome::BrowserIterator it; !it.done(); it.Next()) {
-    Browser* browser = *it;
-    for (int i = 0; i < browser->tab_strip_model()->count(); ++i) {
-      WebContents* contents = browser->tab_strip_model()->GetWebContentsAt(i);
-      DictionaryValue* dict = new DictionaryValue();
-      AutomationId id = automation_util::GetIdForTab(contents);
-      dict->Set("auto_id", id.ToValue());
-      view_list->Append(dict);
-#if defined(ENABLE_FULL_PRINTING)
-      if (preview_controller) {
-        WebContents* preview_dialog =
-            preview_controller->GetPrintPreviewForContents(contents);
-        if (preview_dialog) {
-          DictionaryValue* dict = new DictionaryValue();
-          AutomationId id = automation_util::GetIdForTab(preview_dialog);
-          dict->Set("auto_id", id.ToValue());
-          view_list->Append(dict);
-        }
-      }
-#endif
-    }
-  }
-
-  ExtensionProcessManager* extension_mgr =
-      extensions::ExtensionSystem::Get(profile())->process_manager();
-  const ExtensionProcessManager::ViewSet all_views =
-      extension_mgr->GetAllViews();
-  ExtensionProcessManager::ViewSet::const_iterator iter;
-  for (iter = all_views.begin(); iter != all_views.end(); ++iter) {
-    content::RenderViewHost* host = (*iter);
-    AutomationId id = automation_util::GetIdForExtensionView(host);
-    if (!id.is_valid())
-      continue;
-    const Extension* extension =
-        extension_mgr->GetExtensionForRenderViewHost(host);
-    DictionaryValue* dict = new DictionaryValue();
-    dict->Set("auto_id", id.ToValue());
-    dict->SetString("extension_id", extension->id());
-    view_list->Append(dict);
-  }
-  DictionaryValue dict;
-  dict.Set("views", view_list);
-  AutomationJSONReply(this, reply_message).SendSuccess(&dict);
-}
-
 void TestingAutomationProvider::IsTabIdValid(
     DictionaryValue* args, IPC::Message* reply_message) {
   AutomationJSONReply reply(this, reply_message);
@@ -5328,22 +5230,6 @@ void TestingAutomationProvider::IsTabIdValid(
   }
   DictionaryValue dict;
   dict.SetBoolean("is_valid", is_valid);
-  reply.SendSuccess(&dict);
-}
-
-void TestingAutomationProvider::DoesAutomationObjectExist(
-    DictionaryValue* args, IPC::Message* reply_message) {
-  AutomationJSONReply reply(this, reply_message);
-  AutomationId id;
-  std::string error_msg;
-  if (!GetAutomationIdFromJSONArgs(args, "auto_id", &id, &error_msg)) {
-    reply.SendError(error_msg);
-    return;
-  }
-  DictionaryValue dict;
-  dict.SetBoolean(
-      "does_exist",
-      automation_util::DoesObjectWithIdExist(id, profile()));
   reply.SendSuccess(&dict);
 }
 
@@ -5390,7 +5276,7 @@ void TestingAutomationProvider::SetViewBounds(
   Browser* browser;
   std::string error;
   if (!GetBrowserFromJSONArgs(args, &browser, &error)) {
-    reply.SendError(Error(automation::kInvalidId, error));
+    reply.SendError(error);
     return;
   }
   BrowserWindow* browser_window = browser->window();
@@ -5407,8 +5293,7 @@ void TestingAutomationProvider::MaximizeView(
   Browser* browser;
   std::string error;
   if (!GetBrowserFromJSONArgs(args, &browser, &error)) {
-    AutomationJSONReply(this, reply_message)
-        .SendError(Error(automation::kInvalidId, error));
+    AutomationJSONReply(this, reply_message).SendError(error);
     return;
   }
 
@@ -5458,14 +5343,14 @@ void TestingAutomationProvider::IsPageActionVisible(
     return;
   }
   Browser* browser = automation_util::GetBrowserForTab(tab);
+  if (!browser) {
+    reply.SendError("Tab does not belong to an open browser");
+    return;
+  }
   const Extension* extension;
   if (!GetEnabledExtensionFromJSONArgs(
           args, "extension_id", browser->profile(), &extension, &error)) {
     reply.SendError(error);
-    return;
-  }
-  if (!browser) {
-    reply.SendError("Tab does not belong to an open browser");
     return;
   }
   ExtensionAction* page_action =
@@ -5491,14 +5376,6 @@ void TestingAutomationProvider::IsPageActionVisible(
   DictionaryValue dict;
   dict.SetBoolean("is_visible", is_visible);
   reply.SendSuccess(&dict);
-}
-
-void TestingAutomationProvider::GetChromeDriverAutomationVersion(
-    DictionaryValue* args,
-    IPC::Message* reply_message) {
-  DictionaryValue reply_dict;
-  reply_dict.SetInteger("version", automation::kChromeDriverAutomationVersion);
-  AutomationJSONReply(this, reply_message).SendSuccess(&reply_dict);
 }
 
 void TestingAutomationProvider::CreateNewAutomationProvider(

@@ -15,7 +15,7 @@
 #include "build/build_config.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/ime/text_input_type.h"
-#include "ui/base/keycodes/keyboard_codes.h"
+#include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/text_constants.h"
@@ -27,11 +27,11 @@
 #endif
 
 namespace gfx {
+class Range;
 class ImageSkia;
 }
 
 namespace ui {
-class Range;
 class TextInputClient;
 }  // namespace ui
 
@@ -55,6 +55,9 @@ class VIEWS_EXPORT Textfield : public View {
 
   // Returns true if the build or commandline dictates NativeTextfieldViews use.
   static bool IsViewsTextfieldEnabled();
+
+  // Returns the text cursor blink time in milliseconds, or 0 for no blinking.
+  static size_t GetCaretBlinkMs();
 
   Textfield();
   explicit Textfield(StyleFlags style);
@@ -154,12 +157,6 @@ class VIEWS_EXPORT Textfield : public View {
   // NOTE: in most cases height could be changed instead.
   void SetVerticalMargins(int top, int bottom);
 
-  // Set the text vertical alignment.  Text is vertically centered by default.
-  gfx::VerticalAlignment vertical_alignment() const {
-    return vertical_alignment_;
-  }
-  void SetVerticalAlignment(gfx::VerticalAlignment alignment);
-
   // Sets the default width of the text control. See default_width_in_chars_.
   void set_default_width_in_chars(int default_width) {
     default_width_in_chars_ = default_width;
@@ -172,13 +169,8 @@ class VIEWS_EXPORT Textfield : public View {
   // Sets the text to display when empty.
   void set_placeholder_text(const string16& text) {
     placeholder_text_ = text;
-#if !defined(OS_LINUX)
-    NOTIMPLEMENTED();
-#endif
   }
-  const string16& placeholder_text() const {
-    return placeholder_text_;
-  }
+  virtual base::string16 GetPlaceholderText() const;
 
   SkColor placeholder_text_color() const { return placeholder_text_color_; }
   void set_placeholder_text_color(SkColor color) {
@@ -209,11 +201,11 @@ class VIEWS_EXPORT Textfield : public View {
   // Gets the selected range. This is views-implementation only and
   // has to be called after the wrapper is created.
   // TODO(msw): Return a const reference when NativeTextfieldWin is gone.
-  ui::Range GetSelectedRange() const;
+  gfx::Range GetSelectedRange() const;
 
   // Selects the text given by |range|. This is views-implementation only and
   // has to be called after the wrapper is created.
-  void SelectRange(const ui::Range& range);
+  void SelectRange(const gfx::Range& range);
 
   // Gets the selection model. This is views-implementation only and
   // has to be called after the wrapper is created.
@@ -232,14 +224,14 @@ class VIEWS_EXPORT Textfield : public View {
   // Empty and invalid ranges are ignored. This is views-implementation only and
   // has to be called after the wrapper is created.
   void SetColor(SkColor value);
-  void ApplyColor(SkColor value, const ui::Range& range);
+  void ApplyColor(SkColor value, const gfx::Range& range);
 
   // Set various text styles over the entire text or a logical character range.
   // The respective |style| is applied if |value| is true, or removed if false.
   // Empty and invalid ranges are ignored. This is views-implementation only and
   // has to be called after the wrapper is created.
   void SetStyle(gfx::TextStyle style, bool value);
-  void ApplyStyle(gfx::TextStyle style, bool value, const ui::Range& range);
+  void ApplyStyle(gfx::TextStyle style, bool value, const gfx::Range& range);
 
   // Clears Edit history.
   void ClearEditHistory();
@@ -276,6 +268,7 @@ class VIEWS_EXPORT Textfield : public View {
   virtual void OnBlur() OVERRIDE;
   virtual void GetAccessibleState(ui::AccessibleViewState* state) OVERRIDE;
   virtual ui::TextInputClient* GetTextInputClient() OVERRIDE;
+  virtual gfx::Point GetKeyboardContextMenuLocation() OVERRIDE;
 
  protected:
   virtual void ViewHierarchyChanged(
@@ -334,9 +327,6 @@ class VIEWS_EXPORT Textfield : public View {
   // Holds whether margins were set.
   bool horizontal_margins_were_set_;
   bool vertical_margins_were_set_;
-
-  // The vertical alignment of text in the Textfield.
-  gfx::VerticalAlignment vertical_alignment_;
 
   // Text to display when empty.
   string16 placeholder_text_;

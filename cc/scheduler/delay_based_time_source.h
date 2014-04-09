@@ -15,7 +15,7 @@ namespace cc {
 
 // This timer implements a time source that achieves the specified interval
 // in face of millisecond-precision delayed callbacks and random queueing
-// delays.
+// delays. DelayBasedTimeSource uses base::TimeTicks::Now as its timebase.
 class CC_EXPORT DelayBasedTimeSource : public TimeSource {
  public:
   static scoped_refptr<DelayBasedTimeSource> Create(
@@ -27,7 +27,7 @@ class CC_EXPORT DelayBasedTimeSource : public TimeSource {
   virtual void SetTimebaseAndInterval(base::TimeTicks timebase,
                                       base::TimeDelta interval) OVERRIDE;
 
-  virtual void SetActive(bool active) OVERRIDE;
+  virtual base::TimeTicks SetActive(bool active) OVERRIDE;
   virtual bool Active() const OVERRIDE;
 
   // Get the last and next tick times. nextTimeTime() returns null when
@@ -71,6 +71,23 @@ class CC_EXPORT DelayBasedTimeSource : public TimeSource {
 
  private:
   DISALLOW_COPY_AND_ASSIGN(DelayBasedTimeSource);
+};
+
+// DelayBasedTimeSource uses base::TimeTicks::HighResNow as its timebase.
+class DelayBasedTimeSourceHighRes : public DelayBasedTimeSource {
+ public:
+  static scoped_refptr<DelayBasedTimeSourceHighRes> Create(
+        base::TimeDelta interval, base::SingleThreadTaskRunner* task_runner);
+
+  virtual base::TimeTicks Now() const OVERRIDE;
+
+ protected:
+  DelayBasedTimeSourceHighRes(base::TimeDelta interval,
+                              base::SingleThreadTaskRunner* task_runner);
+  virtual ~DelayBasedTimeSourceHighRes();
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(DelayBasedTimeSourceHighRes);
 };
 
 }  // namespace cc

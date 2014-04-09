@@ -90,12 +90,12 @@ bool AfterTranslateInfoBar::ShowOptionsMenuButton() const {
 }
 
 void AfterTranslateInfoBar::SetOriginalLanguage(size_t language_index) {
-  GetDelegate()->set_original_language_index(language_index);
+  GetDelegate()->UpdateOriginalLanguageIndex(language_index);
   GetDelegate()->Translate();
 }
 
 void AfterTranslateInfoBar::SetTargetLanguage(size_t language_index) {
-  GetDelegate()->set_target_language_index(language_index);
+  GetDelegate()->UpdateTargetLanguageIndex(language_index);
   GetDelegate()->Translate();
 }
 

@@ -15,8 +15,6 @@
 #include "chrome/browser/storage_monitor/removable_device_constants.h"
 #include "device/media_transfer_protocol/mtp_storage_info.pb.h"
 
-namespace chrome {
-
 namespace {
 
 // Device root path constant.
@@ -165,6 +163,21 @@ bool MediaTransferProtocolDeviceObserverLinux::GetStorageInfoForPath(
   return true;
 }
 
+void MediaTransferProtocolDeviceObserverLinux::EjectDevice(
+    const std::string& device_id,
+    base::Callback<void(StorageMonitor::EjectStatus)> callback) {
+  std::string location;
+  if (!GetLocationForDeviceId(device_id, &location)) {
+    callback.Run(StorageMonitor::EJECT_NO_SUCH_DEVICE);
+    return;
+  }
+
+  // TODO(thestig): Change this to tell the mtp manager to eject the device.
+
+  StorageChanged(false, location);
+  callback.Run(StorageMonitor::EJECT_OK);
+}
+
 // device::MediaTransferProtocolManager::Observer override.
 void MediaTransferProtocolDeviceObserverLinux::StorageChanged(
     bool is_attached,
@@ -211,4 +224,15 @@ void MediaTransferProtocolDeviceObserverLinux::EnumerateStorages() {
   }
 }
 
-}  // namespace chrome
+bool MediaTransferProtocolDeviceObserverLinux::GetLocationForDeviceId(
+    const std::string& device_id, std::string* location) const {
+  for (StorageLocationToInfoMap::const_iterator it = storage_map_.begin();
+       it != storage_map_.end(); ++it) {
+    if (it->second.device_id() == device_id) {
+      *location = it->first;
+      return true;
+    }
+  }
+
+  return false;
+}

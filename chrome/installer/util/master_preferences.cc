@@ -102,7 +102,7 @@ MasterPreferences::MasterPreferences(const base::FilePath& prefs_path)
   // and the remainder of this MasterPreferences object should still be
   // initialized as best as possible.
   if (base::PathExists(prefs_path) &&
-      !file_util::ReadFileToString(prefs_path, &json_data)) {
+      !base::ReadFileToString(prefs_path, &json_data)) {
     LOG(ERROR) << "Failed to read preferences from " << prefs_path.value();
   }
   if (InitializeFromString(json_data))
@@ -277,6 +277,19 @@ void MasterPreferences::EnforceLegacyPreferences() {
         installer::master_preferences::kDoNotCreateDesktopShortcut, true);
     distribution_->SetBoolean(
         installer::master_preferences::kDoNotCreateQuickLaunchShortcut, true);
+  }
+
+  // If there is no entry for kURLsToRestoreOnStartup and there is one for
+  // kURLsToRestoreOnStartupOld, copy the old to the new.
+  const base::ListValue* startup_urls_list = NULL;
+  if (master_dictionary_ &&
+      !master_dictionary_->GetList(prefs::kURLsToRestoreOnStartup, NULL) &&
+      master_dictionary_->GetList(prefs::kURLsToRestoreOnStartupOld,
+                                  &startup_urls_list) &&
+      startup_urls_list) {
+    base::ListValue* new_startup_urls_list = startup_urls_list->DeepCopy();
+    master_dictionary_->Set(prefs::kURLsToRestoreOnStartup,
+                            new_startup_urls_list);
   }
 }
 

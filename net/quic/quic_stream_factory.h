@@ -25,11 +25,17 @@ namespace net {
 class CertVerifier;
 class ClientSocketFactory;
 class HostResolver;
+class HttpServerProperties;
 class QuicClock;
 class QuicClientSession;
+class QuicConnectionHelper;
 class QuicCryptoClientStreamFactory;
 class QuicRandom;
 class QuicStreamFactory;
+
+namespace test {
+class QuicStreamFactoryPeer;
+}  // namespace test
 
 // Encapsulates a pending request for a QuicHttpStream.
 // If the request is still pending when it is destroyed, it will
@@ -76,6 +82,7 @@ class NET_EXPORT_PRIVATE QuicStreamFactory
   QuicStreamFactory(
       HostResolver* host_resolver,
       ClientSocketFactory* client_socket_factory,
+      base::WeakPtr<HttpServerProperties> http_server_properties,
       QuicCryptoClientStreamFactory* quic_crypto_client_stream_factory,
       QuicRandom* random_generator,
       QuicClock* clock);
@@ -103,8 +110,12 @@ class NET_EXPORT_PRIVATE QuicStreamFactory
   // Called by a session when it becomes idle.
   void OnIdleSession(QuicClientSession* session);
 
+  // Called by a session when it is going away and no more streams should be
+  // created on it.
+  void OnSessionGoingAway(QuicClientSession* session);
+
   // Called by a session after it shuts down.
-  void OnSessionClose(QuicClientSession* session);
+  void OnSessionClosed(QuicClientSession* session);
 
   // Cancels a pending request.
   void CancelRequest(QuicStreamRequest* request);
@@ -120,14 +131,24 @@ class NET_EXPORT_PRIVATE QuicStreamFactory
   // IP address changes.
   virtual void OnIPAddressChanged() OVERRIDE;
 
+  bool require_confirmation() const { return require_confirmation_; }
+
+  void set_require_confirmation(bool require_confirmation) {
+    require_confirmation_ = require_confirmation;
+  }
+
+  QuicConnectionHelper* helper() { return helper_.get(); }
+
  private:
   class Job;
+  friend class test::QuicStreamFactoryPeer;
 
   typedef std::map<HostPortProxyPair, QuicClientSession*> SessionMap;
   typedef std::set<HostPortProxyPair> AliasSet;
   typedef std::map<QuicClientSession*, AliasSet> SessionAliasMap;
   typedef std::set<QuicClientSession*> SessionSet;
   typedef std::map<HostPortProxyPair, QuicCryptoClientConfig*> CryptoConfigMap;
+  typedef std::map<HostPortPair, HostPortProxyPair> CanonicalHostMap;
   typedef std::map<HostPortProxyPair, Job*> JobMap;
   typedef std::map<QuicStreamRequest*, Job*> RequestMap;
   typedef std::set<QuicStreamRequest*> RequestSet;
@@ -148,11 +169,24 @@ class NET_EXPORT_PRIVATE QuicStreamFactory
   QuicCryptoClientConfig* GetOrCreateCryptoConfig(
       const HostPortProxyPair& host_port_proxy_pair);
 
+  // If |host_port_proxy_pair| suffix contains ".c.youtube.com" (in future we
+  // could support other suffixes), then populate |crypto_config| with a
+  // canonical server config data from |canonical_hostname_to_origin_map_| for
+  // that suffix.
+  void PopulateFromCanonicalConfig(
+      const HostPortProxyPair& host_port_proxy_pair,
+      QuicCryptoClientConfig* crypto_config);
+
+  bool require_confirmation_;
   HostResolver* host_resolver_;
   ClientSocketFactory* client_socket_factory_;
+  base::WeakPtr<HttpServerProperties> http_server_properties_;
   QuicCryptoClientStreamFactory* quic_crypto_client_stream_factory_;
   QuicRandom* random_generator_;
   scoped_ptr<QuicClock> clock_;
+
+  // The helper used for all connections.
+  scoped_ptr<QuicConnectionHelper> helper_;
 
   // Contains owning pointers to all sessions that currently exist.
   SessionSet all_sessions_;
@@ -166,6 +200,12 @@ class NET_EXPORT_PRIVATE QuicStreamFactory
   // TODO(rtenneti): Persist all_crypto_configs_ to disk and decide when to
   // clear the data in the map.
   CryptoConfigMap all_crypto_configs_;
+
+  // Contains a map of servers which could share the same server config. Map
+  // from a Canonical host/port (host is some postfix of host names) to an
+  // actual origin, which has a plausible set of initial certificates (or at
+  // least server public key).
+  CanonicalHostMap canonical_hostname_to_origin_map_;
 
   QuicConfig config_;
 

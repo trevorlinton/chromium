@@ -10,12 +10,12 @@
 
 #include "base/debug/stack_trace.h"
 #include "base/message_loop/message_loop.h"
-#include "base/message_loop/message_pump_aurax11.h"
+#include "base/message_loop/message_pump_x11.h"
 #include "base/run_loop.h"
 #include "ui/aura/env.h"
 #include "ui/aura/root_window.h"
-#include "ui/base/events/event.h"
 #include "ui/base/x/x11_util.h"
+#include "ui/events/event.h"
 #include "ui/gfx/screen.h"
 
 namespace views {
@@ -64,7 +64,7 @@ bool X11WholeScreenMoveLoop::RunMoveLoop(aura::Window* source,
   DCHECK(!in_move_loop_);  // Can only handle one nested loop at a time.
   in_move_loop_ = true;
 
-  Display* display = base::MessagePumpAuraX11::GetDefaultXDisplay();
+  XDisplay* display = gfx::GetXDisplay();
 
   // Creates an invisible, InputOnly toplevel window. This window will receive
   // all mouse movement for drags. It turns out that normal windows doing a
@@ -83,16 +83,21 @@ bool X11WholeScreenMoveLoop::RunMoveLoop(aura::Window* source,
       -100, -100, 10, 10,
       0, 0, InputOnly, CopyFromParent,
       attribute_mask, &swa);
-  base::MessagePumpAuraX11::Current()->AddDispatcherForWindow(
+  base::MessagePumpX11::Current()->AddDispatcherForWindow(
       this, grab_input_window_);
 
   // Wait for the window to be mapped. If we don't, XGrabPointer fails.
   XMapRaised(display, grab_input_window_);
-  base::MessagePumpAuraX11::Current()->BlockUntilWindowMapped(
+  base::MessagePumpX11::Current()->BlockUntilWindowMapped(
       grab_input_window_);
 
   if (!GrabPointerWithCursor(cursor))
     return false;
+
+  // We are handling a mouse drag outside of the aura::RootWindow system. We
+  // must manually make aura think that the mouse button is pressed so that we
+  // don't draw extraneous tooltips.
+  aura::Env::GetInstance()->set_mouse_button_flags(ui::EF_LEFT_MOUSE_BUTTON);
 
   base::MessageLoopForUI* loop = base::MessageLoopForUI::current();
   base::MessageLoop::ScopedNestableTaskAllower allow_nested(loop);
@@ -111,15 +116,18 @@ void X11WholeScreenMoveLoop::EndMoveLoop() {
   if (!in_move_loop_)
     return;
 
+  // We undo our emulated mouse click from RunMoveLoop();
+  aura::Env::GetInstance()->set_mouse_button_flags(0);
+
   // TODO(erg): Is this ungrab the cause of having to click to give input focus
   // on drawn out windows? Not ungrabbing here screws the X server until I kill
   // the chrome process.
 
   // Ungrab before we let go of the window.
-  Display* display = base::MessagePumpAuraX11::GetDefaultXDisplay();
+  XDisplay* display = gfx::GetXDisplay();
   XUngrabPointer(display, CurrentTime);
 
-  base::MessagePumpAuraX11::Current()->RemoveDispatcherForWindow(
+  base::MessagePumpX11::Current()->RemoveDispatcherForWindow(
       grab_input_window_);
   delegate_->OnMoveLoopEnded();
   XDestroyWindow(display, grab_input_window_);
@@ -129,7 +137,7 @@ void X11WholeScreenMoveLoop::EndMoveLoop() {
 }
 
 bool X11WholeScreenMoveLoop::GrabPointerWithCursor(gfx::NativeCursor cursor) {
-  Display* display = base::MessagePumpAuraX11::GetDefaultXDisplay();
+  XDisplay* display = gfx::GetXDisplay();
   XGrabServer(display);
   XUngrabPointer(display, CurrentTime);
   int ret = XGrabPointer(

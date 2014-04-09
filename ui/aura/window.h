@@ -17,13 +17,13 @@
 #include "ui/aura/aura_export.h"
 #include "ui/aura/client/window_types.h"
 #include "ui/aura/window_observer.h"
-#include "ui/base/events/event_constants.h"
-#include "ui/base/events/event_target.h"
-#include "ui/base/gestures/gesture_types.h"
 #include "ui/compositor/layer_animator.h"
 #include "ui/compositor/layer_delegate.h"
 #include "ui/compositor/layer_owner.h"
 #include "ui/compositor/layer_type.h"
+#include "ui/events/event_constants.h"
+#include "ui/events/event_target.h"
+#include "ui/events/gestures/gesture_types.h"
 #include "ui/gfx/insets.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/rect.h"
@@ -45,6 +45,9 @@ class LayoutManager;
 class RootWindow;
 class WindowDelegate;
 class WindowObserver;
+
+// TODO(beng): remove once RootWindow is renamed.
+typedef RootWindow WindowEventDispatcher;
 
 // Defined in window_property.h (which we do not include)
 template<typename T>
@@ -80,6 +83,7 @@ class AURA_EXPORT Window : public ui::LayerDelegate,
   void set_owned_by_parent(bool owned_by_parent) {
     owned_by_parent_ = owned_by_parent;
   }
+  bool owned_by_parent() const { return owned_by_parent_; }
 
   // A type is used to identify a class of Windows and customize behavior such
   // as event handling and parenting.  This field should only be consumed by the
@@ -100,16 +104,26 @@ class AURA_EXPORT Window : public ui::LayerDelegate,
   void SetTransparent(bool transparent);
 
   WindowDelegate* delegate() { return delegate_; }
+  const WindowDelegate* delegate() const { return delegate_; }
 
   const gfx::Rect& bounds() const;
 
   Window* parent() { return parent_; }
   const Window* parent() const { return parent_; }
 
-  // Returns the RootWindow that contains this Window or NULL if the Window is
-  // not contained by a RootWindow.
-  virtual RootWindow* GetRootWindow();
-  virtual const RootWindow* GetRootWindow() const;
+  // Returns the root Window that contains this Window. The root Window is
+  // defined as the Window that has a dispatcher. These functions return NULL if
+  // the Window is contained in a hierarchy that does not have a dispatcher at
+  // its root.
+  virtual Window* GetRootWindow();
+  virtual const Window* GetRootWindow() const;
+
+  WindowEventDispatcher* GetDispatcher();
+  const WindowEventDispatcher* GetDispatcher() const;
+  void set_dispatcher(WindowEventDispatcher* dispatcher) {
+    dispatcher_ = dispatcher;
+  }
+  bool HasDispatcher() const { return !!dispatcher_; }
 
   // The Window does not own this object.
   void set_user_data(void* user_data) { user_data_ = user_data; }
@@ -156,13 +170,6 @@ class AURA_EXPORT Window : public ui::LayerDelegate,
 
   // Marks the a portion of window as needing to be painted.
   void SchedulePaintInRect(const gfx::Rect& rect);
-
-  // Places this window per |root_window|'s stacking client. The final location
-  // may be a RootWindow other than the one passed in. |root_window| may not be
-  // NULL. |bounds_in_screen| may be empty; it is more optional context that
-  // may, but isn't necessarily used.
-  void SetDefaultParentByRootWindow(RootWindow* root_window,
-                                    const gfx::Rect& bounds_in_screen);
 
   // Stacks the specified child of this Window at the front of the z-order.
   void StackChildAtTop(Window* child);
@@ -351,6 +358,11 @@ class AURA_EXPORT Window : public ui::LayerDelegate,
   void PrintWindowHierarchy(int depth) const;
 #endif
 
+ protected:
+  // Deletes (or removes if not owned by parent) all child windows. Intended for
+  // use from the destructor.
+  void RemoveOrDestroyChildren();
+
  private:
   friend class test::WindowTestApi;
   friend class LayoutManager;
@@ -395,6 +407,18 @@ class AURA_EXPORT Window : public ui::LayerDelegate,
 
   // Called when this window's parent has changed.
   void OnParentChanged();
+
+  // Populates |ancestors| with all transient ancestors of |window| that are
+  // children of |this|. Returns true if any ancestors were found, false if not.
+  bool GetAllTransientAncestors(Window* window, Windows* ancestors) const;
+
+  // Replaces two windows |window1| and |window2| with their possible transient
+  // ancestors that are still siblings (have a common transient parent).
+  // |window1| and |window2| are not modified if such ancestors cannot be found.
+  void FindCommonSiblings(Window** window1, Window** window2) const;
+
+  // Returns true when |ancestor| is a transient ancestor of |this|.
+  bool HasTransientAncestor(const Window* ancestor) const;
 
   // Determines the real location for stacking |child| and invokes
   // StackChildRelativeToImpl().
@@ -462,6 +486,8 @@ class AURA_EXPORT Window : public ui::LayerDelegate,
 
   // Returns true if the mouse is currently within our bounds.
   bool ContainsMouse();
+
+  WindowEventDispatcher* dispatcher_;
 
   client::WindowType type_;
 

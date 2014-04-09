@@ -6,15 +6,14 @@
 
 #include <algorithm>
 
-#include "base/command_line.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/browser/browser_plugin/browser_plugin_embedder.h"
-#include "content/browser/browser_plugin/browser_plugin_guest_helper.h"
 #include "content/browser/browser_plugin/browser_plugin_guest_manager.h"
 #include "content/browser/browser_plugin/browser_plugin_host_factory.h"
 #include "content/browser/browser_thread_impl.h"
+#include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
@@ -31,20 +30,21 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/geolocation_permission_context.h"
-#include "content/public/browser/notification_service.h"
-#include "content/public/browser/notification_types.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/resource_request_details.h"
 #include "content/public/browser/user_metrics.h"
+#include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_view.h"
-#include "content/public/common/content_switches.h"
 #include "content/public/common/drop_data.h"
 #include "content/public/common/media_stream_request.h"
 #include "content/public/common/result_codes.h"
+#include "content/public/common/url_constants.h"
+#include "content/public/common/url_utils.h"
 #include "net/url_request/url_request.h"
 #include "third_party/WebKit/public/web/WebCursorInfo.h"
-#include "ui/base/keycodes/keyboard_codes.h"
+#include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/surface/transport_dib.h"
 #include "webkit/common/resource_type.h"
 
@@ -63,6 +63,9 @@ class BrowserPluginGuest::PermissionRequest :
     public base::RefCounted<BrowserPluginGuest::PermissionRequest> {
  public:
   virtual void Respond(bool should_allow, const std::string& user_input) = 0;
+  virtual bool AllowedByDefault() const {
+      return false;
+  }
  protected:
   PermissionRequest() {
     RecordAction(UserMetricsAction("BrowserPlugin.Guest.PermissionRequest"));
@@ -127,7 +130,7 @@ class BrowserPluginGuest::GeolocationRequest : public PermissionRequest {
               // in the fact whether the embedder/app has geolocation
               // permission. Therefore we use an invalid |bridge_id|.
               -1 /* bridge_id */,
-              web_contents->GetURL(),
+              web_contents->GetLastCommittedURL(),
               geolocation_callback);
           return;
         }
@@ -246,8 +249,6 @@ class BrowserPluginGuest::PointerLockRequest : public PermissionRequest {
 };
 
 namespace {
-const size_t kNumMaxOutstandingPermissionRequests = 1024;
-
 std::string WindowOpenDispositionToString(
   WindowOpenDisposition window_open_disposition) {
   switch (window_open_disposition) {
@@ -302,29 +303,34 @@ static std::string RetrieveDownloadURLFromRequestId(
 
 }  // namespace
 
-class BrowserPluginGuest::EmbedderRenderViewHostObserver
-    : public RenderViewHostObserver {
+class BrowserPluginGuest::EmbedderWebContentsObserver
+    : public WebContentsObserver {
  public:
-  explicit EmbedderRenderViewHostObserver(BrowserPluginGuest* guest)
-      : RenderViewHostObserver(
-          guest->embedder_web_contents()->GetRenderViewHost()),
+  explicit EmbedderWebContentsObserver(BrowserPluginGuest* guest)
+      : WebContentsObserver(guest->embedder_web_contents()),
         browser_plugin_guest_(guest) {
   }
 
-  virtual ~EmbedderRenderViewHostObserver() {
+  virtual ~EmbedderWebContentsObserver() {
   }
 
-  // RenderViewHostObserver:
-  virtual void RenderViewHostDestroyed(
-      RenderViewHost* render_view_host) OVERRIDE {
-    browser_plugin_guest_->embedder_web_contents_ = NULL;
-    browser_plugin_guest_->Destroy();
+  // WebContentsObserver:
+  virtual void WebContentsDestroyed(WebContents* web_contents) OVERRIDE {
+    browser_plugin_guest_->EmbedderDestroyed();
+  }
+
+  virtual void WasShown() OVERRIDE {
+    browser_plugin_guest_->EmbedderVisibilityChanged(true);
+  }
+
+  virtual void WasHidden() OVERRIDE {
+    browser_plugin_guest_->EmbedderVisibilityChanged(false);
   }
 
  private:
   BrowserPluginGuest* browser_plugin_guest_;
 
-  DISALLOW_COPY_AND_ASSIGN(EmbedderRenderViewHostObserver);
+  DISALLOW_COPY_AND_ASSIGN(EmbedderWebContentsObserver);
 };
 
 BrowserPluginGuest::BrowserPluginGuest(
@@ -348,6 +354,7 @@ BrowserPluginGuest::BrowserPluginGuest(
       embedder_visible_(true),
       next_permission_request_id_(browser_plugin::kInvalidPermissionRequestID),
       has_render_view_(has_render_view),
+      last_seen_auto_size_enabled_(false),
       is_in_destruction_(false) {
   DCHECK(web_contents);
   web_contents->SetDelegate(this);
@@ -384,6 +391,21 @@ void BrowserPluginGuest::DestroyUnattachedWindows() {
   DCHECK_EQ(0ul, pending_new_windows_.size());
 }
 
+void BrowserPluginGuest::LoadURLWithParams(WebContents* web_contents,
+                                           const GURL& url,
+                                           const Referrer& referrer,
+                                           PageTransition transition_type) {
+  NavigationController::LoadURLParams load_url_params(url);
+  load_url_params.referrer = referrer;
+  load_url_params.transition_type = transition_type;
+  load_url_params.extra_headers = std::string();
+  if (delegate_ && delegate_->IsOverridingUserAgent()) {
+    load_url_params.override_user_agent =
+        NavigationController::UA_OVERRIDE_TRUE;
+  }
+  web_contents->GetController().LoadURLWithParams(load_url_params);
+}
+
 void BrowserPluginGuest::RespondToPermissionRequest(
     int request_id,
     bool should_allow,
@@ -415,10 +437,61 @@ int BrowserPluginGuest::RequestPermission(
                   request_id);
   // If BrowserPluginGuestDelegate hasn't handled the permission then we simply
   // reject it immediately.
-  if (!delegate_->RequestPermission(permission_type, request_info, callback))
-    callback.Run(false, "");
+  if (!delegate_->RequestPermission(
+      permission_type, request_info, callback, request->AllowedByDefault())) {
+    callback.Run(request->AllowedByDefault(), "");
+    return browser_plugin::kInvalidPermissionRequestID;
+  }
 
   return request_id;
+}
+
+BrowserPluginGuest* BrowserPluginGuest::CreateNewGuestWindow(
+    const OpenURLParams& params) {
+  BrowserPluginGuestManager* guest_manager =
+      GetWebContents()->GetBrowserPluginGuestManager();
+
+  // Allocate a new instance ID for the new guest.
+  int instance_id = guest_manager->get_next_instance_id();
+
+  // Set the attach params to use the same partition as the opener.
+  // We pull the partition information from the site's URL, which is of the form
+  // guest://site/{persist}?{partition_name}.
+  const GURL& site_url = GetWebContents()->GetSiteInstance()->GetSiteURL();
+  BrowserPluginHostMsg_Attach_Params attach_params;
+  attach_params.storage_partition_id = site_url.query();
+  attach_params.persist_storage =
+      site_url.path().find("persist") != std::string::npos;
+
+  // The new guest gets a copy of this guest's extra params so that the content
+  // embedder exposes the same API for this guest as its opener.
+  scoped_ptr<base::DictionaryValue> extra_params(
+      extra_attach_params_->DeepCopy());
+  BrowserPluginGuest* new_guest =
+      GetWebContents()->GetBrowserPluginGuestManager()->CreateGuest(
+          GetWebContents()->GetSiteInstance(), instance_id,
+          attach_params, extra_params.Pass());
+  new_guest->opener_ = AsWeakPtr();
+
+  // Take ownership of |new_guest|.
+  pending_new_windows_.insert(
+      std::make_pair(new_guest, NewWindowInfo(params.url, std::string())));
+
+  // Request permission to show the new window.
+  RequestNewWindowPermission(
+      new_guest->GetWebContents(),
+      params.disposition,
+      gfx::Rect(),
+      params.user_gesture);
+
+  return new_guest;
+}
+
+void BrowserPluginGuest::EmbedderDestroyed() {
+  embedder_web_contents_ = NULL;
+  if (delegate_)
+    delegate_->EmbedderDestroyed();
+  Destroy();
 }
 
 void BrowserPluginGuest::Destroy() {
@@ -483,11 +556,9 @@ void BrowserPluginGuest::Initialize(
       static_cast<WebContentsViewGuest*>(GetWebContents()->GetView());
   new_view->OnGuestInitialized(embedder_web_contents->GetView());
 
-  // |render_view_host| manages the ownership of this BrowserPluginGuestHelper.
-  new BrowserPluginGuestHelper(this, GetWebContents()->GetRenderViewHost());
-
   RendererPreferences* renderer_prefs =
       GetWebContents()->GetMutableRendererPrefs();
+  std::string guest_user_agent_override = renderer_prefs->user_agent_override;
   // Copy renderer preferences (and nothing else) from the embedder's
   // WebContents to the guest.
   //
@@ -495,6 +566,7 @@ void BrowserPluginGuest::Initialize(
   // values for caret blinking interval, colors related to selection and
   // focus.
   *renderer_prefs = *embedder_web_contents_->GetMutableRendererPrefs();
+  renderer_prefs->user_agent_override = guest_user_agent_override;
 
   // We would like the guest to report changes to frame names so that we can
   // update the BrowserPlugin's corresponding 'name' attribute.
@@ -503,15 +575,10 @@ void BrowserPluginGuest::Initialize(
   // Navigation is disabled in Chrome Apps. We want to make sure guest-initiated
   // navigations still continue to function inside the app.
   renderer_prefs->browser_handles_all_top_level_requests = false;
+  // Disable "client blocked" error page for browser plugin.
+  renderer_prefs->disable_client_blocked_error_page = true;
 
-  // Listen to embedder visibility changes so that the guest is in a 'shown'
-  // state if both the embedder is visible and the BrowserPlugin is marked as
-  // visible.
-  notification_registrar_.Add(
-      this, NOTIFICATION_WEB_CONTENTS_VISIBILITY_CHANGED,
-      Source<WebContents>(embedder_web_contents_));
-
-  embedder_rvh_observer_.reset(new EmbedderRenderViewHostObserver(this));
+  embedder_web_contents_observer_.reset(new EmbedderWebContentsObserver(this));
 
   OnSetSize(instance_id_, params.auto_size_params, params.resize_guest_params);
 
@@ -524,8 +591,10 @@ void BrowserPluginGuest::Initialize(
       new BrowserPluginMsg_GuestContentWindowReady(instance_id_,
                                                    guest_routing_id));
 
-  if (!params.src.empty())
+  if (!params.src.empty()) {
+    // params.src will be validated in BrowserPluginGuest::OnNavigateGuest.
     OnNavigateGuest(instance_id_, params.src);
+  }
 
   has_render_view_ = true;
 
@@ -543,6 +612,18 @@ void BrowserPluginGuest::Initialize(
         GetWebContents()->GetRenderViewHost());
     guest_rvh->SetInputMethodActive(true);
   }
+
+  // Inform the embedder of the guest's information.
+  // We pull the partition information from the site's URL, which is of the form
+  // guest://site/{persist}?{partition_name}.
+  const GURL& site_url = GetWebContents()->GetSiteInstance()->GetSiteURL();
+  BrowserPluginMsg_Attach_ACK_Params ack_params;
+  ack_params.storage_partition_id = site_url.query();
+  ack_params.persist_storage =
+      site_url.path().find("persist") != std::string::npos;
+  ack_params.name = name_;
+  SendMessageToEmbedder(
+      new BrowserPluginMsg_Attach_ACK(instance_id_, ack_params));
 }
 
 BrowserPluginGuest::~BrowserPluginGuest() {
@@ -555,6 +636,7 @@ BrowserPluginGuest::~BrowserPluginGuest() {
 // static
 BrowserPluginGuest* BrowserPluginGuest::Create(
     int instance_id,
+    SiteInstance* guest_site_instance,
     WebContentsImpl* web_contents,
     scoped_ptr<base::DictionaryValue> extra_params) {
   RecordAction(UserMetricsAction("BrowserPlugin.Guest.Create"));
@@ -564,10 +646,11 @@ BrowserPluginGuest* BrowserPluginGuest::Create(
   } else {
     guest = new BrowserPluginGuest(instance_id, web_contents, NULL, false);
   }
+  guest->extra_attach_params_.reset(extra_params->DeepCopy());
   web_contents->SetBrowserPluginGuest(guest);
   BrowserPluginGuestDelegate* delegate = NULL;
   GetContentClient()->browser()->GuestWebContentsCreated(
-      web_contents, NULL, &delegate, extra_params.Pass());
+      guest_site_instance, web_contents, NULL, &delegate, extra_params.Pass());
   guest->SetDelegate(delegate);
   return guest;
 }
@@ -584,6 +667,7 @@ BrowserPluginGuest* BrowserPluginGuest::CreateWithOpener(
   web_contents->SetBrowserPluginGuest(guest);
   BrowserPluginGuestDelegate* delegate = NULL;
   GetContentClient()->browser()->GuestWebContentsCreated(
+      opener->GetWebContents()->GetSiteInstance(),
       web_contents, opener->GetWebContents(), &delegate,
       scoped_ptr<base::DictionaryValue>());
   guest->SetDelegate(delegate);
@@ -605,20 +689,9 @@ gfx::Rect BrowserPluginGuest::ToGuestRect(const gfx::Rect& bounds) {
   return guest_rect;
 }
 
-void BrowserPluginGuest::Observe(int type,
-                                 const NotificationSource& source,
-                                 const NotificationDetails& details) {
-  switch (type) {
-    case NOTIFICATION_WEB_CONTENTS_VISIBILITY_CHANGED: {
-      DCHECK_EQ(Source<WebContents>(source).ptr(), embedder_web_contents_);
-      embedder_visible_ = *Details<bool>(details).ptr();
-      UpdateVisibility();
-      break;
-    }
-    default:
-      NOTREACHED() << "Unexpected notification sent.";
-      break;
-  }
+void BrowserPluginGuest::EmbedderVisibilityChanged(bool visible) {
+  embedder_visible_ = visible;
+  UpdateVisibility();
 }
 
 void BrowserPluginGuest::AddNewContents(WebContents* source,
@@ -638,12 +711,6 @@ void BrowserPluginGuest::CanDownload(
     int request_id,
     const std::string& request_method,
     const base::Callback<void(bool)>& callback) {
-  if (permission_request_map_.size() >= kNumMaxOutstandingPermissionRequests) {
-    // Deny the download request.
-    callback.Run(false);
-    return;
-  }
-
   BrowserThread::PostTaskAndReplyWithResult(
       BrowserThread::IO, FROM_HERE,
       base::Bind(&RetrieveDownloadURLFromRequestId,
@@ -652,6 +719,12 @@ void BrowserPluginGuest::CanDownload(
                  weak_ptr_factory_.GetWeakPtr(),
                  request_method,
                  callback));
+}
+
+void BrowserPluginGuest::LoadProgressChanged(WebContents* contents,
+                                             double progress) {
+  if (delegate_)
+    delegate_->LoadProgressed(progress);
 }
 
 void BrowserPluginGuest::CloseContents(WebContents* source) {
@@ -711,10 +784,13 @@ WebContents* BrowserPluginGuest::OpenURLFromTab(WebContents* source,
     it->second = new_window_info;
     return NULL;
   }
-  // This can happen for cross-site redirects.
-  source->GetController().LoadURL(
-        params.url, params.referrer, params.transition, std::string());
-  return source;
+  if (params.disposition == CURRENT_TAB) {
+    // This can happen for cross-site redirects.
+    LoadURLWithParams(source, params.url, params.referrer, params.transition);
+    return source;
+  }
+
+  return CreateNewGuestWindow(params)->GetWebContents();
 }
 
 void BrowserPluginGuest::WebContentsCreated(WebContents* source_contents,
@@ -766,6 +842,10 @@ WebContentsImpl* BrowserPluginGuest::GetWebContents() {
 
 base::SharedMemory* BrowserPluginGuest::GetDamageBufferFromEmbedder(
     const BrowserPluginHostMsg_ResizeGuest_Params& params) {
+  if (!attached()) {
+    LOG(WARNING) << "Attempting to map a damage buffer prior to attachment.";
+    return NULL;
+  }
 #if defined(OS_WIN)
   base::ProcessHandle handle =
       embedder_web_contents_->GetRenderProcessHost()->GetHandle();
@@ -893,12 +973,6 @@ void BrowserPluginGuest::AskEmbedderForGeolocationPermission(
     int bridge_id,
     const GURL& requesting_frame,
     const GeolocationCallback& callback) {
-  if (permission_request_map_.size() >= kNumMaxOutstandingPermissionRequests) {
-    // Deny the geolocation request.
-    callback.Run(false);
-    return;
-  }
-
   base::DictionaryValue request_info;
   request_info.Set(browser_plugin::kURL,
                    base::Value::CreateStringValue(requesting_frame.spec()));
@@ -953,6 +1027,7 @@ void BrowserPluginGuest::SendQueuedMessages() {
 
 void BrowserPluginGuest::DidCommitProvisionalLoadForFrame(
     int64 frame_id,
+    const string16& frame_unique_name,
     bool is_main_frame,
     const GURL& url,
     PageTransition transition_type,
@@ -961,9 +1036,8 @@ void BrowserPluginGuest::DidCommitProvisionalLoadForFrame(
 }
 
 void BrowserPluginGuest::DidStopLoading(RenderViewHost* render_view_host) {
-  bool disable_dragdrop = !CommandLine::ForCurrentProcess()->HasSwitch(
-                              switches::kEnableBrowserPluginDragDrop);
-  if (disable_dragdrop) {
+  bool enable_dragdrop = delegate_ && delegate_->IsDragAndDropEnabled();
+  if (!enable_dragdrop) {
     // Initiating a drag from inside a guest is currently not supported without
     // the kEnableBrowserPluginDragDrop flag on a linux platform. So inject some
     // JS to disable it. http://crbug.com/161112
@@ -1080,9 +1154,12 @@ bool BrowserPluginGuest::OnMessageReceived(const IPC::Message& message) {
 
 void BrowserPluginGuest::Attach(
     WebContentsImpl* embedder_web_contents,
-    BrowserPluginHostMsg_Attach_Params params) {
+    BrowserPluginHostMsg_Attach_Params params,
+    const base::DictionaryValue& extra_params) {
   if (attached())
     return;
+
+  extra_attach_params_.reset(extra_params.DeepCopy());
 
   // Clear parameters that get inherited from the opener.
   params.storage_partition_id.clear();
@@ -1124,18 +1201,6 @@ void BrowserPluginGuest::Attach(
     params.name.clear();
 
   Initialize(embedder_web_contents, params);
-
-  // Inform the embedder of the guest's information.
-  // We pull the partition information from the site's URL, which is of the form
-  // guest://site/{persist}?{partition_name}.
-  const GURL& site_url = GetWebContents()->GetSiteInstance()->GetSiteURL();
-  BrowserPluginMsg_Attach_ACK_Params ack_params;
-  ack_params.storage_partition_id = site_url.query();
-  ack_params.persist_storage =
-      site_url.path().find("persist") != std::string::npos;
-  ack_params.name = name_;
-  SendMessageToEmbedder(
-      new BrowserPluginMsg_Attach_ACK(instance_id_, ack_params));
 
   SendQueuedMessages();
 
@@ -1245,9 +1310,7 @@ void BrowserPluginGuest::OnHandleInputEvent(
 void BrowserPluginGuest::OnLockMouse(bool user_gesture,
                                      bool last_unlocked_by_target,
                                      bool privileged) {
-  if (pending_lock_request_ ||
-      (permission_request_map_.size() >=
-          kNumMaxOutstandingPermissionRequests)) {
+  if (pending_lock_request_) {
     // Immediately reject the lock because only one pointerLock may be active
     // at a time.
     Send(new ViewMsg_LockMouse_ACK(routing_id(), false));
@@ -1261,7 +1324,7 @@ void BrowserPluginGuest::OnLockMouse(bool user_gesture,
                    base::Value::CreateBooleanValue(last_unlocked_by_target));
   request_info.Set(browser_plugin::kURL,
                    base::Value::CreateStringValue(
-                       web_contents()->GetURL().spec()));
+                       web_contents()->GetLastCommittedURL().spec()));
 
   RequestPermission(BROWSER_PLUGIN_PERMISSION_TYPE_POINTER_LOCK,
                     new PointerLockRequest(this),
@@ -1278,21 +1341,44 @@ void BrowserPluginGuest::OnLockMouseAck(int instance_id, bool succeeded) {
 void BrowserPluginGuest::OnNavigateGuest(
     int instance_id,
     const std::string& src) {
-  GURL url(src);
+  GURL url = delegate_ ? delegate_->ResolveURL(src) : GURL(src);
   // We do not load empty urls in web_contents.
   // If a guest sets empty src attribute after it has navigated to some
   // non-empty page, the action is considered no-op. This empty src navigation
   // should never be sent to BrowserPluginGuest (browser process).
   DCHECK(!src.empty());
-  if (!src.empty()) {
-    // As guests do not swap processes on navigation, only navigations to
-    // normal web URLs are supported.  No protocol handlers are installed for
-    // other schemes (e.g., WebUI or extensions), and no permissions or bindings
-    // can be granted to the guest process.
-    GetWebContents()->GetController().LoadURL(url, Referrer(),
-                                            PAGE_TRANSITION_AUTO_TOPLEVEL,
-                                            std::string());
+  if (src.empty())
+    return;
+
+  // Do not allow navigating a guest to schemes other than known safe schemes.
+  // This will block the embedder trying to load unwanted schemes, e.g.
+  // chrome://settings.
+  bool scheme_is_blocked =
+      (!ChildProcessSecurityPolicyImpl::GetInstance()->IsWebSafeScheme(
+          url.scheme()) &&
+      !ChildProcessSecurityPolicyImpl::GetInstance()->IsPseudoScheme(
+          url.scheme())) ||
+      url.SchemeIs(kJavaScriptScheme);
+  if (scheme_is_blocked || !url.is_valid()) {
+    if (delegate_) {
+      std::string error_type;
+      RemoveChars(net::ErrorToString(net::ERR_ABORTED), "net::", &error_type);
+      delegate_->LoadAbort(true /* is_top_level */, url, error_type);
+    }
+    return;
   }
+
+  GURL validated_url(url);
+  RenderViewHost::FilterURL(
+      GetWebContents()->GetRenderProcessHost(),
+      false,
+      &validated_url);
+  // As guests do not swap processes on navigation, only navigations to
+  // normal web URLs are supported.  No protocol handlers are installed for
+  // other schemes (e.g., WebUI or extensions), and no permissions or bindings
+  // can be granted to the guest process.
+  LoadURLWithParams(GetWebContents(), validated_url, Referrer(),
+                    PAGE_TRANSITION_AUTO_TOPLEVEL);
 }
 
 void BrowserPluginGuest::OnPluginDestroyed(int instance_id) {
@@ -1317,6 +1403,13 @@ void BrowserPluginGuest::OnResizeGuest(
       guest_device_scale_factor_ = params.scale_factor;
       render_widget_host->NotifyScreenInfoChanged();
     }
+  }
+  // When autosize is turned off and as a result there is a layout change, we
+  // send a sizechanged event.
+  if (!auto_size_enabled_ && last_seen_auto_size_enabled_ &&
+      !params.view_rect.size().IsEmpty() && delegate_) {
+    delegate_->SizeChanged(last_seen_view_size_, params.view_rect.size());
+    last_seen_auto_size_enabled_ = false;
   }
   // Invalid damage buffer means we are in HW compositing mode,
   // so just resize the WebContents and repaint if needed.
@@ -1362,6 +1455,7 @@ void BrowserPluginGuest::OnSetSize(
   if (auto_size_enabled_ && (!old_auto_size_enabled ||
                              (old_max_size != max_auto_size_) ||
                              (old_min_size != min_auto_size_))) {
+    RecordAction(UserMetricsAction("BrowserPlugin.Guest.EnableAutoResize"));
     GetWebContents()->GetRenderViewHost()->EnableAutoResize(
         min_auto_size_, max_auto_size_);
     // TODO(fsamuel): If we're changing autosize parameters, then we force
@@ -1497,12 +1591,6 @@ void BrowserPluginGuest::RequestMediaAccessPermission(
     WebContents* web_contents,
     const MediaStreamRequest& request,
     const MediaResponseCallback& callback) {
-  if (permission_request_map_.size() >= kNumMaxOutstandingPermissionRequests) {
-    // Deny the media request.
-    callback.Run(MediaStreamDevices(), scoped_ptr<MediaStreamUI>());
-    return;
-  }
-
   base::DictionaryValue request_info;
   request_info.Set(
       browser_plugin::kURL,
@@ -1522,11 +1610,6 @@ void BrowserPluginGuest::RunJavaScriptDialog(
     const string16& default_prompt_text,
     const DialogClosedCallback& callback,
     bool* did_suppress_message) {
-  if (permission_request_map_.size() >= kNumMaxOutstandingPermissionRequests) {
-    // Cancel the dialog.
-    callback.Run(false, string16());
-    return;
-  }
   base::DictionaryValue request_info;
   request_info.Set(
       browser_plugin::kDefaultPromptText,
@@ -1579,6 +1662,16 @@ void BrowserPluginGuest::OnUpdateRect(
   relay_params.is_resize_ack = ViewHostMsg_UpdateRect_Flags::is_resize_ack(
       params.flags);
   relay_params.needs_ack = params.needs_ack;
+
+  bool size_changed = last_seen_view_size_ != params.view_size;
+  gfx::Size old_size = last_seen_view_size_;
+  last_seen_view_size_ = params.view_size;
+
+  if ((auto_size_enabled_ || last_seen_auto_size_enabled_) &&
+      size_changed && delegate_) {
+    delegate_->SizeChanged(old_size, last_seen_view_size_);
+  }
+  last_seen_auto_size_enabled_ = auto_size_enabled_;
 
   // HW accelerated case, acknowledge resize only
   if (!params.needs_ack || !damage_buffer_) {

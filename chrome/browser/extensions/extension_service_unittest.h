@@ -36,6 +36,7 @@ class ExtensionServiceTestBase : public testing::Test {
     base::FilePath extensions_install_dir;
     bool autoupdate_enabled;
     bool is_first_run;
+    bool profile_is_managed;
 
     ExtensionServiceInitParams();
   };
@@ -49,11 +50,15 @@ class ExtensionServiceTestBase : public testing::Test {
       const base::FilePath& prefs_file,
       const base::FilePath& source_install_dir);
 
+  void InitializeGoodInstalledExtensionService();
+
   void InitializeEmptyExtensionService();
 
   void InitializeExtensionProcessManager();
 
   void InitializeExtensionServiceWithUpdater();
+
+  void InitializeExtensionSyncService();
 
   static void SetUpTestCase();
 
@@ -65,11 +70,12 @@ class ExtensionServiceTestBase : public testing::Test {
   }
 
  protected:
-  void InitializeExtensionServiceHelper(bool autoupdate_enabled,
-                                        bool is_first_run);
+  ExtensionServiceInitParams CreateDefaultInitParams();
 
-  content::TestBrowserThreadBundle thread_bundle_;
+  // Destroying at_exit_manager_ will delete all LazyInstances, so it must come
+  // after thread_bundle_ in the destruction order.
   base::ShadowingAtExitManager at_exit_manager_;
+  content::TestBrowserThreadBundle thread_bundle_;
   base::ScopedTempDir temp_dir_;
   scoped_ptr<TestingProfile> profile_;
   base::FilePath extensions_install_dir_;
@@ -77,6 +83,7 @@ class ExtensionServiceTestBase : public testing::Test {
   // Managed by extensions::ExtensionSystemFactory.
   ExtensionService* service_;
   extensions::ManagementPolicy* management_policy_;
+  scoped_ptr<ExtensionSyncService> extension_sync_service_;
   size_t expected_extensions_count_;
 
 #if defined OS_CHROMEOS

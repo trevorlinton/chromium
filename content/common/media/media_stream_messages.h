@@ -19,6 +19,9 @@
 IPC_ENUM_TRAITS_MAX_VALUE(content::MediaStreamType,
                           content::NUM_MEDIA_TYPES - 1)
 
+IPC_ENUM_TRAITS_MAX_VALUE(content::VideoFacingMode,
+                          content::NUM_MEDIA_VIDEO_FACING_MODE - 1)
+
 IPC_STRUCT_TRAITS_BEGIN(content::StreamOptions)
   IPC_STRUCT_TRAITS_MEMBER(audio_type)
   IPC_STRUCT_TRAITS_MEMBER(audio_device_id)
@@ -30,9 +33,14 @@ IPC_STRUCT_TRAITS_BEGIN(content::StreamDeviceInfo)
   IPC_STRUCT_TRAITS_MEMBER(device.type)
   IPC_STRUCT_TRAITS_MEMBER(device.name)
   IPC_STRUCT_TRAITS_MEMBER(device.id)
-  IPC_STRUCT_TRAITS_MEMBER(device.sample_rate)
-  IPC_STRUCT_TRAITS_MEMBER(device.channel_layout)
-  IPC_STRUCT_TRAITS_MEMBER(in_use)
+  IPC_STRUCT_TRAITS_MEMBER(device.video_facing)
+  IPC_STRUCT_TRAITS_MEMBER(device.matched_output_device_id)
+  IPC_STRUCT_TRAITS_MEMBER(device.input.sample_rate)
+  IPC_STRUCT_TRAITS_MEMBER(device.input.channel_layout)
+  IPC_STRUCT_TRAITS_MEMBER(device.input.frames_per_buffer)
+  IPC_STRUCT_TRAITS_MEMBER(device.matched_output.sample_rate)
+  IPC_STRUCT_TRAITS_MEMBER(device.matched_output.channel_layout)
+  IPC_STRUCT_TRAITS_MEMBER(device.matched_output.frames_per_buffer)
   IPC_STRUCT_TRAITS_MEMBER(session_id)
 IPC_STRUCT_TRAITS_END()
 
@@ -98,10 +106,16 @@ IPC_MESSAGE_CONTROL2(MediaStreamHostMsg_CancelGenerateStream,
                      int /* render view id */,
                      int /* request id */)
 
-// Request to stop streaming from the media stream.
-IPC_MESSAGE_CONTROL2(MediaStreamHostMsg_StopGeneratedStream,
+// Request to close a device that has been opened by GenerateStream.
+IPC_MESSAGE_CONTROL2(MediaStreamHostMsg_StopStreamDevice,
                      int /* render view id */,
-                     std::string /* label */)
+                     std::string /*device_id*/)
+
+// Request to enumerate devices.
+IPC_MESSAGE_CONTROL2(MediaStreamHostMsg_GetSources,
+                     int /* request id */,
+                     GURL /* origin */)
+
 
 // Request to enumerate devices.
 // Used by Pepper.
@@ -112,6 +126,11 @@ IPC_MESSAGE_CONTROL4(MediaStreamHostMsg_EnumerateDevices,
                      content::MediaStreamType /* type */,
                      GURL /* security origin */)
 
+// Request to stop enumerating devices.
+IPC_MESSAGE_CONTROL2(MediaStreamHostMsg_CancelEnumerateDevices,
+                     int /* render view id */,
+                     std::string /* label */)
+
 // Request to open the device.
 IPC_MESSAGE_CONTROL5(MediaStreamHostMsg_OpenDevice,
                      int /* render view id */,
@@ -120,7 +139,7 @@ IPC_MESSAGE_CONTROL5(MediaStreamHostMsg_OpenDevice,
                      content::MediaStreamType /* type */,
                      GURL /* security origin */)
 
-// Request to enumerate devices.
-IPC_MESSAGE_CONTROL2(MediaStreamHostMsg_GetSources,
-                     int /* request id */,
-                     GURL /* origin */)
+// Request to close a device.
+IPC_MESSAGE_CONTROL2(MediaStreamHostMsg_CloseDevice,
+                     int /* render view id */,
+                     std::string /*label*/)

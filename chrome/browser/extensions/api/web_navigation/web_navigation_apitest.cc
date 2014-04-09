@@ -202,6 +202,7 @@ class DelayLoadStartAndExecuteJavascript
 
   virtual void DidCommitProvisionalLoadForFrame(
       int64 frame_id,
+      const string16& frame_unique_name,
       bool is_main_frame,
       const GURL& url,
       content::PageTransition transition_type,
@@ -246,7 +247,6 @@ class TestResourceDispatcherHostDelegate
       ResourceType::Type resource_type,
       int child_id,
       int route_id,
-      bool is_continuation_of_transferred_request,
       ScopedVector<content::ResourceThrottle>* throttles) OVERRIDE {
     ChromeResourceDispatcherHostDelegate::RequestBeginning(
         request,
@@ -255,7 +255,6 @@ class TestResourceDispatcherHostDelegate
         resource_type,
         child_id,
         route_id,
-        is_continuation_of_transferred_request,
         throttles);
     content::ResourceThrottle* throttle =
         test_navigation_listener_->CreateResourceThrottle(request->url(),
@@ -381,7 +380,7 @@ class WebNavigationApiTest : public ExtensionApiTest {
 };
 
 // Fails often on Windows dbg bots. http://crbug.com/177163
-#if defined(OS_WIN)
+#if defined(OS_WIN) && !defined(NDEBUG)
 #define MAYBE_Api DISABLED_Api
 #else
 #define MAYBE_Api Api
@@ -393,7 +392,7 @@ IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, MAYBE_Api) {
 }
 
 // Fails often on Windows dbg bots. http://crbug.com/177163
-#if defined(OS_WIN)
+#if defined(OS_WIN) && !defined(NDEBUG)
 #define MAYBE_GetFrame DISABLED_GetFrame
 #else
 #define MAYBE_GetFrame GetFrame
@@ -497,7 +496,7 @@ IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, SimpleLoad) {
 }
 
 // Fails often on Windows dbg bots. http://crbug.com/177163
-#if defined(OS_WIN)
+#if defined(OS_WIN) && !defined(NDEBUG)
 #define MAYBE_Failures DISABLED_Failures
 #else
 #define MAYBE_Failures Failures
@@ -515,7 +514,7 @@ IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, FilteredTest) {
 }
 
 // Fails often on Windows dbg bots. http://crbug.com/177163
-#if defined(OS_WIN)
+#if defined(OS_WIN) && !defined(NDEBUG)
 #define MAYBE_UserAction DISABLED_UserAction
 #else
 #define MAYBE_UserAction UserAction
@@ -535,7 +534,7 @@ IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, MAYBE_UserAction) {
   ExtensionService* service = extensions::ExtensionSystem::Get(
       browser()->profile())->extension_service();
   const extensions::Extension* extension =
-      service->GetExtensionById(last_loaded_extension_id_, false);
+      service->GetExtensionById(last_loaded_extension_id(), false);
   GURL url = extension->GetResourceURL("userAction/a.html");
 
   ui_test_utils::NavigateToURL(browser(), url);
@@ -577,7 +576,7 @@ IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, MAYBE_RequestOpenTab) {
   ExtensionService* service = extensions::ExtensionSystem::Get(
       browser()->profile())->extension_service();
   const extensions::Extension* extension =
-      service->GetExtensionById(last_loaded_extension_id_, false);
+      service->GetExtensionById(last_loaded_extension_id(), false);
   GURL url = extension->GetResourceURL("requestOpenTab/a.html");
 
   ui_test_utils::NavigateToURL(browser(), url);
@@ -597,7 +596,7 @@ IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, MAYBE_RequestOpenTab) {
 }
 
 // Fails often on Windows dbg bots. http://crbug.com/177163
-#if defined(OS_WIN)
+#if defined(OS_WIN) && !defined(NDEBUG)
 #define MAYBE_TargetBlank DISABLED_TargetBlank
 #else
 #define MAYBE_TargetBlank TargetBlank
@@ -689,7 +688,7 @@ IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, CrossProcess) {
   ExtensionService* service = extensions::ExtensionSystem::Get(
       browser()->profile())->extension_service();
   const extensions::Extension* extension =
-      service->GetExtensionById(last_loaded_extension_id_, false);
+      service->GetExtensionById(last_loaded_extension_id(), false);
 
   // See crossProcess/d.html.
   DelayLoadStartAndExecuteJavascript call_script(
@@ -711,7 +710,7 @@ IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, CrossProcessFragment) {
   ExtensionService* service = extensions::ExtensionSystem::Get(
       browser()->profile())->extension_service();
   const extensions::Extension* extension =
-      service->GetExtensionById(last_loaded_extension_id_, false);
+      service->GetExtensionById(last_loaded_extension_id(), false);
 
   // See crossProcess/f.html.
   DelayLoadStartAndExecuteJavascript call_script3(
@@ -744,7 +743,7 @@ IN_PROC_BROWSER_TEST_F(WebNavigationApiTest, CrossProcessHistory) {
   ExtensionService* service = extensions::ExtensionSystem::Get(
       browser()->profile())->extension_service();
   const extensions::Extension* extension =
-      service->GetExtensionById(last_loaded_extension_id_, false);
+      service->GetExtensionById(last_loaded_extension_id(), false);
 
   // See crossProcess/e.html.
   DelayLoadStartAndExecuteJavascript call_script2(

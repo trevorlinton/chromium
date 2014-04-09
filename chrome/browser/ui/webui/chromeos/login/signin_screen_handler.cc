@@ -5,7 +5,6 @@
 #include "chrome/browser/ui/webui/chromeos/login/signin_screen_handler.h"
 
 #include "base/callback.h"
-#include "base/chromeos/chromeos_version.h"
 #include "base/command_line.h"
 #include "base/debug/trace_event.h"
 #include "base/logging.h"
@@ -13,6 +12,7 @@
 #include "base/metrics/histogram.h"
 #include "base/prefs/pref_registry_simple.h"
 #include "base/prefs/pref_service.h"
+#include "base/prefs/scoped_user_pref_update.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -36,7 +36,6 @@
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/io_thread.h"
 #include "chrome/browser/policy/browser_policy_connector.h"
-#include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/chromeos/login/error_screen_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/native_window_delegate.h"
@@ -241,7 +240,7 @@ std::string GetNetworkName(const std::string& service_path) {
 // Returns captive portal state for a network by its service path.
 NetworkPortalDetector::CaptivePortalState GetCaptivePortalState(
     const std::string& service_path) {
-  NetworkPortalDetector* detector = NetworkPortalDetector::GetInstance();
+  NetworkPortalDetector* detector = NetworkPortalDetector::Get();
   const NetworkState* network = NetworkHandler::Get()->network_state_handler()->
       GetNetworkState(service_path);
   if (!detector || !network)
@@ -252,12 +251,12 @@ NetworkPortalDetector::CaptivePortalState GetCaptivePortalState(
 void RecordDiscrepancyWithShill(
     const NetworkState* network,
     const NetworkPortalDetector::CaptivePortalStatus status) {
-  if (network->connection_state() == flimflam::kStateOnline) {
+  if (network->connection_state() == shill::kStateOnline) {
     UMA_HISTOGRAM_ENUMERATION(
         "CaptivePortal.OOBE.DiscrepancyWithShill_Online",
         status,
         NetworkPortalDetector::CAPTIVE_PORTAL_STATUS_COUNT);
-  } else if (network->connection_state() == flimflam::kStatePortal) {
+  } else if (network->connection_state() == shill::kStatePortal) {
     UMA_HISTOGRAM_ENUMERATION(
         "CaptivePortal.OOBE.DiscrepancyWithShill_RestrictedPool",
         status,
@@ -292,20 +291,20 @@ void RecordNetworkPortalDetectorStats(const std::string& service_path) {
       NOTREACHED();
       break;
     case NetworkPortalDetector::CAPTIVE_PORTAL_STATUS_OFFLINE:
-      if (network->connection_state() == flimflam::kStateOnline ||
-          network->connection_state() == flimflam::kStatePortal)
+      if (network->connection_state() == shill::kStateOnline ||
+          network->connection_state() == shill::kStatePortal)
         RecordDiscrepancyWithShill(network, state.status);
       break;
     case NetworkPortalDetector::CAPTIVE_PORTAL_STATUS_ONLINE:
-      if (network->connection_state() != flimflam::kStateOnline)
+      if (network->connection_state() != shill::kStateOnline)
         RecordDiscrepancyWithShill(network, state.status);
       break;
     case NetworkPortalDetector::CAPTIVE_PORTAL_STATUS_PORTAL:
-      if (network->connection_state() != flimflam::kStatePortal)
+      if (network->connection_state() != shill::kStatePortal)
         RecordDiscrepancyWithShill(network, state.status);
       break;
     case NetworkPortalDetector::CAPTIVE_PORTAL_STATUS_PROXY_AUTH_REQUIRED:
-      if (network->connection_state() != flimflam::kStateOnline)
+      if (network->connection_state() != shill::kStateOnline)
         RecordDiscrepancyWithShill(network, state.status);
       break;
     case NetworkPortalDetector::CAPTIVE_PORTAL_STATUS_COUNT:
@@ -340,7 +339,7 @@ static bool SetUserInputMethodImpl(
   if (input_method.empty())
     return false;
 
-  if (!manager->IsFullLatinKeyboard(input_method)) {
+  if (!manager->IsLoginKeyboard(input_method)) {
     LOG(WARNING) << "SetUserInputMethod('" << username
                  << "'): stored user LRU input method '" << input_method
                  << "' is no longer Full Latin Keyboard Language"
@@ -398,13 +397,20 @@ SigninScreenHandler::SigninScreenHandler(
       is_first_update_state_call_(true),
       offline_login_active_(false),
       last_network_state_(NetworkStateInformer::UNKNOWN),
-      has_pending_auth_ui_(false) {
+      has_pending_auth_ui_(false),
+      wait_for_auto_enrollment_check_(false) {
   DCHECK(network_state_informer_.get());
   DCHECK(error_screen_actor_);
   DCHECK(core_oobe_actor_);
   network_state_informer_->AddObserver(this);
-  CrosSettings::Get()->AddSettingsObserver(kAccountsPrefAllowNewUser, this);
-  CrosSettings::Get()->AddSettingsObserver(kAccountsPrefAllowGuest, this);
+  allow_new_user_subscription_ = CrosSettings::Get()->AddSettingsObserver(
+      kAccountsPrefAllowNewUser,
+      base::Bind(&SigninScreenHandler::UserSettingsChanged,
+                 base::Unretained(this)));
+  allow_guest_subscription_ = CrosSettings::Get()->AddSettingsObserver(
+      kAccountsPrefAllowGuest,
+      base::Bind(&SigninScreenHandler::UserSettingsChanged,
+                 base::Unretained(this)));
 
   registrar_.Add(this,
                  chrome::NOTIFICATION_AUTH_NEEDED,
@@ -426,8 +432,6 @@ SigninScreenHandler::~SigninScreenHandler() {
   if (delegate_)
     delegate_->SetWebUIHandler(NULL);
   network_state_informer_->RemoveObserver(this);
-  CrosSettings::Get()->RemoveSettingsObserver(kAccountsPrefAllowNewUser, this);
-  CrosSettings::Get()->RemoveSettingsObserver(kAccountsPrefAllowGuest, this);
 }
 
 void SigninScreenHandler::DeclareLocalizedValues(
@@ -446,7 +450,6 @@ void SigninScreenHandler::DeclareLocalizedValues(
   builder->Add("signinButton", IDS_LOGIN_BUTTON);
   builder->Add("shutDown", IDS_SHUTDOWN_BUTTON);
   builder->Add("addUser", IDS_ADD_USER_BUTTON);
-  builder->Add("cancelUserAdding", IDS_CANCEL_USER_ADDING);
   builder->Add("browseAsGuest", IDS_GO_INCOGNITO_BUTTON);
   builder->Add("cancel", IDS_CANCEL);
   builder->Add("signOutUser", IDS_SCREEN_LOCK_SIGN_OUT);
@@ -468,6 +471,9 @@ void SigninScreenHandler::DeclareLocalizedValues(
       g_browser_process->browser_policy_connector()->IsEnterpriseManaged() ?
           IDS_DISABLED_ADD_USER_TOOLTIP_ENTERPRISE :
           IDS_DISABLED_ADD_USER_TOOLTIP);
+  builder->Add("supervisedUserExpiredTokenWarning",
+               IDS_SUPERVISED_USER_EXPIRED_TOKEN_WARNING);
+  builder->Add("multiple-signin-banner-text", IDS_LOGIN_USER_ADDING_BANNER);
 
   // Strings used by password changed dialog.
   builder->Add("passwordChangedTitle", IDS_LOGIN_PASSWORD_CHANGED_TITLE);
@@ -499,6 +505,18 @@ void SigninScreenHandler::DeclareLocalizedValues(
                UTF8ToUTF16(chrome::kSupervisedUserManagementDisplayURL));
   builder->Add("removeUserWarningButtonTitle",
                IDS_LOGIN_POD_USER_REMOVE_WARNING_BUTTON);
+
+  // Strings used by confirm password dialog.
+  builder->Add("confirmPasswordTitle", IDS_LOGIN_CONFIRM_PASSWORD_TITLE);
+  builder->Add("confirmPasswordHint", IDS_LOGIN_CONFIRM_PASSWORD_HINT);
+  builder->Add("confirmPasswordConfirmButton",
+               IDS_LOGIN_CONFIRM_PASSWORD_CONFIRM_BUTTON);
+
+  // Strings used by no password warning dialog.
+  builder->Add("noPasswordWarningTitle", IDS_LOGIN_NO_PASSWORD_WARNING_TITLE);
+  builder->Add("noPasswordWarningBody", IDS_LOGIN_NO_PASSWORD_WARNING);
+  builder->Add("noPasswordWarningOkButton",
+               IDS_LOGIN_NO_PASSWORD_WARNING_DISMISS_BUTTON);
 
   if (chromeos::KioskModeSettings::Get()->IsKioskModeEnabled())
     builder->Add("demoLoginMessage", IDS_KIOSK_MODE_LOGIN_MESSAGE);
@@ -849,6 +867,11 @@ void SigninScreenHandler::RegisterMessages() {
               &SigninScreenHandler::HandleShowLoadingTimeoutError);
   AddCallback("updateOfflineLogin",
               &SigninScreenHandler::HandleUpdateOfflineLogin);
+  AddCallback("focusPod", &SigninScreenHandler::HandleFocusPod);
+
+  // This message is sent by the kiosk app menu, but is handled here
+  // so we can tell the delegate to launch the app.
+  AddCallback("launchKioskApp", &SigninScreenHandler::HandleLaunchKioskApp);
 }
 
 void SigninScreenHandler::RegisterPrefs(PrefRegistrySimple* registry) {
@@ -926,7 +949,7 @@ void SigninScreenHandler::ShowErrorScreen(LoginDisplay::SigninError error_id) {
 }
 
 void SigninScreenHandler::ShowSigninUI(const std::string& email) {
-
+  core_oobe_actor_->ShowSignInUI(email);
 }
 
 void SigninScreenHandler::ShowGaiaPasswordChanged(const std::string& username) {
@@ -974,11 +997,6 @@ void SigninScreenHandler::Observe(int type,
                                   const content::NotificationSource& source,
                                   const content::NotificationDetails& details) {
   switch (type) {
-    case chrome::NOTIFICATION_SYSTEM_SETTING_CHANGED: {
-      UpdateAuthExtension();
-      UpdateAddButtonStatus();
-      break;
-    }
     case chrome::NOTIFICATION_AUTH_NEEDED: {
       has_pending_auth_ui_ = true;
       break;
@@ -1013,6 +1031,15 @@ void SigninScreenHandler::OnDnsCleared() {
 
 // Update keyboard layout to least recently used by the user.
 void SigninScreenHandler::SetUserInputMethod(const std::string& username) {
+  UserManager* user_manager = UserManager::Get();
+  if (user_manager->IsUserLoggedIn()) {
+    // We are on sign-in screen inside user session (adding new user to
+    // the session or on lock screen), don't switch input methods in this case.
+    // TODO(dpolukhin): adding user and sign-in should be consistent
+    // crbug.com/292774
+    return;
+  }
+
   chromeos::input_method::InputMethodManager* const manager =
       chromeos::input_method::InputMethodManager::Get();
 
@@ -1153,6 +1180,11 @@ void SigninScreenHandler::LoadAuthExtension(
   CallJS("login.GaiaSigninScreen.loadAuthExtension", params);
 }
 
+void SigninScreenHandler::UserSettingsChanged() {
+  UpdateAuthExtension();
+  UpdateAddButtonStatus();
+}
+
 void SigninScreenHandler::UpdateAuthExtension() {
   DictionaryValue params;
   UpdateAuthParams(&params);
@@ -1290,8 +1322,13 @@ void SigninScreenHandler::HandleToggleEnrollmentScreen() {
 
 void SigninScreenHandler::HandleToggleKioskEnableScreen() {
   if (delegate_ &&
+      !wait_for_auto_enrollment_check_ &&
       !g_browser_process->browser_policy_connector()->IsEnterpriseManaged()) {
-    delegate_->ShowKioskEnableScreen();
+    wait_for_auto_enrollment_check_ = true;
+
+    LoginDisplayHostImpl::default_host()->GetAutoEnrollmentCheckResult(
+        base::Bind(&SigninScreenHandler::ContinueKioskEnableFlow,
+                   weak_factory_.GetWeakPtr()));
   }
 }
 
@@ -1326,13 +1363,21 @@ void SigninScreenHandler::FillUserDictionary(User* user,
       user->GetType() == User::USER_TYPE_PUBLIC_ACCOUNT;
   bool is_locally_managed_user =
       user->GetType() == User::USER_TYPE_LOCALLY_MANAGED;
+  User::OAuthTokenStatus token_status = user->oauth_token_status();
+
+  // If supervised user has unknown token status consider that as valid token.
+  // It will be invalidated inside session in case it has been revoked.
+  if (is_locally_managed_user &&
+      token_status == User::OAUTH_TOKEN_STATUS_UNKNOWN) {
+    token_status = User::OAUTH2_TOKEN_STATUS_VALID;
+  }
 
   user_dict->SetString(kKeyUsername, email);
   user_dict->SetString(kKeyEmailAddress, user->display_email());
   user_dict->SetString(kKeyDisplayName, user->GetDisplayName());
   user_dict->SetBoolean(kKeyPublicAccount, is_public_account);
   user_dict->SetBoolean(kKeyLocallyManagedUser, is_locally_managed_user);
-  user_dict->SetInteger(kKeyOauthTokenStatus, user->oauth_token_status());
+  user_dict->SetInteger(kKeyOauthTokenStatus, token_status);
   user_dict->SetBoolean(kKeySignedIn, user->is_logged_in());
   user_dict->SetBoolean(kKeyIsOwner, is_owner);
 
@@ -1421,12 +1466,8 @@ void SigninScreenHandler::HandleAccountPickerReady() {
   is_account_picker_showing_first_time_ = true;
   MaybePreloadAuthExtension();
 
-  if (ScreenLocker::default_screen_locker()) {
-    content::NotificationService::current()->Notify(
-        chrome::NOTIFICATION_LOCK_WEBUI_READY,
-        content::NotificationService::AllSources(),
-        content::NotificationService::NoDetails());
-  }
+  if (ScreenLocker::default_screen_locker())
+    ScreenLocker::default_screen_locker()->delegate()->OnLockWebUIReady();
 
   if (delegate_)
     delegate_->OnSigninScreenReady();
@@ -1434,10 +1475,8 @@ void SigninScreenHandler::HandleAccountPickerReady() {
 
 void SigninScreenHandler::HandleWallpaperReady() {
   if (ScreenLocker::default_screen_locker()) {
-    content::NotificationService::current()->Notify(
-        chrome::NOTIFICATION_LOCK_BACKGROUND_DISPLAYED,
-        content::NotificationService::AllSources(),
-        content::NotificationService::NoDetails());
+    ScreenLocker::default_screen_locker()->delegate()->
+        OnLockBackgroundDisplayed();
   }
 }
 
@@ -1549,6 +1588,10 @@ void SigninScreenHandler::HandleLoginUIStateChanged(const std::string& source,
   if (!KioskAppManager::Get()->GetAutoLaunchApp().empty() &&
       KioskAppManager::Get()->IsAutoLaunchRequested()) {
     LOG(INFO) << "Showing auto-launch warning";
+    // On slow devices, the wallpaper animation is not shown initially, so we
+    // must explicitly load the wallpaper. This is also the case for the
+    // account-picker and gaia-signin UI states.
+    delegate_->LoadSigninWallpaper();
     HandleToggleKioskAutolaunchScreen();
     return;
   }
@@ -1598,6 +1641,14 @@ void SigninScreenHandler::HandleShowLoadingTimeoutError() {
 
 void SigninScreenHandler::HandleUpdateOfflineLogin(bool offline_login_active) {
   offline_login_active_ = offline_login_active;
+}
+
+void SigninScreenHandler::HandleFocusPod(const std::string& user_id) {
+  SetUserInputMethod(user_id);
+}
+
+void SigninScreenHandler::HandleLaunchKioskApp(const std::string& app_id) {
+  delegate_->LoginAsKioskApp(app_id);
 }
 
 void SigninScreenHandler::StartClearingDnsCache() {
@@ -1734,6 +1785,24 @@ void SigninScreenHandler::SubmitLoginFormForTest() {
   // Test properties are cleared in HandleCompleteLogin because the form
   // submission might fail and login will not be attempted after reloading
   // if they are cleared here.
+}
+
+void SigninScreenHandler::ContinueKioskEnableFlow(bool should_auto_enroll) {
+  wait_for_auto_enrollment_check_ = false;
+
+  // Do not proceed with kiosk enable when auto enroll will be enforced.
+  // TODO(xiyuan): Add an error UI feedkback so user knows what happens.
+  if (should_auto_enroll) {
+    LOG(WARNING) << "Kiosk enable flow aborted because auto enrollment is "
+                    "going to be enforced.";
+
+    if (!kiosk_enable_flow_aborted_callback_for_test_.is_null())
+      kiosk_enable_flow_aborted_callback_for_test_.Run();
+    return;
+  }
+
+  if (delegate_)
+    delegate_->ShowKioskEnableScreen();
 }
 
 }  // namespace chromeos

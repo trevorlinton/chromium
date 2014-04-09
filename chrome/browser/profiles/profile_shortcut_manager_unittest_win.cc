@@ -223,7 +223,9 @@ class ProfileShortcutManagerTest : public testing::Test {
         ShellUtil::SHELL_SHORTCUT_CREATE_ALWAYS)) << location.ToString();
     const base::FilePath system_level_shortcut_path =
         GetSystemShortcutsDirectory().Append(
-            distribution->GetAppShortCutName() + installer::kLnkExt);
+            distribution->
+                GetShortcutName(BrowserDistribution::SHORTCUT_CHROME) +
+                installer::kLnkExt);
     EXPECT_TRUE(base::PathExists(system_level_shortcut_path))
         << location.ToString();
     return system_level_shortcut_path;
@@ -311,7 +313,7 @@ TEST_F(ProfileShortcutManagerTest, ShortcutFilenameStripsReservedCharacters) {
   const string16 kSanitizedProfileName = L"Harry";
   BrowserDistribution* distribution = GetDistribution();
   const string16 expected_name = kSanitizedProfileName + L" - " +
-      distribution->GetAppShortCutName() + installer::kLnkExt;
+      l10n_util::GetStringUTF16(IDS_SHORT_PRODUCT_NAME) + installer::kLnkExt;
   EXPECT_EQ(expected_name,
             profiles::internal::GetShortcutFilenameForProfile(kProfileName,
                                                               distribution));
@@ -319,9 +321,11 @@ TEST_F(ProfileShortcutManagerTest, ShortcutFilenameStripsReservedCharacters) {
 
 TEST_F(ProfileShortcutManagerTest, UnbadgedShortcutFilename) {
   BrowserDistribution* distribution = GetDistribution();
-  EXPECT_EQ(distribution->GetAppShortCutName() + installer::kLnkExt,
-            profiles::internal::GetShortcutFilenameForProfile(string16(),
-                                                              distribution));
+  EXPECT_EQ(
+      distribution->GetShortcutName(BrowserDistribution::SHORTCUT_CHROME) +
+          installer::kLnkExt,
+      profiles::internal::GetShortcutFilenameForProfile(string16(),
+                                                        distribution));
 }
 
 TEST_F(ProfileShortcutManagerTest, ShortcutFlags) {
@@ -579,7 +583,8 @@ TEST_F(ProfileShortcutManagerTest, UpdateShortcutWithNoFlags) {
                                 false));
   const base::FilePath regular_shortcut_path =
       CreateRegularShortcutWithName(FROM_HERE,
-                                    GetDistribution()->GetAppShortCutName());
+                                    GetDistribution()->GetShortcutName(
+                                        BrowserDistribution::SHORTCUT_CHROME));
 
   // Add another profile and check that the shortcut was replaced with
   // a badged shortcut with the right command line for the profile
@@ -597,7 +602,8 @@ TEST_F(ProfileShortcutManagerTest, UpdateTwoShortcutsWithNoFlags) {
                                 false));
   const base::FilePath regular_shortcut_path =
       CreateRegularShortcutWithName(FROM_HERE,
-                                    GetDistribution()->GetAppShortCutName());
+                                    GetDistribution()->GetShortcutName(
+                                        BrowserDistribution::SHORTCUT_CHROME));
   const base::FilePath customized_regular_shortcut_path =
       CreateRegularShortcutWithName(FROM_HERE, L"MyChrome");
 
@@ -784,8 +790,7 @@ TEST_F(ProfileShortcutManagerTest, CreateProfileIcon) {
   EXPECT_TRUE(base::DeleteFile(icon_path, false));
   EXPECT_FALSE(base::PathExists(icon_path));
 
-  profile_shortcut_manager_->CreateOrUpdateProfileIcon(profile_1_path_,
-                                                       base::Closure());
+  profile_shortcut_manager_->CreateOrUpdateProfileIcon(profile_1_path_);
   RunPendingTasks();
   EXPECT_TRUE(base::PathExists(icon_path));
 }
@@ -799,7 +804,7 @@ TEST_F(ProfileShortcutManagerTest, UnbadgeProfileIconOnDeletion) {
 
   // Default profile has unbadged icon to start.
   std::string unbadged_icon_1;
-  EXPECT_TRUE(file_util::ReadFileToString(icon_path_1, &unbadged_icon_1));
+  EXPECT_TRUE(base::ReadFileToString(icon_path_1, &unbadged_icon_1));
 
   // Creating a new profile adds a badge to both the new profile icon and the
   // default profile icon. Since they use the same icon index, the icon files
@@ -807,9 +812,9 @@ TEST_F(ProfileShortcutManagerTest, UnbadgeProfileIconOnDeletion) {
   CreateProfileWithShortcut(FROM_HERE, profile_2_name_, profile_2_path_);
 
   std::string badged_icon_1;
-  EXPECT_TRUE(file_util::ReadFileToString(icon_path_1, &badged_icon_1));
+  EXPECT_TRUE(base::ReadFileToString(icon_path_1, &badged_icon_1));
   std::string badged_icon_2;
-  EXPECT_TRUE(file_util::ReadFileToString(icon_path_2, &badged_icon_2));
+  EXPECT_TRUE(base::ReadFileToString(icon_path_2, &badged_icon_2));
 
   EXPECT_NE(badged_icon_1, unbadged_icon_1);
   EXPECT_EQ(badged_icon_1, badged_icon_2);
@@ -820,7 +825,7 @@ TEST_F(ProfileShortcutManagerTest, UnbadgeProfileIconOnDeletion) {
   RunPendingTasks();
 
   std::string unbadged_icon_2;
-  EXPECT_TRUE(file_util::ReadFileToString(icon_path_2, &unbadged_icon_2));
+  EXPECT_TRUE(base::ReadFileToString(icon_path_2, &unbadged_icon_2));
   EXPECT_EQ(unbadged_icon_1, unbadged_icon_2);
 }
 
@@ -834,9 +839,9 @@ TEST_F(ProfileShortcutManagerTest, ProfileIconOnAvatarChange) {
       profile_info_cache_->GetIndexOfProfileWithPath(profile_1_path_);
 
   std::string badged_icon_1;
-  EXPECT_TRUE(file_util::ReadFileToString(icon_path_1, &badged_icon_1));
+  EXPECT_TRUE(base::ReadFileToString(icon_path_1, &badged_icon_1));
   std::string badged_icon_2;
-  EXPECT_TRUE(file_util::ReadFileToString(icon_path_2, &badged_icon_2));
+  EXPECT_TRUE(base::ReadFileToString(icon_path_2, &badged_icon_2));
 
   // Profile 1 and 2 are created with the same icon.
   EXPECT_EQ(badged_icon_1, badged_icon_2);
@@ -846,7 +851,7 @@ TEST_F(ProfileShortcutManagerTest, ProfileIconOnAvatarChange) {
   RunPendingTasks();
 
   std::string new_badged_icon_1;
-  EXPECT_TRUE(file_util::ReadFileToString(icon_path_1, &new_badged_icon_1));
+  EXPECT_TRUE(base::ReadFileToString(icon_path_1, &new_badged_icon_1));
   EXPECT_NE(new_badged_icon_1, badged_icon_1);
 
   // Ensure the new icon is not the unbadged icon.
@@ -854,7 +859,7 @@ TEST_F(ProfileShortcutManagerTest, ProfileIconOnAvatarChange) {
   RunPendingTasks();
 
   std::string unbadged_icon_1;
-  EXPECT_TRUE(file_util::ReadFileToString(icon_path_1, &unbadged_icon_1));
+  EXPECT_TRUE(base::ReadFileToString(icon_path_1, &unbadged_icon_1));
   EXPECT_NE(unbadged_icon_1, new_badged_icon_1);
 
   // Ensure the icon doesn't change on avatar change without 2 profiles.
@@ -862,6 +867,6 @@ TEST_F(ProfileShortcutManagerTest, ProfileIconOnAvatarChange) {
   RunPendingTasks();
 
   std::string unbadged_icon_1_a;
-  EXPECT_TRUE(file_util::ReadFileToString(icon_path_1, &unbadged_icon_1_a));
+  EXPECT_TRUE(base::ReadFileToString(icon_path_1, &unbadged_icon_1_a));
   EXPECT_EQ(unbadged_icon_1, unbadged_icon_1_a);
 }

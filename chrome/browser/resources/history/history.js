@@ -91,8 +91,8 @@ function Visit(result, continued, model) {
   this.model_ = model;
   this.title_ = result.title;
   this.url_ = result.url;
+  this.domain_ = result.domain;
   this.starred_ = result.starred;
-  this.snippet_ = result.snippet || '';
 
   // These identify the name and type of the device on which this visit
   // occurred. They will be empty if the visit occurred on the current device.
@@ -180,7 +180,7 @@ Visit.prototype.getResultDOM = function(propertyBag) {
     menu.dataset.devicename = self.deviceName;
     menu.dataset.devicetype = self.deviceType;
   };
-  domain.textContent = this.getDomainFromURL_(this.url_);
+  domain.textContent = this.domain_;
 
   entryBox.appendChild(time);
 
@@ -212,6 +212,8 @@ Visit.prototype.getResultDOM = function(propertyBag) {
 
   if (isMobileVersion()) {
     var removeButton = createElementWithClassName('button', 'remove-entry');
+    removeButton.setAttribute('aria-label',
+                              loadTimeData.getString('removeFromHistory'));
     removeButton.classList.add('custom-appearance');
     removeButton.addEventListener('click', function(e) {
       self.removeFromHistory();
@@ -252,14 +254,7 @@ Visit.prototype.getResultDOM = function(propertyBag) {
   node.appendChild(entryBoxContainer);
   entryBoxContainer.appendChild(entryBox);
 
-  if (isSearchResult) {
-    time.appendChild(document.createTextNode(this.dateShort));
-    var snippet = createElementWithClassName('div', 'snippet');
-    this.addHighlightedText_(snippet,
-                             this.snippet_,
-                             this.model_.getSearchText());
-    node.appendChild(snippet);
-  } else if (useMonthDate) {
+  if (isSearchResult || useMonthDate) {
     // Show the day instead of the time.
     time.appendChild(document.createTextNode(this.dateShort));
   } else {
@@ -284,19 +279,6 @@ Visit.prototype.removeFromHistory = function() {
 };
 
 // Visit, private: ------------------------------------------------------------
-
-/**
- * Extracts and returns the domain (and subdomains) from a URL.
- * @param {string} url The url.
- * @return {string} The domain. An empty string is returned if no domain can
- *     be found.
- * @private
- */
-Visit.prototype.getDomainFromURL_ = function(url) {
-  // TODO(sergiu): Extract the domain from the C++ side and send it here.
-  var domain = url.replace(/^.+?:\/\//, '').match(/[^/]+/);
-  return domain ? domain[0] : '';
-};
 
 /**
  * Add child text nodes to a node such that occurrences of the specified text is
@@ -386,7 +368,7 @@ Visit.prototype.getVisitAttemptDOM_ = function() {
   node.innerHTML = loadTimeData.getStringF('blockedVisitText',
                                            this.url_,
                                            this.id_,
-                                           this.getDomainFromURL_(this.url_));
+                                           this.domain_);
   return node;
 };
 
@@ -408,7 +390,7 @@ Visit.prototype.addFaviconToElement_ = function(el) {
  */
 Visit.prototype.showMoreFromSite_ = function() {
   recordUmaAction('HistoryPage_EntryMenuShowMoreFromSite');
-  historyView.setSearch(this.getDomainFromURL_(this.url_));
+  historyView.setSearch(this.domain_);
 };
 
 // Visit, private, static: ----------------------------------------------------
@@ -1142,7 +1124,7 @@ HistoryView.prototype.groupVisitsByDomain_ = function(visits, results) {
 
   // Group the visits into a dictionary and generate a list of domains.
   for (var i = 0, visit; visit = visits[i]; i++) {
-    var domain = visit.getDomainFromURL_(visit.url_);
+    var domain = visit.domain_;
     if (!visitsByDomain[domain]) {
       visitsByDomain[domain] = [];
       domains.push(domain);
@@ -1556,24 +1538,22 @@ function load() {
   cr.ui.FocusManager.disableMouseFocusOnButtons();
 
   if (isMobileVersion()) {
-    if (searchField) {
-      // Move the search box out of the header.
-      var resultsDisplay = $('results-display');
-      resultsDisplay.parentNode.insertBefore($('search-field'), resultsDisplay);
+    // Move the search box out of the header.
+    var resultsDisplay = $('results-display');
+    resultsDisplay.parentNode.insertBefore($('search-field'), resultsDisplay);
 
-      window.addEventListener(
-          'resize', historyView.updateClearBrowsingDataButton_);
+    window.addEventListener(
+        'resize', historyView.updateClearBrowsingDataButton_);
 
-      // When the search field loses focus, add a delay before updating the
-      // visibility, otherwise the button will flash on the screen before the
-      // keyboard animates away.
-      searchField.addEventListener('blur', function() {
-        setTimeout(historyView.updateClearBrowsingDataButton_, 250);
-      });
-    }
+    // When the search field loses focus, add a delay before updating the
+    // visibility, otherwise the button will flash on the screen before the
+    // keyboard animates away.
+    searchField.addEventListener('blur', function() {
+      setTimeout(historyView.updateClearBrowsingDataButton_, 250);
+    });
 
-    // Move the button to the bottom of the body.
-    document.body.appendChild($('clear-browsing-data'));
+    // Move the button to the bottom of the page.
+    $('history-page').appendChild($('clear-browsing-data'));
   } else {
     window.addEventListener('message', function(e) {
       if (e.data.method == 'frameSelected')
@@ -1581,6 +1561,22 @@ function load() {
     });
     searchField.focus();
   }
+
+<if expr="is_ios">
+  function checkKeyboardVisibility() {
+    // Figure out the real height based on the orientation, becauase
+    // screen.width and screen.height don't update after rotation.
+    var screenHeight = window.orientation % 180 ? screen.width : screen.height;
+
+    // Assume that the keyboard is visible if more than 30% of the screen is
+    // taken up by window chrome.
+    var isKeyboardVisible = (window.innerHeight / screenHeight) < 0.7;
+
+    document.body.classList.toggle('ios-keyboard-visible', isKeyboardVisible);
+  }
+  window.addEventListener('orientationchange', checkKeyboardVisibility);
+  window.addEventListener('resize', checkKeyboardVisibility);
+</if> /* is_ios */
 }
 
 /**
@@ -1886,7 +1882,10 @@ function toggleHandler(e) {
     // the height to auto so that it is computed and then set it to the
     // computed value in pixels so the transition works properly.
     var height = innerResultList.clientHeight;
-    innerResultList.style.height = height + 'px';
+    innerResultList.style.height = 0;
+    setTimeout(function() {
+      innerResultList.style.height = height + 'px';
+    }, 0);
     innerArrow.classList.remove('collapse');
     innerArrow.classList.add('expand');
   } else {

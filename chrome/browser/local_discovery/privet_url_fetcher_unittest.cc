@@ -17,6 +17,7 @@ namespace {
 const char kSamplePrivetURL[] =
     "http://10.0.0.8:7676/privet/register?action=start";
 const char kSamplePrivetToken[] = "MyToken";
+const char kEmptyPrivetToken[] = "\"\"";
 
 const char kSampleParsableJSON[] = "{ \"hello\" : 2 }";
 const char kSampleUnparsableJSON[] = "{ \"hello\" : }";
@@ -39,6 +40,11 @@ class MockPrivetURLFetcherDelegate : public PrivetURLFetcher::Delegate {
   }
 
   MOCK_METHOD1(OnParsedJsonInternal, void(bool has_error));
+
+  virtual void OnNeedPrivetToken(
+      PrivetURLFetcher* fetcher,
+      const PrivetURLFetcher::TokenCallback& callback) {
+  }
 
   const DictionaryValue* saved_value() { return saved_value_.get(); }
 
@@ -139,6 +145,27 @@ TEST_F(PrivetURLFetcherTest, Header) {
   std::string header_token;
   ASSERT_TRUE(headers.GetHeader("X-Privet-Token", &header_token));
   EXPECT_EQ(kSamplePrivetToken, header_token);
+}
+
+TEST_F(PrivetURLFetcherTest, Header2) {
+  privet_urlfetcher_.reset(new PrivetURLFetcher(
+      "",
+      GURL(kSamplePrivetURL),
+      net::URLFetcher::POST,
+      request_context_.get(),
+      &delegate_));
+
+  privet_urlfetcher_->AllowEmptyPrivetToken();
+  privet_urlfetcher_->Start();
+
+  net::TestURLFetcher* fetcher = fetcher_factory_.GetFetcherByID(0);
+  ASSERT_TRUE(fetcher != NULL);
+  net::HttpRequestHeaders headers;
+  fetcher->GetExtraRequestHeaders(&headers);
+
+  std::string header_token;
+  ASSERT_TRUE(headers.GetHeader("X-Privet-Token", &header_token));
+  EXPECT_EQ(kEmptyPrivetToken, header_token);
 }
 
 TEST_F(PrivetURLFetcherTest, FetchHasError) {

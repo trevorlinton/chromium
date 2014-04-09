@@ -4,10 +4,14 @@
 
 #include "chrome/browser/autocomplete/search_provider.h"
 
+#include <string>
+
 #include "base/command_line.h"
 #include "base/metrics/field_trial.h"
 #include "base/prefs/pref_service.h"
 #include "base/run_loop.h"
+#include "base/strings/string16.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
@@ -27,16 +31,15 @@
 #include "chrome/browser/search_engines/template_url_service.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/metrics/entropy_provider.h"
 #include "chrome/common/metrics/variations/variations_util.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/variations/entropy_provider.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_request_status.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
 
 // SearchProviderTest ---------------------------------------------------------
 
@@ -133,6 +136,8 @@ class SearchProviderTest : public testing::Test,
   void FinishDefaultSuggestQuery();
 
   void ResetFieldTrialList();
+
+  void ClearAllResults();
 
   // See description above class for details of these fields.
   TemplateURL* default_t_url_;
@@ -362,6 +367,10 @@ void SearchProviderTest::ResetFieldTrialList() {
   trial->group();
 }
 
+void SearchProviderTest::ClearAllResults() {
+  provider_->ClearAllResults();
+}
+
 // Actual Tests ---------------------------------------------------------------
 
 // Make sure we query history for the default provider and a URLFetcher is
@@ -482,16 +491,41 @@ TEST_F(SearchProviderTest, DontSendPrivateDataToSuggest) {
     "unknownscheme:anything",
     "http://hostname/?query=q",
     "http://hostname/path#ref",
+    "http://hostname/path #ref",
     "https://hostname/path",
   };
 
   for (size_t i = 0; i < arraysize(inputs); ++i) {
     QueryForInput(ASCIIToUTF16(inputs[i]), false, false);
-    // Make sure the default providers suggest service was not queried.
+    // Make sure the default provider's suggest service was not queried.
     ASSERT_TRUE(test_factory_.GetFetcherByID(
         SearchProvider::kDefaultProviderURLFetcherID) == NULL);
     // Run till the history results complete.
     RunTillProviderDone();
+  }
+}
+
+TEST_F(SearchProviderTest, SendNonPrivateDataToSuggest) {
+  // All of the following input strings should be sent to the suggest server,
+  // because they should not get caught by the private data checks.
+  const char* inputs[] = {
+    "query",
+    "query with spaces",
+    "http://hostname",
+    "http://hostname/path",
+    "http://hostname #ref",
+    "www.hostname.com #ref",
+    "https://hostname",
+    "#hashtag",
+    "foo https://hostname/path"
+  };
+
+  profile_.BlockUntilHistoryProcessesPendingRequests();
+  for (size_t i = 0; i < arraysize(inputs); ++i) {
+    QueryForInput(ASCIIToUTF16(inputs[i]), false, false);
+    // Make sure the default provider's suggest service was queried.
+    ASSERT_TRUE(test_factory_.GetFetcherByID(
+        SearchProvider::kDefaultProviderURLFetcherID) != NULL);
   }
 }
 
@@ -1003,6 +1037,11 @@ TEST_F(SearchProviderTest, DefaultFetcherSuggestRelevance) {
         "\"google:suggestrelevance\":[9999],"
         "\"google:verbatimrelevance\":0}]",
       { { "a", true }, { "b.com", false }, kEmptyMatch, kEmptyMatch },
+      std::string() },
+    { "[\"a\",[\"https://a/\"],[],[],"
+       "{\"google:suggesttype\":[\"NAVIGATION\"],"
+        "\"google:suggestrelevance\":[9999]}]",
+      { { "https://a", true }, { "a", true }, kEmptyMatch, kEmptyMatch },
       std::string() },
 
     // Ensure that the top result is ranked as highly as calculated verbatim.
@@ -1662,6 +1701,15 @@ TEST_F(SearchProviderTest, KeywordFetcherSuggestRelevance) {
         { "k a",    false, true },
         kEmptyMatch },
       std::string() },
+    { "[\"a\",[\"https://a/\"],[],[],"
+       "{\"google:suggesttype\":[\"NAVIGATION\"],"
+        "\"google:suggestrelevance\":[9999]}]",
+      { { "a",         true, true },
+        { "https://a", false, true },
+        { "k a",       false, true },
+        kEmptyMatch,
+        kEmptyMatch },
+      std::string() },
     // Check when navsuggest scores more than verbatim and there is query
     // suggestion but it scores lower.
     { "[\"a\",[\"http://a1.com\", \"http://a2.com\", \"a3\"],[],[],"
@@ -1950,6 +1998,12 @@ TEST_F(SearchProviderTest, DefaultProviderSuggestRelevanceScoringUrlInput) {
       { { "a.com/a", AutocompleteMatchType::NAVSUGGEST,            true },
         { "a.com",   AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED, true },
         kEmptyMatch, kEmptyMatch } },
+    { "a.com", "[\"a.com\",[\"https://a.com\"],[],[],"
+                "{\"google:suggesttype\":[\"NAVIGATION\"],"
+                 "\"google:suggestrelevance\":[9999]}]",
+      { { "https://a.com", AutocompleteMatchType::NAVSUGGEST,            true },
+        { "a.com",         AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED, true },
+        kEmptyMatch, kEmptyMatch } },
 
     // Ensure topmost SUGGEST matches are not allowed for URL input.
     // SearchProvider disregards search and verbatim suggested relevances.
@@ -2125,11 +2179,12 @@ TEST_F(SearchProviderTest, NavigationInline) {
     { "ftp://www.a",          "ftp://a.com",
                               "ftp://a.com",        std::string(), false },
 
-    // Input matching but with nothing to inline will not yield an offset.
+    // Input matching but with nothing to inline will not yield an offset, but
+    // will be allowed to be default.
     { "abc.com",              "http://www.abc.com",
-                                     "www.abc.com", std::string(), false },
+                                     "www.abc.com", std::string(), true },
     { "http://www.abc.com",   "http://www.abc.com",
-                              "http://www.abc.com", std::string(), false },
+                              "http://www.abc.com", std::string(), true },
 
     // Inline matches when the input is a leading substring of the scheme.
     { "h",                    "http://www.abc.com",
@@ -2427,9 +2482,10 @@ TEST_F(SearchProviderTest, RemoveStaleResultsTest) {
                 cases[i].results[j].relevance, false));
       } else {
         provider_->default_results_.suggest_results.push_back(
-            SearchProvider::SuggestResult(ASCIIToUTF16(suggestion), false,
+            SearchProvider::SuggestResult(ASCIIToUTF16(suggestion), string16(),
+                                          string16(), std::string(), false,
                                           cases[i].results[j].relevance,
-                                          false));
+                                          false, false));
       }
     }
 
@@ -2467,4 +2523,460 @@ TEST_F(SearchProviderTest, RemoveStaleResultsTest) {
     EXPECT_EQ(sug_end, sug_it);
     EXPECT_EQ(nav_end, nav_it);
   }
+}
+
+#if !defined(OS_WIN)
+// Verify entity suggestion parsing.
+TEST_F(SearchProviderTest, ParseEntitySuggestion) {
+  struct Match {
+    std::string contents;
+    std::string query_params;
+    std::string fill_into_edit;
+    AutocompleteMatchType::Type type;
+    size_t classification_offsets[3];
+    int classification_styles[3];
+  };
+  const size_t invalid_offset = 10;
+  const int invalid_style = -1;
+  const Match kEmptyMatch = {
+    kNotApplicable, kNotApplicable, kNotApplicable,
+    AutocompleteMatchType::NUM_TYPES,
+    { invalid_offset, invalid_offset, invalid_offset },
+    { invalid_style, invalid_style, invalid_style } };
+
+  struct {
+    const std::string input_text;
+    const std::string response_json;
+    const Match matches[5];
+  } cases[] = {
+    // A query and an entity suggestion with different search terms.
+    { "x",
+      "[\"x\",[\"xy\", \"xy\"],[\"\",\"\"],[],"
+      " {\"google:suggestdetail\":[{},"
+      "   {\"a\":\"A\",\"dq\":\"yy\",\"q\":\"p=v\"}],"
+      "\"google:suggesttype\":[\"QUERY\",\"ENTITY\"]}]",
+      { { "x", "", "x", AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED,
+          { 0, invalid_offset, invalid_offset },
+          { ACMatchClassification::NONE, invalid_style, invalid_style } },
+        { "xy", "", "xy", AutocompleteMatchType::SEARCH_SUGGEST,
+          { 0, 1, invalid_offset },
+          { ACMatchClassification::NONE, ACMatchClassification::MATCH,
+            invalid_style } },
+        { "xy - A", "p=v", "yy", AutocompleteMatchType::SEARCH_SUGGEST,
+          { 0, 1, 2 },
+          { ACMatchClassification::NONE, ACMatchClassification::MATCH,
+            ACMatchClassification::DIM } },
+        kEmptyMatch,
+        kEmptyMatch
+      },
+    },
+    // A query and an entity suggestion with same search terms.
+    { "x",
+      "[\"x\",[\"xy\", \"xy\"],[\"\",\"\"],[],"
+      " {\"google:suggestdetail\":[{},"
+      "   {\"a\":\"A\",\"dq\":\"xy\",\"q\":\"p=v\"}],"
+      "\"google:suggesttype\":[\"QUERY\",\"ENTITY\"]}]",
+      { { "x", "", "x", AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED,
+          { 0, invalid_offset, invalid_offset },
+          { ACMatchClassification::NONE, invalid_style, invalid_style } },
+        { "xy", "", "xy", AutocompleteMatchType::SEARCH_SUGGEST,
+          { 0, 1, invalid_offset },
+          { ACMatchClassification::NONE, ACMatchClassification::MATCH,
+            invalid_style } },
+        { "xy - A", "p=v", "xy", AutocompleteMatchType::SEARCH_SUGGEST,
+          { 0, 1, 2 },
+          { ACMatchClassification::NONE, ACMatchClassification::MATCH,
+            ACMatchClassification::DIM } },
+        kEmptyMatch,
+        kEmptyMatch
+      },
+    },
+  };
+  for (size_t i = 0; i < ARRAYSIZE_UNSAFE(cases); i++) {
+    QueryForInput(ASCIIToUTF16(cases[i].input_text), false, false);
+
+    // Set up a default fetcher with provided results.
+    net::TestURLFetcher* fetcher =
+        test_factory_.GetFetcherByID(
+            SearchProvider::kDefaultProviderURLFetcherID);
+    ASSERT_TRUE(fetcher);
+    fetcher->set_response_code(200);
+    fetcher->SetResponseString(cases[i].response_json);
+    fetcher->delegate()->OnURLFetchComplete(fetcher);
+
+    RunTillProviderDone();
+
+    const ACMatches& matches = provider_->matches();
+    ASSERT_FALSE(matches.empty());
+
+    SCOPED_TRACE("for input with json = " + cases[i].response_json);
+
+    size_t j = 0;
+    // Ensure that the returned matches equal the expectations.
+    for (; j < matches.size(); ++j) {
+      const Match& match = cases[i].matches[j];
+      SCOPED_TRACE(" and match index: " + base::IntToString(j));
+      EXPECT_EQ(match.contents,
+                UTF16ToUTF8(matches[j].contents));
+      EXPECT_EQ(match.query_params,
+                matches[j].search_terms_args->suggest_query_params);
+      EXPECT_EQ(match.fill_into_edit,
+                UTF16ToUTF8(matches[j].fill_into_edit));
+      EXPECT_EQ(match.type, matches[j].type);
+
+      size_t k = 0;
+      for (; k < matches[j].contents_class.size(); k++) {
+        SCOPED_TRACE(" and contents class: " + base::IntToString(k));
+        EXPECT_EQ(match.classification_offsets[k],
+            matches[j].contents_class[k].offset);
+        EXPECT_EQ(match.classification_styles[k],
+            matches[j].contents_class[k].style);
+      }
+      for (; k < ARRAYSIZE_UNSAFE(match.classification_offsets); k++) {
+        SCOPED_TRACE(" and contents class: " + base::IntToString(k));
+        EXPECT_EQ(match.classification_offsets[k], invalid_offset);
+        EXPECT_EQ(match.classification_styles[k], invalid_style);
+      }
+    }
+    // Ensure that no expected matches are missing.
+    for (; j < ARRAYSIZE_UNSAFE(cases[i].matches); ++j) {
+      SCOPED_TRACE(" and match index: " + base::IntToString(j));
+      EXPECT_EQ(cases[i].matches[j].contents, kNotApplicable);
+      EXPECT_EQ(cases[i].matches[j].query_params, kNotApplicable);
+      EXPECT_EQ(cases[i].matches[j].fill_into_edit, kNotApplicable);
+      EXPECT_EQ(cases[i].matches[j].type, AutocompleteMatchType::NUM_TYPES);
+    }
+  }
+}
+#endif  // !defined(OS_WIN)
+
+TEST_F(SearchProviderTest, SearchHistorySuppressesEntitySuggestion) {
+  struct Match {
+    std::string contents;
+    std::string query_params;
+    std::string fill_into_edit;
+    AutocompleteMatchType::Type type;
+  };
+  const Match kEmptyMatch = { kNotApplicable, kNotApplicable, kNotApplicable,
+                              AutocompleteMatchType::NUM_TYPES};
+
+  struct {
+    const std::string input_text;
+    const std::string history_search_term;
+    const std::string response_json;
+    const Match matches[5];
+  } cases[] = {
+    // Search history suppresses both query and entity suggestions.
+    { "x", "xy",
+      "[\"x\",[\"xy\", \"xy\"],[\"\",\"\"],[],"
+      " {\"google:suggestdetail\":[{},"
+      "   {\"a\":\"A\",\"dq\":\"xy\",\"q\":\"p=v\"}],"
+      "\"google:suggesttype\":[\"QUERY\",\"ENTITY\"]}]",
+      {
+        {"xy", "", "xy", AutocompleteMatchType::SEARCH_HISTORY},
+        {"x", "", "x", AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED},
+        {"xy - A", "p=v", "xy", AutocompleteMatchType::SEARCH_SUGGEST},
+        kEmptyMatch,
+        kEmptyMatch,
+      },
+    },
+    // Search history suppresses only query suggestion.
+    { "x", "xyy",
+      "[\"x\",[\"xy\", \"xy\"],[\"\",\"\"],[],"
+      " {\"google:suggestdetail\":[{},"
+      "   {\"a\":\"A\",\"dq\":\"xyy\",\"q\":\"p=v\"}],"
+      "\"google:suggesttype\":[\"QUERY\",\"ENTITY\"]}]",
+      {
+        {"xyy", "", "xyy", AutocompleteMatchType::SEARCH_HISTORY},
+        {"xy", "", "xy", AutocompleteMatchType::SEARCH_HISTORY},
+        {"x", "", "x", AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED},
+        {"xy - A", "p=v", "xyy", AutocompleteMatchType::SEARCH_SUGGEST},
+        kEmptyMatch,
+      },
+    }
+  };
+
+  for (size_t i = 0; i < ARRAYSIZE_UNSAFE(cases); i++) {
+    GURL term_url(AddSearchToHistory(
+        default_t_url_, ASCIIToUTF16(cases[i].history_search_term), 10));
+    profile_.BlockUntilHistoryProcessesPendingRequests();
+    QueryForInput(ASCIIToUTF16(cases[i].input_text), false, false);
+
+    // Set up a default fetcher with provided results.
+    net::TestURLFetcher* fetcher =
+        test_factory_.GetFetcherByID(
+            SearchProvider::kDefaultProviderURLFetcherID);
+    ASSERT_TRUE(fetcher);
+    fetcher->set_response_code(200);
+    fetcher->SetResponseString(cases[i].response_json);
+    fetcher->delegate()->OnURLFetchComplete(fetcher);
+
+    RunTillProviderDone();
+
+    const ACMatches& matches = provider_->matches();
+    ASSERT_FALSE(matches.empty());
+    SCOPED_TRACE("for case: " + base::IntToString(i));
+
+    size_t j = 0;
+    // Ensure that the returned matches equal the expectations.
+    for (; j < matches.size(); ++j) {
+      SCOPED_TRACE(" and match index: " + base::IntToString(j));
+      EXPECT_EQ(cases[i].matches[j].contents,
+                UTF16ToUTF8(matches[j].contents));
+      EXPECT_EQ(cases[i].matches[j].query_params,
+                matches[j].search_terms_args->suggest_query_params);
+      EXPECT_EQ(cases[i].matches[j].fill_into_edit,
+                UTF16ToUTF8(matches[j].fill_into_edit));
+      EXPECT_EQ(cases[i].matches[j].type, matches[j].type);
+    }
+    // Ensure that no expected matches are missing.
+    for (; j < ARRAYSIZE_UNSAFE(cases[i].matches); ++j) {
+      SCOPED_TRACE(" and match index: " + base::IntToString(j));
+      EXPECT_EQ(cases[i].matches[j].contents, kNotApplicable);
+      EXPECT_EQ(cases[i].matches[j].query_params, kNotApplicable);
+      EXPECT_EQ(cases[i].matches[j].fill_into_edit, kNotApplicable);
+      EXPECT_EQ(cases[i].matches[j].type, AutocompleteMatchType::NUM_TYPES);
+    }
+  }
+}
+
+// A basic test that verifies the prefetch metadata parsing logic.
+TEST_F(SearchProviderTest, PrefetchMetadataParsing) {
+  struct Match {
+    std::string contents;
+    bool allowed_to_be_prefetched;
+    AutocompleteMatchType::Type type;
+    bool from_keyword;
+  };
+  const Match kEmptyMatch = { kNotApplicable,
+                              false,
+                              AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED,
+                              false };
+
+  struct {
+    const std::string input_text;
+    bool prefer_keyword_provider_results;
+    const std::string default_provider_response_json;
+    const std::string keyword_provider_response_json;
+    const Match matches[5];
+  } cases[] = {
+    // Default provider response does not have prefetch details. Ensure that the
+    // suggestions are not marked as prefetch query.
+    { "a",
+      false,
+      "[\"a\",[\"b\", \"c\"],[],[],{\"google:suggestrelevance\":[1, 2]}]",
+      std::string(),
+      { { "a", false, AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED, false },
+        { "c", false, AutocompleteMatchType::SEARCH_SUGGEST, false },
+        { "b", false, AutocompleteMatchType::SEARCH_SUGGEST, false },
+        kEmptyMatch,
+        kEmptyMatch
+      },
+    },
+    // Ensure that default provider suggest response prefetch details are
+    // parsed and recorded in AutocompleteMatch.
+    { "ab",
+      false,
+      "[\"ab\",[\"abc\", \"http://b.com\", \"http://c.com\"],[],[],"
+          "{\"google:clientdata\":{\"phi\": 0},"
+          "\"google:suggesttype\":[\"QUERY\", \"NAVIGATION\", \"NAVIGATION\"],"
+          "\"google:suggestrelevance\":[999, 12, 1]}]",
+      std::string(),
+      { { "ab",    false, AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED, false },
+        { "abc",   true,  AutocompleteMatchType::SEARCH_SUGGEST, false },
+        { "b.com", false, AutocompleteMatchType::NAVSUGGEST, false },
+        { "c.com", false, AutocompleteMatchType::NAVSUGGEST, false },
+        kEmptyMatch
+      },
+    },
+    // Default provider suggest response has prefetch details.
+    // SEARCH_WHAT_YOU_TYPE suggestion outranks SEARCH_SUGGEST suggestion for
+    // the same query string. Ensure that the prefetch details from
+    // SEARCH_SUGGEST match are set onto SEARCH_WHAT_YOU_TYPE match.
+    { "ab",
+      false,
+      "[\"ab\",[\"ab\", \"http://ab.com\"],[],[],"
+          "{\"google:clientdata\":{\"phi\": 0},"
+          "\"google:suggesttype\":[\"QUERY\", \"NAVIGATION\"],"
+          "\"google:suggestrelevance\":[99, 98]}]",
+      std::string(),
+      { {"ab", true, AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED, false },
+        {"ab.com", false, AutocompleteMatchType::NAVSUGGEST, false },
+        kEmptyMatch,
+        kEmptyMatch,
+        kEmptyMatch
+      },
+    },
+    // Default provider response has prefetch details. We prefer keyword
+    // provider results. Ensure that prefetch bit for a suggestion from the
+    // default search provider does not get copied onto a higher-scoring match
+    // for the same query string from the keyword provider.
+    { "k a",
+      true,
+      "[\"k a\",[\"a\", \"ab\"],[],[], {\"google:clientdata\":{\"phi\": 0},"
+          "\"google:suggesttype\":[\"QUERY\", \"QUERY\"],"
+          "\"google:suggestrelevance\":[9, 12]}]",
+      "[\"a\",[\"b\", \"c\"],[],[],{\"google:suggestrelevance\":[1, 2]}]",
+      { { "a", false, AutocompleteMatchType::SEARCH_OTHER_ENGINE, true},
+        { "k a", false, AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED, false },
+        { "ab", false, AutocompleteMatchType::SEARCH_SUGGEST, false },
+        { "c", false, AutocompleteMatchType::SEARCH_SUGGEST, true },
+        { "b", false, AutocompleteMatchType::SEARCH_SUGGEST, true }
+      },
+    }
+  };
+
+  for (size_t i = 0; i < ARRAYSIZE_UNSAFE(cases); i++) {
+    QueryForInput(ASCIIToUTF16(cases[i].input_text), false,
+                  cases[i].prefer_keyword_provider_results);
+
+    // Set up a default fetcher with provided results.
+    net::TestURLFetcher* fetcher =
+        test_factory_.GetFetcherByID(
+            SearchProvider::kDefaultProviderURLFetcherID);
+    ASSERT_TRUE(fetcher);
+    fetcher->set_response_code(200);
+    fetcher->SetResponseString(cases[i].default_provider_response_json);
+    fetcher->delegate()->OnURLFetchComplete(fetcher);
+
+    if (cases[i].prefer_keyword_provider_results) {
+      // Set up a keyword fetcher with provided results.
+      net::TestURLFetcher* keyword_fetcher =
+          test_factory_.GetFetcherByID(
+              SearchProvider::kKeywordProviderURLFetcherID);
+      ASSERT_TRUE(keyword_fetcher);
+      keyword_fetcher->set_response_code(200);
+      keyword_fetcher->SetResponseString(
+          cases[i].keyword_provider_response_json);
+      keyword_fetcher->delegate()->OnURLFetchComplete(keyword_fetcher);
+      keyword_fetcher = NULL;
+    }
+
+    RunTillProviderDone();
+
+    const std::string description =
+        "for input with json =" + cases[i].default_provider_response_json;
+    const ACMatches& matches = provider_->matches();
+    // The top match must inline and score as highly as calculated verbatim.
+    ASSERT_FALSE(matches.empty());
+    EXPECT_GE(matches[0].relevance, 1300);
+
+    // Ensure that the returned matches equal the expectations.
+    for (size_t j = 0; j < matches.size(); ++j) {
+      SCOPED_TRACE(description);
+      EXPECT_EQ(cases[i].matches[j].contents, UTF16ToUTF8(matches[j].contents));
+      EXPECT_EQ(cases[i].matches[j].allowed_to_be_prefetched,
+                SearchProvider::ShouldPrefetch(matches[j]));
+      EXPECT_EQ(cases[i].matches[j].type, matches[j].type);
+      EXPECT_EQ(cases[i].matches[j].from_keyword,
+                matches[j].keyword == ASCIIToUTF16("k"));
+    }
+  }
+}
+
+// A basic test that verifies that the XSSI guarded JSON response is parsed
+// correctly.
+TEST_F(SearchProviderTest, XSSIGuardedJSONParsing) {
+  struct Match {
+    std::string contents;
+    AutocompleteMatchType::Type type;
+  };
+  const Match kEmptyMatch = { kNotApplicable,
+                              AutocompleteMatchType::NUM_TYPES};
+
+  struct {
+    const std::string input_text;
+    const std::string default_provider_response_json;
+    const Match matches[4];
+  } cases[] = {
+    // No XSSI guard.
+    { "a",
+      "[\"a\",[\"b\", \"c\"],[],[],"
+      "{\"google:suggesttype\":[\"QUERY\",\"QUERY\"],"
+      "\"google:suggestrelevance\":[1, 2]}]",
+      { { "a", AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED },
+        { "c", AutocompleteMatchType::SEARCH_SUGGEST },
+        { "b", AutocompleteMatchType::SEARCH_SUGGEST },
+        kEmptyMatch,
+      },
+    },
+    // Standard XSSI guard - )]}'\n.
+    { "a",
+      ")]}'\n[\"a\",[\"b\", \"c\"],[],[],"
+      "{\"google:suggesttype\":[\"QUERY\",\"QUERY\"],"
+      "\"google:suggestrelevance\":[1, 2]}]",
+      { { "a", AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED },
+        { "c", AutocompleteMatchType::SEARCH_SUGGEST },
+        { "b", AutocompleteMatchType::SEARCH_SUGGEST },
+        kEmptyMatch,
+      },
+    },
+    // Modified XSSI guard - contains "[".
+    { "a",
+      ")]}'\n[)\"[\"a\",[\"b\", \"c\"],[],[],"
+      "{\"google:suggesttype\":[\"QUERY\",\"QUERY\"],"
+      "\"google:suggestrelevance\":[1, 2]}]",
+      { { "a", AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED },
+        { "c", AutocompleteMatchType::SEARCH_SUGGEST },
+        { "b", AutocompleteMatchType::SEARCH_SUGGEST },
+        kEmptyMatch,
+      },
+    },
+  };
+
+  for (size_t i = 0; i < ARRAYSIZE_UNSAFE(cases); i++) {
+    ClearAllResults();
+    QueryForInput(ASCIIToUTF16(cases[i].input_text), false, false);
+
+    // Set up a default fetcher with provided results.
+    net::TestURLFetcher* fetcher =
+        test_factory_.GetFetcherByID(
+            SearchProvider::kDefaultProviderURLFetcherID);
+    ASSERT_TRUE(fetcher);
+    fetcher->set_response_code(200);
+    fetcher->SetResponseString(cases[i].default_provider_response_json);
+    fetcher->delegate()->OnURLFetchComplete(fetcher);
+
+    RunTillProviderDone();
+
+    const ACMatches& matches = provider_->matches();
+    // The top match must inline and score as highly as calculated verbatim.
+    ASSERT_FALSE(matches.empty());
+    EXPECT_GE(matches[0].relevance, 1300);
+
+    SCOPED_TRACE("for case: " + base::IntToString(i));
+    size_t j = 0;
+    // Ensure that the returned matches equal the expectations.
+    for (; j < matches.size(); ++j) {
+      SCOPED_TRACE("and match: " + base::IntToString(j));
+      EXPECT_EQ(cases[i].matches[j].contents, UTF16ToUTF8(matches[j].contents));
+      EXPECT_EQ(cases[i].matches[j].type, matches[j].type);
+    }
+    for (; j < ARRAYSIZE_UNSAFE(cases[i].matches); ++j) {
+      SCOPED_TRACE("and match: " + base::IntToString(j));
+      EXPECT_EQ(cases[i].matches[j].contents, kNotApplicable);
+      EXPECT_EQ(cases[i].matches[j].type, AutocompleteMatchType::NUM_TYPES);
+    }
+  }
+}
+
+
+TEST_F(SearchProviderTest, ReflectsBookmarkBarState) {
+  profile_.GetPrefs()->SetBoolean(prefs::kShowBookmarkBar, false);
+  string16 term = term1_.substr(0, term1_.length() - 1);
+  QueryForInput(term, true, false);
+  ASSERT_FALSE(provider_->matches().empty());
+  EXPECT_EQ(AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED,
+            provider_->matches()[0].type);
+  ASSERT_TRUE(provider_->matches()[0].search_terms_args != NULL);
+  EXPECT_FALSE(provider_->matches()[0].search_terms_args->bookmark_bar_pinned);
+
+  profile_.GetPrefs()->SetBoolean(prefs::kShowBookmarkBar, true);
+  term = term1_.substr(0, term1_.length() - 1);
+  QueryForInput(term, true, false);
+  ASSERT_FALSE(provider_->matches().empty());
+  EXPECT_EQ(AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED,
+            provider_->matches()[0].type);
+  ASSERT_TRUE(provider_->matches()[0].search_terms_args != NULL);
+  EXPECT_TRUE(provider_->matches()[0].search_terms_args->bookmark_bar_pinned);
 }

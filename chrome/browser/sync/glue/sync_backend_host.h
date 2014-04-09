@@ -218,10 +218,9 @@ class SyncBackendHost
   bool SetDecryptionPassphrase(const std::string& passphrase)
       WARN_UNUSED_RESULT;
 
-  // Called on |frontend_loop_| to kick off shutdown procedure. After this, no
-  // further sync activity will occur with the sync server and no further
-  // change applications will occur from changes already downloaded.
-  // Furthermore, no notifications will be sent to any invalidation handler.
+  // Called on |frontend_loop_| to kick off shutdown procedure.  Attempts to cut
+  // short any long-lived or blocking sync thread tasks so that the shutdown on
+  // sync thread task that we're about to post won't have to wait very long.
   virtual void StopSyncingForShutdown();
 
   // Called on |frontend_loop_| to kick off shutdown.
@@ -313,9 +312,6 @@ class SyncBackendHost
   // TODO(akalin): Figure out a better way for tests to hook into
   // SyncBackendHost.
 
-  typedef base::Callback<scoped_ptr<syncer::HttpPostProviderFactory>(void)>
-      MakeHttpBridgeFactoryFn;
-
   // Utility struct for holding initialization options.
   struct DoInitializeOptions {
     DoInitializeOptions(
@@ -326,7 +322,7 @@ class SyncBackendHost
         const scoped_refptr<syncer::ExtensionsActivity>& extensions_activity,
         const syncer::WeakHandle<syncer::JsEventHandler>& event_handler,
         const GURL& service_url,
-        MakeHttpBridgeFactoryFn make_http_bridge_factory_fn,
+        scoped_ptr<syncer::HttpPostProviderFactory> http_bridge_factory,
         const syncer::SyncCredentials& credentials,
         const std::string& invalidator_client_id,
         scoped_ptr<syncer::SyncManagerFactory> sync_manager_factory,
@@ -338,8 +334,7 @@ class SyncBackendHost
         scoped_ptr<syncer::UnrecoverableErrorHandler>
             unrecoverable_error_handler,
         syncer::ReportUnrecoverableErrorFunction
-            report_unrecoverable_error_function,
-        bool use_oauth2_token);
+            report_unrecoverable_error_function);
     ~DoInitializeOptions();
 
     base::MessageLoop* sync_loop;
@@ -350,7 +345,7 @@ class SyncBackendHost
     syncer::WeakHandle<syncer::JsEventHandler> event_handler;
     GURL service_url;
     // Overridden by tests.
-    MakeHttpBridgeFactoryFn make_http_bridge_factory_fn;
+    scoped_ptr<syncer::HttpPostProviderFactory> http_bridge_factory;
     syncer::SyncCredentials credentials;
     const std::string invalidator_client_id;
     scoped_ptr<syncer::SyncManagerFactory> sync_manager_factory;
@@ -362,7 +357,6 @@ class SyncBackendHost
     scoped_ptr<syncer::UnrecoverableErrorHandler> unrecoverable_error_handler;
     syncer::ReportUnrecoverableErrorFunction
         report_unrecoverable_error_function;
-    bool use_oauth2_token;
   };
 
   // Allows tests to perform alternate core initialization work.
@@ -390,14 +384,16 @@ class SyncBackendHost
       const base::Callback<void(syncer::ModelTypeSet,
                                 syncer::ModelTypeSet)>& ready_task);
 
-  // Called when the SyncManager has been constructed and initialized.
-  // Stores |js_backend| and |debug_info_listener| on the UI thread for
-  // consumption when initialization is complete.
-  virtual void HandleSyncManagerInitializationOnFrontendLoop(
-      const syncer::WeakHandle<syncer::JsBackend>& js_backend,
-      const syncer::WeakHandle<syncer::DataTypeDebugInfoListener>&
-          debug_info_listener,
-      syncer::ModelTypeSet restored_types);
+  // Reports backend initialization success.  Includes some objects from sync
+  // manager initialization to be passed back to the UI thread.
+  virtual void HandleInitializationSuccessOnFrontendLoop(
+    const syncer::WeakHandle<syncer::JsBackend> js_backend,
+    const syncer::WeakHandle<syncer::DataTypeDebugInfoListener>
+        debug_info_listener);
+
+  // Downloading of control types failed and will be retried. Invokes the
+  // frontend's sync configure retry method.
+  void HandleControlTypesDownloadRetry();
 
   SyncFrontend* frontend() { return frontend_; }
 
@@ -423,15 +419,8 @@ class SyncBackendHost
   // Note: it is illegal to call this before the backend is initialized.
   void AddExperimentalTypes();
 
-  // Downloading of control types failed and will be retried. Invokes the
-  // frontend's sync configure retry method.
-  void HandleControlTypesDownloadRetry();
-
-  // InitializationComplete passes through the SyncBackendHost to forward
-  // on to |frontend_|, and so that tests can intercept here if they need to
-  // set up initial conditions.
-  void HandleInitializationCompletedOnFrontendLoop(
-      bool success);
+  // Handles backend initialization failure.
+  void HandleInitializationFailureOnFrontendLoop();
 
   // Called from Core::OnSyncCycleCompleted to handle updating frontend
   // thread components.
@@ -452,7 +441,7 @@ class SyncBackendHost
       syncer::BootstrapTokenType token_type);
 
   // For convenience, checks if initialization state is INITIALIZED.
-  bool initialized() const { return initialization_state_ == INITIALIZED; }
+  bool initialized() const { return initialized_; }
 
   // Let the front end handle the actionable error event.
   void HandleActionableErrorEventOnFrontendLoop(
@@ -476,9 +465,6 @@ class SyncBackendHost
 
   // Invoked when the passphrase provided by the user has been accepted.
   void NotifyPassphraseAccepted();
-
-  // Invoked when an updated token is available from the sync server.
-  void NotifyUpdatedToken(const std::string& token);
 
   // Invoked when the set of encrypted types or the encrypt
   // everything flag changes.
@@ -523,12 +509,6 @@ class SyncBackendHost
   virtual void OnIncomingInvalidation(
       const syncer::ObjectIdInvalidationMap& invalidation_map) OVERRIDE;
 
-  // Handles stopping the core's SyncManager, accounting for whether
-  // initialization is done yet.
-  void StopSyncManagerForShutdown();
-
-  base::WeakPtrFactory<SyncBackendHost> weak_ptr_factory_;
-
   content::NotificationRegistrar notification_registrar_;
 
   // A reference to the MessageLoop used to construct |this|, so we know how
@@ -545,7 +525,7 @@ class SyncBackendHost
   // sync loop.
   scoped_refptr<Core> core_;
 
-  InitializationState initialization_state_;
+  bool initialized_;
 
   const base::WeakPtr<SyncPrefs> sync_prefs_;
 
@@ -579,15 +559,10 @@ class SyncBackendHost
   // UI-thread cache of the last SyncSessionSnapshot received from syncapi.
   syncer::sessions::SyncSessionSnapshot last_snapshot_;
 
-  // Temporary holder of sync manager's initialization results. Set by
-  // HandleSyncManagerInitializationOnFrontendLoop, and consumed when we pass
-  // it via OnBackendInitialized in the final state of
-  // HandleInitializationCompletedOnFrontendLoop.
-  syncer::WeakHandle<syncer::JsBackend> js_backend_;
-  syncer::WeakHandle<syncer::DataTypeDebugInfoListener> debug_info_listener_;
-
   invalidation::InvalidationService* invalidator_;
   bool invalidation_handler_registered_;
+
+  base::WeakPtrFactory<SyncBackendHost> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(SyncBackendHost);
 };

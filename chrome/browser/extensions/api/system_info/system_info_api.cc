@@ -14,11 +14,11 @@
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/api/system_storage/storage_info_provider.h"
-#include "chrome/browser/extensions/event_names.h"
 #include "chrome/browser/extensions/event_router_forwarder.h"
 #include "chrome/browser/storage_monitor/removable_storage_observer.h"
 #include "chrome/browser/storage_monitor/storage_info.h"
 #include "chrome/browser/storage_monitor/storage_monitor.h"
+#include "chrome/common/extensions/api/system_display.h"
 #include "chrome/common/extensions/api/system_storage.h"
 #include "ui/gfx/display_observer.h"
 
@@ -32,16 +32,19 @@ namespace extensions {
 using api::system_storage::StorageUnitInfo;
 using content::BrowserThread;
 
+namespace system_display = api::system_display;
+namespace system_storage = api::system_storage;
+
 namespace {
 
 bool IsDisplayChangedEvent(const std::string& event_name) {
-  return event_name == event_names::kOnDisplayChanged;
+  return event_name == system_display::OnDisplayChanged::kEventName;
 }
 
 // Event router for systemInfo API. It is a singleton instance shared by
 // multiple profiles.
 class SystemInfoEventRouter : public gfx::DisplayObserver,
-                              public chrome::RemovableStorageObserver {
+                              public RemovableStorageObserver {
  public:
   static SystemInfoEventRouter* GetInstance();
 
@@ -58,11 +61,9 @@ class SystemInfoEventRouter : public gfx::DisplayObserver,
   virtual void OnDisplayAdded(const gfx::Display& new_display) OVERRIDE;
   virtual void OnDisplayRemoved(const gfx::Display& old_display) OVERRIDE;
 
-  // chrome::RemovableStorageObserver implementation.
-  virtual void OnRemovableStorageAttached(
-      const chrome::StorageInfo& info) OVERRIDE;
-  virtual void OnRemovableStorageDetached(
-      const chrome::StorageInfo& info) OVERRIDE;
+  // RemovableStorageObserver implementation.
+  virtual void OnRemovableStorageAttached(const StorageInfo& info) OVERRIDE;
+  virtual void OnRemovableStorageDetached(const StorageInfo& info) OVERRIDE;
 
   // Called from any thread to dispatch the systemInfo event to all extension
   // processes cross multiple profiles.
@@ -87,12 +88,11 @@ SystemInfoEventRouter* SystemInfoEventRouter::GetInstance() {
 }
 
 SystemInfoEventRouter::SystemInfoEventRouter() {
-  chrome::StorageMonitor::GetInstance()->AddObserver(this);
+  StorageMonitor::GetInstance()->AddObserver(this);
 }
 
 SystemInfoEventRouter::~SystemInfoEventRouter() {
-  if (chrome::StorageMonitor* storage_monitor =
-          chrome::StorageMonitor::GetInstance())
+  if (StorageMonitor* storage_monitor = StorageMonitor::GetInstance())
     storage_monitor->RemoveObserver(this);
 }
 
@@ -131,21 +131,21 @@ void SystemInfoEventRouter::RemoveEventListener(
 }
 
 void SystemInfoEventRouter::OnRemovableStorageAttached(
-    const chrome::StorageInfo& info) {
+    const StorageInfo& info) {
   StorageUnitInfo unit;
   systeminfo::BuildStorageUnitInfo(info, &unit);
   scoped_ptr<base::ListValue> args(new base::ListValue);
   args->Append(unit.ToValue().release());
-  DispatchEvent(event_names::kOnStorageAttached, args.Pass());
+  DispatchEvent(system_storage::OnAttached::kEventName, args.Pass());
 }
 
 void SystemInfoEventRouter::OnRemovableStorageDetached(
-    const chrome::StorageInfo& info) {
+    const StorageInfo& info) {
   scoped_ptr<base::ListValue> args(new base::ListValue);
-  args->Append(new base::StringValue(chrome::StorageMonitor::GetInstance()->
+  args->Append(new base::StringValue(StorageMonitor::GetInstance()->
                    GetTransientIdForDeviceId(info.device_id())));
 
-  DispatchEvent(event_names::kOnStorageDetached, args.Pass());
+  DispatchEvent(system_storage::OnDetached::kEventName, args.Pass());
 }
 
 void SystemInfoEventRouter::OnDisplayBoundsChanged(
@@ -163,7 +163,7 @@ void SystemInfoEventRouter::OnDisplayRemoved(const gfx::Display& old_display) {
 
 void SystemInfoEventRouter::OnDisplayChanged() {
   scoped_ptr<base::ListValue> args(new base::ListValue());
-  DispatchEvent(event_names::kOnDisplayChanged, args.Pass());
+  DispatchEvent(system_display::OnDisplayChanged::kEventName, args.Pass());
 }
 
 void SystemInfoEventRouter::DispatchEvent(const std::string& event_name,
@@ -184,9 +184,11 @@ ProfileKeyedAPIFactory<SystemInfoAPI>* SystemInfoAPI::GetFactoryInstance() {
 
 SystemInfoAPI::SystemInfoAPI(Profile* profile) : profile_(profile) {
   ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
-      this, event_names::kOnStorageAttached);
+      this, system_storage::OnAttached::kEventName);
   ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
-      this, event_names::kOnStorageDetached);
+      this, system_storage::OnDetached::kEventName);
+  ExtensionSystem::Get(profile_)->event_router()->RegisterObserver(
+      this, system_display::OnDisplayChanged::kEventName);
 }
 
 SystemInfoAPI::~SystemInfoAPI() {

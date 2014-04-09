@@ -364,14 +364,6 @@ cr.define('print_preview', function() {
       this.otherOptionsSettings_.decorate($('other-options-settings'));
       this.previewArea_.decorate($('preview-area'));
 
-      // Set some of the parameterized text in the no-destinations promotion.
-      var noDestsPromoGcpDescription =
-          this.getChildElement('#no-destinations-promo .gcp-description');
-      noDestsPromoGcpDescription.innerHTML = localStrings.getStringF(
-          'noDestsPromoGcpDesc',
-          '<a target="_blank" href="http://www.google.com/cloudprint/learn/">',
-          '</a>');
-
       setIsVisible($('open-pdf-in-preview-link'), cr.isMac);
     },
 
@@ -476,7 +468,7 @@ cr.define('print_preview', function() {
      * Called when the native layer has initial settings to set. Sets the
      * initial settings of the print preview and begins fetching print
      * destinations.
-     * @param {cr.Event} event Contains the initial print preview settings
+     * @param {Event} event Contains the initial print preview settings
      *     persisted through the session.
      * @private
      */
@@ -501,12 +493,16 @@ cr.define('print_preview', function() {
           settings.unitType,
           settings.selectionOnly);
       this.destinationStore_.init(settings.systemDefaultDestinationId);
+      this.appState_.setInitialized();
+
+      setIsVisible($('system-dialog-link'),
+                   !settings.hidePrintWithSystemDialogLink);
     },
 
     /**
      * Calls when the native layer enables Google Cloud Print integration.
      * Fetches the user's cloud printers.
-     * @param {cr.Event} event Contains the base URL of the Google Cloud Print
+     * @param {Event} event Contains the base URL of the Google Cloud Print
      *     service.
      * @private
      */
@@ -546,7 +542,7 @@ cr.define('print_preview', function() {
 
     /**
      * Called from the native layer when ready to print to Google Cloud Print.
-     * @param {cr.Event} event Contains the body to send in the HTTP request.
+     * @param {Event} event Contains the body to send in the HTTP request.
      * @private
      */
     onPrintToCloud_: function(event) {
@@ -590,7 +586,7 @@ cr.define('print_preview', function() {
 
     /**
      * Called after successfully submitting a job to Google Cloud Print.
-     * @param {!cr.Event} event Contains the ID of the submitted print job.
+     * @param {!Event} event Contains the ID of the submitted print job.
      * @private
      */
     onCloudPrintSubmitDone_: function(event) {
@@ -609,7 +605,7 @@ cr.define('print_preview', function() {
     /**
      * Called when there was an error communicating with Google Cloud print.
      * Displays an error message in the print header.
-     * @param {!cr.Event} event Contains the error message.
+     * @param {!Event} event Contains the error message.
      * @private
      */
     onCloudPrintError_: function(event) {

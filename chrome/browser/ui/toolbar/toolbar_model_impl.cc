@@ -42,8 +42,7 @@ using content::SSLStatus;
 using content::WebContents;
 
 ToolbarModelImpl::ToolbarModelImpl(ToolbarModelDelegate* delegate)
-    : delegate_(delegate),
-      input_in_progress_(false) {
+    : delegate_(delegate) {
 }
 
 ToolbarModelImpl::~ToolbarModelImpl() {
@@ -90,9 +89,8 @@ ToolbarModel::SecurityLevel ToolbarModelImpl::GetSecurityLevelForWebContents(
 }
 
 // ToolbarModelImpl Implementation.
-string16 ToolbarModelImpl::GetText(
-    bool display_search_urls_as_search_terms) const {
-  if (display_search_urls_as_search_terms) {
+string16 ToolbarModelImpl::GetText(bool allow_search_term_replacement) const {
+  if (allow_search_term_replacement) {
     string16 search_terms(GetSearchTerms(false));
     if (!search_terms.empty())
       return search_terms;
@@ -114,7 +112,7 @@ string16 ToolbarModelImpl::GetText(
 }
 
 string16 ToolbarModelImpl::GetCorpusNameForMobile() const {
-  if (!WouldReplaceSearchURLWithSearchTerms(false))
+  if (!WouldPerformSearchTermReplacement(false))
     return string16();
   GURL url(GetURL());
   // If there is a query in the url fragment look for the corpus name there,
@@ -145,7 +143,7 @@ GURL ToolbarModelImpl::GetURL() const {
   return GURL(content::kAboutBlankURL);
 }
 
-bool ToolbarModelImpl::WouldReplaceSearchURLWithSearchTerms(
+bool ToolbarModelImpl::WouldPerformSearchTermReplacement(
     bool ignore_editing) const {
   return !GetSearchTerms(ignore_editing).empty();
 }
@@ -182,17 +180,15 @@ bool ToolbarModelImpl::ShouldDisplayURL() const {
   return true;
 }
 
-ToolbarModel::SecurityLevel
-    ToolbarModelImpl::GetSecurityLevel(bool ignore_editing) const {
-  if (!ignore_editing && input_in_progress_) {
-    // When editing, assume no security style.
-    return NONE;
-  }
-  return GetSecurityLevelForWebContents(delegate_->GetActiveWebContents());
+ToolbarModel::SecurityLevel ToolbarModelImpl::GetSecurityLevel(
+    bool ignore_editing) const {
+  // When editing, assume no security style.
+  return (input_in_progress() && !ignore_editing) ?
+      NONE : GetSecurityLevelForWebContents(delegate_->GetActiveWebContents());
 }
 
 int ToolbarModelImpl::GetIcon() const {
-  if (WouldReplaceSearchURLWithSearchTerms(false))
+  if (WouldPerformSearchTermReplacement(false))
     return IDR_OMNIBOX_SEARCH_SECURED;
 
   static int icon_ids[NUM_SECURITY_LEVELS] = {
@@ -208,7 +204,7 @@ int ToolbarModelImpl::GetIcon() const {
 }
 
 string16 ToolbarModelImpl::GetEVCertName() const {
-  DCHECK_EQ(GetSecurityLevel(false), EV_SECURE);
+  DCHECK_EQ(EV_SECURE, GetSecurityLevel(false));
   scoped_refptr<net::X509Certificate> cert;
   // Note: Navigation controller and active entry are guaranteed non-NULL or
   // the security level would be NONE.
@@ -232,14 +228,6 @@ string16 ToolbarModelImpl::GetEVCertName(const net::X509Certificate& cert) {
       UTF8ToUTF16(cert.subject().country_name));
 }
 
-void ToolbarModelImpl::SetInputInProgress(bool value) {
-  input_in_progress_ = value;
-}
-
-bool ToolbarModelImpl::GetInputInProgress() const {
-  return input_in_progress_;
-}
-
 NavigationController* ToolbarModelImpl::GetNavigationController() const {
   // This |current_tab| can be NULL during the initialization of the
   // toolbar during window creation (i.e. before any tabs have been added
@@ -256,6 +244,10 @@ Profile* ToolbarModelImpl::GetProfile() const {
 }
 
 string16 ToolbarModelImpl::GetSearchTerms(bool ignore_editing) const {
+  if (!search_term_replacement_enabled() ||
+      (input_in_progress() && !ignore_editing))
+    return string16();
+
   const WebContents* web_contents = delegate_->GetActiveWebContents();
   string16 search_terms(chrome::GetSearchTerms(web_contents));
   if (search_terms.empty())
@@ -274,9 +266,8 @@ string16 ToolbarModelImpl::GetSearchTerms(bool ignore_editing) const {
     return search_terms;
 
   // If the URL is using a Google base URL specified via the command line, we
-  // allow search term replacement any time the user isn't editing, bypassing
-  // the security check below.
-  if ((ignore_editing || !input_in_progress_) && entry &&
+  // bypass the security check below.
+  if (entry &&
       google_util::StartsWithCommandLineGoogleBaseURL(entry->GetVirtualURL()))
     return search_terms;
 

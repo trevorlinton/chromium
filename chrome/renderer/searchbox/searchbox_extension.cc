@@ -5,6 +5,7 @@
 #include "chrome/renderer/searchbox/searchbox_extension.h"
 
 #include "base/i18n/rtl.h"
+#include "base/json/string_escape.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -12,6 +13,7 @@
 #include "chrome/common/autocomplete_match_type.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/instant_types.h"
+#include "chrome/common/ntp_logging_events.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/renderer/searchbox/searchbox.h"
 #include "content/public/renderer/render_view.h"
@@ -21,9 +23,9 @@
 #include "third_party/WebKit/public/web/WebFrame.h"
 #include "third_party/WebKit/public/web/WebScriptSource.h"
 #include "third_party/WebKit/public/web/WebView.h"
-#include "ui/base/keycodes/keyboard_codes.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/window_open_disposition.h"
+#include "ui/events/keycodes/keyboard_codes.h"
 #include "url/gurl.h"
 #include "v8/include/v8.h"
 
@@ -192,6 +194,18 @@ static const char kSupportsInstantScript[] =
     "  false;"
     "}";
 
+static const char kDispatchChromeIdentityCheckResult[] =
+    "if (window.chrome &&"
+    "    window.chrome.embeddedSearch &&"
+    "    window.chrome.embeddedSearch.newTabPage &&"
+    "    window.chrome.embeddedSearch.newTabPage.onsignedincheckdone &&"
+    "    typeof window.chrome.embeddedSearch.newTabPage"
+    "        .onsignedincheckdone === 'function') {"
+    "  window.chrome.embeddedSearch.newTabPage.onsignedincheckdone(%s, %s);"
+    "  true;"
+    "}";
+
+
 static const char kDispatchFocusChangedScript[] =
     "if (window.chrome &&"
     "    window.chrome.embeddedSearch &&"
@@ -269,6 +283,17 @@ static const char kDispatchSubmitEventScript[] =
     "  true;"
     "}";
 
+static const char kDispatchSuggestionChangeEventScript[] =
+    "if (window.chrome &&"
+    "    window.chrome.embeddedSearch &&"
+    "    window.chrome.embeddedSearch.searchBox &&"
+    "    window.chrome.embeddedSearch.searchBox.onsuggestionchange &&"
+    "    typeof window.chrome.embeddedSearch.searchBox.onsuggestionchange =="
+    "        'function') {"
+    "  window.chrome.embeddedSearch.searchBox.onsuggestionchange();"
+    "  true;"
+    "}";
+
 static const char kDispatchThemeChangeEventScript[] =
     "if (window.chrome &&"
     "    window.chrome.embeddedSearch &&"
@@ -305,19 +330,20 @@ class SearchBoxExtensionWrapper : public v8::Extension {
   // Helper function to find the RenderView. May return NULL.
   static content::RenderView* GetRenderView();
 
+  // Sends a Chrome identity check to the browser.
+  static void CheckIsUserSignedInToChromeAs(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+
   // Deletes a Most Visited item.
   static void DeleteMostVisitedItem(
       const v8::FunctionCallbackInfo<v8::Value>& args);
 
+  // Focuses the omnibox.
+  static void Focus(const v8::FunctionCallbackInfo<v8::Value>& args);
+
   // Gets whether or not the app launcher is enabled.
   static void GetAppLauncherEnabled(
       const v8::FunctionCallbackInfo<v8::Value>& args);
-
-  // Gets the font family of the text in the omnibox.
-  static void GetFont(const v8::FunctionCallbackInfo<v8::Value>& args);
-
-  // Gets the font size of the text in the omnibox.
-  static void GetFontSize(const v8::FunctionCallbackInfo<v8::Value>& args);
 
   // Gets Most Visited Items.
   static void GetMostVisitedItems(
@@ -337,6 +363,10 @@ class SearchBoxExtensionWrapper : public v8::Extension {
 
   // Gets the start-edge margin to use with extended Instant.
   static void GetStartMargin(const v8::FunctionCallbackInfo<v8::Value>& args);
+
+  // Gets the current top suggestion to prefetch search results.
+  static void GetSuggestionToPrefetch(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
 
   // Gets the background info of the theme currently adopted by browser.
   // Call only when overlay is showing NTP page.
@@ -385,6 +415,10 @@ class SearchBoxExtensionWrapper : public v8::Extension {
   static void UndoMostVisitedDeletion(
       const v8::FunctionCallbackInfo<v8::Value>& args);
 
+  // Indicates whether the page supports Instant.
+  static void GetDisplayInstantResults(
+      const v8::FunctionCallbackInfo<v8::Value>& args);
+
  private:
   DISALLOW_COPY_AND_ASSIGN(SearchBoxExtensionWrapper);
 };
@@ -398,10 +432,22 @@ v8::Extension* SearchBoxExtension::Get() {
 // static
 bool SearchBoxExtension::PageSupportsInstant(WebKit::WebFrame* frame) {
   if (!frame) return false;
-  v8::HandleScope handle_scope;
+  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
   v8::Handle<v8::Value> v = frame->executeScriptAndReturnValue(
       WebKit::WebScriptSource(kSupportsInstantScript));
   return !v.IsEmpty() && v->BooleanValue();
+}
+
+// static
+void SearchBoxExtension::DispatchChromeIdentityCheckResult(
+    WebKit::WebFrame* frame, const string16& identity, bool identity_match) {
+  std::string escaped_identity;
+  base::JsonDoubleQuote(identity, true, &escaped_identity);
+  WebKit::WebString script(UTF8ToUTF16(base::StringPrintf(
+      kDispatchChromeIdentityCheckResult,
+      escaped_identity.c_str(),
+      identity_match ? "true" : "false")));
+  Dispatch(frame, script);
 }
 
 // static
@@ -441,6 +487,11 @@ void SearchBoxExtension::DispatchSubmit(WebKit::WebFrame* frame) {
 }
 
 // static
+void SearchBoxExtension::DispatchSuggestionChange(WebKit::WebFrame* frame) {
+  Dispatch(frame, kDispatchSuggestionChangeEventScript);
+}
+
+// static
 void SearchBoxExtension::DispatchThemeChange(WebKit::WebFrame* frame) {
   Dispatch(frame, kDispatchThemeChangeEventScript);
 }
@@ -458,14 +509,14 @@ SearchBoxExtensionWrapper::SearchBoxExtensionWrapper(
 
 v8::Handle<v8::FunctionTemplate> SearchBoxExtensionWrapper::GetNativeFunction(
     v8::Handle<v8::String> name) {
+  if (name->Equals(v8::String::New("CheckIsUserSignedInToChromeAs")))
+    return v8::FunctionTemplate::New(CheckIsUserSignedInToChromeAs);
   if (name->Equals(v8::String::New("DeleteMostVisitedItem")))
     return v8::FunctionTemplate::New(DeleteMostVisitedItem);
+  if (name->Equals(v8::String::New("Focus")))
+    return v8::FunctionTemplate::New(Focus);
   if (name->Equals(v8::String::New("GetAppLauncherEnabled")))
     return v8::FunctionTemplate::New(GetAppLauncherEnabled);
-  if (name->Equals(v8::String::New("GetFont")))
-    return v8::FunctionTemplate::New(GetFont);
-  if (name->Equals(v8::String::New("GetFontSize")))
-    return v8::FunctionTemplate::New(GetFontSize);
   if (name->Equals(v8::String::New("GetMostVisitedItems")))
     return v8::FunctionTemplate::New(GetMostVisitedItems);
   if (name->Equals(v8::String::New("GetMostVisitedItemData")))
@@ -476,6 +527,8 @@ v8::Handle<v8::FunctionTemplate> SearchBoxExtensionWrapper::GetNativeFunction(
     return v8::FunctionTemplate::New(GetRightToLeft);
   if (name->Equals(v8::String::New("GetStartMargin")))
     return v8::FunctionTemplate::New(GetStartMargin);
+  if (name->Equals(v8::String::New("GetSuggestionToPrefetch")))
+    return v8::FunctionTemplate::New(GetSuggestionToPrefetch);
   if (name->Equals(v8::String::New("GetThemeBackgroundInfo")))
     return v8::FunctionTemplate::New(GetThemeBackgroundInfo);
   if (name->Equals(v8::String::New("IsFocused")))
@@ -500,6 +553,8 @@ v8::Handle<v8::FunctionTemplate> SearchBoxExtensionWrapper::GetNativeFunction(
     return v8::FunctionTemplate::New(UndoAllMostVisitedDeletions);
   if (name->Equals(v8::String::New("UndoMostVisitedDeletion")))
     return v8::FunctionTemplate::New(UndoMostVisitedDeletion);
+  if (name->Equals(v8::String::New("GetDisplayInstantResults")))
+    return v8::FunctionTemplate::New(GetDisplayInstantResults);
   return v8::Handle<v8::FunctionTemplate>();
 }
 
@@ -515,6 +570,18 @@ content::RenderView* SearchBoxExtensionWrapper::GetRenderView() {
 }
 
 // static
+void SearchBoxExtensionWrapper::CheckIsUserSignedInToChromeAs(
+    const v8::FunctionCallbackInfo<v8::Value>& args) {
+  content::RenderView* render_view = GetRenderView();
+  if (!render_view || args.Length() == 0 || args[0]->IsUndefined()) return;
+
+  DVLOG(1) << render_view << " CheckIsUserSignedInToChromeAs";
+
+  SearchBox::Get(render_view)->CheckIsUserSignedInToChromeAs(
+      V8ValueToUTF16(args[0]));
+}
+
+// static
 void SearchBoxExtensionWrapper::DeleteMostVisitedItem(
     const v8::FunctionCallbackInfo<v8::Value>& args) {
   content::RenderView* render_view = GetRenderView();
@@ -525,6 +592,16 @@ void SearchBoxExtensionWrapper::DeleteMostVisitedItem(
 }
 
 // static
+void SearchBoxExtensionWrapper::Focus(
+    const v8::FunctionCallbackInfo<v8::Value>& args) {
+  content::RenderView* render_view = GetRenderView();
+  if (!render_view) return;
+
+  DVLOG(1) << render_view << " Focus";
+  SearchBox::Get(render_view)->Focus();
+}
+
+// static
 void SearchBoxExtensionWrapper::GetAppLauncherEnabled(
     const v8::FunctionCallbackInfo<v8::Value>& args) {
   content::RenderView* render_view = GetRenderView();
@@ -532,26 +609,6 @@ void SearchBoxExtensionWrapper::GetAppLauncherEnabled(
 
   args.GetReturnValue().Set(
       SearchBox::Get(render_view)->app_launcher_enabled());
-}
-
-// static
-void SearchBoxExtensionWrapper::GetFont(
-    const v8::FunctionCallbackInfo<v8::Value>& args) {
-  content::RenderView* render_view = GetRenderView();
-  if (!render_view) return;
-
-  args.GetReturnValue().Set(
-      UTF16ToV8String(SearchBox::Get(render_view)->omnibox_font()));
-}
-
-// static
-void SearchBoxExtensionWrapper::GetFontSize(
-    const v8::FunctionCallbackInfo<v8::Value>& args) {
-  content::RenderView* render_view = GetRenderView();
-  if (!render_view) return;
-
-  args.GetReturnValue().Set(static_cast<uint32_t>(
-      SearchBox::Get(render_view)->omnibox_font_size()));
 }
 
 // static
@@ -621,6 +678,20 @@ void SearchBoxExtensionWrapper::GetStartMargin(
   if (!render_view) return;
   args.GetReturnValue().Set(static_cast<int32_t>(
       SearchBox::Get(render_view)->start_margin()));
+}
+
+// static
+void SearchBoxExtensionWrapper::GetSuggestionToPrefetch(
+    const v8::FunctionCallbackInfo<v8::Value>& args) {
+  content::RenderView* render_view = GetRenderView();
+  if (!render_view) return;
+
+  const InstantSuggestion& suggestion =
+      SearchBox::Get(render_view)->suggestion();
+  v8::Handle<v8::Object> data = v8::Object::New();
+  data->Set(v8::String::New("text"), UTF16ToV8String(suggestion.text));
+  data->Set(v8::String::New("metadata"), UTF8ToV8String(suggestion.metadata));
+  args.GetReturnValue().Set(data);
 }
 
 // static
@@ -808,17 +879,16 @@ void SearchBoxExtensionWrapper::LogEvent(
       GURL(chrome::kChromeSearchMostVisitedUrl));
   if (!render_view) return;
 
-  if (args.Length() < 1 || !args[0]->IsString())
+  if (args.Length() < 1 || !args[0]->IsNumber())
     return;
 
   DVLOG(1) << render_view << " LogEvent";
 
-  std::string histogram_name = *v8::String::Utf8Value(args[0]->ToString());
-
-  if (histogram_name == "NewTabPage.NumberOfMouseOvers")
-    SearchBox::Get(render_view)->CountMouseover();
-  else
-    DVLOG(1) << render_view << " Unsupported histogram name";
+  if (args[0]->Uint32Value() < NTP_NUM_EVENT_TYPES) {
+    NTPLoggingEventType event =
+        static_cast<NTPLoggingEventType>(args[0]->Uint32Value());
+    SearchBox::Get(render_view)->LogEvent(event);
+  }
 }
 
 // static
@@ -828,14 +898,14 @@ void SearchBoxExtensionWrapper::NavigateContentWindow(
   if (!render_view || !args.Length()) return;
 
   GURL destination_url;
-  content::PageTransition transition = content::PAGE_TRANSITION_AUTO_BOOKMARK;
-
+  bool is_most_visited_item_url = false;
   // Check if the url is a rid
   if (args[0]->IsNumber()) {
     InstantMostVisitedItem item;
     if (SearchBox::Get(render_view)->GetMostVisitedItemWithID(
-        args[0]->IntegerValue(), &item)) {
+            args[0]->IntegerValue(), &item)) {
       destination_url = item.url;
+      is_most_visited_item_url = true;
     }
   } else {
     // Resolve the URL
@@ -851,8 +921,8 @@ void SearchBoxExtensionWrapper::NavigateContentWindow(
     WindowOpenDisposition disposition = CURRENT_TAB;
     if (args[1]->Uint32Value() == 2)
       disposition = NEW_BACKGROUND_TAB;
-    SearchBox::Get(render_view)->NavigateToURL(
-        destination_url, transition, disposition, false);
+    SearchBox::Get(render_view)->NavigateToURL(destination_url, disposition,
+                                               is_most_visited_item_url);
   }
 }
 
@@ -918,6 +988,19 @@ void SearchBoxExtensionWrapper::UndoMostVisitedDeletion(
 
   DVLOG(1) << render_view << " UndoMostVisitedDeletion";
   SearchBox::Get(render_view)->UndoMostVisitedDeletion(args[0]->IntegerValue());
+}
+
+// static
+void SearchBoxExtensionWrapper::GetDisplayInstantResults(
+    const v8::FunctionCallbackInfo<v8::Value>& args) {
+  content::RenderView* render_view = GetRenderView();
+  if (!render_view) return;
+
+  bool display_instant_results =
+      SearchBox::Get(render_view)->display_instant_results();
+  DVLOG(1) << render_view << " GetDisplayInstantResults" <<
+      display_instant_results;
+  args.GetReturnValue().Set(display_instant_results);
 }
 
 }  // namespace extensions_v8

@@ -4,10 +4,13 @@
 
 #include "content/renderer/browser_plugin/browser_plugin_compositing_helper.h"
 
+#include "cc/layers/delegated_frame_provider.h"
+#include "cc/layers/delegated_frame_resource_collection.h"
 #include "cc/layers/delegated_renderer_layer.h"
 #include "cc/layers/solid_color_layer.h"
 #include "cc/layers/texture_layer.h"
 #include "cc/output/context_provider.h"
+#include "cc/resources/single_release_callback.h"
 #include "content/common/browser_plugin/browser_plugin_messages.h"
 #include "content/common/gpu/client/context_provider_command_buffer.h"
 #include "content/renderer/browser_plugin/browser_plugin_manager.h"
@@ -40,6 +43,7 @@ BrowserPluginCompositingHelper::BrowserPluginCompositingHelper(
       last_host_id_(0),
       last_mailbox_valid_(false),
       ack_pending_(true),
+      software_ack_pending_(false),
       container_(container),
       browser_plugin_manager_(manager) {
 }
@@ -48,11 +52,29 @@ BrowserPluginCompositingHelper::~BrowserPluginCompositingHelper() {
 }
 
 void BrowserPluginCompositingHelper::DidCommitCompositorFrame() {
-  if (!delegated_layer_.get() || !ack_pending_)
+  if (software_ack_pending_) {
+    cc::CompositorFrameAck ack;
+    if (!unacked_software_frames_.empty()) {
+      ack.last_software_frame_id = unacked_software_frames_.back();
+      unacked_software_frames_.pop_back();
+    }
+
+    browser_plugin_manager_->Send(
+        new BrowserPluginHostMsg_CompositorFrameACK(
+            host_routing_id_,
+            instance_id_,
+            last_route_id_,
+            last_output_surface_id_,
+            last_host_id_,
+            ack));
+
+    software_ack_pending_ = false;
+  }
+  if (!resource_collection_.get() || !ack_pending_)
     return;
 
   cc::CompositorFrameAck ack;
-  delegated_layer_->TakeUnusedResourcesForChildCompositor(&ack.resources);
+  resource_collection_->TakeUnusedResourcesForChildCompositor(&ack.resources);
 
   browser_plugin_manager_->Send(
       new BrowserPluginHostMsg_CompositorFrameACK(
@@ -111,6 +133,9 @@ void BrowserPluginCompositingHelper::MailboxReleased(
       last_route_id_ != mailbox.route_id)
     return;
 
+  if (mailbox.type == SOFTWARE_COMPOSITOR_FRAME)
+    unacked_software_frames_.push_back(mailbox.software_frame_id);
+
   // We need to send an ACK to for every buffer sent to us.
   // However, if a buffer is freed up from
   // the compositor in cases like switching back to SW mode without a new
@@ -151,20 +176,8 @@ void BrowserPluginCompositingHelper::MailboxReleased(
              ack));
       break;
     }
-    case SOFTWARE_COMPOSITOR_FRAME: {
-      cc::CompositorFrameAck ack;
-      ack.last_software_frame_id = mailbox.software_frame_id;
-
-      browser_plugin_manager_->Send(
-         new BrowserPluginHostMsg_CompositorFrameACK(
-             host_routing_id_,
-             instance_id_,
-             mailbox.route_id,
-             mailbox.output_surface_id,
-             mailbox.host_id,
-             ack));
+    case SOFTWARE_COMPOSITOR_FRAME:
       break;
-    }
   }
 }
 
@@ -173,6 +186,12 @@ void BrowserPluginCompositingHelper::OnContainerDestroy() {
     container_->setWebLayer(NULL);
   container_ = NULL;
 
+  if (resource_collection_) {
+    resource_collection_->LoseAllResources();
+    resource_collection_ = NULL;
+  }
+  ack_pending_ = false;
+  software_ack_pending_ = false;
   texture_layer_ = NULL;
   delegated_layer_ = NULL;
   background_layer_ = NULL;
@@ -238,21 +257,20 @@ void BrowserPluginCompositingHelper::OnBuffersSwappedPrivate(
   }
 
   cc::TextureMailbox texture_mailbox;
+  scoped_ptr<cc::SingleReleaseCallback> release_callback;
   if (current_mailbox_valid) {
-    cc::TextureMailbox::ReleaseCallback callback =
+    release_callback = cc::SingleReleaseCallback::Create(
         base::Bind(&BrowserPluginCompositingHelper::MailboxReleased,
                    scoped_refptr<BrowserPluginCompositingHelper>(this),
-                   mailbox);
-    if (is_software_frame) {
-      texture_mailbox = cc::TextureMailbox(mailbox.shared_memory,
-                                           mailbox.size, callback);
-    } else {
-      texture_mailbox = cc::TextureMailbox(mailbox.name, callback, sync_point);
-    }
+                   mailbox)).Pass();
+    if (is_software_frame)
+      texture_mailbox = cc::TextureMailbox(mailbox.shared_memory, mailbox.size);
+    else
+      texture_mailbox = cc::TextureMailbox(mailbox.name, sync_point);
   }
 
   texture_layer_->SetFlipped(!is_software_frame);
-  texture_layer_->SetTextureMailbox(texture_mailbox);
+  texture_layer_->SetTextureMailbox(texture_mailbox, release_callback.Pass());
   texture_layer_->SetNeedsDisplay();
   last_mailbox_valid_ = current_mailbox_valid;
 }
@@ -310,39 +328,77 @@ void BrowserPluginCompositingHelper::OnCompositorFrameSwapped(
       LOG(ERROR) << "Failed to map shared memory of size "
                  << size_in_bytes;
       // Send ACK right away.
-      ack_pending_ = true;
+      software_ack_pending_ = true;
       MailboxReleased(swap_info, 0, false);
+      DidCommitCompositorFrame();
       return;
     }
 
     swap_info.shared_memory = shared_memory.release();
     OnBuffersSwappedPrivate(swap_info, 0,
                             frame->metadata.device_scale_factor);
+    software_ack_pending_ = true;
+    last_route_id_ = route_id;
+    last_output_surface_id_ = output_surface_id;
+    last_host_id_ = host_id;
     return;
   }
 
   DCHECK(!texture_layer_.get());
-  if (!delegated_layer_.get()) {
-    delegated_layer_ = cc::DelegatedRendererLayer::Create(NULL);
-    delegated_layer_->SetIsDrawable(true);
-    delegated_layer_->SetContentsOpaque(true);
 
-    background_layer_->AddChild(delegated_layer_);
-  }
-
-  cc::DelegatedFrameData *frame_data = frame->delegated_frame_data.get();
+  cc::DelegatedFrameData* frame_data = frame->delegated_frame_data.get();
   if (!frame_data)
     return;
+
+  DCHECK(!frame_data->render_pass_list.empty());
+  cc::RenderPass* root_pass = frame_data->render_pass_list.back();
+  gfx::Size frame_size = root_pass->output_rect.size();
+
+  if (last_route_id_ != route_id ||
+      last_output_surface_id_ != output_surface_id ||
+      last_host_id_ != host_id) {
+    // Resource ids are scoped by the output surface.
+    // If the originating output surface doesn't match the last one, it
+    // indicates the guest's output surface may have been recreated, in which
+    // case we should recreate the DelegatedRendererLayer, to avoid matching
+    // resources from the old one with resources from the new one which would
+    // have the same id.
+    frame_provider_ = NULL;
+
+    // Drop the cc::DelegatedFrameResourceCollection so that we will not return
+    // any resources from the old output surface with the new output surface id.
+    if (resource_collection_) {
+      resource_collection_->LoseAllResources();
+      resource_collection_ = NULL;
+    }
+    last_output_surface_id_ = output_surface_id;
+    last_route_id_ = route_id;
+    last_host_id_ = host_id;
+  }
+  if (!resource_collection_) {
+    resource_collection_ = new cc::DelegatedFrameResourceCollection;
+    // TODO(danakj): Could return resources sooner if we set a client here and
+    // listened for UnusedResourcesAreAvailable().
+  }
+  if (!frame_provider_.get() || frame_provider_->frame_size() != frame_size) {
+    frame_provider_ = new cc::DelegatedFrameProvider(
+        resource_collection_.get(), frame->delegated_frame_data.Pass());
+    if (delegated_layer_.get())
+      delegated_layer_->RemoveFromParent();
+    delegated_layer_ =
+        cc::DelegatedRendererLayer::Create(NULL, frame_provider_.get());
+    delegated_layer_->SetIsDrawable(true);
+    delegated_layer_->SetContentsOpaque(true);
+    background_layer_->AddChild(delegated_layer_);
+  } else {
+    frame_provider_->SetFrameData(frame->delegated_frame_data.Pass());
+  }
 
   CheckSizeAndAdjustLayerBounds(
       frame_data->render_pass_list.back()->output_rect.size(),
       frame->metadata.device_scale_factor,
       delegated_layer_.get());
 
-  delegated_layer_->SetFrameData(frame->delegated_frame_data.Pass());
-  last_route_id_ = route_id;
-  last_output_surface_id_ = output_surface_id;
-  last_host_id_ = host_id;
   ack_pending_ = true;
 }
 

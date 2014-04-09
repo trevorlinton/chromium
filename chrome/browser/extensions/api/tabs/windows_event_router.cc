@@ -6,13 +6,14 @@
 
 #include "base/values.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/extensions/event_names.h"
 #include "chrome/browser/extensions/event_router.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_system.h"
+#include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/window_controller.h"
 #include "chrome/browser/extensions/window_controller_list.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/common/extensions/api/windows.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "content/public/browser/notification_service.h"
 
@@ -20,9 +21,9 @@
 #include "ui/base/x/active_window_watcher_x.h"
 #endif
 
-namespace event_names = extensions::event_names;
-
 namespace extensions {
+
+namespace windows = extensions::api::windows;
 
 WindowsEventRouter::WindowsEventRouter(Profile* profile)
     : profile_(profile),
@@ -61,7 +62,7 @@ void WindowsEventRouter::OnWindowControllerAdded(
   base::DictionaryValue* window_dictionary =
       window_controller->CreateWindowValue();
   args->Append(window_dictionary);
-  DispatchEvent(event_names::kOnWindowCreated, window_controller->profile(),
+  DispatchEvent(windows::OnCreated::kEventName, window_controller->profile(),
                 args.Pass());
 }
 
@@ -72,8 +73,9 @@ void WindowsEventRouter::OnWindowControllerRemoved(
 
   int window_id = window_controller->GetWindowId();
   scoped_ptr<base::ListValue> args(new base::ListValue());
-  args->Append(Value::CreateIntegerValue(window_id));
-  DispatchEvent(event_names::kOnWindowRemoved, window_controller->profile(),
+  args->Append(new base::FundamentalValue(window_id));
+  DispatchEvent(windows::OnRemoved::kEventName,
+                window_controller->profile(),
                 args.Pass());
 }
 
@@ -114,14 +116,15 @@ static void WillDispatchWindowFocusedEvent(Profile* new_active_profile,
   // can't see the new focused window across the incognito boundary.
   // See crbug.com/46610.
   if (new_active_profile && new_active_profile != profile &&
-      !extensions::ExtensionSystem::Get(profile)->extension_service()->
-          CanCrossIncognito(extension)) {
+      !extension_util::CanCrossIncognito(
+          extension,
+          extensions::ExtensionSystem::Get(profile)->extension_service())) {
     event_args->Clear();
-    event_args->Append(Value::CreateIntegerValue(
+    event_args->Append(new base::FundamentalValue(
         extension_misc::kUnknownWindowId));
   } else {
     event_args->Clear();
-    event_args->Append(Value::CreateIntegerValue(window_id));
+    event_args->Append(new base::FundamentalValue(window_id));
   }
 }
 
@@ -143,14 +146,14 @@ void WindowsEventRouter::OnActiveWindowChanged(
   focused_profile_ = window_profile;
   focused_window_id_ = window_id;
 
-  scoped_ptr<Event> event(new Event(event_names::kOnWindowFocusedChanged,
+  scoped_ptr<Event> event(new Event(windows::OnFocusChanged::kEventName,
                                     make_scoped_ptr(new base::ListValue())));
   event->will_dispatch_callback =
       base::Bind(&WillDispatchWindowFocusedEvent, window_profile, window_id);
   ExtensionSystem::Get(profile_)->event_router()->BroadcastEvent(event.Pass());
 }
 
-void WindowsEventRouter::DispatchEvent(const char* event_name,
+void WindowsEventRouter::DispatchEvent(const std::string& event_name,
                                       Profile* profile,
                                       scoped_ptr<base::ListValue> args) {
   scoped_ptr<Event> event(new Event(event_name, args.Pass()));

@@ -15,36 +15,27 @@
 #include "base/strings/stringprintf.h"
 #include "ui/aura/client/capture_client.h"
 #include "ui/aura/client/event_client.h"
+#include "ui/aura/client/focus_client.h"
 #include "ui/aura/client/screen_position_client.h"
-#include "ui/aura/client/stacking_client.h"
 #include "ui/aura/client/visibility_client.h"
 #include "ui/aura/env.h"
-#include "ui/aura/focus_manager.h"
 #include "ui/aura/layout_manager.h"
 #include "ui/aura/root_window.h"
 #include "ui/aura/window_delegate.h"
 #include "ui/aura/window_observer.h"
 #include "ui/aura/window_tracker.h"
-#include "ui/base/animation/multi_animation.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
+#include "ui/gfx/animation/multi_animation.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/path.h"
 #include "ui/gfx/screen.h"
 
 namespace aura {
 
-namespace {
-
-void MailboxReleaseCallback(scoped_ptr<base::SharedMemory> shared_memory,
-                            unsigned sync_point, bool lost_resource) {
-  // NOTE: shared_memory will get released when we go out of scope.
-}
-
-}  // namespace
-
 Window::Window(WindowDelegate* delegate)
-    : type_(client::WINDOW_TYPE_UNKNOWN),
+    : dispatcher_(NULL),
+      type_(client::WINDOW_TYPE_UNKNOWN),
       owned_by_parent_(true),
       delegate_(delegate),
       parent_(NULL),
@@ -73,25 +64,12 @@ Window::~Window() {
   FOR_EACH_OBSERVER(WindowObserver, observers_, OnWindowDestroying(this));
 
   // Let the root know so that it can remove any references to us.
-  RootWindow* root_window = GetRootWindow();
-  if (root_window)
-    root_window->OnWindowDestroying(this);
+  WindowEventDispatcher* dispatcher = GetDispatcher();
+  if (dispatcher)
+    dispatcher->OnWindowDestroying(this);
 
   // Then destroy the children.
-  while (!children_.empty()) {
-    Window* child = children_[0];
-    if (child->owned_by_parent_) {
-      delete child;
-      // Deleting the child so remove it from out children_ list.
-      DCHECK(std::find(children_.begin(), children_.end(), child) ==
-             children_.end());
-    } else {
-      // Even if we can't delete the child, we still need to remove it from the
-      // parent so that relevant bookkeeping (parent_ back-pointers etc) are
-      // updated.
-      RemoveChild(child);
-    }
-  }
+  RemoveOrDestroyChildren();
 
   // Removes ourselves from our transient parent (if it hasn't been done by the
   // RootWindow).
@@ -103,13 +81,6 @@ Window::~Window() {
   if (parent_)
     parent_->RemoveChild(this);
 
-  // And let the delegate do any post cleanup.
-  // TODO(beng): Figure out if this notification needs to happen here, or if it
-  // can be moved down adjacent to the observer notification. If it has to be
-  // done here, the reason why should be documented.
-  if (delegate_)
-    delegate_->OnWindowDestroyed();
-
   // Destroy transient children, only after we've removed ourselves from our
   // parent, as destroying an active transient child may otherwise attempt to
   // refocus us.
@@ -117,6 +88,9 @@ Window::~Window() {
   STLDeleteElements(&transient_children);
   DCHECK(transient_children_.empty());
 
+  // Delegate and observers need to be notified after transients are deleted.
+  if (delegate_)
+    delegate_->OnWindowDestroyed();
   FOR_EACH_OBSERVER(WindowObserver, observers_, OnWindowDestroyed(this));
 
   // Clear properties.
@@ -154,12 +128,6 @@ ui::Layer* Window::RecreateLayer() {
     return NULL;
 
   old_layer->set_delegate(NULL);
-  float mailbox_scale_factor;
-  cc::TextureMailbox old_mailbox =
-      old_layer->GetTextureMailbox(&mailbox_scale_factor);
-  scoped_refptr<ui::Texture> old_texture = old_layer->external_texture();
-  if (delegate_ && old_texture.get())
-    old_layer->SetExternalTexture(delegate_->CopyTexture().get());
 
   layer_ = new ui::Layer(old_layer->type());
   layer_owner_.reset(layer_);
@@ -167,29 +135,9 @@ ui::Layer* Window::RecreateLayer() {
   layer_->set_scale_content(old_layer->scale_content());
   layer_->set_delegate(this);
   layer_->SetMasksToBounds(old_layer->GetMasksToBounds());
-  // Move the original texture to the new layer if the old layer has a
-  // texture and we could copy it into the old layer,
-  // crbug.com/175211.
-  if (delegate_ && old_texture.get()) {
-    layer_->SetExternalTexture(old_texture.get());
-  } else if (old_mailbox.IsSharedMemory()) {
-    base::SharedMemory* old_buffer = old_mailbox.shared_memory();
-    const size_t size = old_mailbox.shared_memory_size_in_bytes();
 
-    scoped_ptr<base::SharedMemory> new_buffer(new base::SharedMemory);
-    new_buffer->CreateAndMapAnonymous(size);
-
-    if (old_buffer->memory() && new_buffer->memory()) {
-      memcpy(new_buffer->memory(), old_buffer->memory(), size);
-      base::SharedMemory* new_buffer_raw_ptr = new_buffer.get();
-      cc::TextureMailbox::ReleaseCallback callback =
-          base::Bind(MailboxReleaseCallback, Passed(&new_buffer));
-      cc::TextureMailbox new_mailbox(new_buffer_raw_ptr,
-                                     old_mailbox.shared_memory_size(),
-                                     callback);
-      layer_->SetTextureMailbox(new_mailbox, mailbox_scale_factor);
-    }
-  }
+  if (delegate_)
+    delegate_->DidRecreateLayer(old_layer, layer_);
 
   UpdateLayerName(name_);
   layer_->SetFillsBoundsOpaquely(!transparent_);
@@ -224,18 +172,28 @@ void Window::SetName(const std::string& name) {
 }
 
 void Window::SetTransparent(bool transparent) {
-  // Cannot change transparent flag after the window is initialized.
-  DCHECK(!layer());
   transparent_ = transparent;
+  if (layer())
+    layer_->SetFillsBoundsOpaquely(!transparent_);
 }
 
-RootWindow* Window::GetRootWindow() {
-  return const_cast<RootWindow*>(
+Window* Window::GetRootWindow() {
+  return const_cast<Window*>(
       static_cast<const Window*>(this)->GetRootWindow());
 }
 
-const RootWindow* Window::GetRootWindow() const {
+const Window* Window::GetRootWindow() const {
   return parent_ ? parent_->GetRootWindow() : NULL;
+}
+
+WindowEventDispatcher* Window::GetDispatcher() {
+  return const_cast<WindowEventDispatcher*>(const_cast<const Window*>(this)->
+      GetDispatcher());
+}
+
+const WindowEventDispatcher* Window::GetDispatcher() const {
+  const Window* root_window = GetRootWindow();
+  return root_window ? root_window->dispatcher_ : NULL;
 }
 
 void Window::Show() {
@@ -272,7 +230,7 @@ gfx::Rect Window::GetBoundsInRootWindow() const {
 
 gfx::Rect Window::GetBoundsInScreen() const {
   gfx::Rect bounds(GetBoundsInRootWindow());
-  const RootWindow* root = GetRootWindow();
+  const Window* root = GetRootWindow();
   if (root) {
     aura::client::ScreenPositionClient* screen_position_client =
         aura::client::GetScreenPositionClient(root);
@@ -286,12 +244,12 @@ gfx::Rect Window::GetBoundsInScreen() const {
 }
 
 void Window::SetTransform(const gfx::Transform& transform) {
-  RootWindow* root_window = GetRootWindow();
-  bool contained_mouse = IsVisible() && root_window &&
-      ContainsPointInRoot(root_window->GetLastMouseLocationInRoot());
+  WindowEventDispatcher* dispatcher = GetDispatcher();
+  bool contained_mouse = IsVisible() && dispatcher &&
+      ContainsPointInRoot(dispatcher->GetLastMouseLocationInRoot());
   layer()->SetTransform(transform);
-  if (root_window)
-    root_window->OnWindowTransformed(this, contained_mouse);
+  if (dispatcher)
+    dispatcher->OnWindowTransformed(this, contained_mouse);
 }
 
 void Window::SetLayoutManager(LayoutManager* layout_manager) {
@@ -317,7 +275,7 @@ void Window::SetBounds(const gfx::Rect& new_bounds) {
 
 void Window::SetBoundsInScreen(const gfx::Rect& new_bounds_in_screen,
                                const gfx::Display& dst_display) {
-  RootWindow* root = GetRootWindow();
+  Window* root = GetRootWindow();
   if (root) {
     gfx::Point origin = new_bounds_in_screen.origin();
     aura::client::ScreenPositionClient* screen_position_client =
@@ -341,19 +299,6 @@ void Window::SchedulePaintInRect(const gfx::Rect& rect) {
     FOR_EACH_OBSERVER(
         WindowObserver, observers_, OnWindowPaintScheduled(this, rect));
   }
-}
-
-void Window::SetDefaultParentByRootWindow(RootWindow* root_window,
-                                          const gfx::Rect& bounds_in_screen) {
-  DCHECK(root_window);
-
-  // Stacking clients are mandatory on RootWindow objects.
-  client::StackingClient* client = client::GetStackingClient(root_window);
-  DCHECK(client);
-
-  aura::Window* default_parent = client->GetDefaultParent(
-      root_window, this, bounds_in_screen);
-  default_parent->AddChild(this);
 }
 
 void Window::StackChildAtTop(Window* child) {
@@ -384,7 +329,7 @@ void Window::AddChild(Window* child) {
   params.phase = WindowObserver::HierarchyChangeParams::HIERARCHY_CHANGING;
   NotifyWindowHierarchyChange(params);
 
-  RootWindow* old_root = child->GetRootWindow();
+  Window* old_root = child->GetRootWindow();
 
   DCHECK(std::find(children_.begin(), children_.end(), child) ==
       children_.end());
@@ -400,9 +345,9 @@ void Window::AddChild(Window* child) {
   FOR_EACH_OBSERVER(WindowObserver, observers_, OnWindowAdded(child));
   child->OnParentChanged();
 
-  RootWindow* root_window = GetRootWindow();
+  Window* root_window = GetRootWindow();
   if (root_window && old_root != root_window) {
-    root_window->OnWindowAddedToRootWindow(child);
+    root_window->GetDispatcher()->OnWindowAddedToRootWindow(child);
     child->NotifyAddedToRootWindow();
   }
 
@@ -478,11 +423,11 @@ void Window::ConvertPointToTarget(const Window* source,
     return;
   if (source->GetRootWindow() != target->GetRootWindow()) {
     client::ScreenPositionClient* source_client =
-        GetScreenPositionClient(source->GetRootWindow());
+        client::GetScreenPositionClient(source->GetRootWindow());
     source_client->ConvertPointToScreen(source, point);
 
     client::ScreenPositionClient* target_client =
-        GetScreenPositionClient(target->GetRootWindow());
+        client::GetScreenPositionClient(target->GetRootWindow());
     target_client->ConvertPointFromScreen(target, point);
   } else {
     ui::Layer::ConvertPointToLayer(source->layer(), target->layer(), point);
@@ -490,11 +435,11 @@ void Window::ConvertPointToTarget(const Window* source,
 }
 
 void Window::MoveCursorTo(const gfx::Point& point_in_window) {
-  RootWindow* root_window = GetRootWindow();
+  Window* root_window = GetRootWindow();
   DCHECK(root_window);
   gfx::Point point_in_root(point_in_window);
   ConvertPointToTarget(this, root_window, &point_in_root);
-  root_window->MoveCursorTo(point_in_root);
+  root_window->GetDispatcher()->MoveCursorTo(point_in_root);
 }
 
 gfx::NativeCursor Window::GetCursor(const gfx::Point& point) const {
@@ -620,23 +565,25 @@ void Window::SetCapture() {
   if (!IsVisible())
     return;
 
-  RootWindow* root_window = GetRootWindow();
+  Window* root_window = GetRootWindow();
   if (!root_window)
     return;
   client::GetCaptureClient(root_window)->SetCapture(this);
 }
 
 void Window::ReleaseCapture() {
-  RootWindow* root_window = GetRootWindow();
+  Window* root_window = GetRootWindow();
   if (!root_window)
     return;
   client::GetCaptureClient(root_window)->ReleaseCapture(this);
 }
 
 bool Window::HasCapture() {
-  RootWindow* root_window = GetRootWindow();
-  return root_window &&
-      client::GetCaptureClient(root_window)->GetCaptureWindow() == this;
+  Window* root_window = GetRootWindow();
+  if (!root_window)
+    return false;
+  client::CaptureClient* capture_client = client::GetCaptureClient(root_window);
+  return capture_client && capture_client->GetCaptureWindow() == this;
 }
 
 void Window::SuppressPaint() {
@@ -679,6 +626,23 @@ void Window::PrintWindowHierarchy(int depth) const {
   }
 }
 #endif
+
+void Window::RemoveOrDestroyChildren() {
+  while (!children_.empty()) {
+    Window* child = children_[0];
+    if (child->owned_by_parent_) {
+      delete child;
+      // Deleting the child so remove it from out children_ list.
+      DCHECK(std::find(children_.begin(), children_.end(), child) ==
+             children_.end());
+    } else {
+      // Even if we can't delete the child, we still need to remove it from the
+      // parent so that relevant bookkeeping (parent_ back-pointers etc) are
+      // updated.
+      RemoveChild(child);
+    }
+  }
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // Window, private:
@@ -743,9 +707,9 @@ void Window::SetVisible(bool visible) {
   FOR_EACH_OBSERVER(WindowObserver, observers_,
                     OnWindowVisibilityChanging(this, visible));
 
-  RootWindow* root_window = GetRootWindow();
-  if (root_window)
-    root_window->DispatchMouseExitToHidingWindow(this);
+  WindowEventDispatcher* dispatcher = GetDispatcher();
+  if (dispatcher)
+    dispatcher->DispatchMouseExitToHidingWindow(this);
 
   client::VisibilityClient* visibility_client =
       client::GetVisibilityClient(this);
@@ -763,8 +727,8 @@ void Window::SetVisible(bool visible) {
 
   NotifyWindowVisibilityChanged(this, visible);
 
-  if (root_window)
-    root_window->OnWindowVisibilityChanged(this, visible);
+  if (dispatcher)
+    dispatcher->OnWindowVisibilityChanged(this, visible);
 }
 
 void Window::SchedulePaint() {
@@ -831,10 +795,11 @@ void Window::RemoveChildImpl(Window* child, Window* new_parent) {
   if (layout_manager_)
     layout_manager_->OnWillRemoveWindowFromLayout(child);
   FOR_EACH_OBSERVER(WindowObserver, observers_, OnWillRemoveWindow(child));
-  RootWindow* root_window = child->GetRootWindow();
-  RootWindow* new_root_window = new_parent ? new_parent->GetRootWindow() : NULL;
+  Window* root_window = child->GetRootWindow();
+  Window* new_root_window = new_parent ? new_parent->GetRootWindow() : NULL;
   if (root_window && root_window != new_root_window) {
-    root_window->OnWindowRemovedFromRootWindow(child, new_root_window);
+    root_window->GetDispatcher()->OnWindowRemovedFromRootWindow(
+        child, new_root_window);
     child->NotifyRemovingFromRootWindow();
   }
   child->parent_ = NULL;
@@ -856,6 +821,46 @@ void Window::OnParentChanged() {
       WindowObserver, observers_, OnWindowParentChanged(this, parent_));
 }
 
+bool Window::GetAllTransientAncestors(Window* window,
+                                      Windows* ancestors) const {
+  for (; window; window = window->transient_parent()) {
+    if (window->parent() == this)
+      ancestors->push_back(window);
+  }
+  return (!ancestors->empty());
+}
+
+void Window::FindCommonSiblings(Window** window1, Window** window2) const {
+  DCHECK(window1);
+  DCHECK(window2);
+  DCHECK(*window1);
+  DCHECK(*window2);
+  // Assemble chains of ancestors of both windows.
+  Windows ancestors1;
+  Windows ancestors2;
+  if (!GetAllTransientAncestors(*window1, &ancestors1) ||
+      !GetAllTransientAncestors(*window2, &ancestors2)) {
+    return;
+  }
+  // Walk the two chains backwards and look for the first difference.
+  Windows::const_reverse_iterator it1 = ancestors1.rbegin();
+  Windows::const_reverse_iterator it2 = ancestors2.rbegin();
+  for (; it1  != ancestors1.rend() && it2  != ancestors2.rend(); ++it1, ++it2) {
+    if (*it1 != *it2) {
+      *window1 = *it1;
+      *window2 = *it2;
+      break;
+    }
+  }
+}
+
+bool Window::HasTransientAncestor(const Window* ancestor) const {
+  if (transient_parent_ == ancestor)
+    return true;
+  return transient_parent_ ?
+      transient_parent_->HasTransientAncestor(ancestor) : false;
+}
+
 void Window::StackChildRelativeTo(Window* child,
                                   Window* target,
                                   StackDirection direction) {
@@ -865,14 +870,28 @@ void Window::StackChildRelativeTo(Window* child,
   DCHECK_EQ(this, child->parent());
   DCHECK_EQ(this, target->parent());
 
+  // Consider all transient children of both child's and target's ancestors
+  // up to the common ancestor if such exists and stack them as a unit.
+  // This prevents one transient group from being inserted in the middle of
+  // another.
+  FindCommonSiblings(&child, &target);
+
   const size_t target_i =
       std::find(children_.begin(), children_.end(), target) - children_.begin();
+
+  // When stacking above skip to the topmost transient descendant of the target.
+  size_t final_target_i = target_i;
+  if (direction == STACK_ABOVE && !child->HasTransientAncestor(target)) {
+    while (final_target_i + 1 < children_.size() &&
+           children_[final_target_i + 1]->HasTransientAncestor(target)) {
+      ++final_target_i;
+    }
+  }
 
   // By convention we don't stack on top of windows with layers with NULL
   // delegates.  Walk backward to find a valid target window.
   // See tests WindowTest.StackingMadrigal and StackOverClosingTransient
   // for an explanation of this.
-  size_t final_target_i = target_i;
   while (final_target_i > 0 &&
          children_[final_target_i]->layer()->delegate() == NULL) {
     --final_target_i;
@@ -892,8 +911,22 @@ void Window::StackChildRelativeTo(Window* child,
   if (child == final_target)
     return;
 
-  // Move the child and all its transients.
+  // Move the child.
   StackChildRelativeToImpl(child, final_target, direction);
+
+  // Stack any transient children that share the same parent to be in front of
+  // 'child'. Preserve the existing stacking order by iterating in the order
+  // those children appear in children_ array.
+  Window* last_transient = child;
+  Windows children(children_);
+  for (Windows::iterator it = children.begin(); it != children.end(); ++it) {
+    Window* transient_child = *it;
+    if (transient_child != last_transient &&
+        transient_child->HasTransientAncestor(child)) {
+      StackChildRelativeToImpl(transient_child, last_transient, STACK_ABOVE);
+      last_transient = transient_child;
+    }
+  }
 }
 
 void Window::StackChildRelativeToImpl(Window* child,
@@ -926,18 +959,6 @@ void Window::StackChildRelativeToImpl(Window* child,
     layer()->StackAbove(child->layer(), target->layer());
   else
     layer()->StackBelow(child->layer(), target->layer());
-
-  // Stack any transient children that share the same parent to be in front of
-  // 'child'.
-  Window* last_transient = child;
-  for (Windows::iterator it = child->transient_children_.begin();
-       it != child->transient_children_.end(); ++it) {
-    Window* transient_child = *it;
-    if (transient_child->parent_ == this) {
-      StackChildRelativeToImpl(transient_child, last_transient, STACK_ABOVE);
-      last_transient = transient_child;
-    }
-  }
 
   child->OnStackingChanged();
 }
@@ -1077,9 +1098,9 @@ void Window::OnLayerBoundsChanged(const gfx::Rect& old_bounds,
   FOR_EACH_OBSERVER(WindowObserver,
                     observers_,
                     OnWindowBoundsChanged(this, old_bounds, bounds()));
-  RootWindow* root_window = GetRootWindow();
-  if (root_window)
-    root_window->OnWindowBoundsChanged(this, contained_mouse);
+  WindowEventDispatcher* dispatcher = GetDispatcher();
+  if (dispatcher)
+    dispatcher->OnWindowBoundsChanged(this, contained_mouse);
 }
 
 void Window::OnPaintLayer(gfx::Canvas* canvas) {
@@ -1127,9 +1148,9 @@ void Window::UpdateLayerName(const std::string& name) {
 bool Window::ContainsMouse() {
   bool contains_mouse = false;
   if (IsVisible()) {
-    RootWindow* root_window = GetRootWindow();
-    contains_mouse = root_window &&
-        ContainsPointInRoot(root_window->GetLastMouseLocationInRoot());
+    WindowEventDispatcher* dispatcher = GetDispatcher();
+    contains_mouse = dispatcher &&
+        ContainsPointInRoot(dispatcher->GetLastMouseLocationInRoot());
   }
   return contains_mouse;
 }

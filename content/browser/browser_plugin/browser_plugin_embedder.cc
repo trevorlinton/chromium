@@ -16,6 +16,7 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/native_web_keyboard_event.h"
+#include "content/public/browser/render_view_host.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/result_codes.h"
@@ -177,7 +178,6 @@ void BrowserPluginEmbedder::OnAttach(
       GetBrowserPluginGuestManager()->GetGuestByInstanceID(
           instance_id, web_contents()->GetRenderProcessHost()->GetID());
 
-
   if (guest) {
     // There is an implicit order expectation here:
     // 1. The content embedder is made aware of the attachment.
@@ -188,7 +188,8 @@ void BrowserPluginEmbedder::OnAttach(
         guest->GetWebContents(),
         web_contents(),
         extra_params);
-    guest->Attach(static_cast<WebContentsImpl*>(web_contents()), params);
+    guest->Attach(
+        static_cast<WebContentsImpl*>(web_contents()), params, extra_params);
     return;
   }
 

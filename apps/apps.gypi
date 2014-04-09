@@ -23,10 +23,10 @@
         '<(grit_out_dir)',
       ],
       'sources': [
-        'app_launch_for_metro_restart_win.cc',
-        'app_launch_for_metro_restart_win.h',
-        'app_launcher.cc',
-        'app_launcher.h',
+        'app_keep_alive_service.cc',
+        'app_keep_alive_service.h',
+        'app_keep_alive_service_factory.cc',
+        'app_keep_alive_service_factory.h',
         'app_lifetime_monitor.cc',
         'app_lifetime_monitor.h',
         'app_lifetime_monitor_factory.cc',
@@ -52,12 +52,11 @@
         'app_shim/extension_app_shim_handler_mac.h',
         'app_window_contents.cc',
         'app_window_contents.h',
-        'field_trial_names.cc',
-        'field_trial_names.h',
+        'apps_client.cc',
+        'apps_client.h',
         'launcher.cc',
         'launcher.h',
         'metrics_names.h',
-        'native_app_window.h',
         'pref_names.cc',
         'pref_names.h',
         'prefs.cc',
@@ -74,6 +73,9 @@
         'shell_window_registry.h',
         'switches.cc',
         'switches.h',
+        'ui/native_app_window.h',
+        'ui/views/shell_window_frame_view.cc',
+        'ui/views/shell_window_frame_view.h',
       ],
       'conditions': [
         ['chromeos==1',
@@ -90,50 +92,58 @@
             ],
           }
         ],
+        ['toolkit_views==1', {
+          'dependencies': [
+            '../ui/base/strings/ui_strings.gyp:ui_strings',
+            '../ui/views/views.gyp:views',
+          ],
+        }, {  # toolkit_views==0
+          'sources/': [
+            ['exclude', 'ui/views/'],
+          ],
+        }],
       ],
       # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
       'msvs_disabled_warnings': [ 4267, ],
     },
-  ],
+  ],  # targets
   'conditions': [
-    ['OS=="win"',
-      {
-        'targets': [
-          {
-            'target_name': 'app_host',
-            'type': 'executable',
-            'include_dirs': [
-              '..',
-            ],
-            'direct_dependent_settings': {
-              'include_dirs': [
-                '..',
-              ],
-            },
-            'dependencies': [
-              '../base/base.gyp:base',
-              '../chrome/chrome.gyp:chrome_version_resources',
-              '../chrome/chrome.gyp:launcher_support',
-              '../google_update/google_update.gyp:google_update',
-            ],
-            'sources': [
-              'app_host/app_host.rc',
-              'app_host/app_host_main.cc',
-              'app_host/app_host_resource.h',
-              'app_host/binaries_installer.cc',
-              'app_host/binaries_installer.h',
-              'app_host/update.cc',
-              'app_host/update.h',
-              '<(SHARED_INTERMEDIATE_DIR)/chrome_version/app_host_exe_version.rc',
-            ],
-            'msvs_settings': {
-              'VCLinkerTool': {
-                'SubSystem': '2',  # Set /SUBSYSTEM:WINDOWS
-              },
-            },
+    ['chromeos==1', {
+      'targets': [
+        {
+          'target_name': 'app_shell',
+          'type': 'executable',
+          'defines!': ['CONTENT_IMPLEMENTATION'],
+          'variables': {
+            'chromium_code': 1,
           },
-        ],
-      },
-    ],  # 'OS=="win"'
-  ],  # 'conditions'
+          'dependencies': [
+            'apps',
+            '../base/base.gyp:base',
+            '../content/content.gyp:content',
+            '../content/content_shell_and_tests.gyp:content_shell_lib',
+            '../skia/skia.gyp:skia',
+            '../ui/shell/shell.gyp:shell',
+            '../ui/views/views.gyp:views',
+          ],
+          'include_dirs': [
+            '..',
+          ],
+          'sources': [
+            'shell/app_shell_browser_main_parts.cc',
+            'shell/app_shell_browser_main_parts.h',
+            'shell/app_shell_content_browser_client.cc',
+            'shell/app_shell_content_browser_client.h',
+            'shell/app_shell_content_client.cc',
+            'shell/app_shell_content_client.h',
+            'shell/app_shell_main_delegate.cc',
+            'shell/app_shell_main_delegate.h',
+            'shell/app_shell_main.cc',
+            'shell/web_view_window.cc',
+            'shell/web_view_window.cc',
+          ],
+        },
+      ],  # targets
+    }],  # chromeos==1
+  ],  # conditions
 }

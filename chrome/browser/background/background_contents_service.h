@@ -27,6 +27,14 @@ namespace base {
 class DictionaryValue;
 }
 
+namespace content {
+class SessionStorageNamespace;
+}
+
+namespace extensions {
+class Extension;
+}
+
 namespace gfx {
 class Rect;
 }
@@ -47,6 +55,11 @@ class BackgroundContentsService : private content::NotificationObserver,
  public:
   BackgroundContentsService(Profile* profile, const CommandLine* command_line);
   virtual ~BackgroundContentsService();
+
+  // Allows tests to reduce the time between a force-installed app/extension
+  // crashing and when we reload it.
+  static void SetRestartDelayForForceInstalledAppsAndExtensionsForTesting(
+      int restart_delay_in_ms);
 
   // Returns the BackgroundContents associated with the passed application id,
   // or NULL if none.
@@ -79,11 +92,14 @@ class BackgroundContentsService : private content::NotificationObserver,
   // A BACKGROUND_CONTENTS_OPENED notification will be generated with the passed
   // |frame_name| and |application_id| values, using the passed |profile| as the
   // Source..
-  BackgroundContents* CreateBackgroundContents(content::SiteInstance* site,
-                                               int route_id,
-                                               Profile* profile,
-                                               const string16& frame_name,
-                                               const string16& application_id);
+  BackgroundContents* CreateBackgroundContents(
+      content::SiteInstance* site,
+      int route_id,
+      Profile* profile,
+      const string16& frame_name,
+      const string16& application_id,
+      const std::string& partition_id,
+      content::SessionStorageNamespace* session_storage_namespace);
 
   // Load the manifest-specified background page for the specified hosted app.
   // If the manifest doesn't specify one, then load the BackgroundContents
@@ -95,15 +111,15 @@ class BackgroundContentsService : private content::NotificationObserver,
  private:
   friend class BackgroundContentsServiceTest;
   friend class MockBackgroundContents;
-  friend class TaskManagerBrowserTest;
+  friend class TaskManagerNoShowBrowserTest;
 
   FRIEND_TEST_ALL_PREFIXES(BackgroundContentsServiceTest,
                            BackgroundContentsCreateDestroy);
   FRIEND_TEST_ALL_PREFIXES(BackgroundContentsServiceTest,
                            TestApplicationIDLinkage);
-  FRIEND_TEST_ALL_PREFIXES(TaskManagerBrowserTest,
+  FRIEND_TEST_ALL_PREFIXES(TaskManagerNoShowBrowserTest,
                            NoticeBGContentsChanges);
-  FRIEND_TEST_ALL_PREFIXES(TaskManagerBrowserTest,
+  FRIEND_TEST_ALL_PREFIXES(TaskManagerNoShowBrowserTest,
                            KillBGContents);
 
   // Registers for various notifications.
@@ -113,6 +129,11 @@ class BackgroundContentsService : private content::NotificationObserver,
   virtual void Observe(int type,
                        const content::NotificationSource& source,
                        const content::NotificationDetails& details) OVERRIDE;
+
+  // Restarts a force-installed app/extension after a crash.
+  void RestartForceInstalledExtensionOnCrash(
+      const extensions::Extension* extension,
+      Profile* profile);
 
   // Loads all registered BackgroundContents at startup.
   void LoadBackgroundContentsFromPrefs(Profile* profile);
@@ -162,6 +183,9 @@ class BackgroundContentsService : private content::NotificationObserver,
   // apps may have changed (used by BackgroundApplicationListModel to update the
   // set of background apps as new background contents are opened/closed).
   void SendChangeNotification(Profile* profile);
+
+  // Delay (in ms) before restarting a force-installed extension that crashed.
+  static int restart_delay_in_ms_;
 
   // PrefService used to store list of background pages (or NULL if this is
   // running under an incognito profile).

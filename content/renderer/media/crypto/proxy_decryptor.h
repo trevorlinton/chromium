@@ -15,6 +15,8 @@
 #include "media/base/decryptor.h"
 #include "media/base/media_keys.h"
 
+class GURL;
+
 namespace WebKit {
 #if defined(ENABLE_PEPPER_CDMS)
 class WebFrame;
@@ -24,7 +26,9 @@ class WebMediaPlayerClient;
 
 namespace content {
 
-class WebMediaPlayerProxyAndroid;
+#if defined(OS_ANDROID)
+class RendererMediaPlayerManager;
+#endif  // defined(OS_ANDROID)
 
 // ProxyDecryptor is for EME v0.1b only. It should not be used for the WD API.
 // A decryptor proxy that creates a real decryptor object on demand and
@@ -39,7 +43,7 @@ class ProxyDecryptor : public media::MediaKeys {
       WebKit::WebMediaPlayerClient* web_media_player_client,
       WebKit::WebFrame* web_frame,
 #elif defined(OS_ANDROID)
-      WebMediaPlayerProxyAndroid* proxy,
+      RendererMediaPlayerManager* manager,
       int media_keys_id,
 #endif  // defined(ENABLE_PEPPER_CDMS)
       const media::KeyAddedCB& key_added_cb,
@@ -48,7 +52,7 @@ class ProxyDecryptor : public media::MediaKeys {
   virtual ~ProxyDecryptor();
 
   // Only call this once.
-  bool InitializeCDM(const std::string& key_system);
+  bool InitializeCDM(const std::string& key_system, const GURL& frame_url);
 
   // Requests the ProxyDecryptor to notify the decryptor when it's ready through
   // the |decryptor_ready_cb| provided.
@@ -68,7 +72,8 @@ class ProxyDecryptor : public media::MediaKeys {
 
  private:
   // Helper function to create MediaKeys to handle the given |key_system|.
-  scoped_ptr<media::MediaKeys> CreateMediaKeys(const std::string& key_system);
+  scoped_ptr<media::MediaKeys> CreateMediaKeys(const std::string& key_system,
+                                               const GURL& frame_url);
 
   // Callbacks for firing key events.
   void KeyAdded(const std::string& session_id);
@@ -89,7 +94,7 @@ class ProxyDecryptor : public media::MediaKeys {
   WebKit::WebMediaPlayerClient* web_media_player_client_;
   WebKit::WebFrame* web_frame_;
 #elif defined(OS_ANDROID)
-  WebMediaPlayerProxyAndroid* proxy_;
+  RendererMediaPlayerManager* manager_;
   int media_keys_id_;
 #endif  // defined(ENABLE_PEPPER_CDMS)
 

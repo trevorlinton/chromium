@@ -11,8 +11,8 @@ import re
 import sys
 
 import appengine_wrappers
-from file_system import FileNotFoundError
 import url_constants
+
 
 class _FakeFetcher(object):
   def __init__(self, base_path):
@@ -31,6 +31,7 @@ class _FakeFetcher(object):
   def _Stat(self, path):
     return int(os.stat(os.path.join(self._base_path, path)).st_mtime)
 
+
 class FakeOmahaProxy(_FakeFetcher):
   def fetch(self, url):
     return self._ReadFile(os.path.join('server2',
@@ -38,12 +39,14 @@ class FakeOmahaProxy(_FakeFetcher):
                                        'branch_utility',
                                        'first.json'))
 
+
 class FakeOmahaHistory(_FakeFetcher):
   def fetch(self, url):
     return self._ReadFile(os.path.join('server2',
                                        'test_data',
                                        'branch_utility',
                                        'second.json'))
+
 
 class FakeSubversionServer(_FakeFetcher):
   def __init__(self, base_path):
@@ -66,16 +69,17 @@ class FakeSubversionServer(_FakeFetcher):
         html.append('</html>')
         return '\n'.join(html)
       except OSError as e:
-        raise FileNotFoundError('Listing %s failed: %s' (path, e))
+        return None
     try:
       return self._ReadFile(path)
     except IOError as e:
-      raise FileNotFoundError('Reading %s failed: %s' % (path, e))
+      return None
+
 
 class FakeViewvcServer(_FakeFetcher):
   def __init__(self, base_path):
     _FakeFetcher.__init__(self, base_path)
-    self._base_pattern = re.compile(r'.*chrome/common/extensions/(.*)')
+    self._base_pattern = re.compile(r'.*chrome/common/extensions/+(.*)')
 
   def fetch(self, url):
     url = url.rsplit('?', 1)[0]
@@ -104,11 +108,13 @@ class FakeViewvcServer(_FakeFetcher):
     try:
       return self._ReadFile(path)
     except IOError as e:
-      raise FileNotFoundError('Reading %s failed: %s' % (path, e))
+      return None
+
 
 class FakeGithubStat(_FakeFetcher):
   def fetch(self, url):
     return '{ "commit": { "tree": { "sha": 0} } }'
+
 
 class FakeGithubZip(_FakeFetcher):
   def fetch(self, url):
@@ -120,6 +126,7 @@ class FakeGithubZip(_FakeFetcher):
                             mode='rb')
     except IOError:
       return None
+
 
 class FakeRietveldAPI(_FakeFetcher):
   def __init__(self, base_path):
@@ -137,6 +144,7 @@ class FakeRietveldAPI(_FakeFetcher):
     except IOError:
       return None
 
+
 class FakeRietveldTarball(_FakeFetcher):
   def __init__(self, base_path):
     _FakeFetcher.__init__(self, base_path)
@@ -152,6 +160,7 @@ class FakeRietveldTarball(_FakeFetcher):
     except IOError:
       return None
 
+
 def ConfigureFakeFetchers():
   '''Configure the fake fetcher paths relative to the docs directory.
   '''
@@ -161,8 +170,8 @@ def ConfigureFakeFetchers():
     re.escape(url_constants.OMAHA_DEV_HISTORY): FakeOmahaHistory(docs),
     '%s/.*' % url_constants.SVN_URL: FakeSubversionServer(docs),
     '%s/.*' % url_constants.VIEWVC_URL: FakeViewvcServer(docs),
-    '%s/commits/.*' % url_constants.GITHUB_URL: FakeGithubStat(docs),
-    '%s/zipball' % url_constants.GITHUB_URL: FakeGithubZip(docs),
+    '%s/.*/commits/.*' % url_constants.GITHUB_REPOS: FakeGithubStat(docs),
+    '%s/.*/zipball' % url_constants.GITHUB_REPOS: FakeGithubZip(docs),
     '%s/api/.*' % url_constants.CODEREVIEW_SERVER: FakeRietveldAPI(docs),
     '%s/tarball/.*' % url_constants.CODEREVIEW_SERVER:
         FakeRietveldTarball(docs),

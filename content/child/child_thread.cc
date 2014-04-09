@@ -4,6 +4,8 @@
 
 #include "content/child/child_thread.h"
 
+#include <string>
+
 #include "base/allocator/allocator_extension.h"
 #include "base/base_switches.h"
 #include "base/command_line.h"
@@ -12,6 +14,8 @@
 #include "base/process/kill.h"
 #include "base/process/process_handle.h"
 #include "base/strings/string_util.h"
+#include "base/synchronization/condition_variable.h"
+#include "base/synchronization/lock.h"
 #include "base/threading/thread_local.h"
 #include "base/tracked_objects.h"
 #include "components/tracing/child_trace_message_filter.h"
@@ -23,8 +27,11 @@
 #include "content/child/quota_dispatcher.h"
 #include "content/child/quota_message_filter.h"
 #include "content/child/resource_dispatcher.h"
+#include "content/child/service_worker/service_worker_dispatcher.h"
+#include "content/child/service_worker/service_worker_message_filter.h"
 #include "content/child/socket_stream_dispatcher.h"
 #include "content/child/thread_safe_sender.h"
+#include "content/child/websocket_dispatcher.h"
 #include "content/common/child_process_messages.h"
 #include "content/public/common/content_switches.h"
 #include "ipc/ipc_logging.h"
@@ -95,7 +102,31 @@ class SuicideOnChannelErrorFilter : public IPC::ChannelProxy::MessageFilter {
 #endif  // OS(POSIX)
 
 #if defined(OS_ANDROID)
-ChildThread* g_child_thread;
+ChildThread* g_child_thread = NULL;
+
+// A lock protects g_child_thread.
+base::LazyInstance<base::Lock> g_lazy_child_thread_lock =
+    LAZY_INSTANCE_INITIALIZER;
+
+// base::ConditionVariable has an explicit constructor that takes
+// a base::Lock pointer as parameter. The base::DefaultLazyInstanceTraits
+// doesn't handle the case. Thus, we need our own class here.
+struct CondVarLazyInstanceTraits {
+  static const bool kRegisterOnExit = true;
+  static const bool kAllowedToAccessOnNonjoinableThread ALLOW_UNUSED = false;
+  static base::ConditionVariable* New(void* instance) {
+    return new (instance) base::ConditionVariable(
+        g_lazy_child_thread_lock.Pointer());
+  }
+  static void Delete(base::ConditionVariable* instance) {
+    instance->~ConditionVariable();
+  }
+};
+
+// A condition variable that synchronize threads initializing and waiting
+// for g_child_thread.
+base::LazyInstance<base::ConditionVariable, CondVarLazyInstanceTraits>
+    g_lazy_child_thread_cv = LAZY_INSTANCE_INITIALIZER;
 
 void QuitMainThreadMessageLoop() {
   base::MessageLoop::current()->Quit();
@@ -106,7 +137,8 @@ void QuitMainThreadMessageLoop() {
 }  // namespace
 
 ChildThread::ChildThread()
-    : channel_connected_factory_(this) {
+    : channel_connected_factory_(this),
+      in_browser_process_(false) {
   channel_name_ = CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
       switches::kProcessChannelID);
   Init();
@@ -114,7 +146,8 @@ ChildThread::ChildThread()
 
 ChildThread::ChildThread(const std::string& channel_name)
     : channel_name_(channel_name),
-      channel_connected_factory_(this) {
+      channel_connected_factory_(this),
+      in_browser_process_(true) {
   Init();
 }
 
@@ -122,6 +155,12 @@ void ChildThread::Init() {
   g_lazy_tls.Pointer()->Set(this);
   on_channel_error_called_ = false;
   message_loop_ = base::MessageLoop::current();
+#ifdef IPC_MESSAGE_LOG_ENABLED
+  // We must make sure to instantiate the IPC Logger *before* we create the
+  // channel, otherwise we can get a callback on the IO thread which creates
+  // the logger, and the logger does not like being created on the IO thread.
+  IPC::Logging::GetInstance();
+#endif
   channel_.reset(
       new IPC::SyncChannel(channel_name_,
                            IPC::Channel::MODE_CLIENT,
@@ -130,7 +169,8 @@ void ChildThread::Init() {
                            true,
                            ChildProcess::current()->GetShutDownEvent()));
 #ifdef IPC_MESSAGE_LOG_ENABLED
-  IPC::Logging::GetInstance()->SetIPCSender(this);
+  if (!in_browser_process_)
+    IPC::Logging::GetInstance()->SetIPCSender(this);
 #endif
 
   sync_message_filter_ =
@@ -140,11 +180,17 @@ void ChildThread::Init() {
 
   resource_dispatcher_.reset(new ResourceDispatcher(this));
   socket_stream_dispatcher_.reset(new SocketStreamDispatcher());
+  websocket_dispatcher_.reset(new WebSocketDispatcher);
   file_system_dispatcher_.reset(new FileSystemDispatcher());
 
   histogram_message_filter_ = new ChildHistogramMessageFilter();
   resource_message_filter_ =
       new ChildResourceMessageFilter(resource_dispatcher());
+
+  service_worker_message_filter_ =
+      new ServiceWorkerMessageFilter(thread_safe_sender_.get());
+  service_worker_dispatcher_.reset(
+      new ServiceWorkerDispatcher(thread_safe_sender_.get()));
 
   quota_message_filter_ =
       new QuotaMessageFilter(thread_safe_sender_.get());
@@ -157,6 +203,7 @@ void ChildThread::Init() {
       ChildProcess::current()->io_message_loop_proxy()));
   channel_->AddFilter(resource_message_filter_.get());
   channel_->AddFilter(quota_message_filter_.get());
+  channel_->AddFilter(service_worker_message_filter_.get());
 
   // In single process mode we may already have a power monitor
   if (!base::PowerMonitor::Get()) {
@@ -195,7 +242,13 @@ void ChildThread::Init() {
       base::TimeDelta::FromSeconds(kConnectionTimeoutS));
 
 #if defined(OS_ANDROID)
-  g_child_thread = this;
+  {
+    base::AutoLock lock(g_lazy_child_thread_lock.Get());
+    g_child_thread = this;
+  }
+  // Signalling without locking is fine here because only
+  // one thread can wait on the condition variable.
+  g_lazy_child_thread_cv.Get().Signal();
 #endif
 
 #if defined(TCMALLOC_TRACE_MEMORY_SUPPORTED)
@@ -212,6 +265,7 @@ ChildThread::~ChildThread() {
   IPC::Logging::GetInstance()->SetIPCSender(NULL);
 #endif
 
+  channel_->RemoveFilter(service_worker_message_filter_.get());
   channel_->RemoveFilter(quota_message_filter_.get());
   channel_->RemoveFilter(histogram_message_filter_.get());
   channel_->RemoveFilter(sync_message_filter_.get());
@@ -232,6 +286,7 @@ void ChildThread::Shutdown() {
   // Delete objects that hold references to blink so derived classes can
   // safely shutdown blink in their Shutdown implementation.
   file_system_dispatcher_.reset();
+  quota_dispatcher_.reset();
 }
 
 void ChildThread::OnChannelConnected(int32 peer_pid) {
@@ -314,6 +369,8 @@ bool ChildThread::OnMessageReceived(const IPC::Message& msg) {
   if (resource_dispatcher_->OnMessageReceived(msg))
     return true;
   if (socket_stream_dispatcher_->OnMessageReceived(msg))
+    return true;
+  if (websocket_dispatcher_->OnMessageReceived(msg))
     return true;
   if (file_system_dispatcher_->OnMessageReceived(msg))
     return true;
@@ -403,7 +460,16 @@ ChildThread* ChildThread::current() {
 }
 
 #if defined(OS_ANDROID)
+// The method must NOT be called on the child thread itself.
+// It may block the child thread if so.
 void ChildThread::ShutdownThread() {
+  DCHECK(!ChildThread::current()) <<
+      "this method should NOT be called from child thread itself";
+  {
+    base::AutoLock lock(g_lazy_child_thread_lock.Get());
+    while (!g_child_thread)
+      g_lazy_child_thread_cv.Get().Wait();
+  }
   DCHECK_NE(base::MessageLoop::current(), g_child_thread->message_loop());
   g_child_thread->message_loop()->PostTask(
       FROM_HERE, base::Bind(&QuitMainThreadMessageLoop));

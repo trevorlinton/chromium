@@ -4,10 +4,8 @@
 
 #include "chrome/browser/extensions/api/tab_capture/tab_capture_registry.h"
 
-#include <utility>
-
+#include "base/lazy_instance.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/extensions/event_names.h"
 #include "chrome/browser/extensions/event_router.h"
 #include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/profiles/profile.h"
@@ -27,6 +25,8 @@ using extensions::TabCaptureRegistry;
 using extensions::tab_capture::TabCaptureState;
 
 namespace extensions {
+
+namespace tab_capture = api::tab_capture;
 
 class FullscreenObserver : public content::WebContentsObserver {
  public:
@@ -118,6 +118,20 @@ TabCaptureRegistry::TabCaptureRegistry(Profile* profile)
 
 TabCaptureRegistry::~TabCaptureRegistry() {
   MediaCaptureDevicesDispatcher::GetInstance()->RemoveObserver(this);
+}
+
+// static
+TabCaptureRegistry* TabCaptureRegistry::Get(Profile* profile) {
+  return ProfileKeyedAPIFactory<TabCaptureRegistry>::GetForProfile(profile);
+}
+
+static base::LazyInstance<ProfileKeyedAPIFactory<TabCaptureRegistry> >
+    g_factory = LAZY_INSTANCE_INITIALIZER;
+
+// static
+ProfileKeyedAPIFactory<TabCaptureRegistry>*
+TabCaptureRegistry::GetFactoryInstance() {
+  return &g_factory.Get();
 }
 
 const TabCaptureRegistry::RegistryCaptureInfo
@@ -314,8 +328,8 @@ void TabCaptureRegistry::DispatchStatusChangeEvent(
 
   scoped_ptr<base::ListValue> args(new base::ListValue());
   args->Append(info->ToValue().release());
-  scoped_ptr<Event> event(new Event(
-      extensions::event_names::kOnTabCaptureStatusChanged, args.Pass()));
+  scoped_ptr<Event> event(new Event(tab_capture::OnStatusChanged::kEventName,
+      args.Pass()));
   event->restrict_to_profile = profile_;
 
   router->DispatchEventToExtension(request->extension_id, event.Pass());

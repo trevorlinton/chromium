@@ -37,6 +37,9 @@ class JavaBridgeDispatcherHostManager
   void AddNamedObject(const string16& name, NPObject* object);
   void RemoveNamedObject(const string16& name);
 
+  void OnGetChannelHandle(RenderViewHost* render_view_host,
+                          IPC::Message* reply_msg);
+
   // Every time a JavaBoundObject backed by a real Java object is
   // created/destroyed, we insert/remove a strong ref to that Java object into
   // this set so that it doesn't get garbage collected while it's still
@@ -48,7 +51,6 @@ class JavaBridgeDispatcherHostManager
   // WebContentsObserver overrides
   virtual void RenderViewCreated(RenderViewHost* render_view_host) OVERRIDE;
   virtual void RenderViewDeleted(RenderViewHost* render_view_host) OVERRIDE;
-  virtual void WebContentsDestroyed(WebContents* web_contents) OVERRIDE;
   virtual void DocumentAvailableInMainFrame() OVERRIDE;
 
   void JavaBoundObjectCreated(const base::android::JavaRef<jobject>& object);

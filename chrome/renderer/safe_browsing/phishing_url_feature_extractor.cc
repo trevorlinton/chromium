@@ -10,9 +10,9 @@
 
 #include "base/logging.h"
 #include "base/metrics/histogram.h"
-#include "base/perftimer.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/timer/elapsed_timer.h"
 #include "chrome/renderer/safe_browsing/features.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "url/gurl.h"
@@ -25,7 +25,7 @@ PhishingUrlFeatureExtractor::~PhishingUrlFeatureExtractor() {}
 
 bool PhishingUrlFeatureExtractor::ExtractFeatures(const GURL& url,
                                                   FeatureMap* features) {
-  PerfTimer timer;
+  base::ElapsedTimer timer;
   if (url.HostIsIPAddress()) {
     if (!features->AddBooleanFeature(features::kUrlHostIsIpAddress))
       return false;

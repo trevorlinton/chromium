@@ -8,15 +8,16 @@
 #include "chrome/browser/chromeos/login/user.h"
 #include "chrome/browser/chromeos/login/user_manager.h"
 #include "chrome/browser/extensions/extension_apitest.h"
+#include "chrome/common/chrome_switches.h"
+#include "chrome/test/base/ui_test_utils.h"
+#include "testing/gmock/include/gmock/gmock.h"
+
+#if defined(OS_CHROMEOS)
 #include "chrome/browser/policy/browser_policy_connector.h"
 #include "chrome/browser/policy/external_data_fetcher.h"
 #include "chrome/browser/policy/mock_configuration_policy_provider.h"
 #include "chrome/browser/policy/policy_map.h"
 #include "chrome/browser/policy/policy_types.h"
-#include "chrome/common/chrome_switches.h"
-#include "chrome/test/base/ui_test_utils.h"
-
-#if defined(OS_CHROMEOS)
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/dbus/cryptohome_client.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
@@ -24,23 +25,22 @@
 #include "chromeos/dbus/shill_manager_client.h"
 #include "chromeos/dbus/shill_profile_client.h"
 #include "chromeos/dbus/shill_service_client.h"
-#include "chromeos/network/onc/onc_constants.h"
+#include "chromeos/dbus/shill_stub_helper.h"
 #include "chromeos/network/onc/onc_utils.h"
+#include "components/onc/onc_constants.h"
 #include "policy/policy_constants.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 #endif  // OS_CHROMEOS
+
 using testing::AnyNumber;
 using testing::Return;
 using testing::_;
 
 namespace chromeos {
 
-namespace {
-
+#if defined(OS_CHROMEOS)
 const char kUser1ProfilePath[] = "/profile/user1/shill";
-const char kUserIdStubHashSuffix[] = "-hash";
-
-}  // namespace
+#endif  // defined(OS_CHROMEOS)
 
 class ExtensionNetworkingPrivateApiTest :
     public ExtensionApiTest,
@@ -53,10 +53,12 @@ class ExtensionNetworkingPrivateApiTest :
   }
 
   virtual void SetUpInProcessBrowserTestFixture() OVERRIDE {
+#if defined(OS_CHROMEOS)
     EXPECT_CALL(provider_, IsInitializationComplete(_))
         .WillRepeatedly(Return(true));
     EXPECT_CALL(provider_, RegisterPolicyDomain(_)).Times(AnyNumber());
     policy::BrowserPolicyConnector::SetPolicyProviderForTesting(&provider_);
+#endif
 
     ExtensionApiTest::SetUpInProcessBrowserTestFixture();
   }
@@ -74,14 +76,13 @@ class ExtensionNetworkingPrivateApiTest :
     // Whitelist the extension ID of the test extension.
     command_line->AppendSwitchASCII(::switches::kWhitelistedExtensionID,
                                     "epcifkihnkjgphfkloaaleeakhpmgdmn");
-    command_line->AppendSwitch(switches::kUseNewNetworkConfigurationHandlers);
 
     // TODO(pneubeck): Remove the following hack, once the NetworkingPrivateAPI
     // uses the ProfileHelper to obtain the userhash crbug/238623.
     std::string login_user =
         command_line->GetSwitchValueNative(switches::kLoginUser);
-    // Do the same as CryptohomeClientStubImpl::GetSanitizedUsername
-    std::string sanitized_user = login_user + kUserIdStubHashSuffix;
+    std::string sanitized_user = CryptohomeClient::GetStubSanitizedUsername(
+        login_user);
     command_line->AppendSwitchASCII(switches::kLoginProfile, sanitized_user);
     if (GetParam())
       command_line->AppendSwitch(::switches::kMultiProfiles);
@@ -121,45 +122,55 @@ class ExtensionNetworkingPrivateApiTest :
     profile_test->AddProfile(kUser1ProfilePath, userhash_);
 
     device_test->AddDevice("/device/stub_wifi_device1",
-                           flimflam::kTypeWifi, "stub_wifi_device1");
+                           shill::kTypeWifi, "stub_wifi_device1");
     device_test->AddDevice("/device/stub_cellular_device1",
-                           flimflam::kTypeCellular, "stub_cellular_device1");
+                           shill::kTypeCellular, "stub_cellular_device1");
 
     const bool add_to_watchlist = true;
     const bool add_to_visible = true;
     service_test->AddService("stub_ethernet", "eth0",
-                             flimflam::kTypeEthernet, flimflam::kStateOnline,
+                             shill::kTypeEthernet, shill::kStateOnline,
                              add_to_visible, add_to_watchlist);
+    service_test->SetServiceProperty(
+        "stub_ethernet",
+        shill::kProfileProperty,
+        base::StringValue(shill_stub_helper::kSharedProfilePath));
+    profile_test->AddService(shill_stub_helper::kSharedProfilePath,
+                             "stub_ethernet");
 
     service_test->AddService("stub_wifi1", "wifi1",
-                             flimflam::kTypeWifi, flimflam::kStateOnline,
+                             shill::kTypeWifi, shill::kStateOnline,
                              add_to_visible, add_to_watchlist);
     service_test->SetServiceProperty("stub_wifi1",
-                                     flimflam::kSecurityProperty,
-                                     base::StringValue(flimflam::kSecurityWep));
+                                     shill::kSecurityProperty,
+                                     base::StringValue(shill::kSecurityWep));
+    service_test->SetServiceProperty("stub_wifi1",
+                                     shill::kProfileProperty,
+                                     base::StringValue(kUser1ProfilePath));
+    profile_test->AddService(kUser1ProfilePath, "stub_wifi1");
     base::ListValue frequencies1;
     frequencies1.AppendInteger(2400);
     service_test->SetServiceProperty("stub_wifi1",
                                      shill::kWifiFrequencyListProperty,
                                      frequencies1);
     service_test->SetServiceProperty("stub_wifi1",
-                                     flimflam::kWifiFrequency,
+                                     shill::kWifiFrequency,
                                      base::FundamentalValue(2400));
 
     service_test->AddService("stub_wifi2", "wifi2_PSK",
-                             flimflam::kTypeWifi, flimflam::kStateIdle,
+                             shill::kTypeWifi, shill::kStateIdle,
                              add_to_visible, add_to_watchlist);
     service_test->SetServiceProperty("stub_wifi2",
-                                     flimflam::kGuidProperty,
+                                     shill::kGuidProperty,
                                      base::StringValue("stub_wifi2"));
     service_test->SetServiceProperty("stub_wifi2",
-                                     flimflam::kSecurityProperty,
-                                     base::StringValue(flimflam::kSecurityPsk));
+                                     shill::kSecurityProperty,
+                                     base::StringValue(shill::kSecurityPsk));
     service_test->SetServiceProperty("stub_wifi2",
-                                     flimflam::kSignalStrengthProperty,
+                                     shill::kSignalStrengthProperty,
                                      base::FundamentalValue(80));
     service_test->SetServiceProperty("stub_wifi2",
-                                     flimflam::kConnectableProperty,
+                                     shill::kConnectableProperty,
                                      base::FundamentalValue(true));
 
     base::ListValue frequencies2;
@@ -169,32 +180,32 @@ class ExtensionNetworkingPrivateApiTest :
                                      shill::kWifiFrequencyListProperty,
                                      frequencies2);
     service_test->SetServiceProperty("stub_wifi2",
-                                     flimflam::kWifiFrequency,
+                                     shill::kWifiFrequency,
                                      base::FundamentalValue(5000));
     service_test->SetServiceProperty("stub_wifi2",
-                                     flimflam::kProfileProperty,
+                                     shill::kProfileProperty,
                                      base::StringValue(kUser1ProfilePath));
     profile_test->AddService(kUser1ProfilePath, "stub_wifi2");
 
     service_test->AddService("stub_cellular1", "cellular1",
-                             flimflam::kTypeCellular, flimflam::kStateIdle,
+                             shill::kTypeCellular, shill::kStateIdle,
                              add_to_visible, add_to_watchlist);
     service_test->SetServiceProperty(
         "stub_cellular1",
-        flimflam::kNetworkTechnologyProperty,
-        base::StringValue(flimflam::kNetworkTechnologyGsm));
+        shill::kNetworkTechnologyProperty,
+        base::StringValue(shill::kNetworkTechnologyGsm));
     service_test->SetServiceProperty(
         "stub_cellular1",
-        flimflam::kActivationStateProperty,
-        base::StringValue(flimflam::kActivationStateNotActivated));
+        shill::kActivationStateProperty,
+        base::StringValue(shill::kActivationStateNotActivated));
     service_test->SetServiceProperty(
         "stub_cellular1",
-        flimflam::kRoamingStateProperty,
-        base::StringValue(flimflam::kRoamingStateHome));
+        shill::kRoamingStateProperty,
+        base::StringValue(shill::kRoamingStateHome));
 
     service_test->AddService("stub_vpn1", "vpn1",
-                             flimflam::kTypeVPN,
-                             flimflam::kStateOnline,
+                             shill::kTypeVPN,
+                             shill::kStateOnline,
                              add_to_visible, add_to_watchlist);
 
     manager_test->SortManagerServices();
@@ -216,8 +227,10 @@ class ExtensionNetworkingPrivateApiTest :
 #endif  // OS_CHROMEOS
 
  protected:
+#if defined(OS_CHROMEOS)
   policy::MockConfigurationPolicyProvider provider_;
   std::string userhash_;
+#endif
 };
 
 // Place each subtest into a separate browser test so that the stub networking
@@ -246,6 +259,10 @@ IN_PROC_BROWSER_TEST_P(ExtensionNetworkingPrivateApiTest,
                        StartGetPropertiesNonexistent) {
   EXPECT_TRUE(RunNetworkingSubtest("startGetPropertiesNonexistent"))
       << message_;
+}
+
+IN_PROC_BROWSER_TEST_P(ExtensionNetworkingPrivateApiTest, CreateNetwork) {
+  EXPECT_TRUE(RunNetworkingSubtest("createNetwork")) << message_;
 }
 
 IN_PROC_BROWSER_TEST_P(ExtensionNetworkingPrivateApiTest, GetVisibleNetworks) {
@@ -291,10 +308,10 @@ IN_PROC_BROWSER_TEST_P(ExtensionNetworkingPrivateApiTest,
       "    }"
       "}";
   service_test->SetServiceProperty("stub_wifi2",
-                                   flimflam::kUIDataProperty,
+                                   shill::kUIDataProperty,
                                    base::StringValue(uidata_blob));
   service_test->SetServiceProperty("stub_wifi2",
-                                   flimflam::kAutoConnectProperty,
+                                   shill::kAutoConnectProperty,
                                    base::FundamentalValue(false));
 
   ShillProfileClient::TestInterface* profile_test =
@@ -312,7 +329,7 @@ IN_PROC_BROWSER_TEST_P(ExtensionNetworkingPrivateApiTest,
       "      \"WiFi\": {"
       "        \"Passphrase\": \"passphrase\","
       "        \"Recommended\": [ \"AutoConnect\", \"Passphrase\" ],"
-      "        \"SSID\": \"stub_wifi2\","
+      "        \"SSID\": \"wifi2_PSK\","
       "        \"Security\": \"WPA-PSK\" }"
       "    }"
       "  ],"
@@ -324,7 +341,7 @@ IN_PROC_BROWSER_TEST_P(ExtensionNetworkingPrivateApiTest,
   policy.Set(policy::key::kOpenNetworkConfiguration,
              policy::POLICY_LEVEL_MANDATORY,
              policy::POLICY_SCOPE_USER,
-             Value::CreateStringValue(user_policy_blob),
+             new base::StringValue(user_policy_blob),
              NULL);
   provider_.UpdateChromePolicy(policy);
 

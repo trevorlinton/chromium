@@ -4,8 +4,6 @@
 
 var embedder = {};
 embedder.tests = {};
-embedder.baseGuestURL = '';
-embedder.guestURL = '';
 
 window.runTest = function(testName) {
   if (!embedder.test.testList[testName]) {
@@ -41,11 +39,11 @@ embedder.getHTMLForGuestWithTitle_ = function(title) {
 
 embedder.test = {};
 embedder.test.succeed = function() {
-  chrome.test.sendMessage('DoneNavigationTest.PASSED');
+  chrome.test.sendMessage('TEST_PASSED');
 };
 
 embedder.test.fail = function() {
-  chrome.test.sendMessage('DoneNavigationTest.FAILED');
+  chrome.test.sendMessage('TEST_FAILED');
 };
 
 embedder.test.assertEq = function(a, b) {

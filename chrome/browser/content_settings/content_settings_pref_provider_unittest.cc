@@ -12,6 +12,7 @@
 #include "base/prefs/overlay_user_pref_store.h"
 #include "base/prefs/pref_change_registrar.h"
 #include "base/prefs/pref_service.h"
+#include "base/prefs/scoped_user_pref_update.h"
 #include "base/prefs/testing_pref_store.h"
 #include "base/threading/platform_thread.h"
 #include "base/values.h"
@@ -20,7 +21,6 @@
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/prefs/pref_service_mock_builder.h"
 #include "chrome/browser/prefs/pref_service_syncable.h"
-#include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
@@ -154,11 +154,10 @@ TEST_F(PrefProviderTest, Incognito) {
   scoped_ptr<TestingProfile> profile = profile_builder.Build();
 
   TestingProfile::Builder otr_profile_builder;
+  otr_profile_builder.SetIncognito();
   otr_profile_builder.SetPrefService(make_scoped_ptr(otr_prefs));
-  TestingProfile* otr_profile = otr_profile_builder.Build().release();
-
-  otr_profile->set_incognito(true);
-  profile->SetOffTheRecordProfile(otr_profile);
+  scoped_ptr<TestingProfile> otr_profile(otr_profile_builder.Build());
+  profile->SetOffTheRecordProfile(otr_profile.PassAs<Profile>());
 
   PrefProvider pref_content_settings_provider(regular_prefs, false);
   PrefProvider pref_content_settings_provider_incognito(otr_prefs, true);

@@ -37,7 +37,7 @@ class CloudPolicyRefreshScheduler
   static const int64 kRefreshDelayMinMs;
   static const int64 kRefreshDelayMaxMs;
 
-  // |client|, |store| and |prefs| pointers must stay valid throughout the
+  // |client| and |store| pointers must stay valid throughout the
   // lifetime of CloudPolicyRefreshScheduler.
   CloudPolicyRefreshScheduler(
       CloudPolicyClient* client,
@@ -61,6 +61,12 @@ class CloudPolicyRefreshScheduler
   // When the invalidations service is available then the refresh rate is much
   // lower.
   void SetInvalidationServiceAvailability(bool is_available);
+
+  // Whether the invalidations service is available and receiving notifications
+  // of policy updates.
+  bool invalidations_available() {
+    return invalidations_available_;
+  }
 
   // CloudPolicyClient::Observer:
   virtual void OnPolicyFetched(CloudPolicyClient* client) OVERRIDE;

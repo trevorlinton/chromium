@@ -160,6 +160,13 @@ const rlz_lib::AccessPoint RLZTracker::CHROME_OMNIBOX =
 // static
 const rlz_lib::AccessPoint RLZTracker::CHROME_HOME_PAGE =
     rlz_lib::CHROME_HOME_PAGE;
+#elif defined(OS_IOS)
+// static
+const rlz_lib::AccessPoint RLZTracker::CHROME_OMNIBOX =
+    rlz_lib::CHROME_IOS_OMNIBOX;
+// static
+const rlz_lib::AccessPoint RLZTracker::CHROME_HOME_PAGE =
+    rlz_lib::CHROME_IOS_HOME_PAGE;
 #elif defined(OS_MACOSX)
 // static
 const rlz_lib::AccessPoint RLZTracker::CHROME_OMNIBOX =
@@ -231,6 +238,8 @@ bool RLZTracker::InitRlzFromProfileDelayed(Profile* profile,
       GURL(pref_service->GetString(prefs::kHomePage)));
 
   bool is_google_in_startpages = false;
+#if !defined(OS_IOS)
+  // iOS does not have a notion of startpages.
   SessionStartupPref session_startup_prefs =
       StartupBrowserCreator::GetSessionStartupPref(
           *CommandLine::ForCurrentProcess(), profile);
@@ -240,6 +249,7 @@ bool RLZTracker::InitRlzFromProfileDelayed(Profile* profile,
                       session_startup_prefs.urls.end(),
                       google_util::IsGoogleHomePageUrl) > 0;
   }
+#endif
 
   if (!InitRlzDelayed(first_run, send_ping_immediately, delay,
                       is_google_default_search, is_google_homepage,

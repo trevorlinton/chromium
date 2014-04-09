@@ -11,6 +11,7 @@ TODO(glider): put common functions to a standalone module.
 
 import glob
 import logging
+import multiprocessing
 import optparse
 import os
 import stat
@@ -375,15 +376,25 @@ class ChromeTests(object):
 
     script = os.path.join(self._source_dir, "webkit", "tools", "layout_tests",
                           "run_webkit_tests.py")
-    script_cmd = ["python", script, "--run-singly", "-v",
-                  "--noshow-results", "--time-out-ms=200000",
+    # While Heapcheck is not memory bound like Valgrind for running layout tests
+    # in parallel, it is still CPU bound. Many machines have hyper-threading
+    # turned on, so the real number of cores is actually half.
+    jobs = max(1, int(multiprocessing.cpu_count() * 0.5))
+    script_cmd = ["python", script, "-v",
+                  "--run-singly",  # run a separate DumpRenderTree for each test
+                  "--fully-parallel",
+                  "--child-processes=%d" % jobs,
+                  "--time-out-ms=200000",
+                  "--no-retry-failures",  # retrying takes too much time
+                  # http://crbug.com/176908: Don't launch a browser when done.
+                  "--no-show-results",
                   "--nocheck-sys-deps"]
 
     # Pass build mode to run_webkit_tests.py.  We aren't passed it directly,
     # so parse it out of build_dir.  run_webkit_tests.py can only handle
     # the two values "Release" and "Debug".
     # TODO(Hercules): unify how all our scripts pass around build mode
-    # (--mode / --target / --build_dir / --debug)
+    # (--mode / --target / --build-dir / --debug)
     if self._options.build_dir.endswith("Debug"):
       script_cmd.append("--debug");
     if (chunk_size > 0):
@@ -459,15 +470,13 @@ def main():
     return 1
   parser = optparse.OptionParser("usage: %prog -b <dir> -t <test> "
                                  "[-t <test> ...]")
-  parser.disable_interspersed_args()
-  parser.add_option("-b", "--build_dir",
+  parser.add_option("-b", "--build-dir",
                     help="the location of the output of the compiler output")
-  parser.add_option("-t", "--test", action="append",
-                    help="which test to run")
-  parser.add_option("", "--gtest_filter",
+  parser.add_option("--target", help="Debug or Release")
+  parser.add_option("-t", "--test", action="append", help="which test to run")
+  parser.add_option("--gtest_filter",
                     help="additional arguments to --gtest_filter")
-  parser.add_option("", "--gtest_repeat",
-                    help="argument for --gtest_repeat")
+  parser.add_option("--gtest_repeat", help="argument for --gtest_repeat")
   parser.add_option("-v", "--verbose", action="store_true", default=False,
                     help="verbose output - enable debug log messages")
   # My machine can do about 120 layout tests/hour in release mode.
@@ -478,6 +487,13 @@ def main():
                     help="for layout tests: # of subtests per run.  0 for all.")
 
   options, args = parser.parse_args()
+
+  # Bake target into build_dir.
+  if options.target and options.build_dir:
+    assert (options.target !=
+            os.path.basename(os.path.dirname(options.build_dir)))
+    options.build_dir = os.path.join(os.path.abspath(options.build_dir),
+                                   options.target)
 
   if options.verbose:
     logging_utils.config_root(logging.DEBUG)

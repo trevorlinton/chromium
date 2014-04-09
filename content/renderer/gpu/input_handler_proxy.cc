@@ -10,12 +10,13 @@
 #include "content/renderer/gpu/input_handler_proxy_client.h"
 #include "third_party/WebKit/public/platform/Platform.h"
 #include "third_party/WebKit/public/web/WebInputEvent.h"
-#include "ui/base/latency_info.h"
+#include "ui/events/latency_info.h"
 
 using WebKit::WebFloatPoint;
 using WebKit::WebFloatSize;
 using WebKit::WebGestureEvent;
 using WebKit::WebInputEvent;
+using WebKit::WebMouseEvent;
 using WebKit::WebMouseWheelEvent;
 using WebKit::WebPoint;
 using WebKit::WebTouchEvent;

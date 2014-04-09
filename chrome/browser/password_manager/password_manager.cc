@@ -11,8 +11,10 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/platform_thread.h"
+#include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/password_manager/password_form_manager.h"
 #include "chrome/browser/password_manager/password_manager_delegate.h"
+#include "chrome/browser/password_manager/password_manager_metrics_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/chrome_version_info.h"
@@ -25,10 +27,10 @@
 #include "content/public/common/frame_navigate_params.h"
 #include "grit/generated_resources.h"
 
+using autofill::PasswordForm;
+using autofill::PasswordFormMap;
 using content::UserMetricsAction;
 using content::WebContents;
-using content::PasswordForm;
-using content::PasswordFormMap;
 
 DEFINE_WEB_CONTENTS_USER_DATA_KEY(PasswordManager);
 
@@ -54,12 +56,7 @@ void ReportMetrics(bool password_manager_enabled) {
     return;
   ran_once = true;
 
-  // TODO(isherman): This does not actually measure a user action.  It should be
-  // a boolean histogram.
-  if (password_manager_enabled)
-    content::RecordAction(UserMetricsAction("PasswordManager_Enabled"));
-  else
-    content::RecordAction(UserMetricsAction("PasswordManager_Disabled"));
+  UMA_HISTOGRAM_BOOLEAN("PasswordManager.Enabled", password_manager_enabled);
 }
 
 }  // namespace
@@ -75,6 +72,8 @@ void PasswordManager::RegisterProfilePrefs(
       prefs::kPasswordManagerAllowShowPasswords,
       true,
       user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
+  registry->RegisterListPref(prefs::kPasswordManagerGroupsForDomains,
+                             user_prefs::PrefRegistrySyncable::UNSYNCABLE_PREF);
 }
 
 // static
@@ -137,12 +136,16 @@ bool PasswordManager::IsSavingEnabled() const {
 }
 
 void PasswordManager::ProvisionallySavePassword(const PasswordForm& form) {
-  if (!IsSavingEnabled())
+  if (!IsSavingEnabled()) {
+    RecordFailure(SAVING_DISABLED, form.origin.host());
     return;
+  }
 
   // No password to save? Then don't.
-  if (form.password_value.empty())
+  if (form.password_value.empty()) {
+    RecordFailure(EMPTY_PASSWORD, form.origin.host());
     return;
+  }
 
   scoped_ptr<PasswordFormManager> manager;
   ScopedVector<PasswordFormManager>::iterator matched_manager_it =
@@ -173,6 +176,7 @@ void PasswordManager::ProvisionallySavePassword(const PasswordForm& form) {
     manager.reset(*matched_manager_it);
     pending_login_managers_.weak_erase(matched_manager_it);
   } else {
+    RecordFailure(NO_MATCHING_FORM, form.origin.host());
     return;
   }
 
@@ -180,23 +184,31 @@ void PasswordManager::ProvisionallySavePassword(const PasswordForm& form) {
   // tried to submit credentials before we had time to even find matching
   // results for the given form and autofill. If this is the case, we just
   // give up.
-  if (!manager->HasCompletedMatching())
+  if (!manager->HasCompletedMatching()) {
+    RecordFailure(MATCHING_NOT_COMPLETE, form.origin.host());
     return;
+  }
 
   // Also get out of here if the user told us to 'never remember' passwords for
   // this form.
-  if (manager->IsBlacklisted())
+  if (manager->IsBlacklisted()) {
+    RecordFailure(FORM_BLACKLISTED, form.origin.host());
     return;
+  }
 
   // Bail if we're missing any of the necessary form components.
-  if (!manager->HasValidPasswordForm())
+  if (!manager->HasValidPasswordForm()) {
+    RecordFailure(INVALID_FORM, form.origin.host());
     return;
+  }
 
   // Always save generated passwords, as the user expresses explicit intent for
   // Chrome to manage such passwords. For other passwords, respect the
   // autocomplete attribute.
-  if (!manager->HasGeneratedPassword() && !form.password_autocomplete_set)
+  if (!manager->HasGeneratedPassword() && !form.password_autocomplete_set) {
+    RecordFailure(AUTOCOMPLETE_OFF, form.origin.host());
     return;
+  }
 
   PasswordForm provisionally_saved_form(form);
   provisionally_saved_form.ssl_valid = form.origin.SchemeIsSecure() &&
@@ -210,6 +222,26 @@ void PasswordManager::ProvisionallySavePassword(const PasswordForm& form) {
   provisional_save_manager_.swap(manager);
 }
 
+void PasswordManager::RecordFailure(ProvisionalSaveFailure failure,
+                                    const std::string& form_origin) {
+  UMA_HISTOGRAM_ENUMERATION("PasswordManager.ProvisionalSaveFailure",
+                            failure, MAX_FAILURE_VALUE);
+
+  std::string group_name = password_manager_metrics_util::GroupIdToString(
+      password_manager_metrics_util::MonitoredDomainGroupId(
+          form_origin, delegate_->GetProfile()->GetPrefs()));
+  if (!group_name.empty()) {
+    password_manager_metrics_util::LogUMAHistogramEnumeration(
+        "PasswordManager.ProvisionalSaveFailure_" + group_name, failure,
+        MAX_FAILURE_VALUE);
+  }
+}
+
+void PasswordManager::AddSubmissionCallback(
+    const PasswordSubmittedCallback& callback) {
+  submission_callbacks_.push_back(callback);
+}
+
 void PasswordManager::AddObserver(LoginModelObserver* observer) {
   observers_.AddObserver(observer);
 }
@@ -218,19 +250,13 @@ void PasswordManager::RemoveObserver(LoginModelObserver* observer) {
   observers_.RemoveObserver(observer);
 }
 
-void PasswordManager::DidNavigateAnyFrame(
+void PasswordManager::DidNavigateMainFrame(
       const content::LoadCommittedDetails& details,
       const content::FrameNavigateParams& params) {
-  bool password_form_submitted = params.password_form.origin.is_valid();
-
-  // Try to save the password if one was submitted.
-  if (password_form_submitted)
-    ProvisionallySavePassword(params.password_form);
-
-  // Clear data after submission or main frame navigation. We don't want
-  // to clear data after subframe navigation as there might be password
-  // forms on other frames that could be submitted.
-  if (password_form_submitted || details.is_main_frame)
+  // Clear data after main frame navigation. We don't want to clear data after
+  // subframe navigation as there might be password forms on other frames that
+  // could be submitted.
+  if (!details.is_in_page)
     pending_login_managers_.clear();
 }
 
@@ -241,9 +267,21 @@ bool PasswordManager::OnMessageReceived(const IPC::Message& message) {
                         OnPasswordFormsParsed)
     IPC_MESSAGE_HANDLER(AutofillHostMsg_PasswordFormsRendered,
                         OnPasswordFormsRendered)
+    IPC_MESSAGE_HANDLER(AutofillHostMsg_PasswordFormSubmitted,
+                        OnPasswordFormSubmitted)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
+}
+
+void PasswordManager::OnPasswordFormSubmitted(
+    const PasswordForm& password_form) {
+  ProvisionallySavePassword(password_form);
+  for (size_t i = 0; i < submission_callbacks_.size(); ++i) {
+    submission_callbacks_[i].Run(password_form);
+  }
+
+  pending_login_managers_.clear();
 }
 
 void PasswordManager::OnPasswordFormsParsed(
@@ -272,8 +310,8 @@ void PasswordManager::OnPasswordFormsParsed(
 
 bool PasswordManager::ShouldShowSavePasswordInfoBar() const {
   return provisional_save_manager_->IsNewLogin() &&
-      !provisional_save_manager_->HasGeneratedPassword() &&
-      !provisional_save_manager_->IsPendingCredentialsPublicSuffixMatch();
+         !provisional_save_manager_->HasGeneratedPassword() &&
+         !provisional_save_manager_->IsPendingCredentialsPublicSuffixMatch();
 }
 
 void PasswordManager::OnPasswordFormsRendered(
@@ -283,22 +321,10 @@ void PasswordManager::OnPasswordFormsRendered(
 
   DCHECK(IsSavingEnabled());
 
-  // First, check for a failed login attempt.
-  for (std::vector<PasswordForm>::const_iterator iter = visible_forms.begin();
-       iter != visible_forms.end(); ++iter) {
-    if (provisional_save_manager_->DoesManage(
-        *iter, PasswordFormManager::ACTION_MATCH_REQUIRED)) {
-      // The form trying to be saved has immediately re-appeared. Assume login
-      // failure and abort this save, by clearing provisional_save_manager_.
-      provisional_save_manager_->SubmitFailed();
-      provisional_save_manager_.reset();
-      return;
-    }
-  }
-
-  if (!provisional_save_manager_->HasValidPasswordForm()) {
-    // Form is not completely valid - we do not support it.
-    NOTREACHED();
+  // We now assume that if there is at least one visible password form
+  // that means that the previous login attempt failed.
+  if (!visible_forms.empty()) {
+    provisional_save_manager_->SubmitFailed();
     provisional_save_manager_.reset();
     return;
   }
@@ -311,15 +337,20 @@ void PasswordManager::OnPasswordFormsRendered(
   if (provisional_save_manager_->HasGeneratedPassword())
     UMA_HISTOGRAM_COUNTS("PasswordGeneration.Submitted", 1);
 
-  if (!CommandLine::ForCurrentProcess()->HasSwitch(
+  if (ShouldShowSavePasswordInfoBar()) {
+    if (CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kEnableSavePasswordBubble)) {
-    if (ShouldShowSavePasswordInfoBar()) {
-      delegate_->AddSavePasswordInfoBarIfPermitted(
+      TabSpecificContentSettings* content_settings =
+          TabSpecificContentSettings::FromWebContents(web_contents());
+      content_settings->OnPasswordSubmitted(
           provisional_save_manager_.release());
     } else {
-      provisional_save_manager_->Save();
-      provisional_save_manager_.reset();
+      delegate_->AddSavePasswordInfoBarIfPermitted(
+          provisional_save_manager_.release());
     }
+  } else {
+    provisional_save_manager_->Save();
+    provisional_save_manager_.reset();
   }
 }
 
@@ -329,7 +360,7 @@ void PasswordManager::PossiblyInitializeUsernamesExperiment(
     return;
 
   bool other_possible_usernames_exist = false;
-  for (content::PasswordFormMap::const_iterator it = best_matches.begin();
+  for (autofill::PasswordFormMap::const_iterator it = best_matches.begin();
        it != best_matches.end(); ++it) {
     if (!it->second->other_possible_usernames.empty()) {
       other_possible_usernames_exist = true;
@@ -373,7 +404,7 @@ void PasswordManager::Autofill(
   PossiblyInitializeUsernamesExperiment(best_matches);
   switch (form_for_autofill.scheme) {
     case PasswordForm::SCHEME_HTML: {
-      // Note the check above is required because the observer_ for a non-HTML
+      // Note the check above is required because the observers_ for a non-HTML
       // schemed password form may have been freed, so we need to distinguish.
       autofill::PasswordFormFillData fill_data;
       InitPasswordFormFillData(form_for_autofill,

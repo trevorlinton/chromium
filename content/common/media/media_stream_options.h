@@ -19,7 +19,14 @@ CONTENT_EXPORT extern const char kMediaStreamSourceId[];
 CONTENT_EXPORT extern const char kMediaStreamSourceInfoId[];
 CONTENT_EXPORT extern const char kMediaStreamSourceTab[];
 CONTENT_EXPORT extern const char kMediaStreamSourceScreen[];
+CONTENT_EXPORT extern const char kMediaStreamSourceDesktop[];
 CONTENT_EXPORT extern const char kMediaStreamSourceSystem[];
+
+// Experimental constraint to do device matching.  When this optional constraint
+// is set, WebRTC audio renderer will render audio from media streams to an
+// output device that belongs to the same hardware as the requested source
+// device belongs to.
+CONTENT_EXPORT extern const char kMediaStreamRenderToAssociatedSink[];
 
 // StreamOptions is a Chromium representation of WebKit's
 // WebUserMediaRequest Options. It describes the components
@@ -44,20 +51,18 @@ struct CONTENT_EXPORT StreamDeviceInfo {
   StreamDeviceInfo();
   StreamDeviceInfo(MediaStreamType service_param,
                    const std::string& name_param,
-                   const std::string& device_param,
-                   bool opened);
+                   const std::string& device_param);
   StreamDeviceInfo(MediaStreamType service_param,
                    const std::string& name_param,
                    const std::string& device_param,
                    int sample_rate,
                    int channel_layout,
-                   bool opened);
+                   int frames_per_buffer);
   static bool IsEqual(const StreamDeviceInfo& first,
                       const StreamDeviceInfo& second);
 
   MediaStreamDevice device;
-  // Set to true if the device has been opened, false otherwise.
-  bool in_use;
+
   // Id for this capture session. Unique for all sessions of the same type.
   int session_id;
 };

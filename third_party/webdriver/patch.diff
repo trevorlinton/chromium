@@ -1,8 +1,47 @@
-Index: javascript/chrome-driver/build.desc
-===================================================================
---- javascript/chrome-driver/build.desc	(revision 18456)
-+++ javascript/chrome-driver/build.desc	(working copy)
-@@ -24,6 +24,11 @@
+diff --git a/javascript/atoms/device.js b/javascript/atoms/device.js
+index e2693f8..3731db3 100644
+--- a/javascript/atoms/device.js
++++ b/javascript/atoms/device.js
+@@ -627,6 +627,7 @@ bot.Device.prototype.maybeToggleOption = function() {
+   // Only WebKit fires the change event itself and only for multi-selects,
+   // except for Android versions >= 4.0.
+   if (!(goog.userAgent.WEBKIT && select.multiple) ||
++      (goog.userAgent.product.CHROME && bot.userAgent.isProductVersion(28)) ||
+       (goog.userAgent.product.ANDROID && bot.userAgent.isProductVersion(4))) {
+     bot.events.fire(select, bot.events.EventType.CHANGE);
+   }
+diff --git a/javascript/chrome-driver/atoms.js b/javascript/chrome-driver/atoms.js
+index 66d508c..4dad19d 100644
+--- a/javascript/chrome-driver/atoms.js
++++ b/javascript/chrome-driver/atoms.js
+@@ -20,6 +20,7 @@
+ 
+ goog.provide('webdriver.chrome');
+ 
++goog.require('bot.userAgent');
+ goog.require('goog.dom');
+ goog.require('goog.math.Coordinate');
+ goog.require('goog.math.Rect');
+@@ -124,7 +125,13 @@ webdriver.chrome.scrollIntoView_ = function(elem, region, center) {
+ 
+   offset = goog.style.getClientPosition(elem);
+   var windowSize = goog.dom.getDomHelper(elem).getViewportSize();
+-  scrollHelper(doc.body, windowSize, offset, region, center);
++  // From Chrome 32+, setting scrollTop/Left properties of both
++  // document.documentElement and document.body differs according to the HTML
++  // mode used (strict or quirks).
++  if (bot.userAgent.isProductVersion(32) && doc.compatMode == "CSS1Compat")
++    scrollHelper(doc.documentElement, windowSize, offset, region, center);
++  else
++    scrollHelper(doc.body, windowSize, offset, region, center);
+ };
+ 
+ 
+diff --git a/javascript/chrome-driver/build.desc b/javascript/chrome-driver/build.desc
+index 423c450..1889095 100644
+--- a/javascript/chrome-driver/build.desc
++++ b/javascript/chrome-driver/build.desc
+@@ -24,6 +24,11 @@ js_fragment(name = "get_page_zoom",
    function = "webdriver.chrome.getPageZoom",
    deps = [ ":deps" ])
  
@@ -14,7 +53,7 @@ Index: javascript/chrome-driver/build.desc
  js_test(name = "test",
    srcs = [ "test/*_test.html" ],
    deps = [
-@@ -39,6 +44,7 @@
+@@ -39,6 +44,7 @@ js_fragment_cpp(name = "atoms",
      "//javascript/chrome-driver:get_location_in_view:chrome",
      "//javascript/chrome-driver:get_page_zoom:chrome",
      "//javascript/chrome-driver:is_element_clickable:chrome",

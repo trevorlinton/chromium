@@ -41,7 +41,22 @@ class SystemStorageEjectDeviceFunction
   void OnStorageMonitorInit(const std::string& transient_device_id);
 
   // Eject device request handler.
-  void HandleResponse(chrome::StorageMonitor::EjectStatus status);
+  void HandleResponse(StorageMonitor::EjectStatus status);
+};
+
+class SystemStorageGetAvailableCapacityFunction
+    : public AsyncExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("system.storage.getAvailableCapacity",
+                             SYSTEM_STORAGE_GETAVAILABLECAPACITY);
+  SystemStorageGetAvailableCapacityFunction();
+
+ private:
+  void OnStorageMonitorInit(const std::string& transient_id);
+  void OnQueryCompleted(const std::string& transient_id,
+                        double available_capacity);
+  virtual ~SystemStorageGetAvailableCapacityFunction();
+  virtual bool RunImpl() OVERRIDE;
 };
 
 }  // namespace extensions

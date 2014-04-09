@@ -38,8 +38,6 @@
 #include "ui/gfx/image/image_skia_rep.h"
 #include "ui/gfx/point.h"
 
-namespace chrome {
-
 namespace {
 
 struct ResourceImageInfo {
@@ -139,15 +137,15 @@ int32_t PepperPDFHost::OnResourceMessageReceived(
     PPAPI_DISPATCH_HOST_RESOURCE_CALL_0(PpapiHostMsg_PDF_DidStartLoading,
                                         OnHostMsgDidStartLoading)
     PPAPI_DISPATCH_HOST_RESOURCE_CALL_0(PpapiHostMsg_PDF_DidStopLoading,
-                                      OnHostMsgDidStopLoading)
+                                        OnHostMsgDidStopLoading)
     PPAPI_DISPATCH_HOST_RESOURCE_CALL(PpapiHostMsg_PDF_UserMetricsRecordAction,
                                       OnHostMsgUserMetricsRecordAction)
     PPAPI_DISPATCH_HOST_RESOURCE_CALL_0(PpapiHostMsg_PDF_HasUnsupportedFeature,
                                         OnHostMsgHasUnsupportedFeature)
     PPAPI_DISPATCH_HOST_RESOURCE_CALL_0(PpapiHostMsg_PDF_Print,
-                                      OnHostMsgPrint)
+                                        OnHostMsgPrint)
     PPAPI_DISPATCH_HOST_RESOURCE_CALL_0(PpapiHostMsg_PDF_SaveAs,
-                                      OnHostMsgSaveAs)
+                                        OnHostMsgSaveAs)
     PPAPI_DISPATCH_HOST_RESOURCE_CALL(PpapiHostMsg_PDF_GetResourceImage,
                                       OnHostMsgGetResourceImage)
   IPC_END_MESSAGE_MAP()
@@ -296,18 +294,15 @@ int32_t PepperPDFHost::OnHostMsgGetResourceImage(
   if (res_id == 0)
     return PP_ERROR_FAILED;
 
-  ui::ScaleFactor scale_factor = ui::GetScaleFactorFromScale(scale);
-
   gfx::ImageSkia* res_image_skia =
       ResourceBundle::GetSharedInstance().GetImageSkiaNamed(res_id);
 
   if (!res_image_skia)
     return PP_ERROR_FAILED;
 
-  gfx::ImageSkiaRep image_skia_rep = res_image_skia->GetRepresentation(
-      scale_factor);
+  gfx::ImageSkiaRep image_skia_rep = res_image_skia->GetRepresentation(scale);
 
-  if (image_skia_rep.is_null() || image_skia_rep.scale_factor() != scale_factor)
+  if (image_skia_rep.is_null() || image_skia_rep.scale() != scale)
     return PP_ERROR_FAILED;
 
   PP_Size pp_size;
@@ -399,5 +394,3 @@ bool PepperPDFHost::CreateImageData(
 
   return true;
 }
-
-}  // namespace chrome

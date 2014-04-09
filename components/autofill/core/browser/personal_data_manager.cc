@@ -25,10 +25,7 @@
 #include "components/autofill/core/browser/validation.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #include "components/autofill/core/common/autofill_pref_names.h"
-#include "components/user_prefs/user_prefs.h"
 #include "content/public/browser/browser_context.h"
-
-using content::BrowserContext;
 
 namespace autofill {
 namespace {
@@ -51,30 +48,41 @@ class FormGroupMatchesByGUIDFunctor {
   }
 
  private:
-  std::string guid_;
+  const std::string guid_;
 };
 
 template<typename T, typename C>
+typename C::const_iterator FindElementByGUID(const C& container,
+                                             const std::string& guid) {
+  return std::find_if(container.begin(),
+                      container.end(),
+                      FormGroupMatchesByGUIDFunctor<T>(guid));
+}
+
+template<typename T, typename C>
 bool FindByGUID(const C& container, const std::string& guid) {
-  return std::find_if(
-      container.begin(),
-      container.end(),
-      FormGroupMatchesByGUIDFunctor<T>(guid)) != container.end();
+  return FindElementByGUID<T>(container, guid) != container.end();
 }
 
 template<typename T>
-class DereferenceFunctor {
- public:
-  template<typename T_Iterator>
-  const T& operator()(const T_Iterator& iterator) {
-    return *iterator;
-  }
-};
-
-template<typename T>
-T* address_of(T& v) {
+T* address_of(T& v) {  // NOLINT : non-const ref
   return &v;
 }
+
+template<typename T>
+class IsEmptyFunctor {
+ public:
+  explicit IsEmptyFunctor(const std::string& app_locale)
+      : app_locale_(app_locale) {
+  }
+
+  bool operator()(const T& form_group) {
+    return form_group.IsEmpty(app_locale_);
+  }
+
+ private:
+  const std::string app_locale_;
+};
 
 // Returns true if minimum requirements for import of a given |profile| have
 // been met.  An address submitted via a form must have at least the fields
@@ -86,9 +94,9 @@ bool IsMinimumAddress(const AutofillProfile& profile,
   // All countries require at least one address line.
   if (profile.GetRawInfo(ADDRESS_HOME_LINE1).empty())
     return false;
+
   std::string country_code =
       UTF16ToASCII(profile.GetRawInfo(ADDRESS_HOME_COUNTRY));
-
   if (country_code.empty())
     country_code = AutofillCountry::CountryCodeForLocale(app_locale);
 
@@ -130,6 +138,12 @@ bool IsValidFieldTypeAndValue(const std::set<ServerFieldType>& types_seen,
   return true;
 }
 
+// A helper function for finding the maximum value in a string->int map.
+static bool CompareVotes(const std::pair<std::string, int>& a,
+                         const std::pair<std::string, int>& b) {
+  return a.second < b.second;
+}
+
 }  // namespace
 
 PersonalDataManager::PersonalDataManager(const std::string& app_locale)
@@ -141,8 +155,10 @@ PersonalDataManager::PersonalDataManager(const std::string& app_locale)
       metric_logger_(new AutofillMetrics),
       has_logged_profile_count_(false) {}
 
-void PersonalDataManager::Init(BrowserContext* browser_context) {
+void PersonalDataManager::Init(content::BrowserContext* browser_context,
+                               PrefService* pref_service) {
   browser_context_ = browser_context;
+  pref_service_ = pref_service;
 
   if (!browser_context_->IsOffTheRecord())
     metric_logger_->LogIsAutofillEnabledAtStartup(IsAutofillEnabled());
@@ -186,9 +202,6 @@ void PersonalDataManager::OnWebDataServiceRequestDone(
       pending_profiles_query_ = 0;
     return;
   }
-
-  DCHECK(result->GetType() == AUTOFILL_PROFILES_RESULT ||
-         result->GetType() == AUTOFILL_CREDITCARDS_RESULT);
 
   switch (result->GetType()) {
     case AUTOFILL_PROFILES_RESULT:
@@ -285,7 +298,7 @@ bool PersonalDataManager::ImportFormData(
 
     if (group == CREDIT_CARD) {
       if (LowerCaseEqualsASCII(field->form_control_type, "month")) {
-        DCHECK_EQ(CREDIT_CARD_EXP_MONTH, server_field_type);
+        DCHECK_EQ(CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR, server_field_type);
         local_imported_credit_card->SetInfoForMonthInputType(value);
       } else {
         local_imported_credit_card->SetInfo(field_type, value, app_locale_);
@@ -360,13 +373,12 @@ bool PersonalDataManager::ImportFormData(
   }
   *imported_credit_card = local_imported_credit_card.release();
 
-  if (imported_profile.get() || *imported_credit_card || merged_credit_card) {
+  if (imported_profile.get() || *imported_credit_card || merged_credit_card)
     return true;
-  } else {
-    FOR_EACH_OBSERVER(PersonalDataManagerObserver, observers_,
-                      OnInsufficientFormData());
-    return false;
-  }
+
+  FOR_EACH_OBSERVER(PersonalDataManagerObserver, observers_,
+                    OnInsufficientFormData());
+  return false;
 }
 
 void PersonalDataManager::AddProfile(const AutofillProfile& profile) {
@@ -428,12 +440,9 @@ void PersonalDataManager::UpdateProfile(const AutofillProfile& profile) {
 AutofillProfile* PersonalDataManager::GetProfileByGUID(
     const std::string& guid) {
   const std::vector<AutofillProfile*>& profiles = GetProfiles();
-  for (std::vector<AutofillProfile*>::const_iterator iter = profiles.begin();
-       iter != profiles.end(); ++iter) {
-    if ((*iter)->guid() == guid)
-      return *iter;
-  }
-  return NULL;
+  std::vector<AutofillProfile*>::const_iterator iter =
+      FindElementByGUID<AutofillProfile>(profiles, guid);
+  return (iter != profiles.end()) ? *iter : NULL;
 }
 
 void PersonalDataManager::AddCreditCard(const CreditCard& credit_card) {
@@ -517,12 +526,9 @@ void PersonalDataManager::RemoveByGUID(const std::string& guid) {
 
 CreditCard* PersonalDataManager::GetCreditCardByGUID(const std::string& guid) {
   const std::vector<CreditCard*>& credit_cards = GetCreditCards();
-  for (std::vector<CreditCard*>::const_iterator iter = credit_cards.begin();
-       iter != credit_cards.end(); ++iter) {
-    if ((*iter)->guid() == guid)
-      return *iter;
-  }
-  return NULL;
+  std::vector<CreditCard*>::const_iterator iter =
+      FindElementByGUID<CreditCard>(credit_cards, guid);
+  return (iter != credit_cards.end()) ? *iter : NULL;
 }
 
 void PersonalDataManager::GetNonEmptyTypes(
@@ -543,9 +549,8 @@ bool PersonalDataManager::IsDataLoaded() const {
   return is_data_loaded_;
 }
 
-const std::vector<AutofillProfile*>& PersonalDataManager::GetProfiles() {
-  if (!user_prefs::UserPrefs::Get(browser_context_)->GetBoolean(
-          prefs::kAutofillAuxiliaryProfilesEnabled)) {
+const std::vector<AutofillProfile*>& PersonalDataManager::GetProfiles() const {
+  if (!pref_service_->GetBoolean(prefs::kAutofillAuxiliaryProfilesEnabled)) {
     return web_profiles();
   }
 
@@ -699,8 +704,7 @@ void PersonalDataManager::GetCreditCardSuggestions(
 }
 
 bool PersonalDataManager::IsAutofillEnabled() const {
-  return user_prefs::UserPrefs::Get(browser_context_)->GetBoolean(
-      prefs::kAutofillEnabled);
+  return pref_service_->GetBoolean(prefs::kAutofillEnabled);
 }
 
 // static
@@ -726,7 +730,7 @@ bool PersonalDataManager::IsValidLearnableProfile(
 }
 
 // static
-bool PersonalDataManager::MergeProfile(
+std::string PersonalDataManager::MergeProfile(
     const AutofillProfile& new_profile,
     const std::vector<AutofillProfile*>& existing_profiles,
     const std::string& app_locale,
@@ -735,6 +739,7 @@ bool PersonalDataManager::MergeProfile(
 
   // Set to true if |existing_profiles| already contains an equivalent profile.
   bool matching_profile_found = false;
+  std::string guid = new_profile.guid();
 
   // If we have already saved this address, merge in any missing values.
   // Only merge with the first match.
@@ -751,6 +756,7 @@ bool PersonalDataManager::MergeProfile(
       // data.  If an automatically aggregated profile would overwrite a
       // verified profile, just drop it.
       matching_profile_found = true;
+      guid = existing_profile->guid();
       if (!existing_profile->IsVerified() || new_profile.IsVerified())
         existing_profile->OverwriteWithOrAddTo(new_profile, app_locale);
     }
@@ -761,7 +767,20 @@ bool PersonalDataManager::MergeProfile(
   if (!matching_profile_found)
     merged_profiles->push_back(new_profile);
 
-  return matching_profile_found;
+  return guid;
+}
+
+const std::string& PersonalDataManager::GetDefaultCountryCodeForNewAddress()
+    const {
+  if (default_country_code_.empty())
+    default_country_code_ = MostCommonCountryCodeFromProfiles();
+
+  // If the profiles don't help, guess based on locale.
+  // TODO(estade): prefer to use the timezone instead.
+  if (default_country_code_.empty())
+    default_country_code_ = AutofillCountry::CountryCodeForLocale(app_locale());
+
+  return default_country_code_;
 }
 
 void PersonalDataManager::SetProfiles(std::vector<AutofillProfile>* profiles) {
@@ -769,13 +788,9 @@ void PersonalDataManager::SetProfiles(std::vector<AutofillProfile>* profiles) {
     return;
 
   // Remove empty profiles from input.
-  for (std::vector<AutofillProfile>::iterator it = profiles->begin();
-       it != profiles->end();) {
-    if (it->IsEmpty(app_locale_))
-      profiles->erase(it);
-    else
-      it++;
-  }
+  profiles->erase(std::remove_if(profiles->begin(), profiles->end(),
+                                 IsEmptyFunctor<AutofillProfile>(app_locale_)),
+                  profiles->end());
 
   // Ensure that profile labels are up to date.  Currently, sync relies on
   // labels to identify a profile.
@@ -832,13 +847,9 @@ void PersonalDataManager::SetCreditCards(
     return;
 
   // Remove empty credit cards from input.
-  for (std::vector<CreditCard>::iterator it = credit_cards->begin();
-       it != credit_cards->end();) {
-    if (it->IsEmpty(app_locale_))
-      credit_cards->erase(it);
-    else
-      it++;
-  }
+  credit_cards->erase(std::remove_if(credit_cards->begin(), credit_cards->end(),
+                                     IsEmptyFunctor<CreditCard>(app_locale_)),
+                      credit_cards->end());
 
   scoped_refptr<AutofillWebDataService> autofill_data(
       AutofillWebDataService::FromBrowserContext(browser_context_));
@@ -895,7 +906,7 @@ void PersonalDataManager::LoadProfiles() {
 // Win and Linux implementations do nothing. Mac and Android implementations
 // fill in the contents of |auxiliary_profiles_|.
 #if !defined(OS_MACOSX) && !defined(OS_ANDROID)
-void PersonalDataManager::LoadAuxiliaryProfiles() {
+void PersonalDataManager::LoadAuxiliaryProfiles() const {
 }
 #endif
 
@@ -962,10 +973,10 @@ void PersonalDataManager::CancelPendingQuery(
   *handle = 0;
 }
 
-void PersonalDataManager::SaveImportedProfile(
+std::string PersonalDataManager::SaveImportedProfile(
     const AutofillProfile& imported_profile) {
   if (browser_context_->IsOffTheRecord())
-    return;
+    return std::string();
 
   // Don't save a web profile if the data in the profile is a subset of an
   // auxiliary profile.
@@ -973,40 +984,48 @@ void PersonalDataManager::SaveImportedProfile(
            auxiliary_profiles_.begin();
        iter != auxiliary_profiles_.end(); ++iter) {
     if (imported_profile.IsSubsetOf(**iter, app_locale_))
-      return;
+      return (*iter)->guid();
   }
 
   std::vector<AutofillProfile> profiles;
-  MergeProfile(imported_profile, web_profiles_.get(), app_locale_, &profiles);
+  std::string guid =
+      MergeProfile(imported_profile, web_profiles_.get(), app_locale_,
+                   &profiles);
   SetProfiles(&profiles);
+  return guid;
 }
 
 
-void PersonalDataManager::SaveImportedCreditCard(
+std::string PersonalDataManager::SaveImportedCreditCard(
     const CreditCard& imported_card) {
   DCHECK(!imported_card.number().empty());
   if (browser_context_->IsOffTheRecord())
-    return;
+    return std::string();
 
   // Set to true if |imported_card| is merged into the credit card list.
   bool merged = false;
 
+  std::string guid = imported_card.guid();
   std::vector<CreditCard> credit_cards;
-  for (std::vector<CreditCard*>::const_iterator card = credit_cards_.begin();
-       card != credit_cards_.end();
-       ++card) {
+  for (std::vector<CreditCard*>::const_iterator iter = credit_cards_.begin();
+       iter != credit_cards_.end();
+       ++iter) {
+    CreditCard* card = *iter;
     // If |imported_card| has not yet been merged, check whether it should be
     // with the current |card|.
-    if (!merged && (*card)->UpdateFromImportedCard(imported_card, app_locale_))
+    if (!merged && card->UpdateFromImportedCard(imported_card, app_locale_)) {
+      guid = card->guid();
       merged = true;
+    }
 
-    credit_cards.push_back(**card);
+    credit_cards.push_back(*card);
   }
 
   if (!merged)
     credit_cards.push_back(imported_card);
 
   SetCreditCards(&credit_cards);
+  return guid;
 }
 
 void PersonalDataManager::LogProfileCount() const {
@@ -1028,6 +1047,39 @@ void PersonalDataManager::set_metric_logger(
 void PersonalDataManager::set_browser_context(
     content::BrowserContext* context) {
   browser_context_ = context;
+}
+
+void PersonalDataManager::set_pref_service(PrefService* pref_service) {
+  pref_service_ = pref_service;
+}
+
+std::string PersonalDataManager::MostCommonCountryCodeFromProfiles() const {
+  // Count up country codes from existing profiles.
+  std::map<std::string, int> votes;
+  // TODO(estade): can we make this GetProfiles() instead? It seems to cause
+  // errors in tests on mac trybots. See http://crbug.com/57221
+  const std::vector<AutofillProfile*>& profiles = web_profiles();
+  std::vector<std::string> country_codes;
+  AutofillCountry::GetAvailableCountries(&country_codes);
+  for (size_t i = 0; i < profiles.size(); ++i) {
+    std::string country_code = StringToUpperASCII(UTF16ToASCII(
+        profiles[i]->GetRawInfo(ADDRESS_HOME_COUNTRY)));
+
+    if (std::find(country_codes.begin(), country_codes.end(), country_code) !=
+            country_codes.end()) {
+      // Verified profiles count 100x more than unverified ones.
+      votes[country_code] += profiles[i]->IsVerified() ? 100 : 1;
+    }
+  }
+
+  // Take the most common country code.
+  if (!votes.empty()) {
+    std::map<std::string, int>::iterator iter =
+        std::max_element(votes.begin(), votes.end(), CompareVotes);
+    return iter->first;
+  }
+
+  return std::string();
 }
 
 }  // namespace autofill

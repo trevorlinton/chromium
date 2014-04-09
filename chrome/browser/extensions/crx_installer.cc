@@ -38,13 +38,17 @@
 #include "chrome/common/extensions/extension_file_util.h"
 #include "chrome/common/extensions/extension_icon_set.h"
 #include "chrome/common/extensions/feature_switch.h"
-#include "chrome/common/extensions/manifest.h"
+#include "chrome/common/extensions/manifest_handlers/kiosk_mode_info.h"
 #include "chrome/common/extensions/manifest_handlers/shared_module_info.h"
 #include "chrome/common/extensions/manifest_url_handler.h"
+#include "chrome/common/extensions/permissions/permissions_data.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/resource_dispatcher_host.h"
 #include "content/public/browser/user_metrics.h"
+#include "extensions/common/manifest.h"
+#include "extensions/common/permissions/permission_message_provider.h"
+#include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/user_script.h"
 #include "grit/chromium_strings.h"
 #include "grit/generated_resources.h"
@@ -52,6 +56,10 @@
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
+
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/login/user_manager.h"
+#endif
 
 using content::BrowserThread;
 using content::UserMetricsAction;
@@ -101,6 +109,9 @@ CrxInstaller::CrxInstaller(
     : install_directory_(service_weak->install_directory()),
       install_source_(Manifest::INTERNAL),
       approved_(false),
+      expected_manifest_check_level_(
+          WebstoreInstaller::MANIFEST_CHECK_LEVEL_STRICT),
+      expected_version_strict_checking_(false),
       extensions_enabled_(service_weak->extensions_enabled()),
       delete_source_(false),
       create_app_shortcut_(false),
@@ -127,15 +138,23 @@ CrxInstaller::CrxInstaller(
   if (client_) {
     client_->install_ui()->SetUseAppInstalledBubble(
         approval->use_app_installed_bubble);
-    client_->install_ui()->SetSkipPostInstallUI(approval->skip_post_install_ui);
+    client_->install_ui()->set_skip_post_install_ui(
+        approval->skip_post_install_ui);
   }
 
   if (approval->skip_install_dialog) {
     // Mark the extension as approved, but save the expected manifest and ID
     // so we can check that they match the CRX's.
     approved_ = true;
-    expected_manifest_.reset(approval->manifest->DeepCopy());
+    expected_manifest_check_level_ = approval->manifest_check_level;
+    if (expected_manifest_check_level_ !=
+        WebstoreInstaller::MANIFEST_CHECK_LEVEL_NONE)
+      expected_manifest_.reset(approval->manifest->DeepCopy());
     expected_id_ = approval->extension_id;
+  }
+  if (approval->minimum_version.get()) {
+    expected_version_.reset(new Version(*approval->minimum_version));
+    expected_version_strict_checking_ = false;
   }
 
   show_dialog_callback_ = approval->show_dialog_callback;
@@ -237,21 +256,62 @@ CrxInstallerError CrxInstaller::AllowInstall(const Extension* extension) {
                                    ASCIIToUTF16(extension->id())));
   }
 
-  if (expected_version_.get() &&
-      !expected_version_->Equals(*extension->version())) {
-    return CrxInstallerError(
-        l10n_util::GetStringFUTF16(
-            IDS_EXTENSION_INSTALL_UNEXPECTED_VERSION,
-            ASCIIToUTF16(expected_version_->GetString()),
-            ASCIIToUTF16(extension->version()->GetString())));
+  if (expected_version_.get()) {
+    if (expected_version_strict_checking_) {
+      if (!expected_version_->Equals(*extension->version())) {
+        return CrxInstallerError(
+            l10n_util::GetStringFUTF16(
+              IDS_EXTENSION_INSTALL_UNEXPECTED_VERSION,
+              ASCIIToUTF16(expected_version_->GetString()),
+              ASCIIToUTF16(extension->version()->GetString())));
+      }
+    } else {
+      if (extension->version()->CompareTo(*expected_version_) < 0) {
+        return CrxInstallerError(
+            l10n_util::GetStringFUTF16(
+              IDS_EXTENSION_INSTALL_UNEXPECTED_VERSION,
+              ASCIIToUTF16(expected_version_->GetString() + "+"),
+              ASCIIToUTF16(extension->version()->GetString())));
+      }
+    }
   }
 
   // Make sure the manifests match if we want to bypass the prompt.
-  if (approved_ &&
-      (!expected_manifest_.get() ||
-       !expected_manifest_->Equals(original_manifest_.get()))) {
-    return CrxInstallerError(
-        l10n_util::GetStringUTF16(IDS_EXTENSION_MANIFEST_INVALID));
+  if (approved_) {
+    bool valid = false;
+    if (expected_manifest_check_level_ ==
+        WebstoreInstaller::MANIFEST_CHECK_LEVEL_NONE) {
+        // To skip manifest checking, the extension must be a shared module
+        // and not request any permissions.
+        if (SharedModuleInfo::IsSharedModule(extension) &&
+            PermissionsData::GetActivePermissions(extension)->IsEmpty()) {
+          valid = true;
+        }
+    } else {
+      valid = expected_manifest_->Equals(original_manifest_.get());
+      if (!valid && expected_manifest_check_level_ ==
+          WebstoreInstaller::MANIFEST_CHECK_LEVEL_LOOSE) {
+        std::string error;
+        scoped_refptr<Extension> dummy_extension =
+            Extension::Create(base::FilePath(),
+                              install_source_,
+                              *expected_manifest_->value(),
+                              creation_flags_,
+                              &error);
+        if (error.empty()) {
+          scoped_refptr<const PermissionSet> expected_permissions =
+              PermissionsData::GetActivePermissions(dummy_extension.get());
+          valid = !(PermissionMessageProvider::Get()->IsPrivilegeIncrease(
+                        expected_permissions,
+                        PermissionsData::GetActivePermissions(extension),
+                        extension->GetType()));
+        }
+      }
+    }
+
+    if (!valid)
+      return CrxInstallerError(
+          l10n_util::GetStringUTF16(IDS_EXTENSION_MANIFEST_INVALID));
   }
 
   // The checks below are skipped for themes and external installs.
@@ -463,7 +523,7 @@ void CrxInstaller::OnBlacklistChecked(
 
   blacklist_state_ = blacklist_state;
 
-  if (blacklist_state_ == extensions::Blacklist::BLACKLISTED &&
+  if (blacklist_state_ == extensions::Blacklist::BLACKLISTED_MALWARE &&
       !allow_silent_install_) {
     // User tried to install a blacklisted extension. Show an error and
     // refuse to install it.
@@ -488,13 +548,26 @@ void CrxInstaller::ConfirmInstall() {
   if (!service || service->browser_terminating())
     return;
 
+  if (KioskModeInfo::IsKioskOnly(installer_.extension())) {
+    bool in_kiosk_mode = false;
+#if defined(OS_CHROMEOS)
+    chromeos::UserManager* user_manager = chromeos::UserManager::Get();
+    in_kiosk_mode = user_manager && user_manager->IsLoggedInAsKioskApp();
+#endif
+    if (!in_kiosk_mode) {
+      ReportFailureFromUIThread(CrxInstallerError(
+          l10n_util::GetStringUTF16(
+              IDS_EXTENSION_INSTALL_KIOSK_MODE_ONLY)));
+    }
+  }
+
   string16 error = installer_.CheckManagementPolicy();
   if (!error.empty()) {
     // We don't want to show the error infobar for installs from the WebStore,
     // because the WebStore already shows an error dialog itself.
     // Note: |client_| can be NULL in unit_tests!
     if (extension()->from_webstore() && client_)
-      client_->install_ui()->SetSkipPostInstallUI(true);
+      client_->install_ui()->set_skip_post_install_ui(true);
     ReportFailureFromUIThread(CrxInstallerError(error));
     return;
   }

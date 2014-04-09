@@ -48,9 +48,6 @@ namespace content {
 
 namespace {
 
-// See third_party/WebKit/Source/WebCore/dom/WheelEvent.h.
-const float kTickDivisor = 120.0f;
-
 class FullscreenMouseLockDispatcher : public MouseLockDispatcher {
  public:
   explicit FullscreenMouseLockDispatcher(RenderWidgetFullscreenPepper* widget);
@@ -285,11 +282,9 @@ class PepperWidget : public WebWidget {
   }
 
   virtual void mouseCaptureLost() {
-    NOTIMPLEMENTED();
   }
 
   virtual void setFocus(bool focus) {
-    NOTIMPLEMENTED();
   }
 
   // TODO(piman): figure out IME and implement these if necessary.
@@ -411,7 +406,8 @@ void RenderWidgetFullscreenPepper::SetLayer(WebKit::WebLayer* layer) {
   bool compositing = !!layer_;
   if (compositing != is_accelerated_compositing_active_) {
     if (compositing) {
-      initializeLayerTreeView();
+      if (!layerTreeView())
+        initializeLayerTreeView();
       if (!layerTreeView())
         return;
       layer_->setBounds(WebKit::WebSize(size()));
@@ -440,11 +436,6 @@ bool RenderWidgetFullscreenPepper::OnMessageReceived(const IPC::Message& msg) {
     return true;
 
   return RenderWidgetFullscreen::OnMessageReceived(msg);
-}
-
-void RenderWidgetFullscreenPepper::WillInitiatePaint() {
-  if (plugin_)
-    plugin_->ViewWillInitiatePaint();
 }
 
 void RenderWidgetFullscreenPepper::DidInitiatePaint() {

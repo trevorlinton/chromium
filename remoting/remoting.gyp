@@ -82,17 +82,16 @@
       ['OS=="win"', {
         'host_plugin_extension': 'dll',
         'host_plugin_prefix': '',
-      }],
-      ['OS=="win"', {
         # Use auto-generated CLSIDs to make sure that the newly installed COM
         # classes will be used during/after upgrade even if there are old
         # instances running already.
-        # The parameter passed to uuidgen.py is ignored, but needed to make sure
-        # that the script will be invoked separately for each CLSID. Otherwise
-        # GYP will reuse the value returned by the first invocation of
-        # the script.
-        'daemon_controller_clsid': '<!(python tools/uuidgen.py 1)',
-        'rdp_desktop_session_clsid': '<!(python tools/uuidgen.py 2)',
+        # The parameter at the end is ignored, but needed to make sure that the
+        # script will be invoked separately for each CLSID. Otherwise GYP will
+        # reuse the value returned by the first invocation of the script.
+        'daemon_controller_clsid':
+            '<!(python -c "import uuid; print uuid.uuid4()" 1)',
+        'rdp_desktop_session_clsid':
+            '<!(python -c "import uuid; print uuid.uuid4()" 2)',
       }],
     ],
 
@@ -127,6 +126,8 @@
       'resources/icon_warning.webp',
       'resources/infographic_my_computers.webp',
       'resources/infographic_remote_assistance.webp',
+      'resources/plus.webp',
+      'resources/reload.webp',
       'resources/tick.webp',
       'webapp/connection_history.css',
       'webapp/connection_stats.css',
@@ -134,7 +135,6 @@
       'webapp/main.html',
       'webapp/manifest.json',
       'webapp/menu_button.css',
-      'webapp/oauth2_callback.html',
       'webapp/open_sans.css',
       'webapp/open_sans.woff',
       'webapp/scale-to-fit.webp',
@@ -172,7 +172,6 @@
       'webapp/menu_button.js',
       'webapp/oauth2.js',
       'webapp/oauth2_api.js',
-      'webapp/oauth2_callback.js',
       'webapp/paired_client_manager.js',
       'webapp/plugin_settings.js',
       'webapp/remoting.js',
@@ -276,6 +275,7 @@
             '../google_apis/google_apis.gyp:google_apis',
             '../ipc/ipc.gyp:ipc',
             '../third_party/webrtc/modules/modules.gyp:desktop_capture',
+            '../ui/ui.gyp:keycode_converter',
           ],
           'defines': [
             'VERSION=<(version_full)',
@@ -529,6 +529,23 @@
         },  # end of target 'remoting_host'
 
         {
+          'target_name': 'remoting_native_messaging_base',
+          'type': 'static_library',
+          'variables': { 'enable_wexit_time_destructors': 1, },
+          'dependencies': [
+            '../base/base.gyp:base',
+          ],
+          'sources': [
+            'host/native_messaging/native_messaging_channel.cc',
+            'host/native_messaging/native_messaging_channel.h',
+            'host/native_messaging/native_messaging_reader.cc',
+            'host/native_messaging/native_messaging_reader.h',
+            'host/native_messaging/native_messaging_writer.cc',
+            'host/native_messaging/native_messaging_writer.h',
+          ],
+        },  # end of target 'remoting_native_messaging_base'
+
+        {
           'target_name': 'remoting_me2me_host_static',
           'type': 'static_library',
           'variables': { 'enable_wexit_time_destructors': 1, },
@@ -565,27 +582,6 @@
         },  # end of target 'remoting_me2me_host_static'
 
         {
-          'target_name': 'remoting_host_keygen',
-          'type': 'executable',
-          'dependencies': [
-            'remoting_base',
-            '../base/base.gyp:base',
-            '../base/base.gyp:base_i18n',
-            '../crypto/crypto.gyp:crypto',
-          ],
-          'sources': [
-            'host/keygen_main.cc',
-          ],
-          'conditions': [
-            ['OS=="linux" and linux_use_tcmalloc==1', {
-              'dependencies': [
-                '../base/allocator/allocator.gyp:allocator',
-              ],
-            }],
-          ],
-        },  # end of target 'remoting_host_keygen'
-
-        {
           'target_name': 'remoting_host_setup_base',
           'type': 'static_library',
           'variables': { 'enable_wexit_time_destructors': 1, },
@@ -598,20 +594,22 @@
             'VERSION=<(version_full)',
           ],
           'sources': [
+            'host/setup/daemon_controller.cc',
             'host/setup/daemon_controller.h',
-            'host/setup/daemon_controller_linux.cc',
-            'host/setup/daemon_controller_mac.mm',
-            'host/setup/daemon_controller_win.cc',
+            'host/setup/daemon_controller_delegate_linux.cc',
+            'host/setup/daemon_controller_delegate_linux.h',
+            'host/setup/daemon_controller_delegate_mac.h',
+            'host/setup/daemon_controller_delegate_mac.mm',
+            'host/setup/daemon_controller_delegate_win.cc',
+            'host/setup/daemon_controller_delegate_win.h',
             'host/setup/daemon_installer_win.cc',
             'host/setup/daemon_installer_win.h',
             'host/setup/host_starter.cc',
             'host/setup/host_starter.h',
-            'host/setup/native_messaging_host.cc',
-            'host/setup/native_messaging_host.h',
-            'host/setup/native_messaging_reader.cc',
-            'host/setup/native_messaging_reader.h',
-            'host/setup/native_messaging_writer.cc',
-            'host/setup/native_messaging_writer.h',
+            'host/setup/me2me_native_messaging_host.cc',
+            'host/setup/me2me_native_messaging_host.h',
+            'host/setup/oauth_client.cc',
+            'host/setup/oauth_client.h',
             'host/setup/oauth_helper.cc',
             'host/setup/oauth_helper.h',
             'host/setup/pin_validator.cc',
@@ -652,8 +650,9 @@
             'remoting_host',
             'remoting_host_event_logger',
             'remoting_host_logging',
-            'remoting_infoplist_strings',
             'remoting_host_setup_base',
+            'remoting_infoplist_strings',
+            'remoting_it2me_host_static',
             'remoting_jingle_glue',
             'remoting_resources',
           ],
@@ -743,6 +742,27 @@
             }],
           ],
         },  # end of target 'remoting_host_plugin'
+        {
+          'target_name': 'remoting_it2me_host_static',
+          'type': 'static_library',
+          'variables': { 'enable_wexit_time_destructors': 1, },
+          'dependencies': [
+            '../base/base.gyp:base_i18n',
+            '../net/net.gyp:net',
+            'remoting_base',
+            'remoting_host',
+            'remoting_host_event_logger',
+            'remoting_host_logging',
+            'remoting_infoplist_strings',
+            'remoting_host_setup_base',
+            'remoting_jingle_glue',
+            'remoting_resources',
+          ],
+          'sources': [
+            'host/it2me/it2me_host.cc',
+            'host/it2me/it2me_host.h',
+          ],
+        },  # end of target 'remoting_it2me_host_static'
         {
           'target_name': 'remoting_infoplist_strings',
           'type': 'none',
@@ -890,7 +910,8 @@
               'dependencies': [
                 'remoting_me2me_host',
                 'remoting_start_host',
-                'remoting_native_messaging_host',
+                'remoting_me2me_native_messaging_host',
+                'remoting_me2me_native_messaging_manifest',
               ],
               'actions': [
                 {
@@ -1012,21 +1033,19 @@
           ],  # end of 'conditions'
         },  # end of target 'remoting_me2me_host'
         {
-          'target_name': 'remoting_native_messaging_host',
+          'target_name': 'remoting_me2me_native_messaging_host',
           'type': 'executable',
+          'product_name': 'remoting_native_messaging_host',
           'variables': { 'enable_wexit_time_destructors': 1, },
           'dependencies': [
             '../base/base.gyp:base',
             'remoting_host',
             'remoting_host_logging',
             'remoting_host_setup_base',
-            'remoting_native_messaging_manifest',
-          ],
-          'defines': [
-            'VERSION=<(version_full)',
+            'remoting_native_messaging_base',
           ],
           'sources': [
-            'host/setup/native_messaging_host_main.cc',
+            'host/setup/me2me_native_messaging_host_main.cc',
           ],
           'conditions': [
             ['OS=="linux" and linux_use_tcmalloc==1', {
@@ -1035,7 +1054,7 @@
               ],
             }],
           ],
-        },  # end of target 'remoting_native_messaging_host'
+        },  # end of target 'remoting_me2me_native_messaging_host'
       ],  # end of 'targets'
     }],  # 'OS!="win" and enable_remoting_host==1'
 
@@ -1149,6 +1168,8 @@
             'remoting_host_prefpane',
             'remoting_host_uninstaller',
             'remoting_me2me_host',
+            'remoting_me2me_native_messaging_host',
+            'remoting_me2me_native_messaging_manifest',
           ],
           'variables': {
             'host_name': '<!(python <(version_py_path) -f <(branding_path) -t "@HOST_PLUGIN_FILE_NAME@")',
@@ -1170,11 +1191,15 @@
                 '<(PRODUCT_DIR)/remoting_host_prefpane.prefPane',
                 '<(PRODUCT_DIR)/remoting_me2me_host.app',
                 '<(PRODUCT_DIR)/remoting_host_uninstaller.app',
+                '<(PRODUCT_DIR)/remoting_native_messaging_host',
+                '<(PRODUCT_DIR)/remoting/com.google.chrome.remote_desktop.json',
               ],
               'generated_files_dst': [
                 'PreferencePanes/org.chromium.chromoting.prefPane',
                 'PrivilegedHelperTools/org.chromium.chromoting.me2me_host.app',
                 'Applications/<(host_uninstaller_name).app',
+                'PrivilegedHelperTools/org.chromium.chromoting.me2me_host.app/Contents/MacOS/native_messaging_host',
+                'Config/com.google.chrome.remote_desktop.json',
               ],
               'source_files': [
                 '<@(remoting_host_installer_mac_files)',
@@ -1522,6 +1547,7 @@
             'remoting_lib_ps',
             'remoting_lib_rc',
             'remoting_me2me_host_static',
+            'remoting_native_messaging_base',
             'remoting_protocol',
             'remoting_version_resources',
           ],
@@ -1556,6 +1582,7 @@
             'host/remoting_me2me_host.cc',
             'host/sas_injector.h',
             'host/sas_injector_win.cc',
+            'host/setup/me2me_native_messaging_host_main.cc',
             'host/verify_config_window_win.cc',
             'host/verify_config_window_win.h',
             'host/win/chromoting_module.cc',
@@ -1747,7 +1774,7 @@
         },  # end of target 'remoting_host_messages'
 
         # Generates localized the version information resources for the Windows
-        # binaries. 
+        # binaries.
         # The substitution strings are taken from:
         #   - build/util/LASTCHANGE - the last source code revision.
         #   - chrome/VERSION - the major, build & patch versions.
@@ -1807,25 +1834,40 @@
     ['OS=="android"', {
       'targets': [
         {
+          'target_name': 'remoting_jni_headers',
+          'type': 'none',
+          'sources': [
+            'android/java/src/org/chromium/chromoting/jni/JniInterface.java',
+          ],
+          'variables': {
+            'jni_gen_package': 'remoting',
+          },
+          'includes': [ '../build/jni_generator.gypi' ],
+        },  # end of target 'remoting_jni_headers'
+        {
           'target_name': 'remoting_client_jni',
           'type': 'shared_library',
           'dependencies': [
             'remoting_base',
             'remoting_client',
             'remoting_jingle_glue',
+            'remoting_jni_headers',
             'remoting_protocol',
             '../google_apis/google_apis.gyp:google_apis',
+          ],
+          'include_dirs': [
+            '<(SHARED_INTERMEDIATE_DIR)/remoting',
           ],
           'sources': [
             'client/jni/android_keymap.cc',
             'client/jni/android_keymap.h',
             'client/jni/chromoting_jni_instance.cc',
             'client/jni/chromoting_jni_instance.h',
+            'client/jni/chromoting_jni_onload.cc',
             'client/jni/chromoting_jni_runtime.cc',
             'client/jni/chromoting_jni_runtime.h',
             'client/jni/jni_frame_consumer.cc',
             'client/jni/jni_frame_consumer.h',
-            'client/jni/jni_interface.cc',
           ],
         },  # end of target 'remoting_client_jni'
         {
@@ -1872,15 +1914,13 @@
           ],
           'variables': {
             'apk_name': 'Chromoting',
+            'android_app_version_name': '<(version_full)',
+            'android_app_version_code': '<!(python ../build/util/lastchange.py --revision-only)',
             'manifest_package_name': 'org.chromium.chromoting',
             'native_lib_target': 'libremoting_client_jni',
             'java_in_dir': 'android/java',
             'additional_res_dirs': [ '<(SHARED_INTERMEDIATE_DIR)/remoting/android/res' ],
             'additional_input_paths': [
-              'android/java/src/org/chromium/chromoting/Chromoting.java',
-              'android/java/src/org/chromium/chromoting/Desktop.java',
-              'android/java/src/org/chromium/chromoting/DesktopView.java',
-              'android/java/src/org/chromium/chromoting/jni/JniInterface.java',
               '<(PRODUCT_DIR)/obj/remoting/remoting_android_resources.actions_rules_copies.stamp',
             ],
           },
@@ -1937,7 +1977,7 @@
             'remoting_core',
             'remoting_desktop',
             'remoting_host_exe',
-            'remoting_native_messaging_manifest',
+            'remoting_me2me_native_messaging_manifest',
           ],
           'compiled_inputs': [
             '<(PRODUCT_DIR)/remoting_core.dll',
@@ -1969,13 +2009,13 @@
           'generated_files': [
             '<@(_compiled_inputs)',
             '<(sas_dll_path)/sas.dll',
-            '<(PRODUCT_DIR)/remoting/native_messaging_manifest.json',
+            '<(PRODUCT_DIR)/remoting/com.google.chrome.remote_desktop.json',
             'resources/chromoting.ico',
           ],
           'generated_files_dst': [
             '<@(_compiled_inputs_dst)',
             'files/sas.dll',
-            'files/native_messaging_manifest.json',
+            'files/com.google.chrome.remote_desktop.json',
             'files/chromoting.ico',
           ],
           'zip_path': '<(PRODUCT_DIR)/remoting-me2me-host-<(OS).zip',
@@ -2070,8 +2110,12 @@
       'sources': [
         'client/plugin/chromoting_instance.cc',
         'client/plugin/chromoting_instance.h',
-        'client/plugin/mac_key_event_processor.cc',
-        'client/plugin/mac_key_event_processor.h',
+        'client/plugin/normalizing_input_filter.cc',
+        'client/plugin/delegating_signal_strategy.cc',
+        'client/plugin/delegating_signal_strategy.h',
+        'client/plugin/normalizing_input_filter.h',
+        'client/plugin/normalizing_input_filter_cros.cc',
+        'client/plugin/normalizing_input_filter_mac.cc',
         'client/plugin/pepper_audio_player.cc',
         'client/plugin/pepper_audio_player.h',
         'client/plugin/pepper_entrypoints.cc',
@@ -2088,12 +2132,17 @@
         'client/plugin/pepper_port_allocator.h',
         'client/plugin/pepper_token_fetcher.cc',
         'client/plugin/pepper_token_fetcher.h',
-        'client/plugin/pepper_view.cc',
-        'client/plugin/pepper_view.h',
         'client/plugin/pepper_util.cc',
         'client/plugin/pepper_util.h',
-        'client/plugin/pepper_signal_strategy.cc',
-        'client/plugin/pepper_signal_strategy.h',
+        'client/plugin/pepper_view.cc',
+        'client/plugin/pepper_view.h',
+      ],
+      'conditions' : [
+        [ '(OS!="linux" or chromeos==0)', {
+          'sources!': [
+            'client/plugin/normalizing_input_filter_cros.cc',
+          ],
+        }],
       ],
     },  # end of target 'remoting_client_plugin'
 
@@ -2145,7 +2194,7 @@
                 '<(RULE_INPUT_PATH)',
               ],
               'process_outputs_as_sources': 1,
-              'message': 'Running message compiler on <(RULE_INPUT_PATH).',
+              'message': 'Running message compiler on <(RULE_INPUT_PATH)',
             },
           ],
         }],
@@ -2230,7 +2279,7 @@
       'target_conditions': [
         # We cannot currently build the appsv2 version of WebApp on Windows as
         # there isn't a version of the "patch" tool available on windows. We
-        # should remove this condition when we remove the reliance on the 'patch'.
+        # should remove this condition when we remove the reliance on patch.
 
         # We define this in a 'target_conditions' section because 'plugin_path'
         # is defined in a 'conditions' section so its value is not available
@@ -2285,53 +2334,66 @@
       ],
     }, # end of target 'remoting_webapp'
 
-    # Generates 'native_messaging_manifest.json' to be included in the
+    # Generates 'me2me_native_messaging_manifest.json' to be included in the
     # installation.
     {
-      'target_name': 'remoting_native_messaging_manifest',
+      'target_name': 'remoting_me2me_native_messaging_manifest',
       'type': 'none',
       'dependencies': [
         'remoting_resources',
       ],
       'variables': {
-        'input': 'host/setup/native_messaging_manifest.json',
-        'output': '<(PRODUCT_DIR)/remoting/native_messaging_manifest.json',
+        'input': 'host/setup/me2me_native_messaging_manifest.json',
+        'output': '<(PRODUCT_DIR)/remoting/com.google.chrome.remote_desktop.json',
       },
-      'conditions': [
-        [ 'OS=="win"', {
-          'variables': {
-            'native_messaging_host_path': 'remoting_host.exe',
-          },
-        }, {
-          'variables': {
-            'native_messaging_host_path': '/opt/google/chrome-remote-desktop/native-messaging-host',
-          },
-        }],
-      ],
-      'actions': [
-        {
-          'action_name': 'generate_manifest',
-          'inputs': [
-            '<(remoting_localize_path)',
-            '<(input)',
-          ],
-          'outputs': [
-            '<(output)',
-          ],
-          'action': [
-            'python',
-            '<(remoting_localize_path)',
-            '--define', 'NATIVE_MESSAGING_HOST_PATH=<(native_messaging_host_path)',
-            '--locale_dir', '<(webapp_locale_dir)',
-            '--template', '<(input)',
-            '--locale_output',
-            '<(output)',
-            '--encoding', 'utf-8',
-            'en',
-          ],
+      'target_conditions': [
+        ['OS == "win" or OS == "mac" or OS == "linux"', {
+          'conditions': [
+            [ 'OS == "win"', {
+              'variables': {
+                'me2me_native_messaging_host_path': 'remoting_host.exe',
+              },
+            }], [ 'OS == "mac"', {
+              'variables': {
+                'me2me_native_messaging_host_path': '/Library/PrivilegedHelperTools/org.chromium.chromoting.me2me_host.app/Contents/MacOS/native_messaging_host',
+              },
+            }], ['OS == "linux"', {
+              'variables': {
+                'me2me_native_messaging_host_path': '/opt/google/chrome-remote-desktop/native-messaging-host',
+              },
+            }], ['OS != "linux" and OS != "mac" and OS != "win"', {
+              'variables': {
+                'me2me_native_messaging_host_path': '/opt/google/chrome-remote-desktop/native-messaging-host',
+              },
+            }],
+          ],  # conditions
+          'actions': [
+            {
+              'action_name': 'generate_manifest',
+              'inputs': [
+                '<(remoting_localize_path)',
+                '<(input)',
+              ],
+              'outputs': [
+                '<(output)',
+              ],
+              'action': [
+                'python',
+                '<(remoting_localize_path)',
+                '--define', 'ME2ME_NATIVE_MESSAGING_HOST_PATH=<(me2me_native_messaging_host_path)',
+                '--locale_dir', '<(webapp_locale_dir)',
+                '--template', '<(input)',
+                '--locale_output',
+                '<(output)',
+                '--encoding', 'utf-8',
+                'en',
+              ],
+            },
+          ],  # actions
         },
-      ],
-    },  # end of target 'remoting_native_messaging_manifest'
+       ],
+      ],  # target_conditions
+    },  # end of target 'remoting_me2me_native_messaging_manifest'
     {
       'target_name': 'remoting_resources',
       'type': 'none',
@@ -2348,6 +2410,7 @@
           'host/win/core.rc.jinja2',
           'host/win/host_messages.mc.jinja2',
           'host/win/version.rc.jinja2',
+          'webapp/background.js',
           'webapp/butter_bar.js',
           'webapp/client_screen.js',
           'webapp/error.js',
@@ -2418,6 +2481,8 @@
       'dependencies': [
         '../base/base.gyp:base',
         '../base/third_party/dynamic_annotations/dynamic_annotations.gyp:dynamic_annotations',
+        '../ui/events/events.gyp:events',
+        '../ui/gfx/gfx.gyp:gfx',
         '../ui/ui.gyp:ui',
         '../net/net.gyp:net',
         '../skia/skia.gyp:skia',
@@ -2425,7 +2490,6 @@
         '../third_party/libyuv/libyuv.gyp:libyuv',
         '../third_party/opus/opus.gyp:opus',
         '../third_party/protobuf/protobuf.gyp:protobuf_lite',
-        '../third_party/speex/speex.gyp:libspeex',
         '../media/media.gyp:media',
         '../media/media.gyp:shared_memory_support',
         'remoting_jingle_glue',
@@ -2482,27 +2546,25 @@
         'codec/audio_decoder.h',
         'codec/audio_decoder_opus.cc',
         'codec/audio_decoder_opus.h',
-        'codec/audio_decoder_speex.cc',
-        'codec/audio_decoder_speex.h',
         'codec/audio_decoder_verbatim.cc',
         'codec/audio_decoder_verbatim.h',
         'codec/audio_encoder.h',
         'codec/audio_encoder_opus.cc',
         'codec/audio_encoder_opus.h',
-        'codec/audio_encoder_speex.cc',
-        'codec/audio_encoder_speex.h',
         'codec/audio_encoder_verbatim.cc',
         'codec/audio_encoder_verbatim.h',
+        'codec/scoped_vpx_codec.cc',
+        'codec/scoped_vpx_codec.h',
         'codec/video_decoder.h',
         'codec/video_decoder_verbatim.cc',
         'codec/video_decoder_verbatim.h',
-        'codec/video_decoder_vp8.cc',
-        'codec/video_decoder_vp8.h',
+        'codec/video_decoder_vpx.cc',
+        'codec/video_decoder_vpx.h',
         'codec/video_encoder.h',
         'codec/video_encoder_verbatim.cc',
         'codec/video_encoder_verbatim.h',
-        'codec/video_encoder_vp8.cc',
-        'codec/video_encoder_vp8.h',
+        'codec/video_encoder_vpx.cc',
+        'codec/video_encoder_vpx.h',
       ],
     },  # end of target 'remoting_base'
 
@@ -2530,6 +2592,7 @@
         'remoting_base',
         'remoting_jingle_glue',
         'remoting_protocol',
+        '../third_party/libyuv/libyuv.gyp:libyuv',
         '../third_party/webrtc/modules/modules.gyp:desktop_capture',
       ],
       'sources': [
@@ -2726,6 +2789,8 @@
         '../ppapi/ppapi.gyp:ppapi_cpp',
         '../testing/gmock.gyp:gmock',
         '../testing/gtest.gyp:gtest',
+        '../ui/events/events.gyp:events',
+        '../ui/gfx/gfx.gyp:gfx',
         '../ui/ui.gyp:ui',
         'remoting_base',
         'remoting_breakpad',
@@ -2735,6 +2800,7 @@
         'remoting_host_event_logger',
         'remoting_host_setup_base',
         'remoting_jingle_glue',
+        'remoting_native_messaging_base',
         'remoting_protocol',
         'remoting_resources',
         '../third_party/webrtc/modules/modules.gyp:desktop_capture',
@@ -2762,13 +2828,14 @@
         'base/util_unittest.cc',
         'client/audio_player_unittest.cc',
         'client/key_event_mapper_unittest.cc',
-        'client/plugin/mac_key_event_processor_unittest.cc',
+        'client/plugin/normalizing_input_filter_cros_unittest.cc',
+        'client/plugin/normalizing_input_filter_mac_unittest.cc',
         'codec/audio_encoder_opus_unittest.cc',
         'codec/codec_test.cc',
         'codec/codec_test.h',
-        'codec/video_decoder_vp8_unittest.cc',
+        'codec/video_decoder_vpx_unittest.cc',
         'codec/video_encoder_verbatim_unittest.cc',
-        'codec/video_encoder_vp8_unittest.cc',
+        'codec/video_encoder_vpx_unittest.cc',
         'host/audio_silence_detector_unittest.cc',
         'host/branding.cc',
         'host/branding.h',
@@ -2798,6 +2865,8 @@
         'host/linux/x_server_clipboard_unittest.cc',
         'host/local_input_monitor_unittest.cc',
         'host/log_to_server_unittest.cc',
+        'host/native_messaging/native_messaging_reader_unittest.cc',
+        'host/native_messaging/native_messaging_writer_unittest.cc',
         'host/pairing_registry_delegate_linux_unittest.cc',
         'host/pairing_registry_delegate_win_unittest.cc',
         'host/pin_hash_unittest.cc',
@@ -2813,9 +2882,7 @@
         'host/screen_capturer_fake.h',
         'host/screen_resolution_unittest.cc',
         'host/server_log_entry_unittest.cc',
-        'host/setup/native_messaging_host_unittest.cc',
-        'host/setup/native_messaging_reader_unittest.cc',
-        'host/setup/native_messaging_writer_unittest.cc',
+        'host/setup/me2me_native_messaging_host_unittest.cc',
         'host/setup/oauth_helper_unittest.cc',
         'host/setup/pin_validator_unittest.cc',
         'host/token_validator_factory_impl_unittest.cc',
@@ -2875,7 +2942,7 @@
             ],
           },
         }],
-        ['OS=="mac" or (OS=="linux" and chromeos==0)', {
+        [ 'OS=="mac" or (OS=="linux" and chromeos==0)', {
           # Javascript unittests are disabled on CrOS because they cause
           # valgrind and test errors.
           #
@@ -2909,10 +2976,16 @@
             '<@(remoting_webapp_js_files)',
           ],
         }],
+        [ '(OS!="linux" or chromeos==0)', {
+          'sources!': [
+            'client/plugin/normalizing_input_filter_cros_unittest.cc',
+          ],
+        }],
         ['enable_remoting_host == 0', {
           'dependencies!': [
             'remoting_host',
             'remoting_host_setup_base',
+            'remoting_native_messaging_base',
           ],
           'sources/': [
             ['exclude', 'codec/*'],

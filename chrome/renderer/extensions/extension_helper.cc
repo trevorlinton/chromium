@@ -12,6 +12,8 @@
 #include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/extensions/api/messaging/message.h"
+#include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_messages.h"
 #include "chrome/common/render_messages.h"
 #include "chrome/common/url_constants.h"
@@ -230,6 +232,14 @@ void ExtensionHelper::FrameDetached(WebFrame* frame) {
   g_schedulers.Get().erase(i);
 }
 
+void ExtensionHelper::DidMatchCSS(
+    WebKit::WebFrame* frame,
+    const WebKit::WebVector<WebKit::WebString>& newly_matching_selectors,
+    const WebKit::WebVector<WebKit::WebString>& stopped_matching_selectors) {
+  dispatcher_->DidMatchCSS(
+      frame, newly_matching_selectors, stopped_matching_selectors);
+}
+
 void ExtensionHelper::DidCreateDataSource(WebFrame* frame, WebDataSource* ds) {
   // Check first if we created a scheduler for the frame, since this function
   // gets called for navigations within the document.
@@ -263,16 +273,17 @@ void ExtensionHelper::OnExtensionDispatchOnConnect(
     int target_port_id,
     const std::string& channel_name,
     const base::DictionaryValue& source_tab,
-    const ExtensionMsg_ExternalConnectionInfo& info) {
+    const ExtensionMsg_ExternalConnectionInfo& info,
+    const std::string& tls_channel_id) {
   MessagingBindings::DispatchOnConnect(
       dispatcher_->v8_context_set().GetAll(),
       target_port_id, channel_name, source_tab,
       info.source_id, info.target_id, info.source_url,
-      render_view());
+      tls_channel_id, render_view());
 }
 
 void ExtensionHelper::OnExtensionDeliverMessage(int target_id,
-                                                const std::string& message) {
+                                                const Message& message) {
   MessagingBindings::DeliverMessage(dispatcher_->v8_context_set().GetAll(),
                                         target_id,
                                         message,
@@ -353,7 +364,7 @@ void ExtensionHelper::OnAddMessageToConsole(ConsoleMessageLevel level,
 }
 
 void ExtensionHelper::OnAppWindowClosed() {
-  v8::HandleScope scope;
+  v8::HandleScope scope(v8::Isolate::GetCurrent());
   v8::Handle<v8::Context> script_context =
       render_view()->GetWebView()->mainFrame()->mainWorldScriptContext();
   ChromeV8Context* chrome_v8_context =

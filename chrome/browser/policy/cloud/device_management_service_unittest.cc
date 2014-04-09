@@ -6,12 +6,13 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_loop_proxy.h"
 #include "base/run_loop.h"
 #include "base/strings/string_split.h"
 #include "chrome/browser/policy/cloud/cloud_policy_constants.h"
 #include "chrome/browser/policy/cloud/device_management_service.h"
-#include "chrome/test/base/testing_browser_process.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "chrome/browser/policy/cloud/mock_device_management_service.h"
 #include "net/base/escape.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
@@ -49,6 +50,8 @@ const char kRobotAuthCode[] = "robot-oauth-auth-code";
 class DeviceManagementServiceTestBase : public testing::Test {
  protected:
   DeviceManagementServiceTestBase() {
+    request_context_ =
+        new net::TestURLRequestContextGetter(loop_.message_loop_proxy());
     ResetService();
     InitializeService();
   }
@@ -59,7 +62,10 @@ class DeviceManagementServiceTestBase : public testing::Test {
   }
 
   void ResetService() {
-    service_.reset(new DeviceManagementService(kServiceUrl));
+    scoped_ptr<DeviceManagementService::Configuration> configuration(
+        new MockDeviceManagementServiceConfiguration(kServiceUrl));
+    service_.reset(
+        new DeviceManagementService(configuration.Pass(), request_context_));
   }
 
   void InitializeService() {
@@ -159,11 +165,10 @@ class DeviceManagementServiceTestBase : public testing::Test {
 
   MOCK_METHOD1(OnJobRetry, void(DeviceManagementRequestJob*));
 
+  base::MessageLoop loop_;
+  scoped_refptr<net::TestURLRequestContextGetter> request_context_;
   net::TestURLFetcherFactory factory_;
   scoped_ptr<DeviceManagementService> service_;
-
- private:
-  content::TestBrowserThreadBundle thread_bundle_;
 };
 
 struct FailedRequestParams {

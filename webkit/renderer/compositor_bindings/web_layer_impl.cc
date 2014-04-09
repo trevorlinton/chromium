@@ -13,6 +13,7 @@
 #include "third_party/WebKit/public/platform/WebCompositingReasons.h"
 #include "third_party/WebKit/public/platform/WebFloatPoint.h"
 #include "third_party/WebKit/public/platform/WebFloatRect.h"
+#include "third_party/WebKit/public/platform/WebLayerClient.h"
 #include "third_party/WebKit/public/platform/WebLayerPositionConstraint.h"
 #include "third_party/WebKit/public/platform/WebLayerScrollClient.h"
 #include "third_party/WebKit/public/platform/WebSize.h"
@@ -33,13 +34,20 @@ using WebKit::WebFilterOperations;
 
 namespace webkit {
 
-WebLayerImpl::WebLayerImpl() : layer_(Layer::Create()) {}
+WebLayerImpl::WebLayerImpl() : layer_(Layer::Create()) {
+  web_layer_client_ = NULL;
+  layer_->SetLayerClient(this);
+}
 
-WebLayerImpl::WebLayerImpl(scoped_refptr<Layer> layer) : layer_(layer) {}
+WebLayerImpl::WebLayerImpl(scoped_refptr<Layer> layer) : layer_(layer) {
+  web_layer_client_ = NULL;
+  layer_->SetLayerClient(this);
+}
 
 WebLayerImpl::~WebLayerImpl() {
   layer_->ClearRenderSurface();
   layer_->set_layer_animation_delegate(NULL);
+  web_layer_client_ = NULL;
 }
 
 int WebLayerImpl::id() const { return layer_->id(); }
@@ -170,14 +178,6 @@ void WebLayerImpl::setBackgroundFilters(const WebFilterOperations& filters) {
   layer_->SetBackgroundFilters(filters_impl.AsFilterOperations());
 }
 
-void WebLayerImpl::setFilter(SkImageFilter* filter) {
-  layer_->SetFilter(skia::SharePtr(filter));
-}
-
-void WebLayerImpl::setDebugName(WebKit::WebString name) {
-  layer_->SetDebugName(UTF16ToASCII(name));
-}
-
 void WebLayerImpl::setCompositingReasons(
     WebKit::WebCompositingReasons reasons) {
   layer_->SetCompositingReasons(reasons);
@@ -191,8 +191,10 @@ void WebLayerImpl::setAnimationDelegate(
 }
 
 bool WebLayerImpl::addAnimation(WebKit::WebAnimation* animation) {
-  return layer_->AddAnimation(
-      static_cast<WebAnimationImpl*>(animation)->CloneToAnimation());
+  bool result = layer_->AddAnimation(
+      static_cast<WebAnimationImpl*>(animation)->PassAnimation());
+  delete animation;
+  return result;
 }
 
 void WebLayerImpl::removeAnimation(int animation_id) {
@@ -209,14 +211,6 @@ void WebLayerImpl::removeAnimation(
 
 void WebLayerImpl::pauseAnimation(int animation_id, double time_offset) {
   layer_->PauseAnimation(animation_id, time_offset);
-}
-
-void WebLayerImpl::suspendAnimations(double monotonic_time) {
-  layer_->SuspendAnimations(monotonic_time);
-}
-
-void WebLayerImpl::resumeAnimations(double monotonic_time) {
-  layer_->ResumeAnimations(monotonic_time);
 }
 
 bool WebLayerImpl::hasActiveAnimation() { return layer_->HasActiveAnimation(); }
@@ -246,6 +240,18 @@ void WebLayerImpl::setScrollable(bool scrollable) {
 }
 
 bool WebLayerImpl::scrollable() const { return layer_->scrollable(); }
+
+void WebLayerImpl::setUserScrollable(bool horizontal, bool vertical) {
+  layer_->SetUserScrollable(horizontal, vertical);
+}
+
+bool WebLayerImpl::userScrollableHorizontal() const {
+  return layer_->user_scrollable_horizontal();
+}
+
+bool WebLayerImpl::userScrollableVertical() const {
+  return layer_->user_scrollable_vertical();
+}
 
 void WebLayerImpl::setHaveWheelEventHandlers(bool have_wheel_event_handlers) {
   layer_->SetHaveWheelEventHandlers(have_wheel_event_handlers);
@@ -364,6 +370,29 @@ bool WebLayerImpl::isOrphan() const { return !layer_->layer_tree_host(); }
 
 void WebLayerImpl::setWebLayerClient(WebKit::WebLayerClient* client) {
   web_layer_client_ = client;
+}
+
+std::string WebLayerImpl::DebugName() {
+  if (!web_layer_client_)
+    return std::string();
+
+  std::string name = web_layer_client_->debugName(this).utf8();
+  DCHECK(IsStringASCII(name));
+  return name;
+}
+
+void WebLayerImpl::setScrollParent(WebKit::WebLayer* parent) {
+  cc::Layer* scroll_parent = NULL;
+  if (parent)
+    scroll_parent = static_cast<WebLayerImpl*>(parent)->layer();
+  layer_->SetScrollParent(scroll_parent);
+}
+
+void WebLayerImpl::setClipParent(WebKit::WebLayer* parent) {
+  cc::Layer* clip_parent = NULL;
+  if (parent)
+    clip_parent = static_cast<WebLayerImpl*>(parent)->layer();
+  layer_->SetClipParent(clip_parent);
 }
 
 Layer* WebLayerImpl::layer() const { return layer_.get(); }

@@ -25,13 +25,13 @@
 #include "chrome/browser/bookmarks/base_bookmark_model_observer.h"
 #include "chrome/browser/bookmarks/bookmark_model.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
+#include "chrome/browser/bookmarks/bookmark_test_helpers.h"
 #include "chrome/browser/sync/glue/bookmark_change_processor.h"
 #include "chrome/browser/sync/glue/bookmark_model_associator.h"
 #include "chrome/browser/sync/glue/data_type_error_handler.h"
 #include "chrome/browser/sync/glue/data_type_error_handler_mock.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/testing_profile.h"
-#include "chrome/test/base/ui_test_utils.h"
 #include "content/public/test/test_browser_thread.h"
 #include "sync/api/sync_error.h"
 #include "sync/internal_api/public/change_record.h"
@@ -128,8 +128,7 @@ class FakeServerChange {
       EXPECT_EQ(BaseNode::INIT_OK, node.InitByIdLookup(id));
       if (node.GetIsFolder())
         EXPECT_FALSE(node.GetFirstChildId());
-      node.GetMutableEntryForTest()->Put(syncer::syncable::SERVER_IS_DEL,
-                                         true);
+      node.GetMutableEntryForTest()->PutServerIsDel(true);
       node.Tombstone();
     }
     {
@@ -346,7 +345,7 @@ class ProfileSyncServiceBookmarkTest : public testing::Test {
     bool delete_bookmarks = load == DELETE_EXISTING_STORAGE;
     profile_.CreateBookmarkModel(delete_bookmarks);
     model_ = BookmarkModelFactory::GetForProfile(&profile_);
-    ui_test_utils::WaitForBookmarkModelToLoad(model_);
+    test::WaitForBookmarkModelToLoad(model_);
     // This noticeably speeds up the unit tests that request it.
     if (save == DONT_SAVE_TO_STORAGE)
       model_->ClearStore();
@@ -418,8 +417,7 @@ class ProfileSyncServiceBookmarkTest : public testing::Test {
       if (!node.InitBookmarkByCreation(root, predecessor))
         return false;
       node.SetIsFolder(true);
-      node.GetMutableEntryForTest()->Put(
-          syncer::syncable::UNIQUE_SERVER_TAG, permanent_tags[i]);
+      node.GetMutableEntryForTest()->PutUniqueServerTag(permanent_tags[i]);
       node.SetTitle(UTF8ToWide(permanent_tags[i]));
       node.SetExternalId(0);
       last_child_id = node.GetId();
@@ -1867,8 +1865,7 @@ void ProfileSyncServiceBookmarkTestWithData::ExpectTransactionVersionMatch(
     syncer::ReadNode sync_node(&trans);
     ASSERT_TRUE(model_associator_->InitSyncNodeFromChromeId(it->first,
                                                             &sync_node));
-    EXPECT_EQ(sync_node.GetEntry()->Get(syncer::syncable::TRANSACTION_VERSION),
-              it->second);
+    EXPECT_EQ(sync_node.GetEntry()->GetTransactionVersion(), it->second);
     BookmarkNodeVersionMap::const_iterator expected_ver_it =
         version_expected.find(it->first);
     if (expected_ver_it != version_expected.end())

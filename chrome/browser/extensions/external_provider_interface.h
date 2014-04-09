@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "base/memory/linked_ptr.h"
-#include "chrome/common/extensions/manifest.h"
+#include "extensions/common/manifest.h"
 
 class GURL;
 
@@ -47,7 +47,9 @@ class ExternalProviderInterface {
     virtual bool OnExternalExtensionUpdateUrlFound(
         const std::string& id,
         const GURL& update_url,
-        Manifest::Location location) = 0;
+        Manifest::Location location,
+        int creation_flags,
+        bool mark_acknowledged) = 0;
 
     // Called after all the external extensions have been reported
     // through the above two methods. |provider| is a pointer to the

@@ -18,21 +18,19 @@ class AppListTestViewDelegate  : public AppListViewDelegate {
   AppListTestViewDelegate();
   virtual ~AppListTestViewDelegate();
 
-  int activate_count() { return activate_count_; }
   int dismiss_count() { return dismiss_count_; }
-  AppListItemModel* last_activated() { return last_activated_; }
   void set_test_signin_delegate(SigninDelegate* signin_delegate) {
     test_signin_delegate_ = signin_delegate;
   }
 
   // AppListViewDelegate overrides:
-  virtual void SetModel(AppListModel* model) OVERRIDE {}
+  virtual bool ForceNativeDesktop() const OVERRIDE;
+  virtual void SetProfileByPath(const base::FilePath& profile_path) OVERRIDE {}
+  virtual void InitModel(AppListModel* model) OVERRIDE {}
   virtual SigninDelegate* GetSigninDelegate() OVERRIDE;
   virtual void GetShortcutPathForApp(
       const std::string& app_id,
       const base::Callback<void(const base::FilePath&)>& callback) OVERRIDE;
-  virtual void ActivateAppListItem(AppListItemModel* item,
-                                   int event_flags) OVERRIDE;
   virtual void StartSearch() OVERRIDE {}
   virtual void StopSearch() OVERRIDE {}
   virtual void OpenSearchResult(SearchResult* result,
@@ -42,18 +40,16 @@ class AppListTestViewDelegate  : public AppListViewDelegate {
                                         int event_flags) OVERRIDE {}
   virtual void Dismiss() OVERRIDE;
   virtual void ViewClosing() OVERRIDE {}
-  virtual void ViewActivationChanged(bool active) OVERRIDE {}
   virtual gfx::ImageSkia GetWindowIcon() OVERRIDE;
-  virtual base::string16 GetCurrentUserName() OVERRIDE;
-  virtual base::string16 GetCurrentUserEmail() OVERRIDE;
   virtual void OpenSettings() OVERRIDE {}
   virtual void OpenHelp() OVERRIDE {}
   virtual void OpenFeedback() OVERRIDE {}
+  virtual void ShowForProfileByPath(
+      const base::FilePath& profile_path) OVERRIDE {};
+  virtual content::WebContents* GetStartPageContents() OVERRIDE;
 
  private:
-  int activate_count_;
   int dismiss_count_;
-  AppListItemModel* last_activated_;
   SigninDelegate* test_signin_delegate_;  // Weak. Owned by test.
 };
 

@@ -38,8 +38,8 @@
 #if defined(OS_WIN)
 #include "base/win/win_util.h"
 #include "base/win/windows_version.h"
-#include "ui/base/win/hwnd_util.h"
 #include "ui/gfx/icon_util.h"
+#include "ui/gfx/win/hwnd_util.h"
 #endif
 
 // static
@@ -333,16 +333,14 @@ void InfoBarView::PlatformSpecificHide(bool animate) {
   // false); in this case the second SetFocusManager() call will silently no-op.
   SetFocusManager(NULL);
 
-#if defined(OS_WIN) && !defined(USE_AURA)
   if (!animate)
     return;
 
   // Do not restore focus (and active state with it) if some other top-level
   // window became active.
   views::Widget* widget = GetWidget();
-  if (!widget || ui::DoesWindowBelongToActiveWindow(widget->GetNativeView()))
+  if (!widget || widget->IsActive())
     FocusLastFocusedExternalView();
-#endif
 }
 
 void InfoBarView::PlatformSpecificOnHeightsRecalculated() {

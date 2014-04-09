@@ -34,7 +34,7 @@ const char kMaskedInstrument[] =
     "    \"state\":\"state\","
     "    \"postal_code\":\"postal_code\","
     "    \"phone_number\":\"phone_number\","
-    "    \"country_code\":\"country_code\","
+    "    \"country_code\":\"US\","
     "    \"type\":\"FULL\""
     "  },"
     "  \"status\":\"VALID\","
@@ -61,9 +61,10 @@ const char kMaskedInstrumentMissingStatus[] =
     "    \"state\":\"state\","
     "    \"postal_code\":\"postal_code\","
     "    \"phone_number\":\"phone_number\","
-    "    \"country_code\":\"country_code\""
+    "    \"country_code\":\"US\""
     "  },"
-    "  \"object_id\":\"object_id\""
+    "  \"object_id\":\"object_id\","
+    "  \"amex_disallowed\":true"
     "}";
 
 const char kMaskedInstrumentMissingType[] =
@@ -85,7 +86,7 @@ const char kMaskedInstrumentMissingType[] =
     "    \"state\":\"state\","
     "    \"postal_code\":\"postal_code\","
     "    \"phone_number\":\"phone_number\","
-    "    \"country_code\":\"country_code\""
+    "    \"country_code\":\"US\""
     "  },"
     "  \"status\":\"VALID\","
     "  \"object_id\":\"object_id\""
@@ -110,7 +111,7 @@ const char kMaskedInstrumentMissingLastFourDigits[] =
     "    \"state\":\"state\","
     "    \"postal_code\":\"postal_code\","
     "    \"phone_number\":\"phone_number\","
-    "    \"country_code\":\"country_code\""
+    "    \"country_code\":\"US\""
     "  },"
     "  \"status\":\"VALID\","
     "  \"object_id\":\"object_id\""
@@ -149,7 +150,7 @@ const char kMaskedInstrumentMalformedAddress[] =
     "    \"city\":\"city\","
     "    \"state\":\"state\","
     "    \"phone_number\":\"phone_number\","
-    "    \"country_code\":\"country_code\""
+    "    \"country_code\":\"US\""
     "  },"
     "  \"status\":\"VALID\","
     "  \"object_id\":\"object_id\""
@@ -175,7 +176,7 @@ const char kMaskedInstrumentMissingObjectId[] =
     "    \"state\":\"state\","
     "    \"postal_code\":\"postal_code\","
     "    \"phone_number\":\"phone_number\","
-    "    \"country_code\":\"country_code\""
+    "    \"country_code\":\"US\""
     "  },"
     "  \"status\":\"VALID\""
     "}";
@@ -249,7 +250,7 @@ const char kWalletItemsMissingGoogleTransactionId[] =
     "        \"state\":\"state\","
     "        \"postal_code\":\"postal_code\","
     "        \"phone_number\":\"phone_number\","
-    "        \"country_code\":\"country_code\""
+    "        \"country_code\":\"US\""
     "      },"
     "      \"status\":\"VALID\","
     "      \"object_id\":\"object_id\""
@@ -272,12 +273,13 @@ const char kWalletItemsMissingGoogleTransactionId[] =
     "        \"locality_name\":\"locality_name\","
     "        \"administrative_area_name\":\"administrative_area_name\","
     "        \"postal_code_number\":\"postal_code_number\","
-    "        \"country_name_code\":\"country_name_code\""
+    "        \"country_name_code\":\"US\""
     "      }"
     "    }"
     "  ],"
     "  \"default_address_id\":\"default_address_id\","
     "  \"obfuscated_gaia_id\":\"obfuscated_gaia_id\","
+    "  \"amex_disallowed\":true,"
     "  \"required_legal_document\":"
     "  ["
     "    {"
@@ -314,7 +316,7 @@ const char kWalletItems[] =
     "        \"state\":\"state\","
     "        \"postal_code\":\"postal_code\","
     "        \"phone_number\":\"phone_number\","
-    "        \"country_code\":\"country_code\","
+    "        \"country_code\":\"US\","
     "        \"type\":\"FULL\""
     "      },"
     "      \"status\":\"VALID\","
@@ -338,12 +340,13 @@ const char kWalletItems[] =
     "        \"locality_name\":\"locality_name\","
     "        \"administrative_area_name\":\"administrative_area_name\","
     "        \"postal_code_number\":\"postal_code_number\","
-    "        \"country_name_code\":\"country_name_code\""
+    "        \"country_name_code\":\"US\""
     "      }"
     "    }"
     "  ],"
     "  \"default_address_id\":\"default_address_id\","
-    "  \"obfuscated_gaia_id\":\"obfuscated_gaia_id\"";
+    "  \"obfuscated_gaia_id\":\"obfuscated_gaia_id\","
+    "  \"amex_disallowed\":true";
 
 const char kRequiredLegalDocument[] =
     "  ,"
@@ -413,7 +416,7 @@ TEST_F(WalletItemsTest, CreateMaskedInstrumentMissingObjectId) {
 
 TEST_F(WalletItemsTest, CreateMaskedInstrument) {
   SetUpDictionary(kMaskedInstrument);
-  scoped_ptr<Address> address(new Address("country_code",
+  scoped_ptr<Address> address(new Address("US",
                                           ASCIIToUTF16("name"),
                                           ASCIIToUTF16("address1"),
                                           ASCIIToUTF16("address2"),
@@ -484,7 +487,8 @@ TEST_F(WalletItemsTest, CreateWalletItemsWithRequiredActions) {
                        std::string(),
                        std::string(),
                        std::string(),
-                       std::string());
+                       std::string(),
+                       AMEX_DISALLOWED);
   EXPECT_EQ(expected, *WalletItems::CreateWalletItems(*dict));
 
   ASSERT_FALSE(required_actions.empty());
@@ -493,7 +497,8 @@ TEST_F(WalletItemsTest, CreateWalletItemsWithRequiredActions) {
                                          std::string(),
                                          std::string(),
                                          std::string(),
-                                         std::string());
+                                         std::string(),
+                                         AMEX_DISALLOWED);
   EXPECT_NE(expected, different_required_actions);
 }
 
@@ -507,6 +512,16 @@ TEST_F(WalletItemsTest, CreateWalletItemsMissingGoogleTransactionId) {
   EXPECT_EQ(NULL, WalletItems::CreateWalletItems(*dict).get());
 }
 
+TEST_F(WalletItemsTest, CreateWalletItemsMissingAmexDisallowed) {
+  SetUpDictionary(std::string(kWalletItems) + std::string(kCloseJson));
+  EXPECT_TRUE(dict->Remove("amex_disallowed", NULL));
+  base::string16 amex_number = ASCIIToUTF16("378282246310005");
+  base::string16 message;
+  EXPECT_FALSE(WalletItems::CreateWalletItems(*dict)->SupportsCard(amex_number,
+                                                                   &message));
+  EXPECT_FALSE(message.empty());
+}
+
 TEST_F(WalletItemsTest, CreateWalletItems) {
   SetUpDictionary(std::string(kWalletItems) + std::string(kCloseJson));
   std::vector<RequiredAction> required_actions;
@@ -514,9 +529,10 @@ TEST_F(WalletItemsTest, CreateWalletItems) {
                        "google_transaction_id",
                        "default_instrument_id",
                        "default_address_id",
-                       "obfuscated_gaia_id");
+                       "obfuscated_gaia_id",
+                       AMEX_DISALLOWED);
 
-  scoped_ptr<Address> billing_address(new Address("country_code",
+  scoped_ptr<Address> billing_address(new Address("US",
                                                   ASCIIToUTF16("name"),
                                                   ASCIIToUTF16("address1"),
                                                   ASCIIToUTF16("address2"),
@@ -540,7 +556,7 @@ TEST_F(WalletItemsTest, CreateWalletItems) {
   expected.AddInstrument(masked_instrument.Pass());
 
   scoped_ptr<Address> shipping_address(
-      new Address("country_name_code",
+      new Address("US",
                   ASCIIToUTF16("recipient_name"),
                   ASCIIToUTF16("address_line_1"),
                   ASCIIToUTF16("address_line_2"),

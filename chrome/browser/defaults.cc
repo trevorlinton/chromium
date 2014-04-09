@@ -34,25 +34,17 @@ const bool kShowExitMenuItem = true;
 #endif
 
 #if defined(OS_CHROMEOS)
-const bool kShowFeedbackMenuItem = true;
 const bool kShowHelpMenuItemIcon = true;
 const bool kShowUpgradeMenuItem = false;
 const bool kShowImportOnBookmarkBar = false;
 const bool kAlwaysOpenIncognitoWindow = true;
 const bool kAlwaysCreateTabbedBrowserOnSessionRestore = false;
 #else
-const bool kShowFeedbackMenuItem = false;
 const bool kShowHelpMenuItemIcon = false;
 const bool kShowUpgradeMenuItem = true;
 const bool kShowImportOnBookmarkBar = true;
 const bool kAlwaysOpenIncognitoWindow = false;
 const bool kAlwaysCreateTabbedBrowserOnSessionRestore = true;
-#endif
-
-#if defined(OS_CHROMEOS)
-const bool kOSSupportsOtherBrowsers = false;
-#else
-const bool kOSSupportsOtherBrowsers = true;
 #endif
 
 const bool kDownloadPageHasShowInFolder = true;
@@ -71,8 +63,6 @@ const bool kShowCancelButtonInTaskManager = true;
 #else
 const bool kShowCancelButtonInTaskManager = false;
 #endif
-
-const int kBookmarkBarHeight = 28;
 
 const ui::ResourceBundle::FontStyle kAssociatedNetworkFontStyle =
     ui::ResourceBundle::BoldFont;

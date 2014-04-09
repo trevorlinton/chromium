@@ -16,33 +16,36 @@ class Image;
 }
 
 class Browser;
-class ChromeLauncherControllerPerApp;
-class Profile;
+class ChromeLauncherController;
 
 // Item controller for an browser shortcut.
 class BrowserShortcutLauncherItemController : public LauncherItemController {
  public:
-  BrowserShortcutLauncherItemController(
-      ChromeLauncherControllerPerApp* controller,
-      Profile* profile);
+  explicit BrowserShortcutLauncherItemController(
+      ChromeLauncherController* controller);
 
   virtual ~BrowserShortcutLauncherItemController();
 
+  // Updates the activation state of the Broswer item.
+  void UpdateBrowserItemState();
+
   // LauncherItemController overrides:
-  virtual string16 GetTitle() OVERRIDE;
-  virtual bool HasWindow(aura::Window* window) const OVERRIDE;
+  virtual bool IsCurrentlyShownInWindow(aura::Window* window) const OVERRIDE;
   virtual bool IsOpen() const OVERRIDE;
   virtual bool IsVisible() const OVERRIDE;
-  virtual void Launch(int event_flags) OVERRIDE;
-  virtual void Activate() OVERRIDE;
+  virtual void Launch(ash::LaunchSource source, int event_flags) OVERRIDE;
+  virtual void Activate(ash::LaunchSource source) OVERRIDE;
   virtual void Close() OVERRIDE;
-  virtual void LauncherItemChanged(
-      int model_index,
-      const ash::LauncherItem& old_item) OVERRIDE;
-  virtual void Clicked(const ui::Event& event) OVERRIDE;
-  virtual void OnRemoved() OVERRIDE;
   virtual ChromeLauncherAppMenuItems GetApplicationList(
       int event_flags) OVERRIDE;
+  virtual void ItemSelected(const ui::Event& event) OVERRIDE;
+  virtual base::string16 GetTitle() OVERRIDE;
+  virtual ui::MenuModel* CreateContextMenu(
+      aura::Window* root_window) OVERRIDE;
+  virtual ash::LauncherMenuModel* CreateApplicationMenu(
+      int event_flags) OVERRIDE;
+  virtual bool IsDraggable() OVERRIDE;
+  virtual bool ShouldShowTooltip() OVERRIDE;
 
  private:
   // Get the favicon for the browser list entry for |web_contents|.
@@ -59,9 +62,9 @@ class BrowserShortcutLauncherItemController : public LauncherItemController {
   // Activate a browser - or advance to the next one on the list.
   void ActivateOrAdvanceToNextBrowser();
 
-  ChromeLauncherControllerPerApp* app_controller_;
-
-  Profile* profile_;
+  // Returns true when the given |browser| is listed in the browser application
+  // list.
+  bool IsBrowserRepresentedInBrowserList(Browser* browser);
 
   DISALLOW_COPY_AND_ASSIGN(BrowserShortcutLauncherItemController);
 };

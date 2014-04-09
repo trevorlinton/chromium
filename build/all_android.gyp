@@ -17,7 +17,8 @@
       'target_name': 'All',
       'type': 'none',
       'dependencies': [
-        '../content/content.gyp:content_shell_apk',
+        '../content/content_shell_and_tests.gyp:content_shell_apk',
+        '../mojo/mojo.gyp:mojo_shell_apk',
         '<@(android_app_targets)',
         'android_builder_tests',
         '../android_webview/android_webview.gyp:android_webview_apk',
@@ -34,14 +35,16 @@
       'type': 'none',
       'dependencies': [
         '../third_party/WebKit/public/all.gyp:all_blink',
-        '../content/content.gyp:content_shell_apk',
+        '../content/content_shell_and_tests.gyp:content_shell_apk',
+        '../breakpad/breakpad.gyp:dump_syms#host',
+        '../breakpad/breakpad.gyp:minidump_stackwalk#host',
       ],
     }, # target_name: all_webkit
     {
       # The current list of tests for android.  This is temporary
       # until the full set supported.  If adding a new test here,
-      # please also add it to build/android/run_tests.py, else the
-      # test is not run.
+      # please also add it to build/android/pylib/gtest/gtest_config.py,
+      # else the test is not run.
       #
       # WARNING:
       # Do not add targets here without communicating the implications
@@ -63,10 +66,11 @@
         '../cc/cc_tests.gyp:cc_perftests_apk',
         '../cc/cc_tests.gyp:cc_unittests',
         '../chrome/chrome.gyp:unit_tests',
-        '../components/components.gyp:components_unittests',
-        '../content/content.gyp:content_browsertests',
-        '../content/content.gyp:content_shell_test_apk',
-        '../content/content.gyp:content_unittests',
+        '../components/components_tests.gyp:components_unittests',
+        '../content/content_shell_and_tests.gyp:content_browsertests',
+        '../content/content_shell_and_tests.gyp:content_gl_tests',
+        '../content/content_shell_and_tests.gyp:content_shell_test_apk',
+        '../content/content_shell_and_tests.gyp:content_unittests',
         '../gpu/gpu.gyp:gl_tests',
         '../gpu/gpu.gyp:gpu_unittests',
         '../ipc/ipc.gyp:ipc_tests',
@@ -77,9 +81,9 @@
         '../sync/sync.gyp:sync_unit_tests',
         '../third_party/WebKit/public/all.gyp:*',
         '../tools/android/android_tools.gyp:android_tools',
-        '../tools/android/device_stats_monitor/device_stats_monitor.gyp:device_stats_monitor',
+        '../tools/android/android_tools.gyp:memconsumer',
         '../tools/android/findbugs_plugin/findbugs_plugin.gyp:findbugs_plugin_test',
-        '../ui/ui.gyp:ui_unittests',
+        '../ui/ui_unittests.gyp:ui_unittests',
         # Required by ui_unittests.
         # TODO(wangxianzhu): It'd better let ui_unittests depend on it, but
         # this would cause circular gyp dependency which needs refactoring the
@@ -94,10 +98,11 @@
             '../base/base.gyp:base_unittests_apk',
             '../cc/cc_tests.gyp:cc_unittests_apk',
             '../chrome/chrome.gyp:unit_tests_apk',
-            '../components/components.gyp:components_unittests_apk',
-            '../content/content.gyp:content_browsertests_apk',
-            '../content/content.gyp:content_unittests_apk',
-            '../content/content.gyp:video_decode_accelerator_unittest_apk',
+            '../components/components_tests.gyp:components_unittests_apk',
+            '../content/content_shell_and_tests.gyp:content_browsertests_apk',
+            '../content/content_shell_and_tests.gyp:content_gl_tests_apk',
+            '../content/content_shell_and_tests.gyp:content_unittests_apk',
+            '../content/content_shell_and_tests.gyp:video_decode_accelerator_unittest_apk',
             '../gpu/gpu.gyp:gl_tests_apk',
             '../gpu/gpu.gyp:gpu_unittests_apk',
             '../ipc/ipc.gyp:ipc_tests_apk',
@@ -106,7 +111,7 @@
             '../sandbox/sandbox.gyp:sandbox_linux_jni_unittests_apk',
             '../sql/sql.gyp:sql_unittests_apk',
             '../sync/sync.gyp:sync_unit_tests_apk',
-            '../ui/ui.gyp:ui_unittests_apk',
+            '../ui/ui_unittests.gyp:ui_unittests_apk',
             '../android_webview/android_webview.gyp:android_webview_test_apk',
             '../chrome/chrome.gyp:chromium_testshell_test_apk',
             '../chrome/chrome.gyp:chromium_testshell_uiautomator_tests',
@@ -115,6 +120,22 @@
         }],
       ],
     },
+    {
+      # WebRTC Android APK tests.
+      'target_name': 'android_builder_webrtc',
+      'type': 'none',
+      'variables': {
+        # WebRTC tests are normally not built by Chromium bots.
+        'include_tests%': 0,
+      },
+      'conditions': [
+        ['"<(gtest_target_type)"=="shared_library" and include_tests==1', {
+          'dependencies': [
+            '../third_party/webrtc/build/apk_tests.gyp:*',
+          ],
+        }],
+      ],
+    },  # target_name: android_builder_webrtc
     {
       # Experimental / in-progress targets that are expected to fail
       # but we still try to compile them on bots (turning the stage

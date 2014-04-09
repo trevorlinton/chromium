@@ -23,6 +23,8 @@ class NET_EXPORT_PRIVATE FixRateSender : public SendAlgorithmInterface {
   explicit FixRateSender(const QuicClock* clock);
   virtual ~FixRateSender();
 
+  virtual void SetFromConfig(const QuicConfig& config, bool is_server) OVERRIDE;
+
   // Start implementation of SendAlgorithmInterface.
   virtual void OnIncomingQuicCongestionFeedbackFrame(
       const QuicCongestionFeedbackFrame& feedback,
@@ -32,26 +34,31 @@ class NET_EXPORT_PRIVATE FixRateSender : public SendAlgorithmInterface {
                              QuicByteCount acked_bytes,
                              QuicTime::Delta rtt) OVERRIDE;
   virtual void OnIncomingLoss(QuicTime ack_receive_time) OVERRIDE;
-  virtual void SentPacket(QuicTime sent_time,
-                          QuicPacketSequenceNumber equence_number,
-                          QuicByteCount bytes,
-                          Retransmission is_retransmission) OVERRIDE;
-  virtual void AbandoningPacket(QuicPacketSequenceNumber sequence_number,
-                                QuicByteCount abandoned_bytes) OVERRIDE;
+  virtual bool OnPacketSent(
+      QuicTime sent_time,
+      QuicPacketSequenceNumber equence_number,
+      QuicByteCount bytes,
+      TransmissionType transmission_type,
+      HasRetransmittableData has_retransmittable_data) OVERRIDE;
+  virtual void OnPacketAbandoned(QuicPacketSequenceNumber sequence_number,
+                                 QuicByteCount abandoned_bytes) OVERRIDE;
   virtual QuicTime::Delta TimeUntilSend(
       QuicTime now,
-      Retransmission is_retransmission,
+      TransmissionType transmission_type,
       HasRetransmittableData has_retransmittable_data,
       IsHandshake handshake) OVERRIDE;
   virtual QuicBandwidth BandwidthEstimate() OVERRIDE;
   virtual QuicTime::Delta SmoothedRtt() OVERRIDE;
   virtual QuicTime::Delta RetransmissionDelay() OVERRIDE;
+  virtual QuicByteCount GetCongestionWindow() OVERRIDE;
+  virtual void SetCongestionWindow(QuicByteCount window) OVERRIDE;
   // End implementation of SendAlgorithmInterface.
 
  private:
   QuicByteCount CongestionWindow();
 
   QuicBandwidth bitrate_;
+  QuicByteCount max_segment_size_;
   LeakyBucket fix_rate_leaky_bucket_;
   PacedSender paced_sender_;
   QuicByteCount data_in_flight_;

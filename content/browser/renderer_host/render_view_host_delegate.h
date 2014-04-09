@@ -15,6 +15,7 @@
 #include "content/common/content_export.h"
 #include "content/public/common/javascript_message_type.h"
 #include "content/public/common/media_stream_request.h"
+#include "content/public/common/page_transition_types.h"
 #include "net/base/load_states.h"
 #include "third_party/WebKit/public/web/WebPopupType.h"
 #include "ui/base/window_open_disposition.h"
@@ -46,10 +47,12 @@ class Size;
 namespace content {
 
 class BrowserContext;
+class FrameTree;
 class PageState;
 class RenderViewHost;
 class RenderViewHostDelegateView;
 class SessionStorageNamespace;
+class SiteInstance;
 class WebContents;
 class WebContentsImpl;
 struct ContextMenuParams;
@@ -58,7 +61,8 @@ struct GlobalRequestID;
 struct NativeWebKeyboardEvent;
 struct Referrer;
 struct RendererPreferences;
-class SiteInstance;
+struct ResourceRedirectDetails;
+struct ResourceRequestDetails;
 
 //
 // RenderViewHostDelegate
@@ -91,10 +95,16 @@ class CONTENT_EXPORT RenderViewHostDelegate {
         const base::TimeTicks& proceed_time) = 0;
 
     // The |pending_render_view_host| is ready to commit a page.  The delegate
-    // should ensure that the old RenderViewHost runs its unload handler first.
+    // should ensure that the old RenderViewHost runs its unload handler first
+    // and determine whether a RenderViewHost transfer is needed.
     virtual void OnCrossSiteResponse(
         RenderViewHost* pending_render_view_host,
-        const GlobalRequestID& global_request_id) = 0;
+        const GlobalRequestID& global_request_id,
+        bool is_transfer,
+        const std::vector<GURL>& transfer_url_chain,
+        const Referrer& referrer,
+        PageTransition page_transition,
+        int64 frame_id) = 0;
 
    protected:
     virtual ~RendererManagement() {}
@@ -151,8 +161,8 @@ class CONTENT_EXPORT RenderViewHostDelegate {
   // The RenderView processed a redirect during a provisional load.
   //
   // TODO(creis): Remove this method and have the pre-rendering code listen to
-  // the ResourceDispatcherHost's RESOURCE_RECEIVED_REDIRECT notification
-  // instead.  See http://crbug.com/78512.
+  // WebContentsObserver::DidGetRedirectForResourceRequest instead.
+  // See http://crbug.com/78512.
   virtual void DidRedirectProvisionalLoad(
       RenderViewHost* render_view_host,
       int32 page_id,
@@ -163,6 +173,14 @@ class CONTENT_EXPORT RenderViewHostDelegate {
   virtual void DidFailProvisionalLoadWithError(
       RenderViewHost* render_view_host,
       const ViewHostMsg_DidFailProvisionalLoadWithError_Params& params) {}
+
+  // A response has been received for a resource request.
+  virtual void DidGetResourceResponseStart(
+      const ResourceRequestDetails& details) {}
+
+  // A redirect was received while requesting a resource.
+  virtual void DidGetRedirectForResourceRequest(
+      const ResourceRedirectDetails& details) {}
 
   // The RenderView was navigated to a different page.
   virtual void DidNavigate(RenderViewHost* render_view_host,
@@ -239,9 +257,13 @@ class CONTENT_EXPORT RenderViewHostDelegate {
                               bool user_gesture) {}
 
   // The page wants to transfer the request to a new renderer.
+  // |redirect_chain| contains any redirect URLs (excluding |url|) that happened
+  // before the transfer.
   virtual void RequestTransferURL(
       const GURL& url,
+      const std::vector<GURL>& redirect_chain,
       const Referrer& referrer,
+      PageTransition page_transition,
       WindowOpenDisposition disposition,
       int64 source_frame_id,
       const GlobalRequestID& old_request_id,
@@ -299,6 +321,7 @@ class CONTENT_EXPORT RenderViewHostDelegate {
   // Notification that the renderer has become unresponsive. The
   // delegate can use this notification to show a warning to the user.
   virtual void RendererUnresponsive(RenderViewHost* render_view_host,
+                                    bool is_during_before_unload,
                                     bool is_during_unload) {}
 
   // Notification that a previously unresponsive renderer has become
@@ -419,6 +442,13 @@ class CONTENT_EXPORT RenderViewHostDelegate {
   // create the SessionStorageNamespace on the fly.
   virtual SessionStorageNamespace* GetSessionStorageNamespace(
       SiteInstance* instance);
+
+  // Returns the FrameTree the render view should use. Guaranteed to be constant
+  // for the lifetime of the render view.
+  //
+  // TODO(ajwong): Remove once the main frame RenderFrameHost is no longer
+  // created by the RenderViewHost.
+  virtual FrameTree* GetFrameTree();
 
  protected:
   virtual ~RenderViewHostDelegate() {}

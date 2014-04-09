@@ -12,7 +12,7 @@ namespace gfx {
 
 class GL_EXPORT GLImageShm : public GLImage {
  public:
-  explicit GLImageShm(gfx::Size size);
+  GLImageShm(gfx::Size size, unsigned internalformat);
 
   bool Initialize(gfx::GpuMemoryBufferHandle buffer);
 
@@ -21,6 +21,8 @@ class GL_EXPORT GLImageShm : public GLImage {
   virtual gfx::Size GetSize() OVERRIDE;
   virtual bool BindTexImage() OVERRIDE;
   virtual void ReleaseTexImage() OVERRIDE;
+  virtual void WillUseTexImage() OVERRIDE;
+  virtual void DidUseTexImage() OVERRIDE;
 
  protected:
   virtual ~GLImageShm();
@@ -28,6 +30,7 @@ class GL_EXPORT GLImageShm : public GLImage {
  private:
   scoped_ptr<base::SharedMemory> shared_memory_;
   gfx::Size size_;
+  unsigned internalformat_;
 
   DISALLOW_COPY_AND_ASSIGN(GLImageShm);
 };

@@ -14,7 +14,7 @@
 #include "third_party/WebKit/public/platform/WebGestureCurve.h"
 #include "third_party/WebKit/public/platform/WebPoint.h"
 #include "third_party/WebKit/public/web/WebInputEvent.h"
-#include "ui/base/latency_info.h"
+#include "ui/events/latency_info.h"
 
 using WebKit::WebActiveWheelFlingParameters;
 using WebKit::WebFloatPoint;
@@ -59,10 +59,10 @@ class MockInputHandler : public cc::InputHandler {
   virtual void StartPageScaleAnimation(gfx::Vector2d target_offset,
                                        bool anchor_point,
                                        float page_scale,
-                                       base::TimeTicks start_time,
                                        base::TimeDelta duration) OVERRIDE {}
 
   virtual void NotifyCurrentFlingVelocity(gfx::Vector2dF velocity) OVERRIDE {}
+  virtual void MouseMoveAt(gfx::Point mouse_position) OVERRIDE {}
 
   virtual bool HaveTouchEventHandlersAt(gfx::Point point) OVERRIDE {
     return false;

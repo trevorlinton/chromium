@@ -39,6 +39,13 @@ bool ManagementPolicy::Provider::MustRemainEnabled(const Extension* extension,
   return false;
 }
 
+bool ManagementPolicy::Provider::MustRemainDisabled(
+    const Extension* extension,
+    Extension::DisableReason* reason,
+    string16* error) const {
+  return false;
+}
+
 void ManagementPolicy::RegisterProvider(Provider* provider) {
   providers_.insert(provider);
 }
@@ -49,53 +56,30 @@ void ManagementPolicy::UnregisterProvider(Provider* provider) {
 
 bool ManagementPolicy::UserMayLoad(const Extension* extension,
                                    string16* error) const {
-  for (ProviderList::const_iterator it = providers_.begin();
-       it != providers_.end(); ++it) {
-    if (!(*it)->UserMayLoad(extension, error)) {
-      std::string id;
-      std::string name;
-      GetExtensionNameAndId(extension, &name, &id);
-      DVLOG(1) << "Installation of extension " << name
-               << " (" << id << ")"
-               << " prohibited by " << (*it)->GetDebugPolicyProviderName();
-      return false;
-    }
-  }
-  return true;
+  return ApplyToProviderList(&Provider::UserMayLoad, "Installation",
+                             true, extension, error);
 }
 
 bool ManagementPolicy::UserMayModifySettings(const Extension* extension,
                                              string16* error) const {
-  for (ProviderList::const_iterator it = providers_.begin();
-       it != providers_.end(); ++it) {
-    if (!(*it)->UserMayModifySettings(extension, error)) {
-      std::string id;
-      std::string name;
-      GetExtensionNameAndId(extension, &name, &id);
-      DVLOG(1) << "Modification of extension " << name
-               << " (" << id << ")"
-               << " prohibited by " << (*it)->GetDebugPolicyProviderName();
-      return false;
-    }
-  }
-  return true;
+  return ApplyToProviderList(&Provider::UserMayModifySettings, "Modification",
+                             true, extension, error);
 }
 
 bool ManagementPolicy::MustRemainEnabled(const Extension* extension,
                                          string16* error) const {
+  return ApplyToProviderList(&Provider::MustRemainEnabled, "Disabling",
+                             false, extension, error);
+}
+
+bool ManagementPolicy::MustRemainDisabled(const Extension* extension,
+                                          Extension::DisableReason* reason,
+                                          string16* error) const {
   for (ProviderList::const_iterator it = providers_.begin();
-       it != providers_.end(); ++it) {
-    if ((*it)->MustRemainEnabled(extension, error)) {
-      std::string id;
-      std::string name;
-      GetExtensionNameAndId(extension, &name, &id);
-      DVLOG(1) << "Extension " << name
-               << " (" << id << ")"
-               << " required to remain enabled by "
-               << (*it)->GetDebugPolicyProviderName();
+       it != providers_.end(); ++it)
+    if ((*it)->MustRemainDisabled(extension, reason, error))
       return true;
-    }
-  }
+
   return false;
 }
 
@@ -105,6 +89,28 @@ void ManagementPolicy::UnregisterAllProviders() {
 
 int ManagementPolicy::GetNumProviders() const {
   return providers_.size();
+}
+
+bool ManagementPolicy::ApplyToProviderList(ProviderFunction function,
+                                           const char* debug_operation_name,
+                                           bool normal_result,
+                                           const Extension* extension,
+                                           string16* error) const {
+  for (ProviderList::const_iterator it = providers_.begin();
+       it != providers_.end(); ++it) {
+    const Provider* provider = *it;
+    bool result = (provider->*function)(extension, error);
+    if (result != normal_result) {
+      std::string id;
+      std::string name;
+      GetExtensionNameAndId(extension, &name, &id);
+      DVLOG(1) << debug_operation_name << " of extension " << name
+               << " (" << id << ")"
+               << " prohibited by " << provider->GetDebugPolicyProviderName();
+      return !normal_result;
+    }
+  }
+  return normal_result;
 }
 
 }  // namespace extensions

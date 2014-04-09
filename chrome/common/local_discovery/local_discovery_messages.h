@@ -4,6 +4,7 @@
 
 // Defines local discovery messages between the browser and utility process.
 
+#include "base/file_descriptor_posix.h"
 #include "chrome/common/local_discovery/service_discovery_client.h"
 #include "ipc/ipc_message_macros.h"
 
@@ -24,6 +25,12 @@ IPC_ENUM_TRAITS(net::AddressFamily)
 //------------------------------------------------------------------------------
 // Utility process messages:
 // These are messages from the browser to the utility process.
+
+#if defined(OS_POSIX)
+IPC_MESSAGE_CONTROL2(LocalDiscoveryMsg_SetSockets,
+                     base::FileDescriptor /* socket4 */,
+                     base::FileDescriptor /* socket6 */)
+#endif  // OS_POSIX
 
 // Creates watcher and starts listening in utility process.
 IPC_MESSAGE_CONTROL2(LocalDiscoveryMsg_StartWatcher,
@@ -58,9 +65,16 @@ IPC_MESSAGE_CONTROL3(LocalDiscoveryMsg_ResolveLocalDomain,
 IPC_MESSAGE_CONTROL1(LocalDiscoveryMsg_DestroyLocalDomainResolver,
                      uint64 /* id */)
 
+// Stops local discovery in utility process. http://crbug.com/268466.
+IPC_MESSAGE_CONTROL0(LocalDiscoveryMsg_ShutdownLocalDiscovery)
+
+
 //------------------------------------------------------------------------------
 // Utility process host messages:
 // These are messages from the utility process to the browser.
+
+// Notifies browser process if process failed.
+IPC_MESSAGE_CONTROL0(LocalDiscoveryHostMsg_Error)
 
 // Notifies browser process about new services.
 IPC_MESSAGE_CONTROL3(LocalDiscoveryHostMsg_WatcherCallback,
@@ -76,8 +90,9 @@ IPC_MESSAGE_CONTROL3(
     local_discovery::ServiceDescription /* description */)
 
 // Notifies browser process about local domain resolution results.
-IPC_MESSAGE_CONTROL3(
+IPC_MESSAGE_CONTROL4(
     LocalDiscoveryHostMsg_LocalDomainResolverCallback,
     uint64 /* id */,
     bool /* success */,
-    net::IPAddressNumber /* ip_address */)
+    net::IPAddressNumber /* ip_address_ipv4 */,
+    net::IPAddressNumber /* ip_address_ipv6 */)

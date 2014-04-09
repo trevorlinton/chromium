@@ -2,13 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/chromeos/login/screen_locker.h"
+
 #include "base/command_line.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/chromeos/cros/cros_in_process_browser_test.h"
 #include "chrome/browser/chromeos/login/mock_authenticator.h"
-#include "chrome/browser/chromeos/login/screen_locker.h"
 #include "chrome/browser/chromeos/login/screen_locker_tester.h"
 #include "chrome/browser/chromeos/login/user_manager.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -16,10 +16,11 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/fullscreen/fullscreen_controller.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "chromeos/chromeos_switches.h"
+#include "chromeos/dbus/fake_dbus_thread_manager.h"
 #include "chromeos/dbus/fake_session_manager_client.h"
-#include "chromeos/dbus/mock_dbus_thread_manager_without_gmock.h"
 #include "content/public/browser/notification_service.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -88,7 +89,7 @@ class Waiter : public content::NotificationObserver {
 
 namespace chromeos {
 
-class ScreenLockerTest : public CrosInProcessBrowserTest {
+class ScreenLockerTest : public InProcessBrowserTest {
  public:
   ScreenLockerTest() : fake_session_manager_client_(NULL) {
   }
@@ -115,12 +116,12 @@ class ScreenLockerTest : public CrosInProcessBrowserTest {
 
  private:
   virtual void SetUpInProcessBrowserTestFixture() OVERRIDE {
-    MockDBusThreadManagerWithoutGMock* mock_dbus_thread_manager =
-        new MockDBusThreadManagerWithoutGMock;
-    DBusThreadManager::InitializeForTesting(mock_dbus_thread_manager);
-    CrosInProcessBrowserTest::SetUpInProcessBrowserTestFixture();
+    FakeDBusThreadManager* fake_dbus_thread_manager =
+        new FakeDBusThreadManager;
+    DBusThreadManager::InitializeForTesting(fake_dbus_thread_manager);
+    InProcessBrowserTest::SetUpInProcessBrowserTestFixture();
     fake_session_manager_client_ =
-        mock_dbus_thread_manager->fake_session_manager_client();
+        fake_dbus_thread_manager->fake_session_manager_client();
     zero_duration_mode_.reset(new ui::ScopedAnimationDurationScaleMode(
         ui::ScopedAnimationDurationScaleMode::ZERO_DURATION));
   }
@@ -158,17 +159,13 @@ IN_PROC_BROWSER_TEST_F(ScreenLockerTest, TestBasic) {
   EXPECT_TRUE(tester->IsLocked());
   tester->EnterPassword("pass");
   content::RunAllPendingInMessageLoop();
-  // Successful authentication simply send a unlock request to PowerManager.
-  EXPECT_TRUE(tester->IsLocked());
+  // Successful authentication clears the lock screen and tells the
+  // SessionManager to announce this over DBus.
+  EXPECT_FALSE(tester->IsLocked());
   EXPECT_EQ(
       1,
       fake_session_manager_client_->notify_lock_screen_shown_call_count());
 
-  // Emulate LockScreen request from SessionManager.
-  // TODO(oshima): Find out better way to handle this in mock.
-  ScreenLocker::Hide();
-  content::RunAllPendingInMessageLoop();
-  EXPECT_FALSE(tester->IsLocked());
   EXPECT_TRUE(VerifyLockScreenDismissed());
 }
 
@@ -195,8 +192,6 @@ IN_PROC_BROWSER_TEST_F(ScreenLockerTest, TestFullscreenExit) {
 
   tester->InjectMockAuthenticator(UserManager::kStubUser, "pass");
   tester->EnterPassword("pass");
-  content::RunAllPendingInMessageLoop();
-  ScreenLocker::Hide();
   content::RunAllPendingInMessageLoop();
   EXPECT_FALSE(tester->IsLocked());
   EXPECT_TRUE(VerifyLockScreenDismissed());

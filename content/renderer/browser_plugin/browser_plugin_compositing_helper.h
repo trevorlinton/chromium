@@ -6,6 +6,7 @@
 #define  CONTENT_RENDERER_BROWSER_PLUGIN_BROWSER_PLUGIN_COMPOSITING_HELPER_H_
 
 #include <string>
+#include <vector>
 
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
@@ -22,6 +23,8 @@ class CompositorFrame;
 class Layer;
 class SolidColorLayer;
 class TextureLayer;
+class DelegatedFrameProvider;
+class DelegatedFrameResourceCollection;
 class DelegatedRendererLayer;
 }
 
@@ -92,8 +95,13 @@ class CONTENT_EXPORT BrowserPluginCompositingHelper :
   int last_host_id_;
   bool last_mailbox_valid_;
   bool ack_pending_;
+  bool software_ack_pending_;
+  std::vector<unsigned> unacked_software_frames_;
 
   gfx::Size buffer_size_;
+
+  scoped_refptr<cc::DelegatedFrameResourceCollection> resource_collection_;
+  scoped_refptr<cc::DelegatedFrameProvider> frame_provider_;
 
   scoped_refptr<cc::SolidColorLayer> background_layer_;
   scoped_refptr<cc::TextureLayer> texture_layer_;

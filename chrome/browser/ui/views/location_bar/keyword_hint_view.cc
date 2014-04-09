@@ -23,20 +23,19 @@
 
 
 KeywordHintView::KeywordHintView(Profile* profile,
-                                 const gfx::Font& font,
-                                 int font_y_offset,
+                                 const gfx::FontList& font_list,
                                  SkColor text_color,
                                  SkColor background_color)
     : profile_(profile),
       tab_image_(new views::ImageView()) {
   leading_label_ =
-      CreateLabel(font, font_y_offset, text_color, background_color);
+      CreateLabel(font_list, text_color, background_color);
   tab_image_->SetImage(
       ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
           IDR_OMNIBOX_KEYWORD_HINT_TAB));
   AddChildView(tab_image_);
   trailing_label_ =
-      CreateLabel(font, font_y_offset, text_color, background_color);
+      CreateLabel(font_list, text_color, background_color);
 }
 
 KeywordHintView::~KeywordHintView() {
@@ -84,22 +83,19 @@ void KeywordHintView::Layout() {
   bool show_labels = (width() != tab_width);
   gfx::Size leading_size(leading_label_->GetPreferredSize());
   leading_label_->SetBounds(0, 0, show_labels ? leading_size.width() : 0,
-                            leading_size.height());
+                            height());
   tab_image_->SetBounds(leading_label_->bounds().right(), 0, tab_width,
                         height());
   gfx::Size trailing_size(trailing_label_->GetPreferredSize());
   trailing_label_->SetBounds(tab_image_->bounds().right(), 0,
                              show_labels ? trailing_size.width() : 0,
-                             trailing_size.height());
+                             height());
 }
 
-views::Label* KeywordHintView::CreateLabel(const gfx::Font& font,
-                                           int font_y_offset,
+views::Label* KeywordHintView::CreateLabel(const gfx::FontList& font_list,
                                            SkColor text_color,
                                            SkColor background_color) {
-  views::Label* label = new views::Label();
-  label->set_border(views::Border::CreateEmptyBorder(font_y_offset, 0, 0, 0));
-  label->SetFont(font);
+  views::Label* label = new views::Label(string16(), font_list);
   label->SetEnabledColor(text_color);
   label->SetBackgroundColor(background_color);
   AddChildView(label);

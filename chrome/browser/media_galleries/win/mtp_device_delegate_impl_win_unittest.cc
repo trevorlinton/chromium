@@ -28,8 +28,6 @@
 #include "content/public/browser/web_contents.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace chrome {
-
 namespace {
 
 typedef std::map<MediaGalleryPrefId, MediaFileSystemInfo> FSInfoMap;
@@ -63,7 +61,7 @@ class MTPDeviceDelegateImplWinTest : public ChromeRenderViewHostTestHarness {
                         bool media_device);
 
   // Pointer to the storage monitor. Owned by TestingBrowserProcess.
-  test::TestStorageMonitorWin* monitor_;
+  TestStorageMonitorWin* monitor_;
   scoped_refptr<extensions::Extension> extension_;
 
   EnsureMediaDirectoriesExists media_directories_;
@@ -72,22 +70,21 @@ class MTPDeviceDelegateImplWinTest : public ChromeRenderViewHostTestHarness {
 void MTPDeviceDelegateImplWinTest::SetUp() {
   ChromeRenderViewHostTestHarness::SetUp();
 
-  test::TestStorageMonitor::RemoveSingleton();
-  test::TestPortableDeviceWatcherWin* portable_device_watcher =
-      new test::TestPortableDeviceWatcherWin;
-  test::TestVolumeMountWatcherWin* mount_watcher =
-      new test::TestVolumeMountWatcherWin;
+  TestStorageMonitor::RemoveSingleton();
+  TestPortableDeviceWatcherWin* portable_device_watcher =
+      new TestPortableDeviceWatcherWin;
+  TestVolumeMountWatcherWin* mount_watcher = new TestVolumeMountWatcherWin;
   portable_device_watcher->set_use_dummy_mtp_storage_info(true);
-  scoped_ptr<test::TestStorageMonitorWin> monitor(
-      new test::TestStorageMonitorWin(
-          mount_watcher, portable_device_watcher));
+  scoped_ptr<TestStorageMonitorWin> monitor(
+      new TestStorageMonitorWin(mount_watcher, portable_device_watcher));
   TestingBrowserProcess* browser_process = TestingBrowserProcess::GetGlobal();
   DCHECK(browser_process);
   monitor_ = monitor.get();
   browser_process->SetStorageMonitor(monitor.Pass());
 
   base::RunLoop runloop;
-  monitor_->EnsureInitialized(runloop.QuitClosure());
+  browser_process->media_file_system_registry()->GetPreferences(profile())->
+      EnsureInitialized(runloop.QuitClosure());
   runloop.Run();
 
   extensions::TestExtensionSystem* extension_system(
@@ -105,7 +102,7 @@ void MTPDeviceDelegateImplWinTest::SetUp() {
 void MTPDeviceDelegateImplWinTest::TearDown() {
   // Windows storage monitor must be destroyed on the same thread
   // as construction.
-  test::TestStorageMonitor::RemoveSingleton();
+  TestStorageMonitor::RemoveSingleton();
 
   ChromeRenderViewHostTestHarness::TearDown();
 }
@@ -151,7 +148,7 @@ void MTPDeviceDelegateImplWinTest::CheckGalleryInfo(
 TEST_F(MTPDeviceDelegateImplWinTest, GalleryNameMTP) {
   base::FilePath location(
       PortableDeviceWatcherWin::GetStoragePathFromStorageId(
-          test::TestPortableDeviceWatcherWin::kStorageUniqueIdA));
+          TestPortableDeviceWatcherWin::kStorageUniqueIdA));
   AttachDevice(StorageInfo::MTP_OR_PTP, "mtp_fake_id", location);
 
   content::RenderViewHost* rvh = web_contents()->GetRenderViewHost();
@@ -175,5 +172,3 @@ TEST_F(MTPDeviceDelegateImplWinTest, GalleryNameMTP) {
   }
   EXPECT_TRUE(checked);
 }
-
-}  // namespace chrome

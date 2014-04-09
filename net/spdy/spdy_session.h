@@ -28,7 +28,6 @@
 #include "net/socket/stream_socket.h"
 #include "net/spdy/buffered_spdy_framer.h"
 #include "net/spdy/spdy_buffer.h"
-#include "net/spdy/spdy_credential_state.h"
 #include "net/spdy/spdy_framer.h"
 #include "net/spdy/spdy_header_block.h"
 #include "net/spdy/spdy_protocol.h"
@@ -157,7 +156,7 @@ class NET_EXPORT_PRIVATE SpdyStreamRequest {
 
   // Called by |session_| when the stream attempt has finished
   // successfully.
-  void OnRequestCompleteSuccess(base::WeakPtr<SpdyStream>* stream);
+  void OnRequestCompleteSuccess(const base::WeakPtr<SpdyStream>& stream);
 
   // Called by |session_| when the stream attempt has finished with an
   // error. Also called with ERR_ABORTED if |session_| is destroyed
@@ -172,6 +171,7 @@ class NET_EXPORT_PRIVATE SpdyStreamRequest {
 
   void Reset();
 
+  base::WeakPtrFactory<SpdyStreamRequest> weak_ptr_factory_;
   SpdyStreamType type_;
   base::WeakPtr<SpdySession> session_;
   base::WeakPtr<SpdyStream> stream_;
@@ -185,7 +185,7 @@ class NET_EXPORT_PRIVATE SpdyStreamRequest {
 
 class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
                                public SpdyFramerDebugVisitorInterface,
-                               public LayeredPool {
+                               public HigherLayeredPool {
  public:
   // TODO(akalin): Use base::TickClock when it becomes available.
   typedef base::TimeTicks (*TimeFunc)(void);
@@ -206,7 +206,6 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
               const base::WeakPtr<HttpServerProperties>& http_server_properties,
               bool verify_domain_authentication,
               bool enable_sending_initial_data,
-              bool enable_credential_frames,
               bool enable_compression,
               bool enable_ping_based_connection_checking,
               NextProto default_protocol,
@@ -261,10 +260,7 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
                              int certificate_error_code);
 
   // Returns the protocol used by this session. Always between
-  // kProtoSPDY2 and kProtoSPDYMaximumVersion.
-  //
-  // TODO(akalin): Change the lower bound to kProtoSPDYMinimumVersion
-  // once we stop supporting SPDY/1.
+  // kProtoSPDYMinimumVersion and kProtoSPDYMaximumVersion.
   NextProto protocol() const { return protocol_; }
 
   // Check to see if this SPDY session can support an additional domain.
@@ -293,15 +289,6 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
       uint8 credential_slot,
       SpdyControlFlags flags,
       const SpdyHeaderBlock& headers);
-
-  // Tries to create a CREDENTIAL frame. If successful, fills in
-  // |credential_frame| and returns OK. Returns the error (guaranteed
-  // to not be ERR_IO_PENDING) otherwise.
-  int CreateCredentialFrame(const std::string& origin,
-                            const std::string& key,
-                            const std::string& cert,
-                            RequestPriority priority,
-                            scoped_ptr<SpdyFrame>* credential_frame);
 
   // Creates and returns a SpdyBuffer holding a data frame with the
   // given data. May return NULL if stalled by flow control.
@@ -342,10 +329,6 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   // Fills SSL Certificate Request info |cert_request_info| and returns
   // true when SSL is in use.
   bool GetSSLCertRequestInfo(SSLCertRequestInfo* cert_request_info);
-
-  // Returns the ServerBoundCertService used by this Socket, or NULL
-  // if server bound certs are not supported in this session.
-  ServerBoundCertService* GetServerBoundCertService() const;
 
   // Send a WINDOW_UPDATE frame for a stream. Called by a stream
   // whenever receive window size is increased.
@@ -409,7 +392,8 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   size_t num_created_streams() const { return created_streams_.size(); }
 
   size_t pending_create_stream_queue_size(RequestPriority priority) const {
-    DCHECK_LT(priority, NUM_PRIORITIES);
+    DCHECK_GE(priority, MINIMUM_PRIORITY);
+    DCHECK_LE(priority, MAXIMUM_PRIORITY);
     return pending_create_stream_queues_[priority].size();
   }
 
@@ -440,11 +424,6 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
 
   int GetPeerAddress(IPEndPoint* address) const;
   int GetLocalAddress(IPEndPoint* address) const;
-
-  // Returns true if requests on this session require credentials.
-  bool NeedsCredentials() const;
-
-  SpdyCredentialState* credential_state() { return &credential_state_; }
 
   // Adds |alias| to set of aliases associated with this session.
   void AddPooledAlias(const SpdySessionKey& alias_key);
@@ -479,7 +458,7 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   // Must be used only by |pool_|.
   base::WeakPtr<SpdySession> GetWeakPtr();
 
-  // LayeredPool implementation:
+  // HigherLayeredPool implementation:
   virtual bool CloseOneIdleConnection() OVERRIDE;
 
  private:
@@ -501,8 +480,8 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, SessionFlowControlNoSendLeaks);
   FRIEND_TEST_ALL_PREFIXES(SpdySessionTest, SessionFlowControlEndToEnd);
 
-  typedef std::deque<SpdyStreamRequest*> PendingStreamRequestQueue;
-  typedef std::set<SpdyStreamRequest*> PendingStreamRequestCompletionSet;
+  typedef std::deque<base::WeakPtr<SpdyStreamRequest> >
+      PendingStreamRequestQueue;
 
   struct ActiveStreamInfo {
     ActiveStreamInfo();
@@ -574,7 +553,7 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   // |request->OnRequestComplete{Success,Failure}()| will be called
   // when the stream is created (unless it is cancelled). Otherwise,
   // no stream is created and the error is returned.
-  int TryCreateStream(SpdyStreamRequest* request,
+  int TryCreateStream(const base::WeakPtr<SpdyStreamRequest>& request,
                       base::WeakPtr<SpdyStream>* stream);
 
   // Actually create a stream into |stream|. Returns OK if successful;
@@ -584,7 +563,11 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
 
   // Called by SpdyStreamRequest to remove |request| from the stream
   // creation queue.
-  void CancelStreamRequest(SpdyStreamRequest* request);
+  void CancelStreamRequest(const base::WeakPtr<SpdyStreamRequest>& request);
+
+  // Returns the next pending stream request to process, or NULL if
+  // there is none.
+  base::WeakPtr<SpdyStreamRequest> GetNextPendingStreamRequest();
 
   // Called when there is room to create more streams (e.g., a stream
   // was closed). Processes as many pending stream requests as
@@ -783,7 +766,8 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
 
   // Invokes a user callback for stream creation.  We provide this method so it
   // can be deferred to the MessageLoop, so we avoid re-entrancy problems.
-  void CompleteStreamRequest(SpdyStreamRequest* pending_request);
+  void CompleteStreamRequest(
+      const base::WeakPtr<SpdyStreamRequest>& pending_request);
 
   // Remove old unclaimed pushed streams.
   void DeleteExpiredPushedStreams();
@@ -960,12 +944,6 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   // not yet been satisfied.
   PendingStreamRequestQueue pending_create_stream_queues_[NUM_PRIORITIES];
 
-  // A set of requests that are waiting to be completed (i.e., for the
-  // stream to actually be created). This is necessary since we kick
-  // off the stream creation asynchronously, and so the request may be
-  // cancelled before the asynchronous task to create the stream runs.
-  PendingStreamRequestCompletionSet pending_stream_request_completions_;
-
   // Map from stream id to all active streams.  Streams are active in the sense
   // that they have a consumer (typically SpdyNetworkTransaction and regardless
   // of whether or not there is currently any ongoing IO [might be waiting for
@@ -1096,18 +1074,12 @@ class NET_EXPORT SpdySession : public BufferedSpdyFramerVisitorInterface,
   // Outside of tests, these should always be true.
   bool verify_domain_authentication_;
   bool enable_sending_initial_data_;
-  bool enable_credential_frames_;
   bool enable_compression_;
   bool enable_ping_based_connection_checking_;
 
-  // The SPDY protocol used. Always between kProtoSPDY2 and
+  // The SPDY protocol used. Always between kProtoSPDYMinimumVersion and
   // kProtoSPDYMaximumVersion.
-  //
-  // TODO(akalin): Change the lower bound to kProtoSPDYMinimumVersion
-  // once we stop supporting SPDY/1.
   NextProto protocol_;
-
-  SpdyCredentialState credential_state_;
 
   // |connection_at_risk_of_loss_time_| is an optimization to avoid sending
   // wasteful preface pings (when we just got some data).

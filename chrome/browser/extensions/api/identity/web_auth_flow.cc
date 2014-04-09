@@ -16,6 +16,7 @@
 #include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/common/extensions/api/identity_private.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
@@ -37,6 +38,8 @@ using content::WebContents;
 using content::WebContentsObserver;
 
 namespace extensions {
+
+namespace identity_private = api::identity_private;
 
 WebAuthFlow::WebAuthFlow(
     Delegate* delegate,
@@ -86,7 +89,7 @@ void WebAuthFlow::Start() {
     args->AppendString("silent");
 
   scoped_ptr<Event> event(
-      new Event("identityPrivate.onWebFlowRequest", args.Pass()));
+      new Event(identity_private::OnWebFlowRequest::kEventName, args.Pass()));
   event->restrict_to_profile = profile_;
   ExtensionSystem* system = ExtensionSystem::Get(profile_);
 
@@ -220,6 +223,7 @@ void WebAuthFlow::DidStartProvisionalLoadForFrame(
 }
 
 void WebAuthFlow::DidFailProvisionalLoad(int64 frame_id,
+                                         const string16& frame_unique_name,
                                          bool is_main_frame,
                                          const GURL& validated_url,
                                          int error_code,

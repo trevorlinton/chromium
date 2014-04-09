@@ -92,7 +92,6 @@ void RunEnsureFileExistsCallback(
   callback.Run(error, created);
 }
 
-
 // Runs |callback| with the arguments based on the given arguments.
 void RunCreateSnapshotFileCallback(
     const AsyncFileUtil::CreateSnapshotFileCallback& callback,
@@ -278,6 +277,8 @@ void AsyncFileUtil::CopyFileLocal(
     scoped_ptr<fileapi::FileSystemOperationContext> context,
     const fileapi::FileSystemURL& src_url,
     const fileapi::FileSystemURL& dest_url,
+    CopyOrMoveOption option,
+    const CopyFileProgressCallback& progress_callback,
     const StatusCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
 
@@ -290,9 +291,11 @@ void AsyncFileUtil::CopyFileLocal(
 
   PostFileSystemCallback(
       file_system_getter_,
-      base::Bind(&fileapi_internal::Copy,
-                 src_path, dest_path,
-                 google_apis::CreateRelayCallback(callback)),
+      base::Bind(
+          &fileapi_internal::Copy,
+          src_path, dest_path,
+          option == fileapi::FileSystemOperation::OPTION_PRESERVE_LAST_MODIFIED,
+          google_apis::CreateRelayCallback(callback)),
       base::Bind(callback, base::PLATFORM_FILE_ERROR_FAILED));
 }
 
@@ -300,6 +303,7 @@ void AsyncFileUtil::MoveFileLocal(
     scoped_ptr<fileapi::FileSystemOperationContext> context,
     const fileapi::FileSystemURL& src_url,
     const fileapi::FileSystemURL& dest_url,
+    CopyOrMoveOption option,
     const StatusCallback& callback) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
 
@@ -312,9 +316,11 @@ void AsyncFileUtil::MoveFileLocal(
 
   PostFileSystemCallback(
       file_system_getter_,
-      base::Bind(&fileapi_internal::Move,
-                 src_path, dest_path,
-                 google_apis::CreateRelayCallback(callback)),
+      base::Bind(
+          &fileapi_internal::Move,
+          src_path, dest_path,
+          option == fileapi::FileSystemOperation::OPTION_PRESERVE_LAST_MODIFIED,
+          google_apis::CreateRelayCallback(callback)),
       base::Bind(callback, base::PLATFORM_FILE_ERROR_FAILED));
 }
 

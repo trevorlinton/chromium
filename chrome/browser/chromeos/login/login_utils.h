@@ -70,7 +70,6 @@ class LoginUtils {
   virtual void PrepareProfile(
       const UserContext& user_context,
       const std::string& display_email,
-      bool using_oauth,
       bool has_cookies,
       bool has_active_session,
       Delegate* delegate) = 0;
@@ -101,9 +100,6 @@ class LoginUtils {
 
   // Restores authentication session after crash.
   virtual void RestoreAuthenticationSession(Profile* profile) = 0;
-
-  // Stops background fetchers.
-  virtual void StopBackgroundFetchers() = 0;
 
   // Initialize RLZ.
   virtual void InitRlzDelayed(Profile* user_profile) = 0;

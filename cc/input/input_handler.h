@@ -96,6 +96,8 @@ class CC_EXPORT InputHandler {
 
   virtual void NotifyCurrentFlingVelocity(gfx::Vector2dF velocity) = 0;
 
+  virtual void MouseMoveAt(gfx::Point mouse_position) = 0;
+
   // Stop scrolling the selected layer. Should only be called if ScrollBegin()
   // returned ScrollStarted.
   virtual void ScrollEnd() = 0;
@@ -117,7 +119,6 @@ class CC_EXPORT InputHandler {
   virtual void StartPageScaleAnimation(gfx::Vector2d target_offset,
                                        bool anchor_point,
                                        float page_scale,
-                                       base::TimeTicks start_time,
                                        base::TimeDelta duration) = 0;
 
   // Request another callback to InputHandlerClient::Animate().

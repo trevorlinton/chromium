@@ -29,7 +29,9 @@ namespace autofill {
                                                     NSTextViewDelegate> {
  @private
   base::scoped_nsobject<GTMWidthBasedTweaker> buttonContainer_;
+  base::scoped_nsobject<NSImageView> buttonStripImage_;
   base::scoped_nsobject<NSButton> saveInChromeCheckbox_;
+  base::scoped_nsobject<NSImageView> saveInChromeTooltip_;
   base::scoped_nsobject<AutofillDetailsContainer> detailsContainer_;
   base::scoped_nsobject<HyperlinkTextView> legalDocumentsView_;
   base::scoped_nsobject<AutofillNotificationContainer> notificationContainer_;
@@ -68,8 +70,14 @@ namespace autofill {
 // Called when there are changes to the notification area.
 - (void)updateNotificationArea;
 
+// Called when the error bubble needs to be updated.
+- (void)updateErrorBubble;
+
 // Validates form input data.
 - (BOOL)validate;
+
+// Updates status of "save in Chrome" checkbox.
+- (void)updateSaveInChrome;
 
 @end
 
@@ -78,6 +86,8 @@ namespace autofill {
 @interface AutofillMainContainer (Testing)
 
 @property(readonly, nonatomic) NSButton* saveInChromeCheckboxForTesting;
+@property(readonly, nonatomic) NSImageView* buttonStripImageForTesting;
+@property(readonly, nonatomic) NSImageView* saveInChromeTooltipForTesting;
 
 @end
 

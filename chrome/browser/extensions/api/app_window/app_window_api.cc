@@ -5,9 +5,9 @@
 #include "chrome/browser/extensions/api/app_window/app_window_api.h"
 
 #include "apps/app_window_contents.h"
-#include "apps/native_app_window.h"
 #include "apps/shell_window.h"
 #include "apps/shell_window_registry.h"
+#include "apps/ui/native_app_window.h"
 #include "base/command_line.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -18,6 +18,7 @@
 #include "chrome/browser/ui/apps/chrome_shell_window_delegate.h"
 #include "chrome/common/extensions/api/app_window.h"
 #include "chrome/common/extensions/features/feature_channel.h"
+#include "chrome/common/extensions/features/simple_feature.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_process_host.h"
@@ -31,7 +32,6 @@
 
 #if defined(USE_ASH)
 #include "ash/shell.h"
-#include "ash/wm/property_util.h"
 #include "ui/aura/root_window.h"
 #include "ui/aura/window.h"
 #endif
@@ -53,6 +53,8 @@ const char kHtmlFrameOption[] = "experimental-html";
 
 namespace {
 
+const int kUnboundedSize = apps::ShellWindow::SizeConstraints::kUnboundedSize;
+
 // Opens an inspector window and delays the response to the
 // AppWindowCreateFunction until the DevToolsWindow has finished loading, and is
 // ready to stop on breakpoints in the callback.
@@ -65,7 +67,7 @@ class DevToolsRestorer : public content::NotificationObserver {
         DevToolsWindow::ToggleDevToolsWindow(
             created_view,
             true /* force_open */,
-            DEVTOOLS_TOGGLE_ACTION_SHOW_CONSOLE);
+            DevToolsToggleAction::ShowConsole());
 
     registrar_.Add(
         this,
@@ -94,6 +96,7 @@ void SetCreateResultFromShellWindow(ShellWindow* window,
   result->SetBoolean("fullscreen", window->GetBaseWindow()->IsFullscreen());
   result->SetBoolean("minimized", window->GetBaseWindow()->IsMinimized());
   result->SetBoolean("maximized", window->GetBaseWindow()->IsMaximized());
+  result->SetBoolean("alwaysOnTop", window->GetBaseWindow()->IsAlwaysOnTop());
   base::DictionaryValue* boundsValue = new base::DictionaryValue();
   gfx::Rect bounds = window->GetClientBounds();
   boundsValue->SetInteger("left", bounds.x());
@@ -101,9 +104,38 @@ void SetCreateResultFromShellWindow(ShellWindow* window,
   boundsValue->SetInteger("width", bounds.width());
   boundsValue->SetInteger("height", bounds.height());
   result->Set("bounds", boundsValue);
+
+  const ShellWindow::SizeConstraints& size_constraints =
+      window->size_constraints();
+  gfx::Size min_size = size_constraints.GetMinimumSize();
+  gfx::Size max_size = size_constraints.GetMaximumSize();
+  if (min_size.width() != kUnboundedSize)
+    result->SetInteger("minWidth", min_size.width());
+  if (min_size.height() != kUnboundedSize)
+    result->SetInteger("minHeight", min_size.height());
+  if (max_size.width() != kUnboundedSize)
+    result->SetInteger("maxWidth", max_size.width());
+  if (max_size.height() != kUnboundedSize)
+    result->SetInteger("maxHeight", max_size.height());
 }
 
 }  // namespace
+
+// static
+bool AppWindowCreateFunction::AllowAlwaysOnTopWindows(
+    const std::string& extension_id) {
+  if (GetCurrentChannel() <= chrome::VersionInfo::CHANNEL_DEV)
+    return true;
+
+  const char* kWhitelist[] = {
+    "0F42756099D914A026DADFA182871C015735DD95",
+    "2D22CDB6583FD0A13758AEBE8B15E45208B4E9A7"
+  };
+  return SimpleFeature::IsIdInWhitelist(
+      extension_id,
+      std::set<std::string>(kWhitelist,
+                            kWhitelist + arraysize(kWhitelist)));
+}
 
 void AppWindowCreateFunction::SendDelayedResponse() {
   SendResponse(true);
@@ -133,11 +165,6 @@ bool AppWindowCreateFunction::RunImpl() {
   // with a hack in AppWindowCustomBindings::GetView().
   ShellWindow::CreateParams create_params;
   app_window::CreateWindowOptions* options = params->options.get();
-#if defined(USE_ASH)
-  bool force_maximize = ash::Shell::IsForcedMaximizeMode();
-#else
-  bool force_maximize = false;
-#endif
   if (options) {
     if (options->id.get()) {
       // TODO(mek): use URL if no id specified?
@@ -150,9 +177,9 @@ bool AppWindowCreateFunction::RunImpl() {
       create_params.window_key = *options->id;
 
       if (!options->singleton || *options->singleton) {
-        ShellWindow* window = apps::ShellWindowRegistry::Get(profile())->
-            GetShellWindowForAppAndKey(extension_id(),
-                                       create_params.window_key);
+        ShellWindow* window = apps::ShellWindowRegistry::Get(
+            GetProfile())->GetShellWindowForAppAndKey(extension_id(),
+                                                      create_params.window_key);
         if (window) {
           content::RenderViewHost* created_view =
               window->web_contents()->GetRenderViewHost();
@@ -164,7 +191,7 @@ bool AppWindowCreateFunction::RunImpl() {
 
           window->GetBaseWindow()->Show();
           base::DictionaryValue* result = new base::DictionaryValue;
-          result->Set("viewId", base::Value::CreateIntegerValue(view_id));
+          result->Set("viewId", new base::FundamentalValue(view_id));
           SetCreateResultFromShellWindow(window, result);
           result->SetBoolean("existingWindow", true);
           result->SetBoolean("injectTitlebar", false);
@@ -216,8 +243,9 @@ bool AppWindowCreateFunction::RunImpl() {
 
     if (options->frame.get()) {
       if (*options->frame == kHtmlFrameOption &&
-          CommandLine::ForCurrentProcess()->HasSwitch(
-              switches::kEnableExperimentalExtensionApis)) {
+          (GetExtension()->HasAPIPermission(APIPermission::kExperimental) ||
+           CommandLine::ForCurrentProcess()->HasSwitch(
+               switches::kEnableExperimentalExtensionApis))) {
         create_params.frame = ShellWindow::FRAME_NONE;
         inject_html_titlebar = true;
       } else if (*options->frame == kNoneFrameOption) {
@@ -228,8 +256,9 @@ bool AppWindowCreateFunction::RunImpl() {
     }
 
     if (options->transparent_background.get() &&
-        CommandLine::ForCurrentProcess()->HasSwitch(
-            switches::kEnableExperimentalExtensionApis)) {
+        (GetExtension()->HasAPIPermission(APIPermission::kExperimental) ||
+         CommandLine::ForCurrentProcess()->HasSwitch(
+             switches::kEnableExperimentalExtensionApis))) {
       create_params.transparent_background = *options->transparent_background;
     }
 
@@ -250,6 +279,10 @@ bool AppWindowCreateFunction::RunImpl() {
     if (options->resizable.get())
       create_params.resizable = *options->resizable.get();
 
+    if (options->always_on_top.get() &&
+        AllowAlwaysOnTopWindows(GetExtension()->id()))
+      create_params.always_on_top = *options->always_on_top.get();
+
     if (options->type != extensions::api::app_window::WINDOW_TYPE_PANEL) {
       switch (options->state) {
         case extensions::api::app_window::STATE_NONE:
@@ -265,38 +298,14 @@ bool AppWindowCreateFunction::RunImpl() {
           create_params.state = ui::SHOW_STATE_MINIMIZED;
           break;
       }
-    } else {
-      force_maximize = false;
     }
   }
 
   create_params.creator_process_id =
       render_view_host_->GetProcess()->GetID();
 
-  // Rather then maximizing the window after it was created, we maximize it
-  // immediately - that way the initial presentation is much smoother (no odd
-  // rectangles are shown temporarily in the added space). Note that suppressing
-  // animations does not help to remove the shown artifacts.
-#if USE_ASH
-  if (force_maximize && !create_params.maximum_size.IsEmpty()) {
-    // Check that the application is able to fill the monitor - if not don't
-    // maximize.
-    // TODO(skuhne): In case of multi monitor usage we should find out in
-    // advance on which monitor the window will be displayed (or be happy with
-    // a temporary bad frame upon creation).
-    gfx::Size size = ash::Shell::GetPrimaryRootWindow()->bounds().size();
-    if (size.width() > create_params.maximum_size.width() ||
-        size.height() > create_params.maximum_size.height())
-      force_maximize = false;
-  }
- #endif
-
-  if (force_maximize)
-    create_params.state = ui::SHOW_STATE_MAXIMIZED;
-
-  ShellWindow* shell_window = new ShellWindow(profile(),
-                                              new ChromeShellWindowDelegate(),
-                                              GetExtension());
+  ShellWindow* shell_window = new ShellWindow(
+      GetProfile(), new ChromeShellWindowDelegate(), GetExtension());
   shell_window->Init(url,
                      new apps::AppWindowContents(shell_window),
                      create_params);
@@ -311,15 +320,15 @@ bool AppWindowCreateFunction::RunImpl() {
     view_id = created_view->GetRoutingID();
 
   base::DictionaryValue* result = new base::DictionaryValue;
-  result->Set("viewId", base::Value::CreateIntegerValue(view_id));
+  result->Set("viewId", new base::FundamentalValue(view_id));
   result->Set("injectTitlebar",
-      base::Value::CreateBooleanValue(inject_html_titlebar));
-  result->Set("id", base::Value::CreateStringValue(shell_window->window_key()));
+      new base::FundamentalValue(inject_html_titlebar));
+  result->Set("id", new base::StringValue(shell_window->window_key()));
   SetCreateResultFromShellWindow(shell_window, result);
   SetResult(result);
 
-  if (apps::ShellWindowRegistry::Get(profile())->
-          HadDevToolsAttached(created_view)) {
+  if (apps::ShellWindowRegistry::Get(GetProfile())
+          ->HadDevToolsAttached(created_view)) {
     new DevToolsRestorer(this, created_view);
     return true;
   }

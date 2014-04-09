@@ -87,11 +87,6 @@ void PrefService::InitFromStorage(bool async) {
   }
 }
 
-bool PrefService::ReloadPersistentPrefs() {
-  return user_pref_store_->ReadPrefs() ==
-             PersistentPrefStore::PREF_READ_ERROR_NONE;
-}
-
 void PrefService::CommitPendingWrite() {
   DCHECK(CalledOnValidThread());
   user_pref_store_->CommitPendingWrite();
@@ -177,16 +172,29 @@ bool PrefService::HasPrefPath(const char* path) const {
   return pref && !pref->IsDefaultValue();
 }
 
-base::DictionaryValue* PrefService::GetPreferenceValues() const {
+scoped_ptr<base::DictionaryValue> PrefService::GetPreferenceValues() const {
   DCHECK(CalledOnValidThread());
-  base::DictionaryValue* out = new base::DictionaryValue;
+  scoped_ptr<base::DictionaryValue> out(new base::DictionaryValue);
   PrefRegistry::const_iterator i = pref_registry_->begin();
   for (; i != pref_registry_->end(); ++i) {
     const base::Value* value = GetPreferenceValue(i->first);
     DCHECK(value);
     out->Set(i->first, value->DeepCopy());
   }
-  return out;
+  return out.Pass();
+}
+
+scoped_ptr<base::DictionaryValue>
+PrefService::GetPreferenceValuesWithoutPathExpansion() const {
+  DCHECK(CalledOnValidThread());
+  scoped_ptr<base::DictionaryValue> out(new base::DictionaryValue);
+  PrefRegistry::const_iterator i = pref_registry_->begin();
+  for (; i != pref_registry_->end(); ++i) {
+    const base::Value* value = GetPreferenceValue(i->first);
+    DCHECK(value);
+    out->SetWithoutPathExpansion(i->first, value->DeepCopy());
+  }
+  return out.Pass();
 }
 
 const PrefService::Preference* PrefService::FindPreference(
@@ -287,6 +295,10 @@ const base::Value* PrefService::GetDefaultPrefValue(const char* path) const {
     return NULL;
   }
   return value;
+}
+
+void PrefService::MarkUserStoreNeedsEmptyValue(const std::string& key) const {
+  user_pref_store_->MarkNeedsEmptyValue(key);
 }
 
 const base::ListValue* PrefService::GetList(const char* path) const {

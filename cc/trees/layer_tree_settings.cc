@@ -16,28 +16,27 @@ LayerTreeSettings::LayerTreeSettings()
     : impl_side_painting(false),
       allow_antialiasing(true),
       throttle_frame_production(true),
-      begin_frame_scheduling_enabled(false),
+      begin_impl_frame_scheduling_enabled(false),
+      deadline_scheduling_enabled(true),
       using_synchronous_renderer_compositor(false),
       per_tile_painting_enabled(false),
       partial_swap_enabled(false),
-      cache_render_pass_contents(true),
       accelerated_animation_enabled(true),
       background_color_instead_of_checkerboard(false),
       show_overdraw_in_tracing(false),
       can_use_lcd_text(true),
       should_clear_root_render_pass(true),
-      use_linear_fade_scrollbar_animator(false),
+      scrollbar_animator(NoAnimator),
       scrollbar_linear_fade_delay_ms(300),
       scrollbar_linear_fade_length_ms(300),
-      solid_color_scrollbars(false),
       solid_color_scrollbar_color(SK_ColorWHITE),
-      solid_color_scrollbar_thickness_dip(-1),
       calculate_top_controls_position(false),
       use_memory_management(true),
       timeout_and_draw_when_animation_checkerboards(true),
+      maximum_number_of_failed_draws_before_draw_is_forced_(3),
       layer_transforms_should_scale_layer_contents(false),
       minimum_contents_scale(0.0625f),
-      low_res_contents_scale_factor(0.125f),
+      low_res_contents_scale_factor(0.25f),
       top_controls_height(0.f),
       top_controls_show_threshold(0.5f),
       top_controls_hide_threshold(0.5f),
@@ -56,11 +55,11 @@ LayerTreeSettings::LayerTreeSettings()
       force_direct_layer_drawing(false),
       strict_layer_property_change_checking(false),
       use_map_image(false),
-      compositor_name("ChromiumCompositor"),
-      ignore_root_layer_flings(false) {
-  // TODO(danakj): Renable surface caching when we can do it more realiably.
-  // crbug.com/170713
-  cache_render_pass_contents = false;
+      ignore_root_layer_flings(false),
+      use_rgba_4444_textures(false),
+      always_overscroll(false),
+      touch_hit_testing(true),
+      texture_id_allocation_chunk_size(64) {
 }
 
 LayerTreeSettings::~LayerTreeSettings() {}

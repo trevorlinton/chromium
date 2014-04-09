@@ -10,13 +10,14 @@
 
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/perftimer.h"
+#include "base/timer/elapsed_timer.h"
 #include "chrome/browser/extensions/extension_function_dispatcher.h"
 #include "content/public/browser/javascript_dialog_manager.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "extensions/common/stack_frame.h"
 #include "extensions/common/view_type.h"
 
 #if defined(TOOLKIT_VIEWS)
@@ -31,12 +32,14 @@
 
 #if !defined(OS_ANDROID)
 #include "chrome/browser/ui/chrome_web_modal_dialog_manager_delegate.h"
+#include "components/web_modal/web_contents_modal_dialog_host.h"
 #endif
 
 class Browser;
 class PrefsTabHelper;
 
 namespace content {
+class BrowserContext;
 class RenderProcessHost;
 class RenderWidgetHostView;
 class SiteInstance;
@@ -53,6 +56,7 @@ class WindowController;
 class ExtensionHost : public content::WebContentsDelegate,
 #if !defined(OS_ANDROID)
                       public ChromeWebModalDialogManagerDelegate,
+                      public web_modal::WebContentsModalDialogHost,
 #endif
                       public content::WebContentsObserver,
                       public ExtensionFunctionDispatcher::Delegate,
@@ -111,6 +115,10 @@ class ExtensionHost : public content::WebContentsDelegate,
   }
 
   Profile* profile() const { return profile_; }
+
+  // Returns the same value as profile() but as a BrowserContext. Implemented
+  // in the .cc file to avoid including profile.h in this header.
+  content::BrowserContext* browser_context();
 
   ViewType extension_host_type() const { return extension_host_type_; }
   const GURL& GetURL() const;
@@ -197,6 +205,21 @@ class ExtensionHost : public content::WebContentsDelegate,
   // Closes this host (results in deletion).
   void Close();
 
+#if !defined(OS_ANDROID)
+  // ChromeWebModalDialogManagerDelegate
+  virtual web_modal::WebContentsModalDialogHost*
+      GetWebContentsModalDialogHost() OVERRIDE;
+
+  // web_modal::WebContentsModalDialogHost
+  virtual gfx::NativeView GetHostView() const OVERRIDE;
+  virtual gfx::Point GetDialogPosition(const gfx::Size& size) OVERRIDE;
+  virtual gfx::Size GetMaximumDialogSize() OVERRIDE;
+  virtual void AddObserver(
+      web_modal::ModalDialogHostObserver* observer) OVERRIDE;
+  virtual void RemoveObserver(
+      web_modal::ModalDialogHostObserver* observer) OVERRIDE;
+#endif
+
   // ExtensionFunctionDispatcher::Delegate
   virtual WindowController* GetExtensionWindowController() const OVERRIDE;
 
@@ -205,6 +228,11 @@ class ExtensionHost : public content::WebContentsDelegate,
   void OnEventAck();
   void OnIncrementLazyKeepaliveCount();
   void OnDecrementLazyKeepaliveCount();
+  void OnDetailedConsoleMessageAdded(
+      const base::string16& message,
+      const base::string16& source,
+      const StackTrace& stack_trace,
+      int32 severity_level);
 
   // Handles keyboard events that were not handled by HandleKeyboardEvent().
   // Platform specific implementation may override this method to handle the
@@ -262,7 +290,7 @@ class ExtensionHost : public content::WebContentsDelegate,
   content::WebContents* associated_web_contents_;
 
   // Used to measure how long it's been since the host was created.
-  PerfTimer since_created_;
+  base::ElapsedTimer since_created_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionHost);
 };

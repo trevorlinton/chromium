@@ -8,8 +8,6 @@
 #include "base/files/file_path.h"
 #include "base/strings/string16.h"
 
-namespace chrome {
-
 struct StorageInfo {
  public:
   enum Type {
@@ -27,6 +25,8 @@ struct StorageInfo {
     ITUNES,
     // A Picasa database.
     PICASA,
+    // An iPhoto library.
+    IPHOTO,
   };
 
   StorageInfo();
@@ -65,6 +65,8 @@ struct StorageInfo {
   static bool IsITunesDevice(const std::string& device_id);
 
   static bool IsPicasaDevice(const std::string& device_id);
+
+  static bool IsIPhotoDevice(const std::string& device_id);
 
   const std::string& device_id() const { return device_id_; }
   const string16& name() const { return name_; }
@@ -109,7 +111,5 @@ struct StorageInfo {
   // Zero if not collected or unknown.
   uint64 total_size_in_bytes_;
 };
-
-}  // namespace chrome
 
 #endif  // CHROME_BROWSER_STORAGE_MONITOR_STORAGE_INFO_H_

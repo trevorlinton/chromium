@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 #include "chrome/common/extensions/extension_constants.h"
-#include "chrome/common/extensions/extension_manifest_constants.h"
 
 #include <vector>
 
@@ -87,6 +86,11 @@ bool IsBlacklistUpdateUrl(const GURL& url) {
 }
 
 const char kGalleryBrowsePrefix[] = "https://chrome.google.com/webstore";
+
+const char kWebstoreSourceField[] = "utm_source";
+
+const char kLaunchSourceAppList[] = "chrome-app-launcher";
+const char kLaunchSourceAppListSearch[] = "chrome-app-launcher-search";
 
 }  // namespace extension_urls
 

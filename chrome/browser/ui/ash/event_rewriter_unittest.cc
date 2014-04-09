@@ -11,13 +11,15 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_pref_service_syncable.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/base/events/event.h"
+#include "ui/events/event.h"
 
 #if defined(OS_CHROMEOS)
 #include <X11/keysym.h>
 #include <X11/XF86keysym.h>
 #include <X11/Xlib.h>
 
+#include "ash/test/ash_test_base.h"
+#include "ash/wm/window_state.h"
 #include "chrome/browser/chromeos/input_method/input_method_configuration.h"
 #include "chrome/browser/chromeos/input_method/mock_input_method_manager.h"
 #include "chrome/browser/chromeos/login/mock_user_manager.h"
@@ -25,7 +27,9 @@
 #include "chrome/browser/chromeos/preferences.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/ime/mock_xkeyboard.h"
-#include "ui/base/x/x11_util.h"
+#include "ui/aura/window.h"
+#include "ui/events/x/events_x_utils.h"
+#include "ui/gfx/x/x11_types.h"
 
 namespace {
 
@@ -73,7 +77,7 @@ std::string GetExpectedResultAsString(ui::KeyboardCode ui_keycode,
 class EventRewriterTest : public testing::Test {
  public:
   EventRewriterTest()
-      : display_(ui::GetXDisplay()),
+      : display_(gfx::GetXDisplay()),
         keycode_a_(XKeysymToKeycode(display_, XK_a)),
         keycode_alt_l_(XKeysymToKeycode(display_, XK_Alt_L)),
         keycode_alt_r_(XKeysymToKeycode(display_, XK_Alt_R)),
@@ -118,6 +122,7 @@ class EventRewriterTest : public testing::Test {
         keycode_next_(XKeysymToKeycode(display_, XK_Next)),
         keycode_home_(XKeysymToKeycode(display_, XK_Home)),
         keycode_end_(XKeysymToKeycode(display_, XK_End)),
+        keycode_escape_(XKeysymToKeycode(display_, XK_Escape)),
         keycode_launch6_(XKeysymToKeycode(display_, XF86XK_Launch6)),
         keycode_launch7_(XKeysymToKeycode(display_, XF86XK_Launch7)),
         keycode_f1_(XKeysymToKeycode(display_, XK_F1)),
@@ -231,6 +236,7 @@ class EventRewriterTest : public testing::Test {
   const KeyCode keycode_next_;
   const KeyCode keycode_home_;
   const KeyCode keycode_end_;
+  const KeyCode keycode_escape_;
   const KeyCode keycode_launch6_;  // F15
   const KeyCode keycode_launch7_;  // F16
   const KeyCode keycode_f1_;
@@ -1379,6 +1385,32 @@ TEST_F(EventRewriterTest, TestRewriteModifiersRemapToControl) {
                                       ShiftMask | ControlMask | Mod1Mask));
 }
 
+TEST_F(EventRewriterTest, TestRewriteModifiersRemapToEscape) {
+  // Remap Search to ESC.
+  TestingPrefServiceSyncable prefs;
+  chromeos::Preferences::RegisterProfilePrefs(prefs.registry());
+  IntegerPrefMember search;
+  search.Init(prefs::kLanguageRemapSearchKeyTo, &prefs);
+  search.SetValue(chromeos::input_method::kEscapeKey);
+
+  EventRewriter rewriter;
+  rewriter.set_pref_service_for_testing(&prefs);
+
+  // Press Search. Confirm the event is now VKEY_ESCAPE.
+  EXPECT_EQ(GetExpectedResultAsString(ui::VKEY_ESCAPE,
+                                      ui::EF_NONE,
+                                      ui::ET_KEY_PRESSED,
+                                      keycode_escape_,
+                                      0U,
+                                      KeyPress),
+            GetRewrittenEventAsString(&rewriter,
+                                      ui::VKEY_LWIN,
+                                      0,
+                                      ui::ET_KEY_PRESSED,
+                                      keycode_super_l_,
+                                      0U));
+}
+
 TEST_F(EventRewriterTest, TestRewriteModifiersRemapMany) {
   // Remap Search to Alt.
   TestingPrefServiceSyncable prefs;
@@ -2296,4 +2328,64 @@ TEST_F(EventRewriterTest, TestRewriteKeyEventSentByXSendEvent) {
                                       KeyPress),
             rewritten_event);
 }
+
+// Tests of event rewriting that depend on the Ash window manager.
+class EventRewriterAshTest : public ash::test::AshTestBase {
+ public:
+  EventRewriterAshTest() {
+    chromeos::Preferences::RegisterProfilePrefs(prefs_.registry());
+    rewriter_.set_pref_service_for_testing(&prefs_);
+  }
+  virtual ~EventRewriterAshTest() {}
+
+  bool RewriteFunctionKeys(ui::KeyEvent* event) {
+    return rewriter_.RewriteFunctionKeys(event);
+  }
+
+ protected:
+  TestingPrefServiceSyncable prefs_;
+
+ private:
+  EventRewriter rewriter_;
+
+  DISALLOW_COPY_AND_ASSIGN(EventRewriterAshTest);
+};
+
+TEST_F(EventRewriterAshTest, TopRowKeysAreFunctionKeys) {
+  scoped_ptr<aura::Window> window(CreateTestWindowInShellWithId(1));
+  ash::wm::WindowState* window_state = ash::wm::GetWindowState(window.get());
+  window_state->Activate();
+
+  // Create a simulated keypress of F1 targetted at the window.
+  XEvent xev_f1;
+  KeyCode keycode_f1 = XKeysymToKeycode(gfx::GetXDisplay(), XK_F1);
+  InitXKeyEvent(ui::VKEY_F1, 0, ui::ET_KEY_PRESSED, keycode_f1, 0u, &xev_f1);
+  ui::KeyEvent press_f1(&xev_f1, false);
+  ui::Event::DispatcherApi dispatch_helper(&press_f1);
+  dispatch_helper.set_target(window.get());
+
+  // Simulate an apps v2 window that has requested top row keys as function
+  // keys. The event should not be rewritten.
+  window_state->set_top_row_keys_are_function_keys(true);
+  ASSERT_FALSE(RewriteFunctionKeys(&press_f1));
+  ASSERT_EQ(ui::VKEY_F1, press_f1.key_code());
+
+  // The event should also not be rewritten if the send-function-keys pref is
+  // additionally set, for both apps v2 and regular windows.
+  BooleanPrefMember send_function_keys_pref;
+  send_function_keys_pref.Init(prefs::kLanguageSendFunctionKeys, &prefs_);
+  send_function_keys_pref.SetValue(true);
+  ASSERT_FALSE(RewriteFunctionKeys(&press_f1));
+  ASSERT_EQ(ui::VKEY_F1, press_f1.key_code());
+  window_state->set_top_row_keys_are_function_keys(false);
+  ASSERT_FALSE(RewriteFunctionKeys(&press_f1));
+  ASSERT_EQ(ui::VKEY_F1, press_f1.key_code());
+
+  // If the pref isn't set when an event is sent to a regular window, F1 is
+  // rewritten to the back key.
+  send_function_keys_pref.SetValue(false);
+  ASSERT_TRUE(RewriteFunctionKeys(&press_f1));
+  ASSERT_EQ(ui::VKEY_BROWSER_BACK, press_f1.key_code());
+}
+
 #endif  // OS_CHROMEOS

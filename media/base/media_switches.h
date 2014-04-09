@@ -18,11 +18,16 @@ MEDIA_EXPORT extern const char kEnableEac3Playback[];
 
 MEDIA_EXPORT extern const char kEnableOpusPlayback[];
 
-MEDIA_EXPORT extern const char kEnableVp8AlphaPlayback[];
+MEDIA_EXPORT extern const char kDisableVp8AlphaPlayback[];
 
 MEDIA_EXPORT extern const char kVideoThreads[];
 
-MEDIA_EXPORT extern const char kOverrideEncryptedMediaCanPlayType[];
+MEDIA_EXPORT extern const char kEnableMP3StreamParser[];
+
+#if defined(OS_ANDROID)
+MEDIA_EXPORT extern const char kDisableInfobarForProtectedMediaIdentifier[];
+MEDIA_EXPORT extern const char kMediaDrmEnableNonCompositing[];
+#endif
 
 #if defined(GOOGLE_TV)
 MEDIA_EXPORT extern const char kUseExternalVideoSurfaceThresholdInPixels[];
@@ -48,6 +53,8 @@ MEDIA_EXPORT extern const char kWaveOutBuffers[];
 #if defined(USE_CRAS)
 MEDIA_EXPORT extern const char kUseCras[];
 #endif
+
+MEDIA_EXPORT extern const char kDisableSystemSoundsManager[];
 
 }  // namespace switches
 

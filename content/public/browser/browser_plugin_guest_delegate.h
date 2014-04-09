@@ -11,6 +11,8 @@
 #include "base/values.h"
 #include "content/common/content_export.h"
 #include "content/public/common/browser_plugin_permission_type.h"
+#include "ui/gfx/size.h"
+#include "url/gurl.h"
 
 namespace content {
 
@@ -37,7 +39,25 @@ class CONTENT_EXPORT BrowserPluginGuestDelegate {
   // gracefully.
   virtual void GuestProcessGone(base::TerminationStatus status) {}
 
+  // Informs the delegate that the embedder has been destroyed.
+  virtual void EmbedderDestroyed() {}
+
   virtual bool HandleKeyboardEvent(const NativeWebKeyboardEvent& event);
+
+  virtual bool IsDragAndDropEnabled();
+
+  // Returns whether the user agent for the guest is being overridden.
+  virtual bool IsOverridingUserAgent() const;
+
+  // Notification that a load in the guest resulted in abort. Note that |url|
+  // may be invalid.
+  virtual void LoadAbort(bool is_top_level,
+                         const GURL& url,
+                         const std::string& error_type) {}
+
+  // Notification that the page has made some progress loading. |progress| is a
+  // value between 0.0 (nothing loaded) and 1.0 (page loaded completely).
+  virtual void LoadProgressed(double progress) {}
 
   // Notification that the guest is no longer hung.
   virtual void RendererResponsive() {}
@@ -56,7 +76,15 @@ class CONTENT_EXPORT BrowserPluginGuestDelegate {
   virtual bool RequestPermission(
       BrowserPluginPermissionType permission_type,
       const base::DictionaryValue& request_info,
-      const PermissionResponseCallback& callback);
+      const PermissionResponseCallback& callback,
+      bool allowed_by_default);
+
+  // Requests resolution of a potentially relative URL.
+  virtual GURL ResolveURL(const std::string& src);
+
+  // Notifies that the content size of the guest has changed in autosize mode.
+  virtual void SizeChanged(const gfx::Size& old_size,
+                           const gfx::Size& new_size) {}
 };
 
 }  // namespace content

@@ -6,6 +6,8 @@
 #define CONTENT_PUBLIC_BROWSER_ANDROID_COMPOSITOR_H_
 
 #include "base/callback.h"
+#include "cc/resources/ui_resource_bitmap.h"
+#include "cc/resources/ui_resource_client.h"
 #include "content/common/content_export.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/rect.h"
@@ -33,19 +35,6 @@ class CONTENT_EXPORT Compositor {
   // instance can be used. This should be called only once.
   static void Initialize();
 
-  enum CompositorFlags {
-    // Creates a direct GL context on the thread that draws
-    // (i.e. main or impl thread).
-    DIRECT_CONTEXT_ON_DRAW_THREAD = 1,
-
-    // Runs the compositor in threaded mode.
-    ENABLE_COMPOSITOR_THREAD = 1 << 1,
-  };
-
-  // Initialize with flags. This should only be called once instead
-  // of Initialize().
-  static void InitializeWithFlags(uint32 flags);
-
   // Creates and returns a compositor instance.
   static Compositor* Create(CompositorClient* client);
 
@@ -70,19 +59,20 @@ class CONTENT_EXPORT Compositor {
   // Set the output surface which the compositor renders into.
   virtual void SetSurface(jobject surface) = 0;
 
-  // Tells the view tree to assume a transparent background when rendering.
-  virtual void SetHasTransparentBackground(bool flag) = 0;
-
   // Attempts to composite and read back the result into the provided buffer.
   // The buffer must be at least window width * height * 4 (RGBA) bytes large.
   // The buffer is not modified if false is returned.
   virtual bool CompositeAndReadback(void *pixels, const gfx::Rect& rect) = 0;
 
-  // Invalidate the whole viewport.
-  virtual void SetNeedsRedraw() = 0;
-
   // Composite immediately. Used in single-threaded mode.
   virtual void Composite() = 0;
+
+  // Generates a UIResource and returns a UIResourceId.  May return 0.
+  virtual cc::UIResourceId GenerateUIResource(
+      const cc::UIResourceBitmap& bitmap) = 0;
+
+  // Deletes a UIResource.
+  virtual void DeleteUIResource(cc::UIResourceId resource_id) = 0;
 
   // Generates an OpenGL texture and returns a texture handle.  May return 0
   // if the current context is lost.

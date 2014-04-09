@@ -4,42 +4,25 @@
 
 #include "chrome/browser/nacl_host/nacl_host_message_filter.h"
 
-#include "chrome/browser/extensions/extension_info_map.h"
-#include "chrome/browser/nacl_host/nacl_browser.h"
 #include "chrome/browser/nacl_host/nacl_file_host.h"
 #include "chrome/browser/nacl_host/nacl_process_host.h"
 #include "chrome/browser/nacl_host/pnacl_host.h"
+#include "components/nacl/browser/nacl_browser.h"
 #include "components/nacl/common/nacl_host_messages.h"
-#include "extensions/common/constants.h"
 #include "ipc/ipc_platform_file.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
-
-static base::FilePath GetManifestPath(
-    ExtensionInfoMap* extension_info_map, const std::string& manifest) {
-  GURL manifest_url(manifest);
-  const extensions::Extension* extension = extension_info_map->extensions()
-      .GetExtensionOrAppByURL(manifest_url);
-  if (extension != NULL &&
-      manifest_url.SchemeIs(extensions::kExtensionScheme)) {
-    std::string path = manifest_url.path();
-    TrimString(path, "/", &path);  // Remove first slash
-    return extension->path().AppendASCII(path);
-  }
-  return base::FilePath();
-}
+#include "url/gurl.h"
 
 NaClHostMessageFilter::NaClHostMessageFilter(
     int render_process_id,
     bool is_off_the_record,
     const base::FilePath& profile_directory,
-    ExtensionInfoMap* extension_info_map,
     net::URLRequestContextGetter* request_context)
     : render_process_id_(render_process_id),
       off_the_record_(is_off_the_record),
       profile_directory_(profile_directory),
       request_context_(request_context),
-      extension_info_map_(extension_info_map),
       weak_ptr_factory_(this) {
 }
 
@@ -48,7 +31,6 @@ NaClHostMessageFilter::~NaClHostMessageFilter() {
 
 void NaClHostMessageFilter::OnChannelClosing() {
   PnaclHost::GetInstance()->RendererClosing(render_process_id_);
-  BrowserMessageFilter::OnChannelClosing();
 }
 
 bool NaClHostMessageFilter::OnMessageReceived(const IPC::Message& message,
@@ -57,8 +39,6 @@ bool NaClHostMessageFilter::OnMessageReceived(const IPC::Message& message,
   IPC_BEGIN_MESSAGE_MAP_EX(NaClHostMessageFilter, message, *message_was_ok)
 #if !defined(DISABLE_NACL)
     IPC_MESSAGE_HANDLER_DELAY_REPLY(NaClHostMsg_LaunchNaCl, OnLaunchNaCl)
-    IPC_MESSAGE_HANDLER(NaClHostMsg_EnsurePnaclInstalled,
-                        OnEnsurePnaclInstalled)
     IPC_MESSAGE_HANDLER_DELAY_REPLY(NaClHostMsg_GetReadonlyPnaclFD,
                                     OnGetReadonlyPnaclFd)
     IPC_MESSAGE_HANDLER_DELAY_REPLY(NaClHostMsg_NaClCreateTemporaryFile,
@@ -92,32 +72,17 @@ void NaClHostMessageFilter::OnLaunchNaCl(
       launch_params.uses_irt,
       launch_params.enable_dyncode_syscalls,
       launch_params.enable_exception_handling,
+      launch_params.enable_crash_throttling,
       off_the_record_,
       profile_directory_);
-  base::FilePath manifest_url =
-      GetManifestPath(extension_info_map_.get(), launch_params.manifest_url);
-  host->Launch(this, reply_msg, manifest_url);
-}
-
-void NaClHostMessageFilter::ReplyEnsurePnaclInstalled(
-    int instance,
-    bool success) {
-  Send(new NaClViewMsg_EnsurePnaclInstalledReply(instance, success));
-}
-
-void NaClHostMessageFilter::SendProgressEnsurePnaclInstalled(
-    int instance,
-    const nacl::PnaclInstallProgress& progress) {
-    // TODO(jvoung): actually send an IPC.
-}
-
-void NaClHostMessageFilter::OnEnsurePnaclInstalled(
-    int instance) {
-  nacl_file_host::EnsurePnaclInstalled(
-      base::Bind(&NaClHostMessageFilter::ReplyEnsurePnaclInstalled,
-                 this, instance),
-      base::Bind(&NaClHostMessageFilter::SendProgressEnsurePnaclInstalled,
-                 this, instance));
+  GURL manifest_url(launch_params.manifest_url);
+  base::FilePath manifest_path;
+  // We're calling MapUrlToLocalFilePath with the non-blocking API
+  // because we're running in the I/O thread. Ideally we'd use the other path,
+  // which would cover more cases.
+  nacl::NaClBrowser::GetDelegate()->MapUrlToLocalFilePath(
+      manifest_url, false /* use_blocking_api */, &manifest_path);
+  host->Launch(this, reply_msg, manifest_path);
 }
 
 void NaClHostMessageFilter::OnGetReadonlyPnaclFd(
@@ -195,14 +160,14 @@ void NaClHostMessageFilter::OnTranslationFinished(int instance, bool success) {
 
 void NaClHostMessageFilter::OnNaClErrorStatus(int render_view_id,
                                               int error_id) {
-  NaClBrowser::GetDelegate()->ShowNaClInfobar(render_process_id_,
-                                              render_view_id, error_id);
+  nacl::NaClBrowser::GetDelegate()->ShowNaClInfobar(render_process_id_,
+                                                    render_view_id, error_id);
 }
 
 void NaClHostMessageFilter::OnOpenNaClExecutable(int render_view_id,
                                                  const GURL& file_url,
                                                  IPC::Message* reply_msg) {
-  nacl_file_host::OpenNaClExecutable(this, extension_info_map_,
-                                     render_view_id, file_url, reply_msg);
+  nacl_file_host::OpenNaClExecutable(this, render_view_id, file_url,
+                                     reply_msg);
 }
 #endif

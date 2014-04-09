@@ -337,8 +337,6 @@ void BackendImpl::CleanupCache() {
       // This is a net_unittest, verify that we are not 'leaking' entries.
       File::WaitForPendingIO(&num_pending_io_);
       DCHECK(!num_refs_);
-    } else {
-      File::DropPendingIO();
     }
   }
   block_files_.CloseFiles();
@@ -869,7 +867,7 @@ int32 BackendImpl::GetCurrentEntryId() const {
 }
 
 int BackendImpl::MaxFileSize() const {
-  return max_size_ / 8;
+  return cache_type() == net::PNACL_CACHE ? max_size_ : max_size_ / 8;
 }
 
 void BackendImpl::ModifyStorageSize(int32 old_size, int32 new_size) {
@@ -1897,6 +1895,11 @@ void BackendImpl::ReportStats() {
   stats_.SetCounter(Stats::FATAL_ERROR, 0);
   stats_.SetCounter(Stats::DOOM_CACHE, 0);
   stats_.SetCounter(Stats::DOOM_RECENT, 0);
+
+  int age = (Time::Now() -
+             Time::FromInternalValue(data_->header.create_time)).InHours();
+  if (age)
+    CACHE_UMA(HOURS, "FilesAge", 0, age);
 
   int64 total_hours = stats_.GetCounter(Stats::TIMER) / 120;
   if (!data_->header.create_time || !data_->header.lru.filled) {

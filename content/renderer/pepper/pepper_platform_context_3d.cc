@@ -11,12 +11,9 @@
 #include "content/renderer/render_thread_impl.h"
 #include "gpu/command_buffer/client/gles2_cmd_helper.h"
 #include "gpu/command_buffer/client/gles2_implementation.h"
-#include "gpu/ipc/command_buffer_proxy.h"
 #include "ppapi/c/pp_graphics_3d.h"
 #include "ui/gl/gpu_preference.h"
 #include "url/gurl.h"
-
-#ifdef ENABLE_GPU
 
 namespace content {
 
@@ -96,7 +93,6 @@ bool PlatformContext3D::Init(const int32* attrib_list,
   command_buffer_ = channel_->CreateOffscreenCommandBuffer(
       surface_size,
       share_buffer,
-      "*",
       attribs,
       GURL::EmptyGURL(),
       gpu_preference);
@@ -135,6 +131,10 @@ gpu::CommandBuffer* PlatformContext3D::GetCommandBuffer() {
   return command_buffer_;
 }
 
+gpu::GpuControl* PlatformContext3D::GetGpuControl() {
+  return command_buffer_;
+}
+
 int PlatformContext3D::GetCommandBufferRouteId() {
   DCHECK(command_buffer_);
   return command_buffer_->GetRouteID();
@@ -168,5 +168,3 @@ void PlatformContext3D::OnConsoleMessage(const std::string& msg, int id) {
 }
 
 }  // namespace content
-
-#endif  // ENABLE_GPU

@@ -133,7 +133,7 @@ namespace sql {
 Connection::ErrorIgnorerCallback* Connection::current_ignorer_cb_ = NULL;
 
 // static
-bool Connection::ShouldIgnore(int error) {
+bool Connection::ShouldIgnoreSqliteError(int error) {
   if (!current_ignorer_cb_)
     return false;
   return current_ignorer_cb_->Run(error);
@@ -641,7 +641,7 @@ bool Connection::Execute(const char* sql) {
 
   int error = ExecuteAndReturnErrorCode(sql);
   if (error != SQLITE_OK)
-    error = OnSqliteError(error, NULL);
+    error = OnSqliteError(error, NULL, sql);
 
   // This needs to be a FATAL log because the error case of arriving here is
   // that there's a malformed SQL statement. This can arise in development if
@@ -702,7 +702,7 @@ scoped_refptr<Connection::StatementRef> Connection::GetUniqueStatement(
     DLOG(FATAL) << "SQL compile error " << GetErrorMessage();
 
     // It could also be database corruption.
-    OnSqliteError(rc, NULL);
+    OnSqliteError(rc, NULL, sql);
     return new StatementRef(NULL, NULL, false);
   }
   return new StatementRef(this, stmt, true);
@@ -722,6 +722,29 @@ scoped_refptr<Connection::StatementRef> Connection::GetUntrackedStatement(
     return new StatementRef(NULL, NULL, false);
   }
   return new StatementRef(NULL, stmt, true);
+}
+
+std::string Connection::GetSchema() const {
+  // The ORDER BY should not be necessary, but relying on organic
+  // order for something like this is questionable.
+  const char* kSql =
+      "SELECT type, name, tbl_name, sql "
+      "FROM sqlite_master ORDER BY 1, 2, 3, 4";
+  Statement statement(GetUntrackedStatement(kSql));
+
+  std::string schema;
+  while (statement.Step()) {
+    schema += statement.ColumnString(0);
+    schema += '|';
+    schema += statement.ColumnString(1);
+    schema += '|';
+    schema += statement.ColumnString(2);
+    schema += '|';
+    schema += statement.ColumnString(3);
+    schema += '\n';
+  }
+
+  return schema;
 }
 
 bool Connection::IsSQLValid(const char* sql) {
@@ -841,7 +864,7 @@ bool Connection::OpenInternal(const std::string& file_name,
     // purposes.
     UMA_HISTOGRAM_SPARSE_SLOWLY("Sqlite.OpenFailure", err);
 
-    OnSqliteError(err, NULL);
+    OnSqliteError(err, NULL, "-- sqlite3_open()");
     bool was_poisoned = poisoned_;
     Close();
 
@@ -999,14 +1022,19 @@ void Connection::AddTaggedHistogram(const std::string& name,
     histogram->Add(sample);
 }
 
-int Connection::OnSqliteError(int err, sql::Statement *stmt) {
+int Connection::OnSqliteError(int err, sql::Statement *stmt, const char* sql) {
   UMA_HISTOGRAM_SPARSE_SLOWLY("Sqlite.Error", err);
   AddTaggedHistogram("Sqlite.Error", err);
 
   // Always log the error.
-  LOG(ERROR) << "sqlite error " << err
+  if (!sql && stmt)
+    sql = stmt->GetSQLStatement();
+  if (!sql)
+    sql = "-- unknown";
+  LOG(ERROR) << histogram_tag_ << " sqlite error " << err
              << ", errno " << GetLastErrno()
-             << ": " << GetErrorMessage();
+             << ": " << GetErrorMessage()
+             << ", sql: " << sql;
 
   if (!error_callback_.is_null()) {
     // Fire from a copy of the callback in case of reentry into
@@ -1017,7 +1045,7 @@ int Connection::OnSqliteError(int err, sql::Statement *stmt) {
   }
 
   // The default handling is to assert on debug and to ignore on release.
-  if (!ShouldIgnore(err))
+  if (!ShouldIgnoreSqliteError(err))
     DLOG(FATAL) << GetErrorMessage();
   return err;
 }

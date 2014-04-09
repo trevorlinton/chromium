@@ -14,13 +14,16 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/extension_manifest_constants.h"
-#include "chrome/common/extensions/manifest.h"
-#include "chrome/common/extensions/permissions/api_permission.h"
-#include "chrome/common/policy/policy_schema.h"
 #include "extensions/common/install_warning.h"
+#include "extensions/common/manifest.h"
+#include "extensions/common/manifest_constants.h"
+#include "extensions/common/permissions/api_permission.h"
 
-using extension_manifest_keys::kStorageManagedSchema;
+#if defined(ENABLE_CONFIGURATION_POLICY)
+#include "components/policy/core/common/schema.h"
+#endif
+
+using extensions::manifest_keys::kStorageManagedSchema;
 
 namespace extensions {
 
@@ -28,14 +31,15 @@ StorageSchemaManifestHandler::StorageSchemaManifestHandler() {}
 
 StorageSchemaManifestHandler::~StorageSchemaManifestHandler() {}
 
+#if defined(ENABLE_CONFIGURATION_POLICY)
 // static
-scoped_ptr<policy::PolicySchema> StorageSchemaManifestHandler::GetSchema(
+scoped_ptr<policy::SchemaOwner> StorageSchemaManifestHandler::GetSchema(
     const Extension* extension,
     std::string* error) {
   if (!extension->HasAPIPermission(APIPermission::kStorage)) {
     *error = base::StringPrintf("The storage permission is required to use %s",
                                 kStorageManagedSchema);
-    return scoped_ptr<policy::PolicySchema>();
+    return scoped_ptr<policy::SchemaOwner>();
   }
   std::string path;
   extension->manifest()->GetString(kStorageManagedSchema, &path);
@@ -43,21 +47,22 @@ scoped_ptr<policy::PolicySchema> StorageSchemaManifestHandler::GetSchema(
   if (file.IsAbsolute() || file.ReferencesParent()) {
     *error = base::StringPrintf("%s must be a relative path without ..",
                                 kStorageManagedSchema);
-    return scoped_ptr<policy::PolicySchema>();
+    return scoped_ptr<policy::SchemaOwner>();
   }
   file = extension->path().AppendASCII(path);
   if (!base::PathExists(file)) {
     *error =
         base::StringPrintf("File does not exist: %s", file.value().c_str());
-    return scoped_ptr<policy::PolicySchema>();
+    return scoped_ptr<policy::SchemaOwner>();
   }
   std::string content;
-  if (!file_util::ReadFileToString(file, &content)) {
+  if (!base::ReadFileToString(file, &content)) {
     *error = base::StringPrintf("Can't read %s", file.value().c_str());
-    return scoped_ptr<policy::PolicySchema>();
+    return scoped_ptr<policy::SchemaOwner>();
   }
-  return policy::PolicySchema::Parse(content, error);
+  return policy::SchemaOwner::Parse(content, error);
 }
+#endif
 
 bool StorageSchemaManifestHandler::Parse(Extension* extension,
                                          string16* error) {
@@ -74,7 +79,11 @@ bool StorageSchemaManifestHandler::Validate(
     const Extension* extension,
     std::string* error,
     std::vector<InstallWarning>* warnings) const {
+#if defined(ENABLE_CONFIGURATION_POLICY)
   return !!GetSchema(extension, error);
+#else
+  return true;
+#endif
 }
 
 const std::vector<std::string> StorageSchemaManifestHandler::Keys() const {

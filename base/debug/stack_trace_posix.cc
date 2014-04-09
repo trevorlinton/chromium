@@ -43,6 +43,7 @@ namespace {
 
 volatile sig_atomic_t in_signal_handler = 0;
 
+#if !defined(USE_SYMBOLIZE) && defined(__GLIBCXX__)
 // The prefix used for mangled symbols, per the Itanium C++ ABI:
 // http://www.codesourcery.com/cxx-abi/abi.html#mangling
 const char kMangledSymbolPrefix[] = "_Z";
@@ -51,6 +52,7 @@ const char kMangledSymbolPrefix[] = "_Z";
 // (('a'..'z').to_a+('A'..'Z').to_a+('0'..'9').to_a + ['_']).join
 const char kSymbolCharacters[] =
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_";
+#endif  // !defined(USE_SYMBOLIZE) && defined(__GLIBCXX__)
 
 #if !defined(USE_SYMBOLIZE)
 // Demangles C++ symbols in the given text. Example:
@@ -253,7 +255,7 @@ void StackDumpSignalHandler(int signal, siginfo_t* info, void* void_context) {
   }
   PrintToStderr("\n");
 
-  debug::StackTrace().PrintBacktrace();
+  debug::StackTrace().Print();
 
 #if defined(OS_LINUX)
 #if ARCH_CPU_X86_FAMILY
@@ -474,7 +476,7 @@ StackTrace::StackTrace() {
   count_ = std::max(backtrace(trace_, arraysize(trace_)), 0);
 }
 
-void StackTrace::PrintBacktrace() const {
+void StackTrace::Print() const {
   // NOTE: This code MUST be async-signal safe (it's used by in-process
   // stack dumping signal handler). NO malloc or stdio is allowed here.
 

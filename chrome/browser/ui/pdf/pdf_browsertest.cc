@@ -44,10 +44,7 @@ class PDFBrowserTest : public InProcessBrowserTest,
   PDFBrowserTest()
       : snapshot_different_(true),
         next_dummy_search_value_(0),
-        load_stop_notification_count_(0),
-        pdf_test_server_(
-            content::BrowserThread::GetMessageLoopProxyForThread(
-                content::BrowserThread::IO)) {
+        load_stop_notification_count_(0) {
     pdf_test_server_.ServeFilesFromDirectory(
         base::FilePath(FILE_PATH_LITERAL("pdf/test")));
   }
@@ -288,14 +285,14 @@ IN_PROC_BROWSER_TEST_F(PDFBrowserTest, MAYBE_FindAndCopy) {
   ui::Clipboard::ObjectMapParams params;
   params.push_back(std::vector<char>());
   objects[ui::Clipboard::CBF_TEXT] = params;
-  clipboard->WriteObjects(ui::Clipboard::BUFFER_STANDARD, objects);
+  clipboard->WriteObjects(ui::CLIPBOARD_TYPE_COPY_PASTE, objects);
 
   browser()->tab_strip_model()->GetActiveWebContents()->
       GetRenderViewHost()->Copy();
   ASSERT_NO_FATAL_FAILURE(WaitForResponse());
 
   std::string text;
-  clipboard->ReadAsciiText(ui::Clipboard::BUFFER_STANDARD, &text);
+  clipboard->ReadAsciiText(ui::CLIPBOARD_TYPE_COPY_PASTE, &text);
   ASSERT_EQ("adipiscing", text);
 }
 

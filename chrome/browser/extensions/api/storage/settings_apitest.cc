@@ -65,6 +65,11 @@ class NoopSyncChangeProcessor : public syncer::SyncChangeProcessor {
     return syncer::SyncError();
   }
 
+  virtual syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const
+      OVERRIDE {
+    return syncer::SyncDataList();
+  }
+
   virtual ~NoopSyncChangeProcessor() {};
 };
 
@@ -81,6 +86,11 @@ class SyncChangeProcessorDelegate : public syncer::SyncChangeProcessor {
       const tracked_objects::Location& from_here,
       const syncer::SyncChangeList& change_list) OVERRIDE {
     return recipient_->ProcessSyncChanges(from_here, change_list);
+  }
+
+  virtual syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const
+      OVERRIDE {
+    return recipient_->GetAllSyncData(type);
   }
 
  private:
@@ -514,7 +524,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionSettingsApiTest, PRE_ManagedStorageEvents) {
   EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
 }
 
-#if defined(OS_CHROMEOS) || defined(OS_WIN)
+#if defined(OS_CHROMEOS) || defined(OS_WIN) || \
+    (defined(OS_LINUX) && defined(USE_AURA))
 // Flakily times out. http://crbug.com/171477
 #define MAYBE_ManagedStorageEvents DISABLED_ManagedStorageEvents
 #else

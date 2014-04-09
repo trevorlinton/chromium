@@ -90,6 +90,41 @@ class ShellWindow : public content::NotificationObserver,
     FRAME_NONE,  // Frameless window.
   };
 
+  class SizeConstraints {
+   public:
+    // The value SizeConstraints uses to represent an unbounded width or height.
+    // This is an enum so that it can be declared inline here.
+    enum { kUnboundedSize = 0 };
+
+    SizeConstraints();
+    SizeConstraints(const gfx::Size& min_size, const gfx::Size& max_size);
+    ~SizeConstraints();
+
+    // Returns the bounds with its size clamped to the min/max size.
+    gfx::Size ClampSize(gfx::Size size) const;
+
+    // When gfx::Size is used as a min/max size, a zero represents an unbounded
+    // component. This method checks whether either component is specified.
+    // Note we can't use gfx::Size::IsEmpty as it returns true if either width
+    // or height is zero.
+    bool HasMinimumSize() const;
+    bool HasMaximumSize() const;
+
+    // This returns true if all components are specified, and min and max are
+    // equal.
+    bool HasFixedSize() const;
+
+    gfx::Size GetMaximumSize() const;
+    gfx::Size GetMinimumSize() const;
+
+    void set_minimum_size(const gfx::Size& min_size);
+    void set_maximum_size(const gfx::Size& max_size);
+
+   private:
+    gfx::Size minimum_size_;
+    gfx::Size maximum_size_;
+  };
+
   struct CreateParams {
     CreateParams();
     ~CreateParams();
@@ -123,6 +158,10 @@ class ShellWindow : public content::NotificationObserver,
 
     // If true, the window will be focused on creation. Defaults to true.
     bool focused;
+
+    // If true, the window will stay on top of other windows that are not
+    // configured to be always on top. Defaults to false.
+    bool always_on_top;
   };
 
   class Delegate {
@@ -206,10 +245,6 @@ class ShellWindow : public content::NotificationObserver,
   // Returns the bounds that should be reported to the renderer.
   gfx::Rect GetClientBounds() const;
 
-  // This will return a slightly smaller icon then the app_icon to be used in
-  // application lists.
-  scoped_ptr<gfx::Image> GetAppListIcon();
-
   // NativeAppWindows should call this to determine what the window's title
   // is on startup and from within UpdateWindowTitle().
   string16 GetTitle() const;
@@ -228,6 +263,10 @@ class ShellWindow : public content::NotificationObserver,
   // Specifies a url for the launcher icon.
   void SetAppIconUrl(const GURL& icon_url);
 
+  // Set the region in the window that will accept input events.
+  // If |region| is NULL, then the entire window will accept input events.
+  void UpdateInputRegion(scoped_ptr<SkRegion> region);
+
   // Called from the render interface to modify the draggable regions.
   void UpdateDraggableRegions(
       const std::vector<extensions::DraggableRegion>& regions);
@@ -243,8 +282,17 @@ class ShellWindow : public content::NotificationObserver,
   void Minimize();
   void Restore();
 
+  // Set the minimum and maximum size that this window is allowed to be.
+  void SetMinimumSize(const gfx::Size& min_size);
+  void SetMaximumSize(const gfx::Size& max_size);
+
   ShellWindowContents* shell_window_contents_for_test() {
     return shell_window_contents_.get();
+  }
+
+  // Get the size constraints.
+  const SizeConstraints& size_constraints() const {
+    return size_constraints_;
   }
 
  protected:
@@ -319,8 +367,16 @@ class ShellWindow : public content::NotificationObserver,
       const gfx::Size& minimum_size,
       gfx::Rect* bounds) const;
 
+  // Loads the appropriate default or cached window bounds and constrains them
+  // based on screen size and minimum/maximum size. Returns a new CreateParams
+  // that should be used to create the window.
+  CreateParams LoadDefaultsAndConstrain(CreateParams params) const;
+
   // Load the app's image, firing a load state change when loaded.
   void UpdateExtensionAppIcon();
+
+  // Called when size_constraints is changed.
+  void OnSizeConstraintsChanged();
 
   // extensions::ExtensionKeybindingRegistry::Delegate implementation.
   virtual extensions::ActiveTabPermissionGranter*
@@ -334,8 +390,8 @@ class ShellWindow : public content::NotificationObserver,
   void DidDownloadFavicon(int id,
                           int http_status_code,
                           const GURL& image_url,
-                          int requested_size,
-                          const std::vector<SkBitmap>& bitmaps);
+                          const std::vector<SkBitmap>& bitmaps,
+                          const std::vector<gfx::Size>& original_bitmap_sizes);
 
   // extensions::IconImage::Observer implementation.
   virtual void OnExtensionIconImageChanged(
@@ -374,6 +430,9 @@ class ShellWindow : public content::NotificationObserver,
   bool fullscreen_for_window_api_;
   // Fullscreen entered by HTML requestFullscreen.
   bool fullscreen_for_tab_;
+
+  // Size constraints on the window.
+  SizeConstraints size_constraints_;
 
   DISALLOW_COPY_AND_ASSIGN(ShellWindow);
 };

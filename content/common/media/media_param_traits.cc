@@ -11,7 +11,7 @@
 
 using media::AudioParameters;
 using media::ChannelLayout;
-using media::VideoCaptureParams;
+using media::VideoCaptureFormat;
 using media::VideoCaptureSessionId;
 
 namespace IPC {
@@ -54,48 +54,35 @@ void ParamTraits<AudioParameters>::Log(const AudioParameters& p,
   l->append(base::StringPrintf("<AudioParameters>"));
 }
 
-void ParamTraits<VideoCaptureParams>::Write(Message* m,
-                                            const VideoCaptureParams& p) {
+void ParamTraits<VideoCaptureFormat>::Write(Message* m,
+                                            const VideoCaptureFormat& p) {
   m->WriteInt(p.width);
   m->WriteInt(p.height);
-  m->WriteInt(p.frame_per_second);
-  m->WriteInt(static_cast<int>(p.session_id));
+  m->WriteInt(p.frame_rate);
   m->WriteInt(static_cast<int>(p.frame_size_type));
 }
 
-bool ParamTraits<VideoCaptureParams>::Read(const Message* m,
+bool ParamTraits<VideoCaptureFormat>::Read(const Message* m,
                                            PickleIterator* iter,
-                                           VideoCaptureParams* r) {
-  int session_id, frame_size_type;
+                                           VideoCaptureFormat* r) {
+  int frame_size_type;
   if (!m->ReadInt(iter, &r->width) ||
       !m->ReadInt(iter, &r->height) ||
-      !m->ReadInt(iter, &r->frame_per_second) ||
-      !m->ReadInt(iter, &session_id) ||
+      !m->ReadInt(iter, &r->frame_rate) ||
       !m->ReadInt(iter, &frame_size_type))
     return false;
 
-  r->session_id = static_cast<VideoCaptureSessionId>(session_id);
   r->frame_size_type =
       static_cast<media::VideoCaptureResolutionType>(
           frame_size_type);
-
-  // TODO(wjia): Replace with IsValid() method on VideoCaptureParams.
-  if (r->width <= 0 || r->height <= 0 || r->frame_per_second <= 0 ||
-      r->frame_per_second > media::limits::kMaxFramesPerSecond ||
-      r->width > media::limits::kMaxDimension ||
-      r->height > media::limits::kMaxDimension ||
-      r->width * r->height > media::limits::kMaxCanvas ||
-      r->frame_size_type < 0 ||
-      r->frame_size_type >= media::MaxVideoCaptureResolutionType) {
+  if (!r->IsValid())
     return false;
-  }
-
   return true;
 }
 
-void ParamTraits<VideoCaptureParams>::Log(const VideoCaptureParams& p,
+void ParamTraits<VideoCaptureFormat>::Log(const VideoCaptureFormat& p,
                                           std::string* l) {
-  l->append(base::StringPrintf("<VideoCaptureParams>"));
+  l->append(base::StringPrintf("<VideoCaptureFormat>"));
 }
 
 }

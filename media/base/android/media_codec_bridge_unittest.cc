@@ -93,7 +93,20 @@ unsigned char test_mp3[] = {
 
 namespace media {
 
+// Helper macro to skip the test if MediaCodecBridge isn't available.
+#define SKIP_TEST_IF_MEDIA_CODEC_BRIDGE_IS_NOT_AVAILABLE() \
+  do { \
+    if (!MediaCodecBridge::IsAvailable()) { \
+      LOG(INFO) << "Could not run test - not supported on device."; \
+      return; \
+    } \
+  } while (0) \
+
 static const int kPresentationTimeBase = 100;
+
+static inline const base::TimeDelta InfiniteTimeOut() {
+  return base::TimeDelta::FromMicroseconds(-1);
+}
 
 void DecodeMediaFrame(
     VideoCodecBridge* media_codec, const uint8* data, size_t data_size,
@@ -103,17 +116,22 @@ void DecodeMediaFrame(
   base::TimeDelta timestamp = initial_timestamp_lower_bound;
   base::TimeDelta new_timestamp;
   for (int i = 0; i < 10; ++i) {
-    int input_buf_index = media_codec->DequeueInputBuffer(
-        MediaCodecBridge::kTimeOutInfinity);
+    int input_buf_index = -1;
+    MediaCodecStatus status =
+        media_codec->DequeueInputBuffer(InfiniteTimeOut(), &input_buf_index);
+    ASSERT_EQ(MEDIA_CODEC_OK, status);
+
     media_codec->QueueInputBuffer(
         input_buf_index, data, data_size, input_presentation_timestamp);
+
     size_t unused_offset = 0;
     size_t size = 0;
     bool eos = false;
-    int output_buf_index = media_codec->DequeueOutputBuffer(
-        MediaCodecBridge::kTimeOutInfinity,
-        &unused_offset, &size, &new_timestamp, &eos);
-    if (output_buf_index > 0)
+    int output_buf_index = -1;
+    status = media_codec->DequeueOutputBuffer(InfiniteTimeOut(),
+        &output_buf_index, &unused_offset, &size, &new_timestamp, &eos);
+
+    if (status == MEDIA_CODEC_OK && output_buf_index > 0)
       media_codec->ReleaseOutputBuffer(output_buf_index, false);
     // Output time stamp should not be smaller than old timestamp.
     ASSERT_TRUE(new_timestamp >= timestamp);
@@ -123,24 +141,24 @@ void DecodeMediaFrame(
 }
 
 TEST(MediaCodecBridgeTest, Initialize) {
-  if (!MediaCodecBridge::IsAvailable())
-    return;
+  SKIP_TEST_IF_MEDIA_CODEC_BRIDGE_IS_NOT_AVAILABLE();
 
   scoped_ptr<media::MediaCodecBridge> media_codec;
-  media_codec.reset(VideoCodecBridge::Create(kCodecH264));
+  media_codec.reset(VideoCodecBridge::Create(kCodecH264, false));
 }
 
 TEST(MediaCodecBridgeTest, DoNormal) {
-  if (!MediaCodecBridge::IsAvailable())
-    return;
+  SKIP_TEST_IF_MEDIA_CODEC_BRIDGE_IS_NOT_AVAILABLE();
 
   scoped_ptr<media::AudioCodecBridge> media_codec;
   media_codec.reset(AudioCodecBridge::Create(kCodecMP3));
 
-  media_codec->Start(kCodecMP3, 44100, 2, NULL, 0, false, NULL);
+  ASSERT_TRUE(media_codec->Start(kCodecMP3, 44100, 2, NULL, 0, false, NULL));
 
-  int input_buf_index = media_codec->DequeueInputBuffer(
-      MediaCodecBridge::kTimeOutInfinity);
+  int input_buf_index = -1;
+  MediaCodecStatus status =
+      media_codec->DequeueInputBuffer(InfiniteTimeOut(), &input_buf_index);
+  ASSERT_EQ(MEDIA_CODEC_OK, status);
   ASSERT_GE(input_buf_index, 0);
 
   int64 input_pts = kPresentationTimeBase;
@@ -148,14 +166,12 @@ TEST(MediaCodecBridgeTest, DoNormal) {
       input_buf_index, test_mp3, sizeof(test_mp3),
       base::TimeDelta::FromMicroseconds(++input_pts));
 
-  input_buf_index = media_codec->DequeueInputBuffer(
-      MediaCodecBridge::kTimeOutInfinity);
+  status = media_codec->DequeueInputBuffer(InfiniteTimeOut(), &input_buf_index);
   media_codec->QueueInputBuffer(
       input_buf_index, test_mp3, sizeof(test_mp3),
       base::TimeDelta::FromMicroseconds(++input_pts));
 
-  input_buf_index = media_codec->DequeueInputBuffer(
-      MediaCodecBridge::kTimeOutInfinity);
+  status = media_codec->DequeueInputBuffer(InfiniteTimeOut(), &input_buf_index);
   media_codec->QueueEOS(input_buf_index);
 
   input_pts = kPresentationTimeBase;
@@ -164,21 +180,25 @@ TEST(MediaCodecBridgeTest, DoNormal) {
     size_t unused_offset = 0;
     size_t size = 0;
     base::TimeDelta timestamp;
-    int output_buf_index = media_codec->DequeueOutputBuffer(
-        MediaCodecBridge::kTimeOutInfinity,
-        &unused_offset, &size, &timestamp, &eos);
-    switch (output_buf_index) {
-      case MediaCodecBridge::INFO_TRY_AGAIN_LATER:
+    int output_buf_index = -1;
+    status = media_codec->DequeueOutputBuffer(InfiniteTimeOut(),
+        &output_buf_index, &unused_offset, &size, &timestamp, &eos);
+    switch (status) {
+      case MEDIA_CODEC_DEQUEUE_OUTPUT_AGAIN_LATER:
         FAIL();
         return;
 
-      case MediaCodecBridge::INFO_OUTPUT_FORMAT_CHANGED:
+      case MEDIA_CODEC_OUTPUT_FORMAT_CHANGED:
         continue;
 
-      case MediaCodecBridge::INFO_OUTPUT_BUFFERS_CHANGED:
-        media_codec->GetOutputBuffers();
+      case MEDIA_CODEC_OUTPUT_BUFFERS_CHANGED:
+        ASSERT_TRUE(media_codec->GetOutputBuffers());
         continue;
+
+      default:
+        break;
     }
+    ASSERT_GE(output_buf_index, 0);
     EXPECT_LE(1u, size);
     if (!eos)
       EXPECT_EQ(++input_pts, timestamp.InMicroseconds());
@@ -188,8 +208,7 @@ TEST(MediaCodecBridgeTest, DoNormal) {
 }
 
 TEST(MediaCodecBridgeTest, InvalidVorbisHeader) {
-  if (!MediaCodecBridge::IsAvailable())
-    return;
+  SKIP_TEST_IF_MEDIA_CODEC_BRIDGE_IS_NOT_AVAILABLE();
 
   scoped_ptr<media::AudioCodecBridge> media_codec;
   media_codec.reset(AudioCodecBridge::Create(kCodecVorbis));
@@ -218,11 +237,10 @@ TEST(MediaCodecBridgeTest, InvalidVorbisHeader) {
 }
 
 TEST(MediaCodecBridgeTest, PresentationTimestampsDoNotDecrease) {
-  if (!MediaCodecBridge::IsAvailable())
-    return;
+  SKIP_TEST_IF_MEDIA_CODEC_BRIDGE_IS_NOT_AVAILABLE();
 
   scoped_ptr<VideoCodecBridge> media_codec;
-  media_codec.reset(VideoCodecBridge::Create(kCodecVP8));
+  media_codec.reset(VideoCodecBridge::Create(kCodecVP8, false));
   EXPECT_TRUE(media_codec->Start(
       kCodecVP8, gfx::Size(320, 240), NULL, NULL));
   scoped_refptr<DecoderBuffer> buffer =
@@ -250,7 +268,7 @@ TEST(MediaCodecBridgeTest, PresentationTimestampsDoNotDecrease) {
 
 TEST(MediaCodecBridgeTest, CreateUnsupportedCodec) {
   EXPECT_EQ(NULL, AudioCodecBridge::Create(kUnknownAudioCodec));
-  EXPECT_EQ(NULL, VideoCodecBridge::Create(kUnknownVideoCodec));
+  EXPECT_EQ(NULL, VideoCodecBridge::Create(kUnknownVideoCodec, false));
 }
 
 }  // namespace media

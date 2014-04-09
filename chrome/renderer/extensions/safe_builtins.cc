@@ -70,7 +70,8 @@ const char kScript[] =
     "saveBuiltin(Function,\n"
     "            ['apply', 'bind', 'call']);\n"
     "saveBuiltin(Array,\n"
-    "            ['concat', 'forEach', 'join', 'push', 'slice', 'splice']);\n"
+    "            ['concat', 'forEach', 'indexOf', 'join', 'push', 'slice',\n"
+    "             'splice', 'map', 'filter']);\n"
     "saveBuiltin(String,\n"
     "            ['slice', 'split']);\n"
     "saveBuiltin(RegExp,\n"
@@ -132,7 +133,7 @@ v8::Local<v8::Object> Load(const char* name, v8::Handle<v8::Context> context) {
   v8::Local<v8::Value> value =
       context->Global()->GetHiddenValue(MakeKey(name));
   CHECK(!value.IsEmpty() && value->IsObject()) << name;
-  return v8::Local<v8::Object>::New(value->ToObject());
+  return value->ToObject();
 }
 
 class ExtensionImpl : public v8::Extension {

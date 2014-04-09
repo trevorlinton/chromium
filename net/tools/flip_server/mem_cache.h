@@ -10,8 +10,8 @@
 
 #include "base/compiler_specific.h"
 #include "base/memory/scoped_ptr.h"
-#include "net/tools/flip_server/balsa_headers.h"
-#include "net/tools/flip_server/balsa_visitor_interface.h"
+#include "net/tools/balsa/balsa_headers.h"
+#include "net/tools/balsa/balsa_visitor_interface.h"
 #include "net/tools/flip_server/constants.h"
 
 namespace net {
@@ -135,7 +135,13 @@ class MemoryCache {
 
   bool AssignFileData(const std::string& filename, MemCacheIter* mci);
 
+  // For unittests
+  void InsertFile(const BalsaHeaders* headers,
+                  const std::string& filename,
+                  const std::string& body);
+
  private:
+  void InsertFile(FileData* file_data);
   void ClearFiles();
 
   Files files_;

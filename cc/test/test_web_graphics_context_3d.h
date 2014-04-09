@@ -1,4 +1,4 @@
-// Copyright 2011 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,34 +9,28 @@
 
 #include "base/compiler_specific.h"
 #include "base/containers/hash_tables.h"
+#include "base/containers/scoped_ptr_hash_map.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/stl_util.h"
 #include "base/synchronization/lock.h"
-#include "cc/base/scoped_ptr_hash_map.h"
-#include "cc/debug/fake_web_graphics_context_3d.h"
+#include "cc/output/context_provider.h"
+#include "cc/test/fake_web_graphics_context_3d.h"
+#include "cc/test/ordered_texture_map.h"
+#include "cc/test/test_texture.h"
 #include "third_party/khronos/GLES2/gl2.h"
 
-namespace WebKit { struct WebGraphicsMemoryAllocation; }
-
 namespace cc {
+class TestContextSupport;
 
 class TestWebGraphicsContext3D : public FakeWebGraphicsContext3D {
  public:
-  static scoped_ptr<TestWebGraphicsContext3D> Create() {
-    return make_scoped_ptr(new TestWebGraphicsContext3D());
-  }
-  static scoped_ptr<TestWebGraphicsContext3D> Create(
-      const WebKit::WebGraphicsContext3D::Attributes& attributes) {
-    return make_scoped_ptr(new TestWebGraphicsContext3D(attributes));
-  }
+  static scoped_ptr<TestWebGraphicsContext3D> Create();
+
   virtual ~TestWebGraphicsContext3D();
 
   virtual bool makeContextCurrent();
-
-  virtual int width();
-  virtual int height();
 
   virtual void reshapeWithScaleFactor(
       int width, int height, float scale_factor);
@@ -75,19 +69,34 @@ class TestWebGraphicsContext3D : public FakeWebGraphicsContext3D {
 
   virtual void useProgram(WebKit::WebGLId program);
 
+  virtual void genBuffers(WebKit::WGC3Dsizei count, WebKit::WebGLId* ids);
+  virtual void genFramebuffers(WebKit::WGC3Dsizei count, WebKit::WebGLId* ids);
+  virtual void genRenderbuffers(WebKit::WGC3Dsizei count, WebKit::WebGLId* ids);
+  virtual void genTextures(WebKit::WGC3Dsizei count, WebKit::WebGLId* ids);
+
+  virtual void deleteBuffers(WebKit::WGC3Dsizei count, WebKit::WebGLId* ids);
+  virtual void deleteFramebuffers(
+      WebKit::WGC3Dsizei count, WebKit::WebGLId* ids);
+  virtual void deleteRenderbuffers(
+      WebKit::WGC3Dsizei count, WebKit::WebGLId* ids);
+  virtual void deleteTextures(WebKit::WGC3Dsizei count, WebKit::WebGLId* ids);
+
   virtual WebKit::WebGLId createBuffer();
   virtual WebKit::WebGLId createFramebuffer();
-  virtual WebKit::WebGLId createProgram();
   virtual WebKit::WebGLId createRenderbuffer();
-  virtual WebKit::WebGLId createShader(WebKit::WGC3Denum);
   virtual WebKit::WebGLId createTexture();
 
   virtual void deleteBuffer(WebKit::WebGLId id);
   virtual void deleteFramebuffer(WebKit::WebGLId id);
-  virtual void deleteProgram(WebKit::WebGLId id);
   virtual void deleteRenderbuffer(WebKit::WebGLId id);
+  virtual void deleteTexture(WebKit::WebGLId id);
+
+  virtual WebKit::WebGLId createProgram();
+  virtual WebKit::WebGLId createShader(WebKit::WGC3Denum);
+  virtual WebKit::WebGLId createExternalTexture();
+
+  virtual void deleteProgram(WebKit::WebGLId id);
   virtual void deleteShader(WebKit::WebGLId id);
-  virtual void deleteTexture(WebKit::WebGLId texture_id);
 
   virtual void endQueryEXT(WebKit::WGC3Denum target);
   virtual void getQueryObjectuivEXT(
@@ -111,17 +120,8 @@ class TestWebGraphicsContext3D : public FakeWebGraphicsContext3D {
   virtual void loseContextCHROMIUM(WebKit::WGC3Denum current,
                                    WebKit::WGC3Denum other);
 
-  // Takes ownership of the |callback|.
-  virtual void signalSyncPoint(unsigned sync_point,
-                               WebGraphicsSyncPointCallback* callback);
-  virtual void signalQuery(WebKit::WebGLId query,
-                           WebGraphicsSyncPointCallback* callback);
-
   virtual void setSwapBuffersCompleteCallbackCHROMIUM(
       WebGraphicsSwapBuffersCompleteCallbackCHROMIUM* callback);
-
-  virtual void setMemoryAllocationChangedCallbackCHROMIUM(
-      WebGraphicsMemoryAllocationChangedCallbackCHROMIUM* callback);
 
   virtual void prepareTexture();
   virtual void finish();
@@ -136,8 +136,6 @@ class TestWebGraphicsContext3D : public FakeWebGraphicsContext3D {
                                   WebKit::WGC3Denum access);
   virtual WebKit::WGC3Dboolean unmapBufferCHROMIUM(WebKit::WGC3Denum target);
 
-  virtual void bindTexImage2DCHROMIUM(WebKit::WGC3Denum target,
-                                      WebKit::WGC3Dint image_id);
   virtual WebKit::WGC3Duint createImageCHROMIUM(
       WebKit::WGC3Dsizei width,
       WebKit::WGC3Dsizei height,
@@ -151,6 +149,10 @@ class TestWebGraphicsContext3D : public FakeWebGraphicsContext3D {
       WebKit::WGC3Duint image_id,
       WebKit::WGC3Denum access);
   virtual void unmapImageCHROMIUM(WebKit::WGC3Duint image_id);
+
+  const ContextProvider::Capabilities& test_capabilities() const {
+    return test_capabilities_;
+  }
 
   // When set, MakeCurrent() will fail after this many times.
   void set_times_make_current_succeeds(int times) {
@@ -185,13 +187,23 @@ class TestWebGraphicsContext3D : public FakeWebGraphicsContext3D {
   void ResetUsedTextures() { used_textures_.clear(); }
 
   void set_support_swapbuffers_complete_callback(bool support) {
-    support_swapbuffers_complete_callback_ = support;
+    test_capabilities_.swapbuffers_complete_callback = support;
   }
   void set_have_extension_io_surface(bool have) {
-    have_extension_io_surface_ = have;
+    test_capabilities_.iosurface = have;
+    test_capabilities_.texture_rectangle = have;
   }
   void set_have_extension_egl_image(bool have) {
-    have_extension_egl_image_ = have;
+    test_capabilities_.egl_image_external = have;
+  }
+  void set_have_post_sub_buffer(bool have) {
+    test_capabilities_.post_sub_buffer = have;
+  }
+  void set_have_discard_framebuffer(bool have) {
+    test_capabilities_.discard_framebuffer = have;
+  }
+  void set_support_compressed_texture_etc1(bool support) {
+    test_capabilities_.texture_format_etc1 = support;
   }
 
   // When this context is lost, all contexts in its share group are also lost.
@@ -203,20 +215,43 @@ class TestWebGraphicsContext3D : public FakeWebGraphicsContext3D {
 
   static const WebKit::WebGLId kExternalTextureId;
   virtual WebKit::WebGLId NextTextureId();
+  virtual void RetireTextureId(WebKit::WebGLId id);
 
   virtual WebKit::WebGLId NextBufferId();
+  virtual void RetireBufferId(WebKit::WebGLId id);
 
   virtual WebKit::WebGLId NextImageId();
+  virtual void RetireImageId(WebKit::WebGLId id);
 
-  void SetMemoryAllocation(WebKit::WebGraphicsMemoryAllocation allocation);
+  size_t GetTransferBufferMemoryUsedBytes() const;
+  void SetMaxTransferBufferUsageBytes(size_t max_transfer_buffer_usage_bytes);
+
+  void set_test_support(TestContextSupport* test_support) {
+    test_support_ = test_support;
+  }
 
  protected:
+  struct TextureTargets {
+    TextureTargets();
+    ~TextureTargets();
+
+    void BindTexture(WebKit::WGC3Denum target, WebKit::WebGLId id);
+    void UnbindTexture(WebKit::WebGLId id);
+
+    WebKit::WebGLId BoundTexture(WebKit::WGC3Denum target);
+
+   private:
+    typedef base::hash_map<WebKit::WGC3Denum, WebKit::WebGLId> TargetTextureMap;
+    TargetTextureMap bound_textures_;
+  };
+
   struct Buffer {
     Buffer();
     ~Buffer();
 
     WebKit::WGC3Denum target;
     scoped_ptr<uint8[]> pixels;
+    size_t size;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(Buffer);
@@ -240,9 +275,9 @@ class TestWebGraphicsContext3D : public FakeWebGraphicsContext3D {
     unsigned next_buffer_id;
     unsigned next_image_id;
     unsigned next_texture_id;
-    std::vector<WebKit::WebGLId> textures;
-    ScopedPtrHashMap<unsigned, Buffer> buffers;
-    ScopedPtrHashMap<unsigned, Image> images;
+    base::ScopedPtrHashMap<unsigned, Buffer> buffers;
+    base::ScopedPtrHashMap<unsigned, Image> images;
+    OrderedTextureMap textures;
 
    private:
     friend class base::RefCountedThreadSafe<Namespace>;
@@ -251,18 +286,15 @@ class TestWebGraphicsContext3D : public FakeWebGraphicsContext3D {
   };
 
   TestWebGraphicsContext3D();
-  TestWebGraphicsContext3D(
-      const WebKit::WebGraphicsContext3D::Attributes& attributes);
 
   void CallAllSyncPointCallbacks();
   void SwapBuffersComplete();
   void CreateNamespace();
+  WebKit::WebGLId BoundTextureId(WebKit::WGC3Denum target);
 
   unsigned context_id_;
   Attributes attributes_;
-  bool support_swapbuffers_complete_callback_;
-  bool have_extension_io_surface_;
-  bool have_extension_egl_image_;
+  ContextProvider::Capabilities test_capabilities_;
   int times_make_current_succeeds_;
   int times_bind_texture_succeeds_;
   int times_end_query_succeeds_;
@@ -272,16 +304,15 @@ class TestWebGraphicsContext3D : public FakeWebGraphicsContext3D {
   int times_map_buffer_chromium_succeeds_;
   WebGraphicsContextLostCallback* context_lost_callback_;
   WebGraphicsSwapBuffersCompleteCallbackCHROMIUM* swap_buffers_callback_;
-  WebGraphicsMemoryAllocationChangedCallbackCHROMIUM*
-      memory_allocation_changed_callback_;
-  std::vector<WebGraphicsSyncPointCallback*> sync_point_callbacks_;
   base::hash_set<WebKit::WebGLId> used_textures_;
   std::vector<WebKit::WebGraphicsContext3D*> shared_contexts_;
   int max_texture_size_;
   int width_;
   int height_;
+  TestContextSupport* test_support_;
 
   unsigned bound_buffer_;
+  TextureTargets texture_targets_;
 
   scoped_refptr<Namespace> namespace_;
   static Namespace* shared_namespace_;

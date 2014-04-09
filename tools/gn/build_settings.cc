@@ -4,15 +4,39 @@
 
 #include "tools/gn/build_settings.h"
 
+#include "base/file_util.h"
 #include "tools/gn/filesystem_utils.h"
 
 BuildSettings::BuildSettings()
-    : item_tree_(),
+    : using_external_generator_(false),
+      item_tree_(),
+      target_manager_(this),
+      toolchain_manager_(this) {
+}
+
+BuildSettings::BuildSettings(const BuildSettings& other)
+    : root_path_(other.root_path_),
+      root_path_utf8_(other.root_path_utf8_),
+      secondary_source_path_(other.secondary_source_path_),
+      using_external_generator_(other.using_external_generator_),
+      python_path_(other.python_path_),
+      build_config_file_(other.build_config_file_),
+      build_dir_(other.build_dir_),
+      build_to_source_dir_string_(other.build_to_source_dir_string_),
+      build_args_(other.build_args_),
+      target_resolved_callback_(),  // Don't copy.
+      item_tree_(),
       target_manager_(this),
       toolchain_manager_(this) {
 }
 
 BuildSettings::~BuildSettings() {
+}
+
+void BuildSettings::SetRootPath(const base::FilePath& r) {
+  DCHECK(r.value()[r.value().size() - 1] != base::FilePath::kSeparators[0]);
+  root_path_ = r;
+  root_path_utf8_ = FilePathToUTF8(root_path_);
 }
 
 void BuildSettings::SetSecondarySourcePath(const SourceDir& d) {

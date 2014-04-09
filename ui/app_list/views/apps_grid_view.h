@@ -22,9 +22,14 @@
 #include "ui/base/dragdrop/drag_source_win.h"
 #endif
 
+namespace content {
+class WebContents;
+}
+
 namespace views {
 class ButtonListener;
 class DragImageView;
+class WebView;
 }
 
 namespace app_list {
@@ -43,10 +48,10 @@ class AppsGridViewDelegate;
 class PageSwitcher;
 class PaginationModel;
 
-// AppsGridView displays a grid for AppListModel::Apps sub model.
+// AppsGridView displays a grid for AppListItemList sub model.
 class APP_LIST_EXPORT AppsGridView : public views::View,
                                      public views::ButtonListener,
-                                     public ui::ListModelObserver,
+                                     public AppListItemListObserver,
                                      public PaginationModelObserver,
                                      public AppListModelObserver {
  public:
@@ -56,8 +61,14 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
     TOUCH,
   };
 
+  // Constructs the app icon grid view. |delegate| is the delegate of this
+  // view, which usually is the hosting AppListView. |pagination_model| is
+  // the paging info shared within the launcher UI. |start_page_contents| is
+  // the contents for the launcher start page. It could be NULL if the start
+  // page is not available.
   AppsGridView(AppsGridViewDelegate* delegate,
-               PaginationModel* pagination_model);
+               PaginationModel* pagination_model,
+               content::WebContents* start_page_contents);
   virtual ~AppsGridView();
 
   // Sets fixed layout parameters. After setting this, CalculateLayout below
@@ -66,6 +77,10 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
 
   // Sets |model| to use. Note this does not take ownership of |model|.
   void SetModel(AppListModel* model);
+
+  // Sets the |item_list| to render. Note this does not take ownership of
+  // |item_list|.
+  void SetItemList(AppListItemList* item_list);
 
   void SetSelectedView(views::View* view);
   void ClearSelectedView(views::View* view);
@@ -120,9 +135,6 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
   // Stops the timer that triggers a page flip during a drag.
   void StopPageFlipTimer();
 
-  // Get the last grid view which was created.
-  static AppsGridView* GetLastGridViewForTest();
-
   // Return the view model for test purposes.
   const views::ViewModel* view_model_for_test() const { return &view_model_; }
 
@@ -135,7 +147,7 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
   }
 
  private:
-  friend class app_list::test::AppsGridViewTestApi;
+  friend class test::AppsGridViewTestApi;
 
   // Represents the index to an item view in the grid.
   struct Index {
@@ -166,6 +178,12 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
   void UpdatePulsingBlockViews();
 
   views::View* CreateViewForItemAtIndex(size_t index);
+
+  // Convert between the model index and the visual index. The model index
+  // is the index of the item in AppListModel. The visual index is the Index
+  // struct above with page/slot info of where to display the item.
+  Index GetIndexFromModelIndex(int model_index) const;
+  int GetModelIndexFromIndex(const Index& index) const;
 
   void SetSelectedItemByIndex(const Index& index);
   bool IsValidIndex(const Index& index) const;
@@ -226,15 +244,19 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
   // buffer area surrounding it.
   bool IsPointWithinDragBuffer(const gfx::Point& point) const;
 
+  // Handles start page layout and transition animation.
+  void LayoutStartPage();
+
   // Overridden from views::ButtonListener:
   virtual void ButtonPressed(views::Button* sender,
                              const ui::Event& event) OVERRIDE;
 
-  // Overridden from ListModelObserver:
-  virtual void ListItemsAdded(size_t start, size_t count) OVERRIDE;
-  virtual void ListItemsRemoved(size_t start, size_t count) OVERRIDE;
-  virtual void ListItemMoved(size_t index, size_t target_index) OVERRIDE;
-  virtual void ListItemsChanged(size_t start, size_t count) OVERRIDE;
+  // Overridden from AppListItemListObserver:
+  virtual void OnListItemAdded(size_t index, AppListItemModel* item) OVERRIDE;
+  virtual void OnListItemRemoved(size_t index, AppListItemModel* item) OVERRIDE;
+  virtual void OnListItemMoved(size_t from_index,
+                               size_t to_index,
+                               AppListItemModel* item) OVERRIDE;
 
   // Overridden from PaginationModelObserver:
   virtual void TotalPagesChanged() OVERRIDE;
@@ -246,13 +268,17 @@ class APP_LIST_EXPORT AppsGridView : public views::View,
   virtual void OnAppListModelStatusChanged() OVERRIDE;
 
   // Hide a given view temporarily without losing (mouse) events and / or
-  // changing the size of it.
-  void HideView(views::View* view, bool hide);
+  // changing the size of it. If |immediate| is set the change will be
+  // immediately applied - otherwise it will change gradually.
+  // If |hide| is set the view will get hidden, otherwise it gets shown.
+  void SetViewHidden(views::View* view, bool hide, bool immediate);
 
   AppListModel* model_;  // Owned by AppListView.
+  AppListItemList* item_list_;  // Not owned.
   AppsGridViewDelegate* delegate_;
   PaginationModel* pagination_model_;  // Owned by AppListController.
   PageSwitcher* page_switcher_view_;  // Owned by views hierarchy.
+  views::WebView* start_page_view_;  // Owned by views hierarchy.
 
   gfx::Size icon_size_;
   int cols_;

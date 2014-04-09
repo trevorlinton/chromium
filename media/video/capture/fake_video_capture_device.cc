@@ -34,6 +34,17 @@ void FakeVideoCaptureDevice::GetDeviceNames(Names* const device_names) {
   }
 }
 
+void FakeVideoCaptureDevice::GetDeviceSupportedFormats(
+    const Name& device,
+    VideoCaptureCapabilities* formats) {
+  VideoCaptureCapability capture_format;
+  capture_format.color = media::PIXEL_FORMAT_I420;
+  capture_format.width = 640;
+  capture_format.height = 480;
+  capture_format.frame_rate = 1000 / kFakeCaptureTimeoutMs;
+  formats->push_back(capture_format);
+}
+
 VideoCaptureDevice* FakeVideoCaptureDevice::Create(const Name& device_name) {
   if (fail_next_create_) {
     fail_next_create_ = false;
@@ -42,7 +53,7 @@ VideoCaptureDevice* FakeVideoCaptureDevice::Create(const Name& device_name) {
   for (int n = 0; n < kNumberOfFakeDevices; ++n) {
     std::string possible_id = base::StringPrintf("/dev/video%d", n);
     if (device_name.id().compare(possible_id) == 0) {
-      return new FakeVideoCaptureDevice(device_name);
+      return new FakeVideoCaptureDevice();
     }
   }
   return NULL;
@@ -52,12 +63,11 @@ void FakeVideoCaptureDevice::SetFailNextCreate() {
   fail_next_create_ = true;
 }
 
-FakeVideoCaptureDevice::FakeVideoCaptureDevice(const Name& device_name)
-    : device_name_(device_name),
-      observer_(NULL),
-      state_(kIdle),
+FakeVideoCaptureDevice::FakeVideoCaptureDevice()
+    : state_(kIdle),
       capture_thread_("CaptureThread"),
-      frame_count_(0) {
+      frame_count_(0),
+      capabilities_roster_index_(0) {
 }
 
 FakeVideoCaptureDevice::~FakeVideoCaptureDevice() {
@@ -66,9 +76,9 @@ FakeVideoCaptureDevice::~FakeVideoCaptureDevice() {
   DCHECK(!capture_thread_.IsRunning());
 }
 
-void FakeVideoCaptureDevice::Allocate(
+void FakeVideoCaptureDevice::AllocateAndStart(
     const VideoCaptureCapability& capture_format,
-    EventHandler* observer) {
+    scoped_ptr<VideoCaptureDevice::Client> client) {
   capture_format_.frame_size_type = capture_format.frame_size_type;
   if (capture_format.frame_size_type == VariableResolutionVideoCaptureDevice)
     PopulateCapabilitiesRoster();
@@ -77,10 +87,8 @@ void FakeVideoCaptureDevice::Allocate(
     return;  // Wrong state.
   }
 
-  observer_ = observer;
-  capture_format_.color = VideoCaptureCapability::kI420;
-  capture_format_.expected_capture_delay = 0;
-  capture_format_.interlaced = false;
+  client_ = client.Pass();
+  capture_format_.color = PIXEL_FORMAT_I420;
   if (capture_format.width > 320) {  // VGA
     capture_format_.width = 640;
     capture_format_.height = 480;
@@ -91,33 +99,13 @@ void FakeVideoCaptureDevice::Allocate(
     capture_format_.frame_rate = 30;
   }
 
-  size_t fake_frame_size =
-      capture_format_.width * capture_format_.height * 3 / 2;
+  const size_t fake_frame_size = VideoFrame::AllocationSize(
+      VideoFrame::I420,
+      gfx::Size(capture_format_.width, capture_format_.height));
   fake_frame_.reset(new uint8[fake_frame_size]);
 
-  state_ = kAllocated;
-  observer_->OnFrameInfo(capture_format_);
-}
+  client_->OnFrameInfo(capture_format_);
 
-void FakeVideoCaptureDevice::Reallocate() {
-  DCHECK_EQ(state_, kCapturing);
-  capture_format_ = capabilities_roster_.at(++capabilities_roster_index_ %
-                                            capabilities_roster_.size());
-  DCHECK_EQ(capture_format_.color, VideoCaptureCapability::kI420);
-  DVLOG(3) << "Reallocating FakeVideoCaptureDevice, new capture resolution ("
-           << capture_format_.width << "x" << capture_format_.height << ")";
-
-  size_t fake_frame_size =
-      capture_format_.width * capture_format_.height * 3 / 2;
-  fake_frame_.reset(new uint8[fake_frame_size]);
-
-  observer_->OnFrameInfoChanged(capture_format_);
-}
-
-void FakeVideoCaptureDevice::Start() {
-  if (state_ != kAllocated) {
-      return;  // Wrong state.
-  }
   state_ = kCapturing;
   capture_thread_.Start();
   capture_thread_.message_loop()->PostTask(
@@ -126,24 +114,28 @@ void FakeVideoCaptureDevice::Start() {
                  base::Unretained(this)));
 }
 
-void FakeVideoCaptureDevice::Stop() {
-  if (state_ != kCapturing) {
-      return;  // Wrong state.
-  }
-  capture_thread_.Stop();
-  state_ = kAllocated;
+void FakeVideoCaptureDevice::Reallocate() {
+  DCHECK_EQ(state_, kCapturing);
+  capture_format_ = capabilities_roster_.at(++capabilities_roster_index_ %
+                                            capabilities_roster_.size());
+  DCHECK_EQ(capture_format_.color, PIXEL_FORMAT_I420);
+  DVLOG(3) << "Reallocating FakeVideoCaptureDevice, new capture resolution ("
+           << capture_format_.width << "x" << capture_format_.height << ")";
+
+  const size_t fake_frame_size = VideoFrame::AllocationSize(
+      VideoFrame::I420,
+      gfx::Size(capture_format_.width, capture_format_.height));
+  fake_frame_.reset(new uint8[fake_frame_size]);
+
+  client_->OnFrameInfoChanged(capture_format_);
 }
 
-void FakeVideoCaptureDevice::DeAllocate() {
-  if (state_ != kAllocated && state_ != kCapturing) {
-      return;  // Wrong state.
+void FakeVideoCaptureDevice::StopAndDeAllocate() {
+  if (state_ != kCapturing) {
+    return;  // Wrong state.
   }
   capture_thread_.Stop();
   state_ = kIdle;
-}
-
-const VideoCaptureDevice::Name& FakeVideoCaptureDevice::device_name() {
-  return device_name_;
 }
 
 void FakeVideoCaptureDevice::OnCaptureTask() {
@@ -151,7 +143,9 @@ void FakeVideoCaptureDevice::OnCaptureTask() {
     return;
   }
 
-  int frame_size = capture_format_.width * capture_format_.height * 3 / 2;
+  const size_t frame_size = VideoFrame::AllocationSize(
+      VideoFrame::I420,
+      gfx::Size(capture_format_.width, capture_format_.height));
   memset(fake_frame_.get(), 0, frame_size);
 
   SkBitmap bitmap;
@@ -204,8 +198,8 @@ void FakeVideoCaptureDevice::OnCaptureTask() {
 
   frame_count_++;
 
-  // Give the captured frame to the observer.
-  observer_->OnIncomingCapturedFrame(
+  // Give the captured frame to the client.
+  client_->OnIncomingCapturedFrame(
       fake_frame_.get(), frame_size, base::Time::Now(), 0, false, false);
   if (!(frame_count_ % kFakeCaptureCapabilityChangePeriod) &&
       (capture_format_.frame_size_type ==
@@ -225,25 +219,19 @@ void FakeVideoCaptureDevice::PopulateCapabilitiesRoster() {
       media::VideoCaptureCapability(320,
                                     240,
                                     30,
-                                    VideoCaptureCapability::kI420,
-                                    0,
-                                    false,
+                                    PIXEL_FORMAT_I420,
                                     VariableResolutionVideoCaptureDevice));
   capabilities_roster_.push_back(
       media::VideoCaptureCapability(640,
                                     480,
                                     30,
-                                    VideoCaptureCapability::kI420,
-                                    0,
-                                    false,
+                                    PIXEL_FORMAT_I420,
                                     VariableResolutionVideoCaptureDevice));
   capabilities_roster_.push_back(
       media::VideoCaptureCapability(800,
                                     600,
                                     30,
-                                    VideoCaptureCapability::kI420,
-                                    0,
-                                    false,
+                                    PIXEL_FORMAT_I420,
                                     VariableResolutionVideoCaptureDevice));
 
   capabilities_roster_index_ = 0;

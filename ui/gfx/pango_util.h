@@ -13,7 +13,7 @@
 #include "base/logging.h"
 #include "base/strings/string16.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "ui/base/ui_export.h"
+#include "ui/gfx/gfx_export.h"
 
 typedef struct _PangoContext PangoContext;
 
@@ -51,13 +51,13 @@ class ScopedPangoFontDescription {
 };
 
 // Uses Pango to draw text onto |cr|. This is the public method for d
-void UI_EXPORT DrawTextOntoCairoSurface(cairo_t* cr,
-                                        const base::string16& text,
-                                        const gfx::Font& font,
-                                        const gfx::Rect& bounds,
-                                        const gfx::Rect& clip,
-                                        SkColor text_color,
-                                        int flags);
+void GFX_EXPORT DrawTextOntoCairoSurface(cairo_t* cr,
+                                         const base::string16& text,
+                                         const gfx::Font& font,
+                                         const gfx::Rect& bounds,
+                                         const gfx::Rect& clip,
+                                         SkColor text_color,
+                                         int flags);
 
 // ----------------------------------------------------------------------------
 // All other methods in this file are only to be used within the ui/ directory.

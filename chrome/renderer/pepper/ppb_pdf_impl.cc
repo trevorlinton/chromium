@@ -44,7 +44,7 @@ using content::RenderThread;
 
 namespace {
 
-#if defined(OS_LINUX) || defined(OS_OPENBSD)
+#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
 class PrivateFontFile : public ppapi::Resource {
  public:
   PrivateFontFile(PP_Instance instance, int fd)
@@ -192,7 +192,7 @@ PP_Resource GetFontFileWithFallback(
     PP_Instance instance_id,
     const PP_BrowserFont_Trusted_Description* description,
     PP_PrivateFontCharset charset) {
-#if defined(OS_LINUX) || defined(OS_OPENBSD)
+#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
   // Validate the instance before using it below.
   if (!content::PepperPluginInstance::Get(instance_id))
     return 0;
@@ -224,7 +224,7 @@ bool GetFontTableForPrivateFontFile(PP_Resource font_file,
                                     uint32_t table,
                                     void* output,
                                     uint32_t* output_length) {
-#if defined(OS_LINUX) || defined(OS_OPENBSD)
+#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
   ppapi::Resource* resource =
       PpapiGlobals::Get()->GetResourceTracker()->GetResource(font_file);
   if (!resource)
@@ -398,6 +398,27 @@ PP_Resource GetResourceImage(PP_Instance instance_id,
   return GetResourceImageForScale(instance_id, image_id, 1.0f);
 }
 
+PP_Var ModalPromptForPassword(PP_Instance instance_id,
+                              PP_Var message) {
+  content::PepperPluginInstance* instance =
+      content::PepperPluginInstance::Get(instance_id);
+  if (!instance)
+    return PP_MakeUndefined();
+
+  std::string actual_value;
+  scoped_refptr<ppapi::StringVar> message_string(
+      ppapi::StringVar::FromPPVar(message));
+
+  IPC::SyncMessage* msg = new ChromeViewHostMsg_PDFModalPromptForPassword(
+      instance->GetRenderView()->GetRoutingID(),
+      message_string->value(),
+      &actual_value);
+  msg->EnableMessagePumping();
+  instance->GetRenderView()->Send(msg);
+
+  return ppapi::StringVar::StringToPPVar(actual_value);
+}
+
 const PPB_PDF ppb_pdf = {
   &GetLocalizedString,
   &GetResourceImage,
@@ -413,7 +434,8 @@ const PPB_PDF ppb_pdf = {
   &SaveAs,
   &PPB_PDF_Impl::InvokePrintingForInstance,
   &IsFeatureEnabled,
-  &GetResourceImageForScale
+  &GetResourceImageForScale,
+  &ModalPromptForPassword,
 };
 
 }  // namespace

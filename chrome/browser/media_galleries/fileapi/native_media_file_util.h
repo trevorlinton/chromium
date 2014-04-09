@@ -9,8 +9,6 @@
 #include "base/memory/weak_ptr.h"
 #include "webkit/browser/fileapi/async_file_util.h"
 
-namespace chrome {
-
 class MediaPathFilter;
 
 // This class handles native file system operations with media type filtering.
@@ -65,11 +63,14 @@ class NativeMediaFileUtil : public fileapi::AsyncFileUtil {
       scoped_ptr<fileapi::FileSystemOperationContext> context,
       const fileapi::FileSystemURL& src_url,
       const fileapi::FileSystemURL& dest_url,
+      CopyOrMoveOption option,
+      const CopyFileProgressCallback& progress_callback,
       const StatusCallback& callback) OVERRIDE;
   virtual void MoveFileLocal(
       scoped_ptr<fileapi::FileSystemOperationContext> context,
       const fileapi::FileSystemURL& src_url,
       const fileapi::FileSystemURL& dest_url,
+      CopyOrMoveOption option,
       const StatusCallback& callback) OVERRIDE;
   virtual void CopyInForeignFile(
       scoped_ptr<fileapi::FileSystemOperationContext> context,
@@ -112,6 +113,7 @@ class NativeMediaFileUtil : public fileapi::AsyncFileUtil {
       scoped_ptr<fileapi::FileSystemOperationContext> context,
       const fileapi::FileSystemURL& src_url,
       const fileapi::FileSystemURL& dest_url,
+      CopyOrMoveOption option,
       bool copy,
       const StatusCallback& callback);
   virtual void CopyInForeignFileOnTaskRunnerThread(
@@ -140,6 +142,7 @@ class NativeMediaFileUtil : public fileapi::AsyncFileUtil {
       fileapi::FileSystemOperationContext* context,
       const fileapi::FileSystemURL& src_url,
       const fileapi::FileSystemURL& dest_url,
+      CopyOrMoveOption option,
       bool copy);
   virtual base::PlatformFileError CopyInForeignFileSync(
       fileapi::FileSystemOperationContext* context,
@@ -172,7 +175,7 @@ class NativeMediaFileUtil : public fileapi::AsyncFileUtil {
       scoped_refptr<webkit_blob::ShareableFileReference>* file_ref);
 
  protected:
-  chrome::MediaPathFilter* media_path_filter() {
+  MediaPathFilter* media_path_filter() {
     return media_path_filter_;
   }
 
@@ -198,14 +201,12 @@ class NativeMediaFileUtil : public fileapi::AsyncFileUtil {
       base::FilePath* local_file_path);
 
 
-  base::WeakPtrFactory<NativeMediaFileUtil> weak_factory_;
-
   // Not owned, owned by the backend which owns this.
-  chrome::MediaPathFilter* media_path_filter_;
+  MediaPathFilter* media_path_filter_;
+
+  base::WeakPtrFactory<NativeMediaFileUtil> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(NativeMediaFileUtil);
 };
-
-}  // namespace chrome
 
 #endif  // CHROME_BROWSER_MEDIA_GALLERIES_FILEAPI_NATIVE_MEDIA_FILE_UTIL_H_

@@ -3,7 +3,9 @@
 // found in the LICENSE file.
 
 #include "base/basictypes.h"
+#include "base/bind.h"
 #include "base/compiler_specific.h"
+#include "base/test/launcher/unit_test_launcher.h"
 #include "base/test/test_suite.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_paths.h"
@@ -25,5 +27,9 @@ class ViewTestSuite : public base::TestSuite {
 };
 
 int main(int argc, char** argv) {
-  return ViewTestSuite(argc, argv).Run();
+  ViewTestSuite test_suite(argc, argv);
+
+  return base::LaunchUnitTests(
+      argc, argv, base::Bind(&ViewTestSuite::Run,
+                             base::Unretained(&test_suite)));
 }

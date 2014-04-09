@@ -16,9 +16,6 @@
 #include "device/media_transfer_protocol/media_transfer_protocol_manager.h"
 #endif
 
-namespace chrome {
-namespace test {
-
 TestStorageMonitor::TestStorageMonitor()
     : StorageMonitor(),
       init_called_(false) {
@@ -32,13 +29,13 @@ TestStorageMonitor::~TestStorageMonitor() {}
 
 // static
 TestStorageMonitor* TestStorageMonitor::CreateAndInstall() {
-  RemoveSingleton();
   TestStorageMonitor* monitor = new TestStorageMonitor();
   scoped_ptr<StorageMonitor> pass_monitor(monitor);
   monitor->Init();
   monitor->MarkInitialized();
   TestingBrowserProcess* browser_process = TestingBrowserProcess::GetGlobal();
   if (browser_process) {
+    DCHECK(browser_process->storage_monitor() == NULL);
     browser_process->SetStorageMonitor(pass_monitor.Pass());
     return monitor;
   }
@@ -131,6 +128,3 @@ void TestStorageMonitor::EjectDevice(
   ejected_device_ = device_id;
   callback.Run(EJECT_OK);
 }
-
-}  // namespace test
-}  // namespace chrome

@@ -11,8 +11,8 @@
 
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "net/tools/epoll_server/epoll_server.h"
 #include "net/tools/flip_server/constants.h"
-#include "net/tools/flip_server/epoll_server.h"
 #include "net/tools/flip_server/mem_cache.h"
 
 namespace net {
@@ -45,7 +45,7 @@ class OutputOrdering {
   explicit OutputOrdering(SMConnectionInterface* connection);
   ~OutputOrdering();
   void Reset();
-  bool ExistsInPriorityMaps(uint32 stream_id);
+  bool ExistsInPriorityMaps(uint32 stream_id) const;
 
   struct BeginOutputtingAlarm : public EpollAlarmCallbackInterface {
    public:

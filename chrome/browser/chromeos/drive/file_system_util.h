@@ -23,23 +23,12 @@ class FileSystemURL;
 
 namespace drive {
 
+class DriveAppRegistry;
+class DriveServiceInterface;
 class FileSystemInterface;
 class ResourceEntry;
 
 namespace util {
-
-// Path constants.
-
-// Name of the directory used to store metadata.
-const base::FilePath::CharType kMetadataDirectory[] = FILE_PATH_LITERAL("meta");
-
-// Name of the directory used to store cached files.
-const base::FilePath::CharType kCacheFileDirectory[] =
-    FILE_PATH_LITERAL("files");
-
-// Name of the directory used to store temporary files.
-const base::FilePath::CharType kTemporaryFileDirectory[] =
-    FILE_PATH_LITERAL("tmp");
 
 // Special resource IDs introduced to manage pseudo directory tree locally.
 // These strings are supposed to be different from any resource ID used on the
@@ -71,6 +60,10 @@ const base::FilePath& GetDriveMyDriveRootPath();
 // Returns the Drive mount point path, which looks like "/special/drive".
 const base::FilePath& GetDriveMountPointPath();
 
+// Returns the FileSystem for the |profile|. If not available (not mounted
+// or disabled), returns NULL.
+FileSystemInterface* GetFileSystemByProfile(Profile* profile);
+
 // Returns a FileSystemInterface instance for the |profile_id|, or NULL
 // if the Profile for |profile_id| is destructed or Drive File System is
 // disabled for the profile.
@@ -81,15 +74,20 @@ const base::FilePath& GetDriveMountPointPath();
 // This function must be called on UI thread.
 FileSystemInterface* GetFileSystemByProfileId(void* profile_id);
 
+// Returns the DriveAppRegistry for the |profile|. If not available (not
+// mounted or disabled), returns NULL.
+DriveAppRegistry* GetDriveAppRegistryByProfile(Profile* profile);
+
+// Returns the DriveService for the |profile|. If not available (not mounted
+// or disabled), returns NULL.
+DriveServiceInterface* GetDriveServiceByProfile(Profile* profile);
+
 // Checks if the resource ID is a special one, which is effective only in our
 // implementation and is not supposed to be sent to the server.
 bool IsSpecialResourceId(const std::string& resource_id);
 
 // Returns a ResourceEntry for "/drive/root" directory.
 ResourceEntry CreateMyDriveRootEntry(const std::string& root_resource_id);
-
-// Returns a ResourceEntry for "/drive/other" directory.
-ResourceEntry CreateOtherDirEntry();
 
 // Returns the Drive mount path as string.
 const std::string& GetDriveMountPointPathAsString();
@@ -143,27 +141,18 @@ std::string NormalizeFileName(const std::string& input);
 // profile.
 base::FilePath GetCacheRootPath(Profile* profile);
 
-// Migrates cache files from old "persistent" and "tmp" directories to the new
-// "files" directory (see crbug.com/248905).
-// TODO(hashimoto): Remove this function at some point.
-void MigrateCacheFilesFromOldDirectories(
-    const base::FilePath& cache_root_directory);
-
 // Callback type for PrepareWritableFileAndRun.
 typedef base::Callback<void (FileError, const base::FilePath& path)>
-    OpenFileCallback;
+    PrepareWritableFileCallback;
 
 // Invokes |callback| on blocking thread pool, after converting virtual |path|
 // string like "/special/drive/foo.txt" to the concrete local cache file path.
 // After |callback| returns, the written content is synchronized to the server.
 //
-// If |path| is not a Drive path, it is regarded as a local path and no path
-// conversion takes place.
-//
-// Must be called from UI thread.
+// The |path| must be a path under Drive. Must be called from UI thread.
 void PrepareWritableFileAndRun(Profile* profile,
                                const base::FilePath& path,
-                               const OpenFileCallback& callback);
+                               const PrepareWritableFileCallback& callback);
 
 // Ensures the existence of |directory| of '/special/drive/foo'.  This will
 // create |directory| and its ancestors if they don't exist.  |callback| is
@@ -212,6 +201,9 @@ std::string ReadResourceIdFromGDocFile(const base::FilePath& file_path);
 // Returns the (base-16 encoded) MD5 digest of the file content at |file_path|,
 // or an empty string if an error is found.
 std::string GetMd5Digest(const base::FilePath& file_path);
+
+// Returns true if Drive is enabled for the given Profile.
+bool IsDriveEnabledForProfile(Profile* profile);
 
 }  // namespace util
 }  // namespace drive

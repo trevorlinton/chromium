@@ -3,11 +3,13 @@
 // found in the LICENSE file.
 
 #include "base/strings/string_number_conversions.h"
-#include "net/quic/crypto/crypto_server_config.h"
+#include "crypto/secure_hash.h"
 #include "net/quic/crypto/crypto_utils.h"
+#include "net/quic/crypto/quic_crypto_server_config.h"
 #include "net/quic/crypto/quic_random.h"
 #include "net/quic/test_tools/crypto_test_utils.h"
 #include "net/quic/test_tools/mock_clock.h"
+#include "net/quic/test_tools/mock_random.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using base::StringPiece;
@@ -72,8 +74,8 @@ class CryptoServerTest : public ::testing::Test {
   void ShouldSucceed(const CryptoHandshakeMessage& message) {
     string error_details;
     QuicErrorCode error = config_.ProcessClientHello(
-        message, QuicVersionMax(), 1 /* GUID */, addr_,
-        &clock_, rand_, &params_, &out_, &error_details);
+        message, 1 /* GUID */, addr_, &clock_,
+        rand_, &params_, &out_, &error_details);
 
     ASSERT_EQ(error, QUIC_NO_ERROR)
         << "Message failed with error " << error_details << ": "
@@ -84,8 +86,8 @@ class CryptoServerTest : public ::testing::Test {
                             const CryptoHandshakeMessage& message) {
     string error_details;
     QuicErrorCode error = config_.ProcessClientHello(
-        message, QuicVersionMax(), 1 /* GUID */, addr_,
-        &clock_, rand_, &params_, &out_, &error_details);
+        message, 1 /* GUID */, addr_, &clock_,
+        rand_, &params_, &out_, &error_details);
 
     ASSERT_NE(error, QUIC_NO_ERROR)
         << "Message didn't fail: " << message.DebugString();
@@ -237,6 +239,76 @@ TEST_F(CryptoServerTest, ReplayProtection) {
   ShouldSucceed(msg);
   // The message should accepted twice when replay protection is off.
   ASSERT_EQ(kSHLO, out_.tag());
+}
+
+TEST(CryptoServerConfigGenerationTest, Determinism) {
+  // Test that using a deterministic PRNG causes the server-config to be
+  // deterministic.
+
+  MockRandom rand_a, rand_b;
+  const QuicCryptoServerConfig::ConfigOptions options;
+  MockClock clock;
+
+  QuicCryptoServerConfig a(QuicCryptoServerConfig::TESTING, &rand_a);
+  QuicCryptoServerConfig b(QuicCryptoServerConfig::TESTING, &rand_b);
+  scoped_ptr<CryptoHandshakeMessage> scfg_a(
+      a.AddDefaultConfig(&rand_a, &clock, options));
+  scoped_ptr<CryptoHandshakeMessage> scfg_b(
+      b.AddDefaultConfig(&rand_b, &clock, options));
+
+  ASSERT_EQ(scfg_a->DebugString(), scfg_b->DebugString());
+}
+
+TEST(CryptoServerConfigGenerationTest, SCIDVaries) {
+  // This test ensures that the server config ID varies for different server
+  // configs.
+
+  MockRandom rand_a, rand_b;
+  const QuicCryptoServerConfig::ConfigOptions options;
+  MockClock clock;
+
+  QuicCryptoServerConfig a(QuicCryptoServerConfig::TESTING, &rand_a);
+  rand_b.ChangeValue();
+  QuicCryptoServerConfig b(QuicCryptoServerConfig::TESTING, &rand_b);
+  scoped_ptr<CryptoHandshakeMessage> scfg_a(
+      a.AddDefaultConfig(&rand_a, &clock, options));
+  scoped_ptr<CryptoHandshakeMessage> scfg_b(
+      b.AddDefaultConfig(&rand_b, &clock, options));
+
+  StringPiece scid_a, scid_b;
+  EXPECT_TRUE(scfg_a->GetStringPiece(kSCID, &scid_a));
+  EXPECT_TRUE(scfg_b->GetStringPiece(kSCID, &scid_b));
+
+  EXPECT_NE(scid_a, scid_b);
+}
+
+
+TEST(CryptoServerConfigGenerationTest, SCIDIsHashOfServerConfig) {
+  MockRandom rand_a;
+  const QuicCryptoServerConfig::ConfigOptions options;
+  MockClock clock;
+
+  QuicCryptoServerConfig a(QuicCryptoServerConfig::TESTING, &rand_a);
+  scoped_ptr<CryptoHandshakeMessage> scfg(
+      a.AddDefaultConfig(&rand_a, &clock, options));
+
+  StringPiece scid;
+  EXPECT_TRUE(scfg->GetStringPiece(kSCID, &scid));
+  // Need to take a copy of |scid| has we're about to call |Erase|.
+  const string scid_str(scid.as_string());
+
+  scfg->Erase(kSCID);
+  scfg->MarkDirty();
+  const QuicData& serialized(scfg->GetSerialized());
+
+  scoped_ptr<crypto::SecureHash> hash(
+      crypto::SecureHash::Create(crypto::SecureHash::SHA256));
+  hash->Update(serialized.data(), serialized.length());
+  uint8 digest[16];
+  hash->Finish(digest, sizeof(digest));
+
+  ASSERT_EQ(scid.size(), sizeof(digest));
+  EXPECT_TRUE(0 == memcmp(digest, scid_str.data(), sizeof(digest)));
 }
 
 class CryptoServerTestNoConfig : public CryptoServerTest {

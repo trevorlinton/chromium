@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_AUTOFILL_ACCOUNT_CHOOSER_MODEL_H_
 #define CHROME_BROWSER_UI_AUTOFILL_ACCOUNT_CHOOSER_MODEL_H_
 
+#include <string>
 #include <vector>
 
 #include "base/basictypes.h"
@@ -14,15 +15,20 @@
 #include "ui/base/models/simple_menu_model.h"
 
 class AutofillMetrics;
-class PrefService;
+class Profile;
 
 namespace autofill {
+
+class AccountChooserModel;
 
 // A delegate interface to allow the AccountChooserModel to inform its owner
 // of changes.
 class AccountChooserModelDelegate {
  public:
   virtual ~AccountChooserModelDelegate();
+
+  // Called right before the account chooser is shown.
+  virtual void AccountChooserWillShow() = 0;
 
   // Called when the active account has changed.
   virtual void AccountChoiceChanged() = 0;
@@ -41,10 +47,12 @@ class AccountChooserModel : public ui::SimpleMenuModel,
                             public ui::SimpleMenuModel::Delegate {
  public:
   AccountChooserModel(AccountChooserModelDelegate* delegate,
-                      PrefService* prefs,
-                      const AutofillMetrics& metric_logger,
-                      DialogType dialog_type);
+                      Profile* profile,
+                      const AutofillMetrics& metric_logger);
   virtual ~AccountChooserModel();
+
+  // ui::SimpleMenuModel implementation.
+  virtual void MenuWillShow() OVERRIDE;
 
   // ui::SimpleMenuModel::Delegate implementation.
   virtual bool IsCommandIdChecked(int command_id) const OVERRIDE;
@@ -53,6 +61,7 @@ class AccountChooserModel : public ui::SimpleMenuModel,
       int command_id,
       ui::Accelerator* accelerator) OVERRIDE;
   virtual void ExecuteCommand(int command_id, int event_flags) OVERRIDE;
+  virtual void MenuWillShow(ui::SimpleMenuModel* source) OVERRIDE;
 
   // Sets the selection to the currently active Online Wallet account.
   // Should be called if the user attempts to sign into the Online Wallet
@@ -65,24 +74,24 @@ class AccountChooserModel : public ui::SimpleMenuModel,
   // Returns true if there are any accounts for the user to choose from.
   bool HasAccountsToChoose() const;
 
-  // Sets the name of the account used to communicate with the Online Wallet.
-  void SetActiveWalletAccountName(const string16& account);
+  // Sets the name of the accounts used to communicate with the Online Wallet.
+  void SetWalletAccounts(const std::vector<std::string>& accounts);
 
-  // Clears the name of the account used to communicate with the Online Wallet.
+  // Clears the set of accounts used to communicate with the Online Wallet.
   // Any Wallet error automatically clears the currently active account name.
-  void ClearActiveWalletAccountName();
+  void ClearWalletAccounts();
 
   // Returns the name of the currently active account, or an empty string.
-  const string16& active_wallet_account_name() const {
-    return active_wallet_account_name_;
-  }
+  // The currently active account may not be the checked item in the menu, but
+  // will be the most recently checked wallet account item.
+  base::string16 GetActiveWalletAccountName() const;
+
+  // Returns the index of the account that is currently active.
+  size_t GetActiveWalletAccountIndex() const;
 
   // Disables all Wallet accounts and switches to the local Autofill data.
-  // Should be called when the Wallet server returns an error with the message
-  // to be displayed. If |message| is empty the error state will be cleared.
-  void SetHadWalletError(const base::string16& message);
-
-  bool HadWalletError() const;
+  // Should be called when the Wallet server returns an error.
+  void SetHadWalletError();
 
   // Switches the dialog to the local Autofill data.
   // Should be called when the Online Wallet sign-in attempt has failed.
@@ -91,23 +100,15 @@ class AccountChooserModel : public ui::SimpleMenuModel,
   // Returns true if the selected account is an Online Wallet account.
   bool WalletIsSelected() const;
 
-  // Returns true if the current selection matches the currently active
-  // Wallet account.
-  bool IsActiveWalletAccountSelected() const;
-
   // Returns the command id of the current selection.
   int checked_item() const { return checked_item_; }
 
-  base::string16 wallet_error_message() const { return wallet_error_message_; }
-
  protected:
   // Command IDs of the items in this menu; protected for the tests.
-  // kActiveWalletItemId is the currently active account.
   // kAutofillItemId is "Pay without the Wallet" (local autofill data).
-  // In the future, kFirstAdditionalItemId will be added as the first id
-  // for additional accounts.
-  static const int kActiveWalletItemId;
   static const int kAutofillItemId;
+  // Wallet account menu item IDs are this value + the account index.
+  static const int kWalletAccountsStartId;
 
  private:
   // Reconstructs the set of menu items.
@@ -118,17 +119,18 @@ class AccountChooserModel : public ui::SimpleMenuModel,
   // The command id of the currently selected item.
   int checked_item_;
 
-  // The message to be displayed if there is a Wallet error. This message is
-  // only non-empty if a Wallet error has occurred.
-  base::string16 wallet_error_message_;
+  // The index of the active wallet account.
+  size_t active_wallet_account_;
+
+  // Whether there has been a Wallet error.
+  bool had_wallet_error_;
 
   // For logging UMA metrics.
   const AutofillMetrics& metric_logger_;
-  const DialogType dialog_type_;
 
-  // The name (email) of the account currently used in communications with the
+  // The names (emails) of the signed in accounts, gotten from the
   // Online Wallet service.
-  string16 active_wallet_account_name_;
+  std::vector<std::string> wallet_accounts_;
 
   DISALLOW_COPY_AND_ASSIGN(AccountChooserModel);
 };

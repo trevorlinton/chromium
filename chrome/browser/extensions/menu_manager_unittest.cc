@@ -21,8 +21,8 @@
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/prefs/pref_service_syncable.h"
 #include "chrome/common/chrome_paths.h"
+#include "chrome/common/extensions/api/context_menus.h"
 #include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/extension_constants.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/common/context_menu_params.h"
@@ -39,6 +39,8 @@ using testing::Return;
 using testing::SaveArg;
 
 namespace extensions {
+
+namespace context_menus = api::context_menus;
 
 // Base class for tests.
 class MenuManagerTest : public testing::Test {
@@ -83,10 +85,10 @@ class MenuManagerTest : public testing::Test {
   }
 
  protected:
-  TestingProfile profile_;
   base::MessageLoopForUI message_loop_;
   content::TestBrowserThread ui_thread_;
   content::TestBrowserThread file_thread_;
+  TestingProfile profile_;
 
   MenuManager manager_;
   ExtensionList extensions_;
@@ -216,15 +218,15 @@ TEST_F(MenuManagerTest, PopulateFromValue) {
 
   base::ListValue* document_url_patterns(new base::ListValue());
   document_url_patterns->Append(
-      Value::CreateStringValue("http://www.google.com/*"));
+      new base::StringValue("http://www.google.com/*"));
   document_url_patterns->Append(
-      Value::CreateStringValue("http://www.reddit.com/*"));
+      new base::StringValue("http://www.reddit.com/*"));
 
   base::ListValue* target_url_patterns(new base::ListValue());
   target_url_patterns->Append(
-      Value::CreateStringValue("http://www.yahoo.com/*"));
+      new base::StringValue("http://www.yahoo.com/*"));
   target_url_patterns->Append(
-      Value::CreateStringValue("http://www.facebook.com/*"));
+      new base::StringValue("http://www.facebook.com/*"));
 
   base::DictionaryValue value;
   value.SetBoolean("incognito", incognito);
@@ -433,7 +435,7 @@ TEST_F(MenuManagerTest, ExtensionUnloadRemovesMenuItems) {
   // Notify that the extension was unloaded, and make sure the right item is
   // gone.
   UnloadedExtensionInfo details(
-      extension1, extension_misc::UNLOAD_REASON_DISABLE);
+      extension1, UnloadedExtensionInfo::REASON_DISABLE);
   notifier->Notify(chrome::NOTIFICATION_EXTENSION_UNLOADED,
                    content::Source<Profile>(&profile_),
                    content::Details<UnloadedExtensionInfo>(
@@ -588,7 +590,7 @@ TEST_F(MenuManagerTest, ExecuteCommand) {
     EXPECT_CALL(*mock_event_router,
               DispatchEventToExtensionMock(
                   item->extension_id(),
-                  extensions::event_names::kOnContextMenuClicked,
+                  context_menus::OnClicked::kEventName,
                   _,
                   &profile,
                   GURL(),

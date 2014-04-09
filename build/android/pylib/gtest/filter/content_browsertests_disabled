@@ -2,14 +2,11 @@
 # Timeouts
 Http/MediaTest.*
 File/MediaTest.*
-ExternalClearKey/EncryptedMediaTest.*
-ClearKey/EncryptedMediaTest.*
 WorkerTest.*
 MediaTest.*
 MediaSourceTest.*
 WebGLConformanceTest.*
 MessagePortTest.Tests
-EncryptedMediaTest.*
 CrossPlatformAccessibilityBrowserTest.*
 DatabaseTest.*
 ResourceDispatcherHostBrowserTest.SyncXMLHttpRequest_DuringUnload
@@ -38,6 +35,11 @@ PluginTest.*
 # https://codereview.chromium.org/14304004/. Investigate more.
 DomSerializerTests.*
 
+# http://crbug.com/297230
+DumpAccessibilityTreeTest.AccessibilityCanvas
+RendererAccessibilityTest.DetachAccessibilityObject
+RendererAccessibilityTest.EditableTextModeFocusEvents
+
 # http://crbug.com/187500
 RenderViewImplTest.*
 RendererAccessibilityTest.EditableTextModeFocusNotifications
@@ -63,9 +65,12 @@ DownloadContentTest.ResumeInterruptedDownloadBadPrecondition
 DownloadContentTest.ResumeWithDeletedFile
 
 # http://crbug.com/181069
+WebrtcBrowserTest.CanForwardRemoteStream
+WebrtcBrowserTest.CanForwardRemoteStream720p
 WebrtcBrowserTest.CanSetupVideoCall
 WebrtcBrowserTest.CanSetupAudioAndVideoCall
 WebrtcBrowserTest.CanSetupAudioAndVideoCallWithoutMsidAndBundle
+WebrtcBrowserTest.CanSetupLegacyCall
 WebrtcBrowserTest.CallWithDataOnly
 WebrtcBrowserTest.CallWithDataAndMedia
 WebrtcBrowserTest.CanMakeEmptyCallThenAddStreamsAndRenegotiate
@@ -77,6 +82,10 @@ WebRTCInternalsBrowserTest.WithRealPeerConnectionCall
 
 # http://crbug.com/175683
 WebrtcBrowserTest.CallWithDataAndLaterAddMedia
+
+# http://crbug.com/311348
+WebrtcBrowserTest.CallWithSctpDataOnly
+WebrtcBrowserTest.CallWithSctpDataAndMedia
 
 # http://crbug.com/224134
 RenderWidgetHostBrowserTest.GetSnapshotFromRendererTest
@@ -101,3 +110,9 @@ ResourceFetcherTests.ResourceFetcherDownload
 
 # http://crbug.com/256238
 SignalTest.*
+
+# http://crbug.com/311344
+BrowserGpuChannelHostFactoryTest.AlreadyEstablished
+BrowserGpuChannelHostFactoryTest.Basic
+BrowserGpuChannelHostFactoryTest.CrashAndRecover
+BrowserGpuChannelHostFactoryTest.EstablishAndTerminate

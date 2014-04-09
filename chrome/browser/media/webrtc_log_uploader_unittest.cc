@@ -23,7 +23,7 @@ class WebRtcLogUploaderTest : public testing::Test {
 
   bool VerifyNumberOfLinesAndContentsOfLastLine(int expected_lines) {
     std::string contents;
-    int read = file_util::ReadFileToString(test_list_path_, &contents);
+    int read = base::ReadFileToString(test_list_path_, &contents);
     EXPECT_GT(read, 0);
     if (read <= 0)
       return false;
@@ -92,22 +92,25 @@ TEST_F(WebRtcLogUploaderTest, AddUploadedLogInfoToUploadListFile) {
   EXPECT_TRUE(base::DeleteFile(test_list_path_, false));
   scoped_ptr<WebRtcLogUploader> webrtc_log_uploader_(
       new WebRtcLogUploader());
-  webrtc_log_uploader_->SetUploadPathForTesting(test_list_path_);
 
-  webrtc_log_uploader_->AddUploadedLogInfoToUploadListFile(kTestReportId);
-  webrtc_log_uploader_->AddUploadedLogInfoToUploadListFile(kTestReportId);
+  webrtc_log_uploader_->AddUploadedLogInfoToUploadListFile(test_list_path_,
+                                                           kTestReportId);
+  webrtc_log_uploader_->AddUploadedLogInfoToUploadListFile(test_list_path_,
+                                                           kTestReportId);
   ASSERT_TRUE(VerifyNumberOfLinesAndContentsOfLastLine(2));
 
   const int expected_line_limit = 50;
   ASSERT_TRUE(AddLinesToTestFile(expected_line_limit - 2));
   ASSERT_TRUE(VerifyNumberOfLinesAndContentsOfLastLine(expected_line_limit));
 
-  webrtc_log_uploader_->AddUploadedLogInfoToUploadListFile(kTestReportId);
+  webrtc_log_uploader_->AddUploadedLogInfoToUploadListFile(test_list_path_,
+                                                           kTestReportId);
   ASSERT_TRUE(VerifyNumberOfLinesAndContentsOfLastLine(expected_line_limit));
 
   ASSERT_TRUE(AddLinesToTestFile(10));
   ASSERT_TRUE(VerifyNumberOfLinesAndContentsOfLastLine(60));
 
-  webrtc_log_uploader_->AddUploadedLogInfoToUploadListFile(kTestReportId);
+  webrtc_log_uploader_->AddUploadedLogInfoToUploadListFile(test_list_path_,
+                                                           kTestReportId);
   ASSERT_TRUE(VerifyNumberOfLinesAndContentsOfLastLine(expected_line_limit));
 }

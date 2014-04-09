@@ -15,8 +15,8 @@
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
-#include "cc/resources/sync_point_helper.h"
 #include "content/common/gpu/client/gl_helper_scaling.h"
+#include "gpu/command_buffer/client/context_support.h"
 #include "gpu/command_buffer/common/mailbox.h"
 #include "media/base/video_frame.h"
 #include "media/base/video_util.h"
@@ -111,8 +111,10 @@ class GLHelper::CopyTextureToImpl :
       public base::SupportsWeakPtr<GLHelper::CopyTextureToImpl> {
  public:
   CopyTextureToImpl(WebGraphicsContext3D* context,
+                    gpu::ContextSupport* context_support,
                     GLHelper* helper)
       : context_(context),
+        context_support_(context_support),
         helper_(helper),
         flush_(context),
         max_draw_buffers_(0) {
@@ -282,6 +284,7 @@ class GLHelper::CopyTextureToImpl :
     CopyTextureToImpl* copy_impl_;
     gfx::Size dst_size_;
     gfx::Rect dst_subrect_;
+    GLHelper::ScalerQuality quality_;
     ScalerHolder scaler_;
     scoped_ptr<content::GLHelperScaling::ShaderInterface> pass1_shader_;
     scoped_ptr<content::GLHelperScaling::ShaderInterface> pass2_shader_;
@@ -314,6 +317,7 @@ class GLHelper::CopyTextureToImpl :
   static const float kRGBtoVColorWeights[];
 
   WebGraphicsContext3D* context_;
+  gpu::ContextSupport* context_support_;
   GLHelper* helper_;
 
   // A scoped flush that will ensure all resource deletions are flushed when
@@ -394,14 +398,13 @@ void GLHelper::CopyTextureToImpl::ReadbackAsync(
                        GL_STREAM_READ);
 
   request->query = context_->createQueryEXT();
-  context_->beginQueryEXT(GL_ASYNC_READ_PIXELS_COMPLETED_CHROMIUM,
+  context_->beginQueryEXT(GL_ASYNC_PIXEL_PACK_COMPLETED_CHROMIUM,
                           request->query);
   context_->readPixels(0, 0, dst_size.width(), dst_size.height(),
                        GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-  context_->endQueryEXT(GL_ASYNC_READ_PIXELS_COMPLETED_CHROMIUM);
+  context_->endQueryEXT(GL_ASYNC_PIXEL_PACK_COMPLETED_CHROMIUM);
   context_->bindBuffer(GL_PIXEL_PACK_TRANSFER_BUFFER_CHROMIUM, 0);
-  cc::SyncPointHelper::SignalQuery(
-      context_,
+  context_support_->SignalQuery(
       request->query,
       base::Bind(&CopyTextureToImpl::ReadbackDone, AsWeakPtr(), request));
 }
@@ -547,8 +550,10 @@ void GLHelper::CopyTextureToImpl::CancelRequests() {
   }
 }
 
-GLHelper::GLHelper(WebKit::WebGraphicsContext3D* context)
-    : context_(context) {
+GLHelper::GLHelper(WebKit::WebGraphicsContext3D* context,
+                   gpu::ContextSupport* context_support)
+    : context_(context),
+      context_support_(context_support) {
 }
 
 GLHelper::~GLHelper() {
@@ -638,7 +643,8 @@ WebGLId GLHelper::CompileShaderFromSource(
 void GLHelper::InitCopyTextToImpl() {
   // Lazily initialize |copy_texture_to_impl_|
   if (!copy_texture_to_impl_)
-    copy_texture_to_impl_.reset(new CopyTextureToImpl(context_, this));
+    copy_texture_to_impl_.reset(
+        new CopyTextureToImpl(context_, context_support_, this));
 }
 
 void GLHelper::InitScalerImpl() {
@@ -886,12 +892,13 @@ GLHelper::CopyTextureToImpl::ReadbackYUV_MRT::ReadbackYUV_MRT(
       copy_impl_(copy_impl),
       dst_size_(dst_size),
       dst_subrect_(dst_subrect),
+      quality_(quality),
       scaler_(context, scaler_impl->CreateScaler(
           quality,
           src_size,
           src_subrect,
           dst_subrect.size(),
-          flip_vertically,
+          false,
           false)),
       pass1_shader_(scaler_impl->CreateYuvMrtShader(
           dst_subrect.size(),
@@ -900,7 +907,7 @@ GLHelper::CopyTextureToImpl::ReadbackYUV_MRT::ReadbackYUV_MRT(
                     dst_subrect.height()),
           gfx::Size((dst_subrect.width() + 3) / 4,
                     dst_subrect.height()),
-          false,
+          flip_vertically,
           GLHelperScaling::SHADER_YUV_MRT_PASS1)),
       pass2_shader_(scaler_impl->CreateYuvMrtShader(
           gfx::Size((dst_subrect.width() + 3) / 4,
@@ -947,15 +954,27 @@ void GLHelper::CopyTextureToImpl::ReadbackYUV_MRT::ReadbackYUV(
   WebGLId mailbox_texture =
       copy_impl_->ConsumeMailboxToTexture(mailbox, sync_point);
 
-  // Scale texture to right size.
-  scaler_.Scale(mailbox_texture);
-  context_->deleteTexture(mailbox_texture);
+  WebGLId texture;
+  if (quality_ == GLHelper::SCALER_QUALITY_FAST) {
+    // Optimization: SCALER_QUALITY_FAST is just a single bilinear
+    // pass, which pass1_shader_ can do just as well, so let's skip
+    // the actual scaling in that case.
+    texture = mailbox_texture;
+  } else {
+    // Scale texture to right size.
+    scaler_.Scale(mailbox_texture);
+    texture = scaler_.texture();
+  }
+
 
   std::vector<WebKit::WebGLId> outputs(2);
   // Convert the scaled texture in to Y, U and V planes.
   outputs[0] = y_.texture();
   outputs[1] = uv_;
-  pass1_shader_->Execute(scaler_.texture(), outputs);
+  pass1_shader_->Execute(texture, outputs);
+
+  context_->deleteTexture(mailbox_texture);
+
   outputs[0] = u_.texture();
   outputs[1] = v_.texture();
   pass2_shader_->Execute(uv_, outputs);

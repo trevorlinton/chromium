@@ -49,19 +49,18 @@ BrowserAccessibilityManager* BrowserAccessibilityManager::Create(
                                                 src, delegate, factory);
 }
 
+BrowserAccessibilityManagerAndroid*
+BrowserAccessibilityManager::ToBrowserAccessibilityManagerAndroid() {
+  return static_cast<BrowserAccessibilityManagerAndroid*>(this);
+}
+
 BrowserAccessibilityManagerAndroid::BrowserAccessibilityManagerAndroid(
     ScopedJavaLocalRef<jobject> content_view_core,
     const AccessibilityNodeData& src,
     BrowserAccessibilityDelegate* delegate,
     BrowserAccessibilityFactory* factory)
     : BrowserAccessibilityManager(src, delegate, factory) {
-  if (content_view_core.is_null())
-    return;
-
-  JNIEnv* env = AttachCurrentThread();
-  java_ref_ = JavaObjectWeakGlobalRef(
-      env, Java_BrowserAccessibilityManager_create(
-          env, reinterpret_cast<jint>(this), content_view_core.obj()).obj());
+  SetContentViewCore(content_view_core);
 }
 
 BrowserAccessibilityManagerAndroid::~BrowserAccessibilityManagerAndroid() {
@@ -77,13 +76,24 @@ BrowserAccessibilityManagerAndroid::~BrowserAccessibilityManagerAndroid() {
 AccessibilityNodeData BrowserAccessibilityManagerAndroid::GetEmptyDocument() {
   AccessibilityNodeData empty_document;
   empty_document.id = 0;
-  empty_document.role = AccessibilityNodeData::ROLE_ROOT_WEB_AREA;
-  empty_document.state = 1 << AccessibilityNodeData::STATE_READONLY;
+  empty_document.role = WebKit::WebAXRoleRootWebArea;
+  empty_document.state = 1 << WebKit::WebAXStateReadonly;
   return empty_document;
 }
 
+void BrowserAccessibilityManagerAndroid::SetContentViewCore(
+    ScopedJavaLocalRef<jobject> content_view_core) {
+  if (content_view_core.is_null())
+    return;
+
+  JNIEnv* env = AttachCurrentThread();
+  java_ref_ = JavaObjectWeakGlobalRef(
+      env, Java_BrowserAccessibilityManager_create(
+          env, reinterpret_cast<jint>(this), content_view_core.obj()).obj());
+}
+
 void BrowserAccessibilityManagerAndroid::NotifyAccessibilityEvent(
-    int type,
+    WebKit::WebAXEvent event_type,
     BrowserAccessibility* node) {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
@@ -96,27 +106,27 @@ void BrowserAccessibilityManagerAndroid::NotifyAccessibilityEvent(
   Java_BrowserAccessibilityManager_handleContentChanged(
       env, obj.obj(), node->renderer_id());
 
-  switch (type) {
-    case AccessibilityNotificationLoadComplete:
+  switch (event_type) {
+    case WebKit::WebAXEventLoadComplete:
       Java_BrowserAccessibilityManager_handlePageLoaded(
           env, obj.obj(), focus_->renderer_id());
       break;
-    case AccessibilityNotificationFocusChanged:
+    case WebKit::WebAXEventFocus:
       Java_BrowserAccessibilityManager_handleFocusChanged(
           env, obj.obj(), node->renderer_id());
       break;
-    case AccessibilityNotificationCheckStateChanged:
+    case WebKit::WebAXEventCheckedStateChanged:
       Java_BrowserAccessibilityManager_handleCheckStateChanged(
           env, obj.obj(), node->renderer_id());
       break;
-    case AccessibilityNotificationScrolledToAnchor:
+    case WebKit::WebAXEventScrolledToAnchor:
       Java_BrowserAccessibilityManager_handleScrolledToAnchor(
           env, obj.obj(), node->renderer_id());
       break;
-    case AccessibilityNotificationAlert:
+    case WebKit::WebAXEventAlert:
       // An alert is a special case of live region. Fall through to the
       // next case to handle it.
-    case AccessibilityNotificationObjectShow: {
+    case WebKit::WebAXEventShow: {
       // This event is fired when an object appears in a live region.
       // Speak its text.
       BrowserAccessibilityAndroid* android_node =
@@ -127,13 +137,13 @@ void BrowserAccessibilityManagerAndroid::NotifyAccessibilityEvent(
               env, android_node->GetText()).obj());
       break;
     }
-    case AccessibilityNotificationSelectedTextChanged:
+    case WebKit::WebAXEventSelectedTextChanged:
       Java_BrowserAccessibilityManager_handleTextSelectionChanged(
           env, obj.obj(), node->renderer_id());
       break;
-    case AccessibilityNotificationChildrenChanged:
-    case AccessibilityNotificationTextChanged:
-    case AccessibilityNotificationValueChanged:
+    case WebKit::WebAXEventChildrenChanged:
+    case WebKit::WebAXEventTextChanged:
+    case WebKit::WebAXEventValueChanged:
       if (node->IsEditableText()) {
         Java_BrowserAccessibilityManager_handleEditableTextChanged(
             env, obj.obj(), node->renderer_id());

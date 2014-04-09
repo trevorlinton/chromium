@@ -38,6 +38,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/common/chrome_constants.h"
+#include "chrome/common/chrome_version_info.h"
 #include "content/public/browser/browser_thread.h"
 #include "ui/gfx/image/image_family.h"
 #include "url/gurl.h"
@@ -371,7 +372,7 @@ bool SetDefaultWebClient(const std::string& protocol) {
 ShellIntegration::DefaultWebClientState GetIsDefaultWebClient(
     const std::string& protocol) {
 #if defined(OS_CHROMEOS)
-  return ShellIntegration::IS_DEFAULT;
+  return ShellIntegration::UNKNOWN_DEFAULT;
 #else
   base::ThreadRestrictions::AssertIOAllowed();
 
@@ -435,6 +436,8 @@ bool GetNoDisplayFromDesktopFile(const std::string& shortcut_contents) {
     if (!g_strcmp0(nodisplay_c_string, "true"))
       nodisplay = true;
     g_free(nodisplay_c_string);
+  } else {
+    g_error_free(err);
   }
 
   g_key_file_free(key_file);
@@ -545,6 +548,16 @@ std::vector<base::FilePath> GetDataSearchLocations(base::Environment* env) {
   return search_paths;
 }
 
+std::string GetProgramClassName() {
+  DCHECK(CommandLine::InitializedForCurrentProcess());
+  // Get the res_name component from argv[0].
+  const CommandLine* command_line = CommandLine::ForCurrentProcess();
+  std::string class_name = command_line->GetProgram().BaseName().value();
+  if (!class_name.empty())
+    class_name[0] = base::ToUpperASCII(class_name[0]);
+  return class_name;
+}
+
 std::string GetDesktopName(base::Environment* env) {
 #if defined(GOOGLE_CHROME_BUILD)
   return "google-chrome.desktop";
@@ -623,7 +636,7 @@ bool GetExistingShortcutContents(base::Environment* env,
     VLOG(1) << "Looking for desktop file in " << path.value();
     if (base::PathExists(path)) {
       VLOG(1) << "Found desktop file at " << path.value();
-      return file_util::ReadFileToString(path, output);
+      return base::ReadFileToString(path, output);
     }
   }
 
@@ -761,11 +774,9 @@ std::string GetDesktopFileContents(
   if (no_display)
     g_key_file_set_string(key_file, kDesktopEntry, "NoDisplay", "true");
 
-#if defined(TOOLKIT_GTK)
   std::string wmclass = web_app::GetWMClassFromAppName(app_name);
   g_key_file_set_string(key_file, kDesktopEntry, "StartupWMClass",
                         wmclass.c_str());
-#endif
 
   gsize length = 0;
   gchar* data_dump = g_key_file_to_data(key_file, &length, NULL);

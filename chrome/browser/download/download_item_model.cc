@@ -13,7 +13,6 @@
 #include "base/supports_user_data.h"
 #include "base/time/time.h"
 #include "chrome/browser/download/download_crx_util.h"
-#include "chrome/browser/download/download_util.h"
 #include "chrome/browser/safe_browsing/download_feedback_service.h"
 #include "content/public/browser/download_danger_type.h"
 #include "content/public/browser/download_interrupt_reasons.h"
@@ -23,7 +22,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/time_format.h"
 #include "ui/base/text/bytes_formatting.h"
-#include "ui/base/text/text_elider.h"
+#include "ui/gfx/text_elider.h"
 
 using base::TimeDelta;
 using content::DownloadItem;
@@ -235,11 +234,9 @@ string16 InterruptReasonMessage(int reason) {
 // DownloadItemModel
 
 DownloadItemModel::DownloadItemModel(DownloadItem* download)
-    : download_(download) {
-}
+    : download_(download) {}
 
-DownloadItemModel::~DownloadItemModel() {
-}
+DownloadItemModel::~DownloadItemModel() {}
 
 string16 DownloadItemModel::GetInterruptReasonText() const {
   if (download_->GetState() != DownloadItem::INTERRUPTED ||
@@ -285,34 +282,70 @@ string16 DownloadItemModel::GetStatusText() const {
   return status_text;
 }
 
-string16 DownloadItemModel::GetTooltipText(const gfx::Font& font,
+string16 DownloadItemModel::GetTabProgressStatusText() const {
+  int64 total = GetTotalBytes();
+  int64 size = download_->GetReceivedBytes();
+  string16 received_size = ui::FormatBytes(size);
+  string16 amount = received_size;
+
+  // Adjust both strings for the locale direction since we don't yet know which
+  // string we'll end up using for constructing the final progress string.
+  base::i18n::AdjustStringForLocaleDirection(&amount);
+
+  if (total) {
+    string16 total_text = ui::FormatBytes(total);
+    base::i18n::AdjustStringForLocaleDirection(&total_text);
+
+    base::i18n::AdjustStringForLocaleDirection(&received_size);
+    amount = l10n_util::GetStringFUTF16(
+        IDS_DOWNLOAD_TAB_PROGRESS_SIZE, received_size, total_text);
+  } else {
+    amount.assign(received_size);
+  }
+  int64 current_speed = download_->CurrentSpeed();
+  string16 speed_text = ui::FormatSpeed(current_speed);
+  base::i18n::AdjustStringForLocaleDirection(&speed_text);
+
+  base::TimeDelta remaining;
+  string16 time_remaining;
+  if (download_->IsPaused())
+    time_remaining = l10n_util::GetStringUTF16(IDS_DOWNLOAD_PROGRESS_PAUSED);
+  else if (download_->TimeRemaining(&remaining))
+    time_remaining = ui::TimeFormat::TimeRemaining(remaining);
+
+  if (time_remaining.empty()) {
+    base::i18n::AdjustStringForLocaleDirection(&amount);
+    return l10n_util::GetStringFUTF16(
+        IDS_DOWNLOAD_TAB_PROGRESS_STATUS_TIME_UNKNOWN, speed_text, amount);
+  }
+  return l10n_util::GetStringFUTF16(
+      IDS_DOWNLOAD_TAB_PROGRESS_STATUS, speed_text, amount, time_remaining);
+}
+
+string16 DownloadItemModel::GetTooltipText(const gfx::FontList& font_list,
                                            int max_width) const {
-  string16 tooltip = ui::ElideFilename(
-      download_->GetFileNameToReportUser(), font, max_width);
+  string16 tooltip = gfx::ElideFilename(
+      download_->GetFileNameToReportUser(), font_list, max_width);
   content::DownloadInterruptReason reason = download_->GetLastReason();
   if (download_->GetState() == DownloadItem::INTERRUPTED &&
       reason != content::DOWNLOAD_INTERRUPT_REASON_USER_CANCELED) {
     tooltip += ASCIIToUTF16("\n");
-    tooltip += ui::ElideText(InterruptReasonStatusMessage(reason),
-                             font, max_width, ui::ELIDE_AT_END);
+    tooltip += gfx::ElideText(InterruptReasonStatusMessage(reason),
+                             font_list, max_width, gfx::ELIDE_AT_END);
   }
   return tooltip;
 }
 
-string16 DownloadItemModel::GetWarningText(const gfx::Font& font,
+string16 DownloadItemModel::GetWarningText(const gfx::FontList& font_list,
                                            int base_width) const {
   // Should only be called if IsDangerous().
   DCHECK(IsDangerous());
   string16 elided_filename =
-      ui::ElideFilename(download_->GetFileNameToReportUser(), font, base_width);
+      gfx::ElideFilename(download_->GetFileNameToReportUser(), font_list,
+                        base_width);
   switch (download_->GetDangerType()) {
     case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL: {
-      std::string trial_condition =
-          base::FieldTrialList::FindFullName(download_util::kFinchTrialName);
-      if (trial_condition.empty())
-        return l10n_util::GetStringUTF16(IDS_PROMPT_MALICIOUS_DOWNLOAD_URL);
-      return download_util::AssembleMalwareFinchString(trial_condition,
-                                                       elided_filename);
+      return l10n_util::GetStringUTF16(IDS_PROMPT_MALICIOUS_DOWNLOAD_URL);
     }
     case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE: {
       if (download_crx_util::IsExtensionDownload(*download_)) {
@@ -325,14 +358,8 @@ string16 DownloadItemModel::GetWarningText(const gfx::Font& font,
     }
     case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_CONTENT:
     case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_HOST: {
-      std::string trial_condition =
-          base::FieldTrialList::FindFullName(download_util::kFinchTrialName);
-      if (trial_condition.empty()) {
-        return l10n_util::GetStringFUTF16(IDS_PROMPT_MALICIOUS_DOWNLOAD_CONTENT,
-                                          elided_filename);
-      }
-      return download_util::AssembleMalwareFinchString(trial_condition,
-                                                       elided_filename);
+      return l10n_util::GetStringFUTF16(IDS_PROMPT_MALICIOUS_DOWNLOAD_CONTENT,
+                                        elided_filename);
     }
     case content::DOWNLOAD_DANGER_TYPE_UNCOMMON_CONTENT: {
       return l10n_util::GetStringFUTF16(IDS_PROMPT_UNCOMMON_DOWNLOAD_CONTENT,
@@ -340,7 +367,7 @@ string16 DownloadItemModel::GetWarningText(const gfx::Font& font,
     }
     case content::DOWNLOAD_DANGER_TYPE_POTENTIALLY_UNWANTED: {
       return l10n_util::GetStringFUTF16(
-          IDS_PROMPT_DOWNLOAD_CHANGES_SEARCH_SETTINGS, elided_filename);
+          IDS_PROMPT_DOWNLOAD_CHANGES_SETTINGS, elided_filename);
     }
     case content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS:
     case content::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT:
@@ -385,7 +412,7 @@ bool DownloadItemModel::IsDangerous() const {
   return download_->IsDangerous();
 }
 
-bool DownloadItemModel::IsMalicious() const {
+bool DownloadItemModel::MightBeMalicious() const {
   if (!IsDangerous())
     return false;
   switch (download_->GetDangerType()) {
@@ -404,6 +431,33 @@ bool DownloadItemModel::IsMalicious() const {
       NOTREACHED();
       // Fallthrough.
     case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE:
+      return false;
+  }
+  NOTREACHED();
+  return false;
+}
+
+// If you change this definition of malicious, also update
+// DownloadManagerImpl::NonMaliciousInProgressCount.
+bool DownloadItemModel::IsMalicious() const {
+  if (!MightBeMalicious())
+    return false;
+  switch (download_->GetDangerType()) {
+    case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL:
+    case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_CONTENT:
+    case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_HOST:
+    case content::DOWNLOAD_DANGER_TYPE_POTENTIALLY_UNWANTED:
+      return true;
+
+    case content::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS:
+    case content::DOWNLOAD_DANGER_TYPE_MAYBE_DANGEROUS_CONTENT:
+    case content::DOWNLOAD_DANGER_TYPE_USER_VALIDATED:
+    case content::DOWNLOAD_DANGER_TYPE_MAX:
+    case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE:
+      // We shouldn't get any of these due to the MightBeMalicious() test above.
+      NOTREACHED();
+      // Fallthrough.
+    case content::DOWNLOAD_DANGER_TYPE_UNCOMMON_CONTENT:
       return false;
   }
   NOTREACHED();

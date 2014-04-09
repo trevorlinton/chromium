@@ -243,6 +243,7 @@ public class AwTestBase
                 mBrowserContext, testContainerView, testContainerView.getInternalAccessDelegate(),
                 awContentsClient, false, testDependencyFactory.createLayoutSizer(),
                 supportsLegacyQuirks));
+        AwContents.setShouldDownloadFavicons();
         return testContainerView;
     }
 
@@ -366,6 +367,30 @@ public class AwTestBase
             @Override
             public Float call() throws Exception {
                 return awContents.getScale();
+            }
+        });
+    }
+
+    /**
+     * Returns whether a user can zoom the page in.
+     */
+    protected boolean canZoomInOnUiThread(final AwContents awContents) throws Throwable {
+        return runTestOnUiThreadAndGetResult(new Callable<Boolean>() {
+            @Override
+            public Boolean call() throws Exception {
+                return awContents.canZoomIn();
+            }
+        });
+    }
+
+    /**
+     * Returns whether a user can zoom the page out.
+     */
+    protected boolean canZoomOutOnUiThread(final AwContents awContents) throws Throwable {
+        return runTestOnUiThreadAndGetResult(new Callable<Boolean>() {
+            @Override
+            public Boolean call() throws Exception {
+                return awContents.canZoomOut();
             }
         });
     }

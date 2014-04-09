@@ -17,13 +17,17 @@
 #include "cc/base/scoped_ptr_vector.h"
 #include "ui/gfx/transform.h"
 
-namespace gfx { class Transform; }
+namespace gfx {
+class BoxF;
+class Transform;
+}
 
 namespace cc {
 
 class Animation;
 class AnimationDelegate;
 class AnimationRegistrar;
+class FilterOperations;
 class KeyframeValueList;
 class LayerAnimationValueObserver;
 
@@ -40,8 +44,6 @@ class CC_EXPORT LayerAnimationController
   virtual void RemoveAnimation(int animation_id);
   virtual void RemoveAnimation(int animation_id,
                                Animation::TargetProperty target_property);
-  virtual void SuspendAnimations(double monotonic_time);
-  virtual void ResumeAnimations(double monotonic_time);
 
   // Ensures that the list of active animations on the main thread and the impl
   // thread are kept in sync. This function does not take ownership of the impl
@@ -100,6 +102,8 @@ class CC_EXPORT LayerAnimationController
     layer_animation_delegate_ = delegate;
   }
 
+  bool AnimatedBoundsForBox(const gfx::BoxF& box, gfx::BoxF* bounds);
+
  protected:
   friend class base::RefCounted<LayerAnimationController>;
 
@@ -139,6 +143,7 @@ class CC_EXPORT LayerAnimationController
 
   void NotifyObserversOpacityAnimated(float opacity);
   void NotifyObserversTransformAnimated(const gfx::Transform& transform);
+  void NotifyObserversFilterAnimated(const FilterOperations& filter);
 
   bool HasValueObserver();
   bool HasActiveValueObserver();

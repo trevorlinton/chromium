@@ -17,10 +17,10 @@
 #include "ui/aura/aura_export.h"
 #include "ui/aura/env_observer.h"
 #include "ui/aura/root_window_host.h"
-#include "ui/base/x/x11_atom_cache.h"
 #include "ui/base/x/x11_util.h"
 #include "ui/gfx/insets.h"
 #include "ui/gfx/rect.h"
+#include "ui/gfx/x/x11_atom_cache.h"
 
 namespace ui {
 class MouseEvent;
@@ -63,9 +63,6 @@ class RootWindowHostX11 : public RootWindowHost,
   virtual void OnCursorVisibilityChanged(bool show) OVERRIDE;
   virtual void MoveCursorTo(const gfx::Point& location) OVERRIDE;
   virtual void SetFocusWhenShown(bool focus_when_shown) OVERRIDE;
-  virtual bool CopyAreaToSkCanvas(const gfx::Rect& source_bounds,
-                                  const gfx::Point& dest_offset,
-                                  SkCanvas* canvas) OVERRIDE;
   virtual void PostNativeEvent(const base::NativeEvent& event) OVERRIDE;
   virtual void OnDeviceScaleFactorChanged(float device_scale_factor) OVERRIDE;
   virtual void PrepareForShutdown() OVERRIDE;
@@ -106,7 +103,7 @@ class RootWindowHostX11 : public RootWindowHost,
   RootWindowHostDelegate* delegate_;
 
   // The display and the native X window hosting the root window.
-  Display* xdisplay_;
+  XDisplay* xdisplay_;
   ::Window xwindow_;
 
   // The native root window.
@@ -140,6 +137,9 @@ class RootWindowHostX11 : public RootWindowHost,
   scoped_ptr<MouseMoveFilter> mouse_move_filter_;
 
   ui::X11AtomCache atom_cache_;
+
+  // Touch ids of which the touch press happens at side bezel region.
+  uint32 bezel_tracking_ids_;
 
   DISALLOW_COPY_AND_ASSIGN(RootWindowHostX11);
 };

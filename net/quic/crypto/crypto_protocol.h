@@ -41,6 +41,7 @@ const QuicTag kC255 = TAG('C', '2', '5', '5');  // ECDH, Curve25519
 
 // AEAD algorithms
 const QuicTag kNULL = TAG('N', 'U', 'L', 'L');  // null algorithm
+const QuicTag kNULN = TAG('N', 'U', 'L', 'N');  // new null algorithm
 const QuicTag kAESG = TAG('A', 'E', 'S', 'G');  // AES128 + GCM-12
 
 // Congestion control feedback types
@@ -59,7 +60,6 @@ const QuicTag kCHID = TAG('C', 'H', 'I', 'D');  // Channel ID.
 // Client hello tags
 const QuicTag kVERS = TAG('V', 'E', 'R', 'S');  // Version
 const QuicTag kNONC = TAG('N', 'O', 'N', 'C');  // The client's nonce
-const QuicTag kSSID = TAG('S', 'S', 'I', 'D');  // Session ID
 const QuicTag kKEXS = TAG('K', 'E', 'X', 'S');  // Key exchange methods
 const QuicTag kAEAD = TAG('A', 'E', 'A', 'D');  // Authenticated
                                                 // encryption algorithms
@@ -69,6 +69,10 @@ const QuicTag kICSL = TAG('I', 'C', 'S', 'L');  // Idle connection state
                                                 // lifetime
 const QuicTag kKATO = TAG('K', 'A', 'T', 'O');  // Keepalive timeout
 const QuicTag kMSPC = TAG('M', 'S', 'P', 'C');  // Max streams per connection.
+const QuicTag kIRTT = TAG('I', 'R', 'T', 'T');  // Estimated initial RTT in us.
+const QuicTag kSWND = TAG('S', 'W', 'N', 'D');  // Server's Initial congestion
+                                                // window.
+const QuicTag kSMSS = TAG('S', 'M', 'S', 'S');  // Server's maximum packet size.
 const QuicTag kSNI  = TAG('S', 'N', 'I', '\0'); // Server name
                                                 // indication
 const QuicTag kPUBS = TAG('P', 'U', 'B', 'S');  // Public key values

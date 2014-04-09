@@ -8,9 +8,8 @@
 #include "base/command_line.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
-#include "chrome/browser/chromeos/cros/network_library.h"
+#include "chrome/browser/chromeos/login/oauth2_login_manager_factory.h"
 #include "chrome/browser/chromeos/login/user_manager.h"
-#include "chrome/browser/chromeos/sms_observer.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/chrome_constants.h"
@@ -38,10 +37,8 @@ ProfileHelper::ProfileHelper()
 ProfileHelper::~ProfileHelper() {
   // Checking whether UserManager is initialized covers case
   // when ScopedTestUserManager is used.
-  if (UserManager::IsInitialized()) {
-    UserManager::Get()->RemoveObserver(this);
+  if (UserManager::IsInitialized())
     UserManager::Get()->RemoveSessionStateObserver(this);
-  }
 }
 
 // static
@@ -96,7 +93,6 @@ bool ProfileHelper::IsSigninProfile(Profile* profile) {
   return profile->GetPath().BaseName().value() == chrome::kInitialProfile;
 }
 
-// static
 void ProfileHelper::ProfileStartup(Profile* profile, bool process_startup) {
   // Initialize Chrome OS preferences like touch pad sensitivity. For the
   // preferences to work in the guest mode, the initialization has to be
@@ -105,23 +101,30 @@ void ProfileHelper::ProfileStartup(Profile* profile, bool process_startup) {
   // GetOffTheRecordProfile() call above.
   profile->InitChromeOSPreferences();
 
-  if (process_startup) {
-    static chromeos::SmsObserver* sms_observer =
-        new chromeos::SmsObserver();
-    chromeos::NetworkLibrary::Get()->
-        AddNetworkManagerObserver(sms_observer);
-
-    profile->SetupChromeOSEnterpriseExtensionObserver();
+  // Add observer so we can see when the first profile's session restore is
+  // completed. After that, we won't need the default profile anymore.
+  if (!IsSigninProfile(profile) &&
+      UserManager::Get()->IsLoggedInAsRegularUser() &&
+      !UserManager::Get()->IsLoggedInAsStub()) {
+    chromeos::OAuth2LoginManager* login_manager =
+        chromeos::OAuth2LoginManagerFactory::GetInstance()->GetForProfile(
+            profile);
+    if (login_manager)
+      login_manager->AddObserver(this);
   }
 }
 
 base::FilePath ProfileHelper::GetActiveUserProfileDir() {
-  DCHECK(!active_user_id_hash_.empty());
-  return base::FilePath(chrome::kProfileDirPrefix + active_user_id_hash_);
+  return GetUserProfileDir(active_user_id_hash_);
+}
+
+base::FilePath ProfileHelper::GetUserProfileDir(
+    const std::string& user_id_hash) {
+  DCHECK(!user_id_hash.empty());
+  return base::FilePath(chrome::kProfileDirPrefix + user_id_hash);
 }
 
 void ProfileHelper::Initialize() {
-  UserManager::Get()->AddObserver(this);
   UserManager::Get()->AddSessionStateObserver(this);
 }
 
@@ -156,12 +159,20 @@ void ProfileHelper::OnBrowsingDataRemoverDone() {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// ProfileHelper, UserManager::Observer implementation:
+// ProfileHelper, OAuth2LoginManager::Observer implementation:
 
-void ProfileHelper::MergeSessionStateChanged(
-    UserManager::MergeSessionState state) {
-  if (state ==  UserManager:: MERGE_STATUS_DONE)
+void ProfileHelper::OnSessionRestoreStateChanged(
+    Profile* user_profile,
+    OAuth2LoginManager::SessionRestoreState state) {
+  if (state == OAuth2LoginManager::SESSION_RESTORE_DONE ||
+      state == OAuth2LoginManager::SESSION_RESTORE_FAILED ||
+      state == OAuth2LoginManager::SESSION_RESTORE_CONNECTION_FAILED) {
+    chromeos::OAuth2LoginManager* login_manager =
+        chromeos::OAuth2LoginManagerFactory::GetInstance()->
+            GetForProfile(user_profile);
+    login_manager->RemoveObserver(this);
     ClearSigninProfile(base::Closure());
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -8,13 +8,14 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/path_service.h"
+#include "base/sys_info.h"
 #include "base/test/test_suite.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/content_test_suite_base.h"
 #include "content/shell/app/shell_main_delegate.h"
+#include "content/shell/browser/shell_content_browser_client.h"
 #include "content/shell/common/shell_content_client.h"
 #include "content/shell/common/shell_switches.h"
-#include "content/shell/shell_content_browser_client.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_ANDROID)
@@ -127,6 +128,7 @@ class ContentTestLauncherDelegate : public TestLauncherDelegate {
 }  // namespace content
 
 int main(int argc, char** argv) {
+  int default_jobs = std::max(1, base::SysInfo::NumberOfProcessors() / 2);
   content::ContentTestLauncherDelegate launcher_delegate;
-  return LaunchTests(&launcher_delegate, argc, argv);
+  return LaunchTests(&launcher_delegate, default_jobs, argc, argv);
 }

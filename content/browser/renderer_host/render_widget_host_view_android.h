@@ -14,6 +14,7 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/process/process.h"
+#include "cc/layers/delegated_frame_resource_collection.h"
 #include "cc/layers/delegated_renderer_layer_client.h"
 #include "cc/layers/texture_layer_client.h"
 #include "cc/output/begin_frame_args.h"
@@ -34,8 +35,10 @@ struct GpuHostMsg_AcceleratedSurfacePostSubBuffer_Params;
 
 namespace cc {
 class CopyOutputResult;
+class DelegatedFrameProvider;
 class DelegatedRendererLayer;
 class Layer;
+class SingleReleaseCallback;
 class TextureLayer;
 }
 
@@ -50,7 +53,6 @@ class ContentViewCoreImpl;
 class OverscrollGlow;
 class RenderWidgetHost;
 class RenderWidgetHostImpl;
-class SurfaceTextureTransportClient;
 struct NativeWebKeyboardEvent;
 
 // -----------------------------------------------------------------------------
@@ -61,6 +63,7 @@ class RenderWidgetHostViewAndroid
       public BrowserAccessibilityDelegate,
       public cc::TextureLayerClient,
       public cc::DelegatedRendererLayerClient,
+      public cc::DelegatedFrameResourceCollectionClient,
       public ImageTransportFactoryAndroidObserver {
  public:
   RenderWidgetHostViewAndroid(RenderWidgetHostImpl* widget,
@@ -98,8 +101,8 @@ class RenderWidgetHostViewAndroid
   virtual void UpdateCursor(const WebCursor& cursor) OVERRIDE;
   virtual void SetIsLoading(bool is_loading) OVERRIDE;
   virtual void TextInputTypeChanged(ui::TextInputType type,
-                                    bool can_compose_inline,
-                                    ui::TextInputMode input_mode) OVERRIDE;
+                                    ui::TextInputMode input_mode,
+                                    bool can_compose_inline) OVERRIDE;
   virtual void ImeCancelComposition() OVERRIDE;
   virtual void DidUpdateBackingStore(
       const gfx::Rect& scroll_rect,
@@ -112,7 +115,7 @@ class RenderWidgetHostViewAndroid
   virtual void SetTooltipText(const string16& tooltip_text) OVERRIDE;
   virtual void SelectionChanged(const string16& text,
                                 size_t offset,
-                                const ui::Range& range) OVERRIDE;
+                                const gfx::Range& range) OVERRIDE;
   virtual void SelectionBoundsChanged(
       const ViewHostMsg_SelectionBounds_Params& params) OVERRIDE;
   virtual void ScrollOffsetChanged() OVERRIDE;
@@ -150,10 +153,11 @@ class RenderWidgetHostViewAndroid
       const WebKit::WebMouseWheelEvent& event) OVERRIDE;
   virtual InputEventAckState FilterInputEvent(
       const WebKit::WebInputEvent& input_event) OVERRIDE;
+  virtual void OnSetNeedsFlushInput() OVERRIDE;
   virtual void GestureEventAck(int gesture_event_type,
                                InputEventAckState ack_result) OVERRIDE;
-  virtual void OnAccessibilityNotifications(
-      const std::vector<AccessibilityHostMsg_NotificationParams>&
+  virtual void OnAccessibilityEvents(
+      const std::vector<AccessibilityHostMsg_EventParams>&
           params) OVERRIDE;
   virtual bool LockMouse() OVERRIDE;
   virtual void UnlockMouse() OVERRIDE;
@@ -165,9 +169,12 @@ class RenderWidgetHostViewAndroid
                               gfx::Vector2dF current_fling_velocity) OVERRIDE;
   virtual void ShowDisambiguationPopup(const gfx::Rect& target_rect,
                                        const SkBitmap& zoomed_bitmap) OVERRIDE;
-  virtual SmoothScrollGesture* CreateSmoothScrollGesture(
+  virtual SyntheticGesture* CreateSmoothScrollGesture(
       bool scroll_down, int pixels_to_scroll, int mouse_event_x,
       int mouse_event_y) OVERRIDE;
+  virtual SyntheticGesture* CreatePinchGesture(
+      bool zoom_in, int pixels_to_move, int anchor_x,
+      int anchor_y) OVERRIDE;
 
   // Implementation of BrowserAccessibilityDelegate:
   virtual void SetAccessibilityFocus(int acc_obj_id) OVERRIDE;
@@ -184,11 +191,16 @@ class RenderWidgetHostViewAndroid
   // cc::TextureLayerClient implementation.
   virtual unsigned PrepareTexture() OVERRIDE;
   virtual WebKit::WebGraphicsContext3D* Context3d() OVERRIDE;
-  virtual bool PrepareTextureMailbox(cc::TextureMailbox* mailbox,
-                                     bool use_shared_memory) OVERRIDE;
+  virtual bool PrepareTextureMailbox(
+      cc::TextureMailbox* mailbox,
+      scoped_ptr<cc::SingleReleaseCallback>* release_callback,
+      bool use_shared_memory) OVERRIDE;
 
   // cc::DelegatedRendererLayerClient implementation.
   virtual void DidCommitFrameData() OVERRIDE;
+
+  // cc::DelegatedFrameResourceCollectionClient implementation.
+  virtual void UnusedResourcesAreAvailable() OVERRIDE;
 
   // ImageTransportFactoryAndroidObserver implementation.
   virtual void OnLostResources() OVERRIDE;
@@ -204,7 +216,6 @@ class RenderWidgetHostViewAndroid
   void SendBeginFrame(const cc::BeginFrameArgs& args);
 
   void OnTextInputStateChanged(const ViewHostMsg_TextInputState_Params& params);
-  void OnProcessImeBatchStateAck(bool is_begin);
   void OnDidChangeBodyBackgroundColor(SkColor color);
   void OnStartContentIntent(const GURL& content_url);
   void OnSetNeedsBeginFrame(bool enabled);
@@ -240,6 +251,7 @@ class RenderWidgetHostViewAndroid
 
   void RunAckCallbacks();
 
+  void DestroyDelegatedContent();
   void SwapDelegatedFrame(uint32 output_surface_id,
                           scoped_ptr<cc::DelegatedFrameData> frame_data);
   void SendDelegatedFrameAck(uint32 output_surface_id);
@@ -291,6 +303,8 @@ class RenderWidgetHostViewAndroid
   // The texture layer for this view when using browser-side compositing.
   scoped_refptr<cc::TextureLayer> texture_layer_;
 
+  scoped_refptr<cc::DelegatedFrameResourceCollection> resource_collection_;
+  scoped_refptr<cc::DelegatedFrameProvider> frame_provider_;
   scoped_refptr<cc::DelegatedRendererLayer> delegated_renderer_layer_;
 
   // The layer used for rendering the contents of this view.
@@ -307,12 +321,11 @@ class RenderWidgetHostViewAndroid
   // The most recent content size that was pushed to the texture layer.
   gfx::Size content_size_in_layer_;
 
-  // Used for image transport when needing to share resources across threads.
-  scoped_ptr<SurfaceTextureTransportClient> surface_texture_transport_;
-
   // The mailbox of the previously received frame.
   gpu::Mailbox current_mailbox_;
-  uint32_t current_mailbox_output_surface_id_;
+
+  // The output surface id of the last received frame.
+  uint32_t last_output_surface_id_;
 
   base::WeakPtrFactory<RenderWidgetHostViewAndroid> weak_ptr_factory_;
 
@@ -321,6 +334,8 @@ class RenderWidgetHostViewAndroid
   // Used to render overscroll overlays.
   bool overscroll_effect_enabled_;
   scoped_ptr<OverscrollGlow> overscroll_effect_;
+
+  bool flush_input_requested_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderWidgetHostViewAndroid);
 };

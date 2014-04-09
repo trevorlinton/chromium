@@ -33,15 +33,13 @@
 using ppapi::thunk::EnterResourceNoLock;
 using ppapi::thunk::PPB_ImageData_API;
 
-namespace chrome {
-
 PepperFlashRendererHost::PepperFlashRendererHost(
     content::RendererPpapiHost* host,
     PP_Instance instance,
     PP_Resource resource)
     : ResourceHost(host->GetPpapiHost(), instance, resource),
-      weak_factory_(this),
-      host_(host) {
+      host_(host),
+      weak_factory_(this) {
 }
 
 PepperFlashRendererHost::~PepperFlashRendererHost() {
@@ -255,5 +253,3 @@ int32_t PepperFlashRendererHost::OnInvokePrinting(
   PPB_PDF_Impl::InvokePrintingForInstance(pp_instance());
   return PP_OK;
 }
-
-}  // namespace chrome

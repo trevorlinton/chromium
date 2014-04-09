@@ -7,22 +7,17 @@
 
 #include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
-#include "chrome/browser/signin/signin_tracker.h"
 #include "ui/app_list/signin_delegate.h"
 
 class Profile;
 
-class ChromeSigninDelegate : public app_list::SigninDelegate,
-                             public SigninTracker::Observer {
+class ChromeSigninDelegate : public app_list::SigninDelegate {
  public:
-  explicit ChromeSigninDelegate(Profile* profile);
+  ChromeSigninDelegate();
+  virtual ~ChromeSigninDelegate();
+  void SetProfile(Profile* profile);
 
  private:
-  virtual ~ChromeSigninDelegate();
-
-  bool IsActiveSignin();
-  void FinishSignin();
-
   // Overridden from app_list::SigninDelegate:
   virtual bool NeedSignin() OVERRIDE;
   virtual void ShowSignin() OVERRIDE;
@@ -34,13 +29,7 @@ class ChromeSigninDelegate : public app_list::SigninDelegate,
   virtual string16 GetLearnMoreLinkText() OVERRIDE;
   virtual string16 GetSettingsLinkText() OVERRIDE;
 
-  // Overridden from SigninTracker::Observer:
-  virtual void SigninFailed(const GoogleServiceAuthError& error) OVERRIDE;
-  virtual void SigninSuccess() OVERRIDE;
-
   Profile* profile_;
-
-  scoped_ptr<SigninTracker> signin_tracker_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeSigninDelegate);
 };

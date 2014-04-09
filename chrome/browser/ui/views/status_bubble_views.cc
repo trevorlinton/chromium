@@ -18,15 +18,15 @@
 #include "third_party/skia/include/core/SkPaint.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "third_party/skia/include/core/SkRect.h"
-#include "ui/base/animation/animation_delegate.h"
-#include "ui/base/animation/linear_animation.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/base/text/text_elider.h"
 #include "ui/base/theme_provider.h"
+#include "ui/gfx/animation/animation_delegate.h"
+#include "ui/gfx/animation/linear_animation.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/point.h"
 #include "ui/gfx/screen.h"
 #include "ui/gfx/skia_util.h"
+#include "ui/gfx/text_elider.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/scrollbar/native_scroll_bar.h"
@@ -35,7 +35,7 @@
 #include "url/gurl.h"
 
 #if defined(USE_ASH)
-#include "ash/wm/property_util.h"
+#include "ash/wm/window_state.h"
 #endif
 
 // The alpha and color of the bubble's shadow.
@@ -74,13 +74,13 @@ static const int kMaxExpansionStepDurationMS = 150;
 // StatusView manages the display of the bubble, applying text changes and
 // fading in or out the bubble as required.
 class StatusBubbleViews::StatusView : public views::Label,
-                                      public ui::LinearAnimation,
-                                      public ui::AnimationDelegate {
+                                      public gfx::LinearAnimation,
+                                      public gfx::AnimationDelegate {
  public:
   StatusView(StatusBubble* status_bubble,
              views::Widget* popup,
              ui::ThemeProvider* theme_provider)
-      : ui::LinearAnimation(kFramerate, this),
+      : gfx::LinearAnimation(kFramerate, this),
         stage_(BUBBLE_HIDDEN),
         style_(STYLE_STANDARD),
         timer_factory_(this),
@@ -314,7 +314,7 @@ void StatusBubbleViews::StatusView::StartShowing() {
 // Animation functions.
 double StatusBubbleViews::StatusView::GetCurrentOpacity() {
   return opacity_start_ + (opacity_end_ - opacity_start_) *
-         ui::LinearAnimation::GetCurrentValue();
+         gfx::LinearAnimation::GetCurrentValue();
 }
 
 void StatusBubbleViews::StatusView::SetOpacity(double opacity) {
@@ -326,7 +326,7 @@ void StatusBubbleViews::StatusView::AnimateToState(double state) {
 }
 
 void StatusBubbleViews::StatusView::AnimationEnded(
-    const ui::Animation* animation) {
+    const gfx::Animation* animation) {
   SetOpacity(opacity_end_);
 
   if (stage_ == BUBBLE_HIDING_FADE) {
@@ -465,12 +465,12 @@ void StatusBubbleViews::StatusView::OnPaint(gfx::Canvas* canvas) {
 // Manages the expansion and contraction of the status bubble as it accommodates
 // URLs too long to fit in the standard bubble. Changes are passed through the
 // StatusView to paint.
-class StatusBubbleViews::StatusViewExpander : public ui::LinearAnimation,
-                                              public ui::AnimationDelegate {
+class StatusBubbleViews::StatusViewExpander : public gfx::LinearAnimation,
+                                              public gfx::AnimationDelegate {
  public:
   StatusViewExpander(StatusBubbleViews* status_bubble,
                      StatusView* status_view)
-      : ui::LinearAnimation(kFramerate, this),
+      : gfx::LinearAnimation(kFramerate, this),
         status_bubble_(status_bubble),
         status_view_(status_view),
         expansion_start_(0),
@@ -490,7 +490,7 @@ class StatusBubbleViews::StatusViewExpander : public ui::LinearAnimation,
   int GetCurrentBubbleWidth();
   void SetBubbleWidth(int width);
   virtual void AnimateToState(double state) OVERRIDE;
-  virtual void AnimationEnded(const ui::Animation* animation) OVERRIDE;
+  virtual void AnimationEnded(const gfx::Animation* animation) OVERRIDE;
 
   // Manager that owns us.
   StatusBubbleViews* status_bubble_;
@@ -511,7 +511,7 @@ void StatusBubbleViews::StatusViewExpander::AnimateToState(double state) {
 }
 
 void StatusBubbleViews::StatusViewExpander::AnimationEnded(
-    const ui::Animation* animation) {
+    const gfx::Animation* animation) {
   SetBubbleWidth(expansion_end_);
   status_view_->SetText(expanded_text_, false);
 }
@@ -533,7 +533,7 @@ void StatusBubbleViews::StatusViewExpander::StartExpansion(
 int StatusBubbleViews::StatusViewExpander::GetCurrentBubbleWidth() {
   return static_cast<int>(expansion_start_ +
       (expansion_end_ - expansion_start_) *
-          ui::LinearAnimation::GetCurrentValue());
+          gfx::LinearAnimation::GetCurrentValue());
 }
 
 void StatusBubbleViews::StatusViewExpander::SetBubbleWidth(int width) {
@@ -583,7 +583,8 @@ void StatusBubbleViews::Init() {
     popup_->SetOpacity(0x00);
     popup_->SetContentsView(view_);
 #if defined(USE_ASH)
-    ash::SetIgnoredByShelf(popup_->GetNativeWindow(), true);
+    ash::wm::GetWindowState(popup_->GetNativeWindow())->
+        set_ignored_by_shelf(true);
 #endif
     Reposition();
   }
@@ -663,7 +664,7 @@ void StatusBubbleViews::SetURL(const GURL& url, const std::string& languages) {
   gfx::Rect popup_bounds = popup_->GetWindowBoundsInScreen();
   int text_width = static_cast<int>(popup_bounds.width() -
       (kShadowThickness * 2) - kTextPositionX - kTextHorizPadding - 1);
-  url_text_ = ui::ElideUrl(url, view_->Label::font(), text_width, languages);
+  url_text_ = gfx::ElideUrl(url, view_->Label::font(), text_width, languages);
 
   // An URL is always treated as a left-to-right string. On right-to-left UIs
   // we need to explicitly mark the URL as LTR to make sure it is displayed
@@ -820,7 +821,7 @@ void StatusBubbleViews::ExpandBubble() {
   // still be too long to fit) before expanding bubble.
   gfx::Rect popup_bounds = popup_->GetWindowBoundsInScreen();
   int max_status_bubble_width = GetMaxStatusBubbleWidth();
-  url_text_ = ui::ElideUrl(url_, view_->Label::font(),
+  url_text_ = gfx::ElideUrl(url_, view_->Label::font(),
       max_status_bubble_width, languages_);
   int expanded_bubble_width =std::max(GetStandardStatusBubbleWidth(),
       std::min(view_->Label::font().GetStringWidth(url_text_) +

@@ -23,6 +23,7 @@
 #include "content/public/browser/notification_source.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/message_center_switches.h"
+#include "ui/message_center/message_center_types.h"
 #include "ui/message_center/message_center_util.h"
 
 class TestAddObserver : public message_center::MessageCenterObserver {
@@ -140,6 +141,9 @@ class MessageCenterNotificationsTest : public InProcessBrowserTest {
                         ASCIIToUTF16("message"),
                         gfx::Image(),
                         WebKit::WebTextDirectionDefault,
+                        message_center::NotifierId(
+                            message_center::NotifierId::APPLICATION,
+                            "extension_id"),
                         UTF8ToUTF16("chrome-test://testing/"),
                         UTF8ToUTF16("REPLACE-ME"),
                         data,
@@ -280,12 +284,12 @@ IN_PROC_BROWSER_TEST_F(MessageCenterNotificationsTest,
   TestDelegate* delegate2;
 
   manager()->Add(CreateTestNotification("n", &delegate), profile());
-  message_center()->SetMessageCenterVisible(true);
+  message_center()->SetVisibility(message_center::VISIBILITY_MESSAGE_CENTER);
   manager()->Add(CreateTestNotification("n2", &delegate2), profile());
 
   EXPECT_EQ("add-n", observer.log());
 
-  message_center()->SetMessageCenterVisible(false);
+  message_center()->SetVisibility(message_center::VISIBILITY_TRANSIENT);
 
   EXPECT_EQ("add-n_add-n2", observer.log());
 
@@ -320,13 +324,16 @@ IN_PROC_BROWSER_TEST_F(MessageCenterNotificationsTest,
   Notification notification = CreateTestNotification("n", &delegate);
   manager()->Add(notification, profile());
   message_center()->ClickOnNotification("n");
-  message_center()->SetMessageCenterVisible(true);
+  message_center()->SetVisibility(message_center::VISIBILITY_MESSAGE_CENTER);
   observer.reset_log();
   notification.set_title(ASCIIToUTF16("title2"));
   manager()->Update(notification, profile());
 
   // Expect that the notification update is not done.
   EXPECT_EQ("", observer.log());
+
+  message_center()->SetVisibility(message_center::VISIBILITY_TRANSIENT);
+  EXPECT_EQ("update-n", observer.log());
 
   delegate->Release();
 }
@@ -359,13 +366,16 @@ IN_PROC_BROWSER_TEST_F(
   Notification notification = CreateTestNotification("n", &delegate);
   manager()->Add(notification, profile());
   message_center()->ClickOnNotification("n");
-  message_center()->SetMessageCenterVisible(true);
+  message_center()->SetVisibility(message_center::VISIBILITY_MESSAGE_CENTER);
   observer.reset_log();
   notification.set_type(message_center::NOTIFICATION_TYPE_PROGRESS);
   manager()->Update(notification, profile());
 
   // Expect that the notification update is not done.
   EXPECT_EQ("", observer.log());
+
+  message_center()->SetVisibility(message_center::VISIBILITY_TRANSIENT);
+  EXPECT_EQ("update-n", observer.log());
 
   delegate->Release();
 }
@@ -398,7 +408,7 @@ IN_PROC_BROWSER_TEST_F(MessageCenterNotificationsTest,
   notification.set_type(message_center::NOTIFICATION_TYPE_PROGRESS);
   manager()->Add(notification, profile());
   message_center()->ClickOnNotification("n");
-  message_center()->SetMessageCenterVisible(true);
+  message_center()->SetVisibility(message_center::VISIBILITY_MESSAGE_CENTER);
   observer.reset_log();
   notification.set_progress(50);
   manager()->Update(notification, profile());

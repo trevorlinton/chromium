@@ -13,7 +13,7 @@
 #include "chrome/browser/ui/tabs/tab_strip_layout_type.h"
 #include "chrome/browser/ui/views/tabs/tab.h"
 #include "chrome/browser/ui/views/tabs/tab_controller.h"
-#include "ui/base/animation/animation_container.h"
+#include "ui/gfx/animation/animation_container.h"
 #include "ui/gfx/point.h"
 #include "ui/gfx/rect.h"
 #include "ui/views/animation/bounds_animator.h"
@@ -263,6 +263,9 @@ class TabStrip : public views::View,
 
   friend class TabDragController;
   friend class TabDragControllerTest;
+  FRIEND_TEST_ALL_PREFIXES(TabDragControllerTest, GestureEndShouldEndDragTest);
+  friend class TabStripTest;
+  FRIEND_TEST_ALL_PREFIXES(TabStripTest, TabHitTestMaskWhenStacked);
 
   // Used during a drop session of a url. Tracks the position of the drop as
   // well as a window used to highlight where the drop occurs.
@@ -576,7 +579,7 @@ class TabStrip : public views::View,
 
   // To ensure all tabs pulse at the same time they share the same animation
   // container. This is that animation container.
-  scoped_refptr<ui::AnimationContainer> animation_container_;
+  scoped_refptr<gfx::AnimationContainer> animation_container_;
 
   // MouseWatcher is used for two things:
   // . When a tab is closed to reset the layout.

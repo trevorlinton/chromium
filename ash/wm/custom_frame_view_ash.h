@@ -7,52 +7,32 @@
 
 #include "ash/ash_export.h"
 #include "base/memory/scoped_ptr.h"
-#include "ui/views/controls/button/button.h"  // ButtonListener
 #include "ui/views/window/non_client_view.h"
 
 namespace ash {
-class FramePainter;
-class FrameMaximizeButton;
+class FrameBorderHitTestController;
+class HeaderPainter;
 }
 namespace gfx {
 class Font;
 }
 namespace views {
-class ImageButton;
 class Widget;
 }
 
 namespace ash {
 
+class FrameCaptionButtonContainerView;
+
 // A NonClientFrameView used for dialogs and other non-browser windows.
 // See also views::CustomFrameView and BrowserNonClientFrameViewAsh.
-class ASH_EXPORT CustomFrameViewAsh : public views::NonClientFrameView,
-                                      public views::ButtonListener {
+class ASH_EXPORT CustomFrameViewAsh : public views::NonClientFrameView {
  public:
   // Internal class name.
   static const char kViewClassName[];
 
-  CustomFrameViewAsh();
+  explicit CustomFrameViewAsh(views::Widget* frame);
   virtual ~CustomFrameViewAsh();
-
-  // For testing.
-  class TestApi {
-    public:
-     explicit TestApi(CustomFrameViewAsh* frame) : frame_(frame) {
-     }
-
-     ash::FrameMaximizeButton* maximize_button() const {
-       return frame_->maximize_button_;
-     }
-
-    private:
-     TestApi();
-     CustomFrameViewAsh* frame_;
-  };
-
-  void Init(views::Widget* frame);
-
-  views::ImageButton* close_button() { return close_button_; }
 
   // views::NonClientFrameView overrides:
   virtual gfx::Rect GetBoundsForClientView() const OVERRIDE;
@@ -73,10 +53,6 @@ class ASH_EXPORT CustomFrameViewAsh : public views::NonClientFrameView,
   virtual gfx::Size GetMinimumSize() OVERRIDE;
   virtual gfx::Size GetMaximumSize() OVERRIDE;
 
-  // views::ButtonListener overrides:
-  virtual void ButtonPressed(views::Button* sender,
-                             const ui::Event& event) OVERRIDE;
-
  private:
   // Height from top of window to top of client area.
   int NonClientTopBorderHeight() const;
@@ -84,11 +60,14 @@ class ASH_EXPORT CustomFrameViewAsh : public views::NonClientFrameView,
   // Not owned.
   views::Widget* frame_;
 
-  ash::FrameMaximizeButton* maximize_button_;
-  views::ImageButton* close_button_;
-  views::ImageButton* window_icon_;
+  // View which contains the window controls.
+  FrameCaptionButtonContainerView* caption_button_container_;
 
-  scoped_ptr<FramePainter> frame_painter_;
+  // Helper class for painting the header.
+  scoped_ptr<HeaderPainter> header_painter_;
+
+  // Updates the hittest bounds overrides based on the window show type.
+  scoped_ptr<FrameBorderHitTestController> frame_border_hit_test_controller_;
 
   DISALLOW_COPY_AND_ASSIGN(CustomFrameViewAsh);
 };

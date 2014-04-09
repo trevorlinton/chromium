@@ -13,12 +13,12 @@
 #include "base/lazy_instance.h"
 #include "base/md5.h"
 #include "base/prefs/pref_service.h"
+#include "base/prefs/scoped_user_pref_update.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/value_conversions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/platform_util.h"
-#include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/chrome_select_file_policy.h"
 #include "chrome/common/pref_names.h"
@@ -152,6 +152,7 @@ std::string RegisterFileSystem(WebContents* web_contents,
   policy->GrantReadFileSystem(renderer_id, file_system_id);
   policy->GrantWriteFileSystem(renderer_id, file_system_id);
   policy->GrantCreateFileForFileSystem(renderer_id, file_system_id);
+  policy->GrantDeleteFromFileSystem(renderer_id, file_system_id);
 
   // We only need file level access for reading FileEntries. Saving FileEntries
   // just needs the file system to have read/write access, which is granted

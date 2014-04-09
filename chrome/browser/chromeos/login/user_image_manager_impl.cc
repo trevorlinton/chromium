@@ -5,6 +5,7 @@
 #include "chrome/browser/chromeos/login/user_image_manager_impl.h"
 
 #include "base/bind.h"
+#include "base/command_line.h"
 #include "base/debug/trace_event.h"
 #include "base/file_util.h"
 #include "base/files/file_path.h"
@@ -13,6 +14,7 @@
 #include "base/path_service.h"
 #include "base/prefs/pref_registry_simple.h"
 #include "base/prefs/pref_service.h"
+#include "base/prefs/scoped_user_pref_update.h"
 #include "base/rand_util.h"
 #include "base/threading/worker_pool.h"
 #include "base/time/time.h"
@@ -22,16 +24,18 @@
 #include "chrome/browser/chromeos/login/default_user_images.h"
 #include "chrome/browser/chromeos/login/helper.h"
 #include "chrome/browser/chromeos/login/user_image.h"
+#include "chrome/browser/chromeos/login/user_image_sync_observer.h"
 #include "chrome/browser/chromeos/login/user_manager.h"
-#include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/profiles/profile_downloader.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/chrome_paths.h"
+#include "chrome/common/chrome_switches.h"
+#include "chromeos/chromeos_switches.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/common/url_constants.h"
+#include "ui/base/webui/web_ui_util.h"
 #include "ui/gfx/image/image_skia.h"
-#include "ui/webui/web_ui_util.h"
 
 using content::BrowserThread;
 
@@ -266,12 +270,11 @@ void UserImageManagerImpl::LoadUserImages(const UserList& users) {
 void UserImageManagerImpl::UserLoggedIn(const std::string& email,
                                         bool user_is_new,
                                         bool user_is_local) {
+  User* user = UserManager::Get()->GetLoggedInUser();
   if (user_is_new) {
     if (!user_is_local)
       SetInitialUserImage(email);
   } else {
-    User* user = UserManager::Get()->GetLoggedInUser();
-
     if (!user_is_local) {
       // If current user image is profile image, it needs to be refreshed.
       bool download_profile_image =
@@ -333,6 +336,14 @@ void UserImageManagerImpl::UserLoggedIn(const std::string& email,
     profile_download_timer_.Start(
         FROM_HERE, base::TimeDelta::FromSeconds(kProfileRefreshIntervalSec),
         this, &UserImageManagerImpl::DownloadProfileDataScheduled);
+  }
+  CommandLine* command_line = CommandLine::ForCurrentProcess();
+  if (user->CanSyncImage() &&
+      !command_line->HasSwitch(chromeos::switches::kDisableUserImageSync)) {
+    if (user_image_sync_observer_.get() &&
+        !command_line->HasSwitch(::switches::kMultiProfiles))
+      NOTREACHED() << "User logged in second time.";
+    user_image_sync_observer_.reset(new UserImageSyncObserver(user));
   }
 }
 
@@ -401,8 +412,13 @@ void UserImageManagerImpl::DownloadProfileImage(const std::string& reason) {
   DownloadProfileData(reason, true);
 }
 
+UserImageSyncObserver* UserImageManagerImpl::GetSyncObserver() const {
+  return user_image_sync_observer_.get();
+}
+
 void UserImageManagerImpl::Shutdown() {
   profile_image_downloader_.reset();
+  user_image_sync_observer_.reset();
 }
 
 const gfx::ImageSkia& UserImageManagerImpl::DownloadedProfileImage() const {
@@ -643,10 +659,9 @@ void UserImageManagerImpl::OnProfileDownloadSuccess(
   UserManager* user_manager = UserManager::Get();
   const User* user = user_manager->GetLoggedInUser();
 
-  if (!downloader->GetProfileFullName().empty()) {
-    user_manager->SaveUserDisplayName(
-        user->email(), downloader->GetProfileFullName());
-  }
+  user_manager->UpdateUserAccountData(user->email(),
+                                      downloader->GetProfileFullName(),
+                                      downloader->GetProfileLocale());
 
   bool requested_image = downloading_profile_image_;
   downloading_profile_image_ = false;
@@ -726,6 +741,12 @@ void UserImageManagerImpl::OnProfileDownloadFailure(
   base::TimeDelta delta = base::Time::Now() - profile_image_load_start_time_;
   AddProfileImageTimeHistogram(kDownloadFailure, profile_image_download_reason_,
                                delta);
+
+  UserManager* user_manager = UserManager::Get();
+  const User* user = user_manager->GetLoggedInUser();
+
+  // Need note that at least one attempt finished.
+  user_manager->UpdateUserAccountData(user->email(), string16(), "");
 
   // Retry download after some time if a network error has occured.
   if (reason == ProfileDownloaderDelegate::NETWORK_ERROR) {

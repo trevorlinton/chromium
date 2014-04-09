@@ -7,7 +7,7 @@
 
 #include "base/memory/shared_memory.h"
 #include "build/build_config.h"
-#include "ui/base/ui_export.h"
+#include "ui/gfx/gfx_export.h"
 
 #if defined(OS_ANDROID)
 #include <third_party/khronos/EGL/egl.h>
@@ -47,7 +47,7 @@ struct GpuMemoryBufferHandle {
 // This interface is thread-safe. However, multiple threads mapping
 // a buffer for Write or ReadOrWrite simultaneously may result in undefined
 // behavior and is not allowed.
-class UI_EXPORT GpuMemoryBuffer {
+class GFX_EXPORT GpuMemoryBuffer {
  public:
   enum AccessMode {
     READ_ONLY,

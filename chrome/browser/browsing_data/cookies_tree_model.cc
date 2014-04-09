@@ -1082,7 +1082,7 @@ void CookiesTreeModel::PopulateCookieInfoWithFilter(
         domain = domain.substr(1);
 
       // We treat secure cookies just the same as normal ones.
-      source_string = std::string(chrome::kHttpScheme) +
+      source_string = std::string(content::kHttpScheme) +
           content::kStandardSchemeSeparator + domain + "/";
     }
 
@@ -1229,7 +1229,7 @@ void CookiesTreeModel::PopulateServerBoundCertInfoWithFilter(
     if (!origin.is_valid()) {
       // Domain Bound Cert.  Make a valid URL to satisfy the
       // CookieTreeRootNode::GetOrCreateHostNode interface.
-      origin = GURL(std::string(chrome::kHttpsScheme) +
+      origin = GURL(std::string(content::kHttpsScheme) +
           content::kStandardSchemeSeparator +
           cert_info->server_identifier() + "/");
     }

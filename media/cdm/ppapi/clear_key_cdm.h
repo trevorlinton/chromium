@@ -14,7 +14,7 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/synchronization/lock.h"
 #include "media/cdm/aes_decryptor.h"
-#include "media/cdm/ppapi/api/content_decryption_module.h"
+#include "media/cdm/ppapi/clear_key_cdm_common.h"
 
 // Enable this to use the fake decoder for testing.
 // TODO(tomfinegan): Move fake audio decoder into a separate class.
@@ -28,20 +28,23 @@ class DecoderBuffer;
 class FFmpegCdmAudioDecoder;
 
 // Clear key implementation of the cdm::ContentDecryptionModule interface.
-class ClearKeyCdm : public cdm::ContentDecryptionModule {
+class ClearKeyCdm : public CdmInterface {
  public:
-  explicit ClearKeyCdm(cdm::Host* host);
+  explicit ClearKeyCdm(Host* host);
   virtual ~ClearKeyCdm();
 
   // ContentDecryptionModule implementation.
   virtual cdm::Status GenerateKeyRequest(
-      const char* type, int type_size,
-      const uint8_t* init_data, int init_data_size) OVERRIDE;
-  virtual cdm::Status AddKey(const char* session_id, int session_id_size,
-                             const uint8_t* key, int key_size,
-                             const uint8_t* key_id, int key_id_size) OVERRIDE;
+      const char* type, uint32_t type_size,
+      const uint8_t* init_data, uint32_t init_data_size) OVERRIDE;
+  virtual cdm::Status AddKey(const char* session_id,
+                             uint32_t session_id_size,
+                             const uint8_t* key,
+                             uint32_t key_size,
+                             const uint8_t* key_id,
+                             uint32_t key_id_size) OVERRIDE;
   virtual cdm::Status CancelKeyRequest(const char* session_id,
-                                       int session_id_size) OVERRIDE;
+                                       uint32_t session_id_size) OVERRIDE;
   virtual void TimerExpired(void* context) OVERRIDE;
   virtual cdm::Status Decrypt(const cdm::InputBuffer& encrypted_buffer,
                               cdm::DecryptedBlock* decrypted_block) OVERRIDE;
@@ -58,6 +61,10 @@ class ClearKeyCdm : public cdm::ContentDecryptionModule {
       const cdm::InputBuffer& encrypted_buffer,
       cdm::AudioFrames* audio_frames) OVERRIDE;
   virtual void Destroy() OVERRIDE;
+  virtual void OnPlatformChallengeResponse(
+      const cdm::PlatformChallengeResponse& response) OVERRIDE;
+  virtual void OnQueryOutputProtectionStatus(
+      uint32_t link_mask, uint32_t output_protection_mask) OVERRIDE;
 
  private:
   // TODO(xhwang): After we removed DecryptorClient. We probably can also remove
@@ -132,7 +139,7 @@ class ClearKeyCdm : public cdm::ContentDecryptionModule {
   // simultaneously.
   base::Lock client_lock_;
 
-  cdm::Host* host_;
+  CdmHost* host_;
 
   std::string heartbeat_session_id_;
   std::string next_heartbeat_message_;

@@ -22,8 +22,6 @@ namespace content {
 class CrossSiteResourceHandler : public LayeredResourceHandler {
  public:
   CrossSiteResourceHandler(scoped_ptr<ResourceHandler> next_handler,
-                           int render_process_host_id,
-                           int render_view_id,
                            net::URLRequest* request);
   virtual ~CrossSiteResourceHandler();
 
@@ -49,18 +47,14 @@ class CrossSiteResourceHandler : public LayeredResourceHandler {
  private:
   // Prepare to render the cross-site response in a new RenderViewHost, by
   // telling the old RenderViewHost to run its onunload handler.
-  void StartCrossSiteTransition(
-      int request_id,
-      ResourceResponse* response);
+  void StartCrossSiteTransition(int request_id,
+                                ResourceResponse* response,
+                                bool should_transfer);
 
   void ResumeIfDeferred();
 
-  int render_process_host_id_;
-  int render_view_id_;
-  net::URLRequest* request_;
   bool has_started_response_;
   bool in_cross_site_transition_;
-  int request_id_;
   bool completed_during_transition_;
   bool did_defer_;
   net::URLRequestStatus completed_status_;

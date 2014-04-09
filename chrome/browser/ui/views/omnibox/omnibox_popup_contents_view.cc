@@ -23,19 +23,9 @@
 #include "ui/views/corewm/window_animations.h"
 #endif
 
-namespace {
-
-// This is the number of pixels in the border image used to draw the bottom
-// border + drop shadow interior to the "visual" border. We lay out assuming
-// that this many pixels inside the border is "in the popup."
-const SkAlpha kGlassPopupAlpha = 240;
-const SkAlpha kOpaquePopupAlpha = 255;
-
 // This is the number of pixels in the border image interior to the actual
 // border.
 const int kBorderInterior = 6;
-
-}  // namespace
 
 class OmniboxPopupContentsView::AutocompletePopupWidget
     : public views::Widget,
@@ -216,15 +206,16 @@ void OmniboxPopupContentsView::UpdatePopupAppearance() {
     params.bounds = GetPopupBounds();
     params.context = popup_parent;
     popup_->Init(params);
+    // Third-party software such as DigitalPersona identity verification can
+    // hook the underlying window creation methods and use SendMessage to
+    // synchronously change focus/activation, resulting in the popup being
+    // destroyed by the time control returns here.  Bail out in this case to
+    // avoid a NULL dereference.
+    if (!popup_.get())
+      return;
 #if defined(USE_AURA)
-    views::corewm::SetWindowVisibilityAnimationType(
-        popup_->GetNativeView(),
-        views::corewm::WINDOW_VISIBILITY_ANIMATION_TYPE_VERTICAL);
-#if defined(OS_CHROMEOS)
-    // No animation for autocomplete popup appearance.
     views::corewm::SetWindowVisibilityAnimationTransition(
-        popup_->GetNativeView(), views::corewm::ANIMATE_HIDE);
-#endif
+        popup_->GetNativeView(), views::corewm::ANIMATE_NONE);
 #endif
     popup_->SetContentsView(this);
     popup_->StackAbove(omnibox_view_->GetRelativeWindowForPopup());
@@ -247,7 +238,7 @@ void OmniboxPopupContentsView::UpdatePopupAppearance() {
     popup_->SetBounds(GetPopupBounds());
   }
 
-  SchedulePaint();
+  Layout();
 }
 
 gfx::Rect OmniboxPopupContentsView::GetTargetBounds() {
@@ -284,7 +275,7 @@ gfx::Image OmniboxPopupContentsView::GetIconIfExtensionMatch(
 // OmniboxPopupContentsView, AnimationDelegate implementation:
 
 void OmniboxPopupContentsView::AnimationProgressed(
-    const ui::Animation* animation) {
+    const gfx::Animation* animation) {
   // We should only be running the animation when the popup is already visible.
   DCHECK(popup_ != NULL);
   popup_->SetBounds(GetPopupBounds());

@@ -6,6 +6,7 @@
 #include "content/browser/renderer_host/media/device_request_message_filter.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/common/media/media_stream_messages.h"
+#include "content/public/browser/media_device_id.h"
 #include "content/public/test/mock_resource_context.h"
 #include "content/public/test/test_browser_thread.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -32,7 +33,7 @@ class MockMediaStreamManager : public MediaStreamManager {
                            int page_request_id,
                            MediaStreamType type,
                            const GURL& security_origin));
-  MOCK_METHOD1(StopGeneratedStream, void(const std::string& label));
+  MOCK_METHOD1(CancelRequest, void(const std::string& label));
 
   std::string DoEnumerateDevices(MediaStreamRequester* requester,
                                  int render_process_id,
@@ -108,9 +109,9 @@ class DeviceRequestMessageFilterTest : public testing::Test {
     EXPECT_EQ(0u, host_->requested_devices().size());
 
     // After the video device callback is fired, |message| should be populated.
-    EXPECT_CALL(*media_stream_manager_, StopGeneratedStream(kAudioLabel))
+    EXPECT_CALL(*media_stream_manager_, CancelRequest(kAudioLabel))
         .Times(1);
-    EXPECT_CALL(*media_stream_manager_, StopGeneratedStream(kVideoLabel))
+    EXPECT_CALL(*media_stream_manager_, CancelRequest(kVideoLabel))
         .Times(1);
     FireVideoDeviceCallback();
     EXPECT_EQ(static_cast<size_t>(number_audio_devices + number_video_devices),
@@ -163,10 +164,10 @@ class DeviceRequestMessageFilterTest : public testing::Test {
   void AddAudioDevices(int number_of_devices) {
     for (int i = 0; i < number_of_devices; i++) {
       physical_audio_devices_.push_back(
-          StreamDeviceInfo(MEDIA_DEVICE_AUDIO_CAPTURE,
-                           "/dev/audio/" + base::IntToString(next_device_id_),
-                           "Audio Device" + base::IntToString(next_device_id_),
-                           false));
+          StreamDeviceInfo(
+              MEDIA_DEVICE_AUDIO_CAPTURE,
+              "/dev/audio/" + base::IntToString(next_device_id_),
+              "Audio Device" + base::IntToString(next_device_id_)));
       next_device_id_++;
     }
   }
@@ -174,10 +175,10 @@ class DeviceRequestMessageFilterTest : public testing::Test {
   void AddVideoDevices(int number_of_devices) {
     for (int i = 0; i < number_of_devices; i++) {
       physical_video_devices_.push_back(
-          StreamDeviceInfo(MEDIA_DEVICE_VIDEO_CAPTURE,
-                           "/dev/video/" + base::IntToString(next_device_id_),
-                           "Video Device" + base::IntToString(next_device_id_),
-                           false));
+          StreamDeviceInfo(
+              MEDIA_DEVICE_VIDEO_CAPTURE,
+              "/dev/video/" + base::IntToString(next_device_id_),
+              "Video Device" + base::IntToString(next_device_id_)));
       next_device_id_++;
     }
   }
@@ -217,7 +218,7 @@ class DeviceRequestMessageFilterTest : public testing::Test {
     for (size_t i = 0; i < devices.size(); i++) {
       bool found_match = false;
       for (size_t j = 0; j < physical_audio_devices_.size(); ++j) {
-        if (DeviceRequestMessageFilter::DoesRawIdMatchGuid(
+        if (content::DoesMediaDeviceIDMatchHMAC(
                 origin,
                 devices[i].device.id,
                 physical_audio_devices_[j].device.id)) {
@@ -226,7 +227,7 @@ class DeviceRequestMessageFilterTest : public testing::Test {
         }
       }
       for (size_t j = 0; j < physical_video_devices_.size(); ++j) {
-        if (DeviceRequestMessageFilter::DoesRawIdMatchGuid(
+        if (content::DoesMediaDeviceIDMatchHMAC(
                 origin,
                 devices[i].device.id,
                 physical_video_devices_[j].device.id)) {

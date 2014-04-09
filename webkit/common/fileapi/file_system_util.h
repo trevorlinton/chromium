@@ -10,8 +10,9 @@
 
 #include "base/files/file_path.h"
 #include "base/platform_file.h"
-#include "third_party/WebKit/public/web/WebFileError.h"
+#include "third_party/WebKit/public/platform/WebFileError.h"
 #include "third_party/WebKit/public/platform/WebFileSystemType.h"
+#include "webkit/common/fileapi/file_system_info.h"
 #include "webkit/common/fileapi/file_system_types.h"
 #include "webkit/common/quota/quota_types.h"
 #include "webkit/common/webkit_storage_common_export.h"
@@ -74,7 +75,7 @@ class WEBKIT_STORAGE_COMMON_EXPORT VirtualPath {
 //
 // |type| needs to be public type as the returned URI is given to the renderer.
 WEBKIT_STORAGE_COMMON_EXPORT GURL GetFileSystemRootURI(const GURL& origin_url,
-                                         FileSystemType type);
+                                                       FileSystemType type);
 
 // Returns the name for the filesystem that is specified by a pair of
 // |origin_url| and |type|.
@@ -144,6 +145,10 @@ WEBKIT_STORAGE_COMMON_EXPORT bool CrackIsolatedFileSystemName(
     const std::string& filesystem_name,
     std::string* filesystem_id);
 
+// Validates the given isolated file system id.
+WEBKIT_STORAGE_COMMON_EXPORT bool ValidateIsolatedFileSystemId(
+    const std::string& filesystem_id);
+
 // Returns the root URI for an isolated filesystem for origin |origin_url|
 // and |filesystem_id|. If the |optional_root_name| is given the resulting
 // root URI will point to the subfolder within the isolated filesystem.
@@ -157,6 +162,19 @@ WEBKIT_STORAGE_COMMON_EXPORT std::string GetIsolatedFileSystemRootURIString(
 WEBKIT_STORAGE_COMMON_EXPORT std::string GetExternalFileSystemRootURIString(
     const GURL& origin_url,
     const std::string& mount_name);
+
+// Translates the net::Error to base::PlatformFileError.
+WEBKIT_STORAGE_COMMON_EXPORT base::PlatformFileError
+NetErrorToPlatformFileError(int error);
+
+#if defined(OS_CHROMEOS)
+// Returns the filesystem info that can be specified by |origin_url|.
+// TODO(nhiroki): This should be deprecated and use
+// GetExternalFileSystemRootURIString() to get separate file systems for each
+// mount type. http://crbug.com/284963.
+WEBKIT_STORAGE_COMMON_EXPORT FileSystemInfo
+GetFileSystemInfoForChromeOS(const GURL& origin_url);
+#endif
 
 }  // namespace fileapi
 

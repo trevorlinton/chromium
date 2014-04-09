@@ -4,16 +4,12 @@
 
 #include "chrome/browser/browser_about_handler.h"
 
-#include <algorithm>
 #include <string>
 
-#include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/singleton.h"
 #include "base/strings/string_util.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/ui/browser_dialogs.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/common/net/url_fixer_upper.h"
 #include "chrome/common/url_constants.h"
 
@@ -75,6 +71,7 @@ bool WillHandleBrowserAboutURL(GURL* url,
     base::MessageLoop::current()->PostTask(FROM_HERE,
         base::Bind(&chrome::AttemptRestart));
   }
+
   GURL::Replacements replacements;
   replacements.SetHostStr(host);
   if (!path.empty())
@@ -101,4 +98,3 @@ bool HandleNonNavigationAboutURL(const GURL& url) {
 
   return false;
 }
-

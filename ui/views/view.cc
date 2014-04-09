@@ -28,6 +28,7 @@
 #include "ui/gfx/point3_f.h"
 #include "ui/gfx/point_conversions.h"
 #include "ui/gfx/rect_conversions.h"
+#include "ui/gfx/scoped_canvas.h"
 #include "ui/gfx/screen.h"
 #include "ui/gfx/skia_util.h"
 #include "ui/gfx/transform.h"
@@ -37,11 +38,16 @@
 #include "ui/views/context_menu_controller.h"
 #include "ui/views/drag_controller.h"
 #include "ui/views/layout/layout_manager.h"
+#include "ui/views/rect_based_targeting_utils.h"
 #include "ui/views/views_delegate.h"
 #include "ui/views/widget/native_widget_private.h"
 #include "ui/views/widget/root_view.h"
 #include "ui/views/widget/tooltip_manager.h"
 #include "ui/views/widget/widget.h"
+
+#if defined(USE_AURA)
+#include "ui/base/cursor/cursor.h"
+#endif
 
 #if defined(OS_WIN)
 #include "base/win/scoped_gdi_object.h"
@@ -62,30 +68,6 @@ const bool kContextMenuOnMousePress = false;
 #else
 const bool kContextMenuOnMousePress = true;
 #endif
-
-// Saves the drawing state, and restores the state when going out of scope.
-class ScopedCanvas {
- public:
-  explicit ScopedCanvas(gfx::Canvas* canvas) : canvas_(canvas) {
-    if (canvas_)
-      canvas_->Save();
-  }
-  ~ScopedCanvas() {
-    if (canvas_)
-      canvas_->Restore();
-  }
-  void SetCanvas(gfx::Canvas* canvas) {
-    if (canvas_)
-      canvas_->Restore();
-    canvas_ = canvas;
-    canvas_->Save();
-  }
-
- private:
-  gfx::Canvas* canvas_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScopedCanvas);
-};
 
 // Returns the top view in |view|'s hierarchy.
 const views::View* GetHierarchyRoot(const views::View* view) {
@@ -176,7 +158,6 @@ View::View()
       focus_border_(FocusBorder::CreateDashedFocusBorder()),
       flip_canvas_on_paint_for_rtl_ui_(false),
       paint_to_layer_(false),
-      accelerator_registration_delayed_(false),
       accelerator_focus_manager_(NULL),
       registered_accelerator_count_(0),
       next_focusable_view_(NULL),
@@ -701,6 +682,32 @@ void View::ConvertPointToTarget(const View* source,
 }
 
 // static
+void View::ConvertRectToTarget(const View* source,
+                               const View* target,
+                               gfx::RectF* rect) {
+  if (source == target)
+    return;
+
+  // |source| can be NULL.
+  const View* root = GetHierarchyRoot(target);
+  if (source) {
+    CHECK_EQ(GetHierarchyRoot(source), root);
+
+    if (source != root)
+      source->ConvertRectForAncestor(root, rect);
+  }
+
+  if (target != root)
+    target->ConvertRectFromAncestor(root, rect);
+
+  // API defines NULL |source| as returning the point in screen coordinates.
+  if (!source) {
+    rect->set_origin(rect->origin() -
+        root->GetWidget()->GetClientAreaBoundsInScreen().OffsetFromOrigin());
+  }
+}
+
+// static
 void View::ConvertPointToWidget(const View* src, gfx::Point* p) {
   DCHECK(src);
   DCHECK(p);
@@ -778,7 +785,7 @@ void View::SchedulePaintInRect(const gfx::Rect& rect) {
 void View::Paint(gfx::Canvas* canvas) {
   TRACE_EVENT1("views", "View::Paint", "class", GetClassName());
 
-  ScopedCanvas scoped_canvas(canvas);
+  gfx::ScopedCanvas scoped_canvas(canvas);
 
   // Paint this View and its children, setting the clip rect to the bounds
   // of this View and translating the origin to the local bounds' top left
@@ -886,7 +893,10 @@ bool View::HitTestRect(const gfx::Rect& rect) const {
   if (GetLocalBounds().Intersects(rect)) {
     if (HasHitTestMask()) {
       gfx::Path mask;
-      GetHitTestMask(&mask);
+      HitTestSource source = HIT_TEST_SOURCE_MOUSE;
+      if (!views::UsePointBasedTargeting(rect))
+        source = HIT_TEST_SOURCE_TOUCH;
+      GetHitTestMask(source, &mask);
 #if defined(USE_AURA)
       // TODO: should we use this every where?
       SkRegion clip_region;
@@ -1299,21 +1309,13 @@ void View::ViewHierarchyChanged(const ViewHierarchyChangedDetails& details) {
 void View::VisibilityChanged(View* starting_from, bool is_visible) {
 }
 
-void View::NativeViewHierarchyChanged(bool attached,
-                                      gfx::NativeView native_view,
-                                      internal::RootView* root_view) {
+void View::NativeViewHierarchyChanged() {
   FocusManager* focus_manager = GetFocusManager();
-  if (!accelerator_registration_delayed_ &&
-      accelerator_focus_manager_ &&
-      accelerator_focus_manager_ != focus_manager) {
+  if (accelerator_focus_manager_ != focus_manager) {
     UnregisterAccelerators(true);
-    accelerator_registration_delayed_ = true;
-  }
-  if (accelerator_registration_delayed_ && attached) {
-    if (focus_manager) {
+
+    if (focus_manager)
       RegisterPendingAccelerators();
-      accelerator_registration_delayed_ = false;
-    }
   }
 }
 
@@ -1367,21 +1369,6 @@ void View::SetFillsBoundsOpaquely(bool fills_bounds_opaquely) {
   // This method should not have the side-effect of creating the layer.
   if (layer())
     layer()->SetFillsBoundsOpaquely(fills_bounds_opaquely);
-}
-
-bool View::SetExternalTexture(ui::Texture* texture) {
-  DCHECK(texture);
-  SetPaintToLayer(true);
-
-  layer()->SetExternalTexture(texture);
-
-  // Child views must not paint into the external texture. So make sure each
-  // child view has its own layer to paint into.
-  for (Views::iterator i = children_.begin(); i != children_.end(); ++i)
-    (*i)->SetPaintToLayer(true);
-
-  SchedulePaintInRect(GetLocalBounds());
-  return true;
 }
 
 gfx::Vector2d View::CalculateOffsetToAncestorWithLayer(
@@ -1518,7 +1505,7 @@ bool View::HasHitTestMask() const {
   return false;
 }
 
-void View::GetHitTestMask(gfx::Path* mask) const {
+void View::GetHitTestMask(HitTestSource source, gfx::Path* mask) const {
   DCHECK(mask);
 }
 
@@ -1561,10 +1548,8 @@ void View::Blur() {
 void View::TooltipTextChanged() {
   Widget* widget = GetWidget();
   // TooltipManager may be null if there is a problem creating it.
-  if (widget && widget->native_widget_private()->GetTooltipManager()) {
-    widget->native_widget_private()->GetTooltipManager()->
-        TooltipTextChanged(this);
-  }
+  if (widget && widget->GetTooltipManager())
+    widget->GetTooltipManager()->TooltipTextChanged(this);
 }
 
 // Context menus ---------------------------------------------------------------
@@ -1747,7 +1732,7 @@ void View::PaintCommon(gfx::Canvas* canvas) {
     // The canvas mirroring is undone once the View is done painting so that we
     // don't pass the canvas with the mirrored transform to Views that didn't
     // request the canvas to be flipped.
-    ScopedCanvas scoped(canvas);
+    gfx::ScopedCanvas scoped(canvas);
     if (FlipCanvasOnPaintForRTLUI()) {
       canvas->Translate(gfx::Vector2d(width(), 0));
       canvas->Scale(-1, 1);
@@ -1815,14 +1800,10 @@ void View::PropagateAddNotifications(
   ViewHierarchyChangedImpl(true, details);
 }
 
-void View::PropagateNativeViewHierarchyChanged(bool attached,
-                                               gfx::NativeView native_view,
-                                               internal::RootView* root_view) {
+void View::PropagateNativeViewHierarchyChanged() {
   for (int i = 0, count = child_count(); i < count; ++i)
-    child_at(i)->PropagateNativeViewHierarchyChanged(attached,
-                                                           native_view,
-                                                           root_view);
-  NativeViewHierarchyChanged(attached, native_view, root_view);
+    child_at(i)->PropagateNativeViewHierarchyChanged();
+  NativeViewHierarchyChanged();
 }
 
 void View::ViewHierarchyChangedImpl(
@@ -1832,13 +1813,8 @@ void View::ViewHierarchyChangedImpl(
     if (details.is_add) {
       // If you get this registration, you are part of a subtree that has been
       // added to the view hierarchy.
-      if (GetFocusManager()) {
+      if (GetFocusManager())
         RegisterPendingAccelerators();
-      } else {
-        // Delay accelerator registration until visible as we do not have
-        // focus manager until then.
-        accelerator_registration_delayed_ = true;
-      }
     } else {
       if (details.child == this)
         UnregisterAccelerators(true);
@@ -1851,7 +1827,7 @@ void View::ViewHierarchyChangedImpl(
     if (widget)
       widget->UpdateRootLayers();
   } else if (!details.is_add && details.child == this) {
-    // Make sure the layers beloning to the subtree rooted at |child| get
+    // Make sure the layers belonging to the subtree rooted at |child| get
     // removed from layers that do not belong in the same subtree.
     OrphanLayers();
     if (use_acceleration_when_possible) {
@@ -2017,7 +1993,7 @@ bool View::ConvertPointForAncestor(const View* ancestor,
   // TODO(sad): Have some way of caching the transformation results.
   bool result = GetTransformRelativeTo(ancestor, &trans);
   gfx::Point3F p(*point);
-  trans.TransformPoint(p);
+  trans.TransformPoint(&p);
   *point = gfx::ToFlooredPoint(p.AsPointF());
   return result;
 }
@@ -2027,8 +2003,25 @@ bool View::ConvertPointFromAncestor(const View* ancestor,
   gfx::Transform trans;
   bool result = GetTransformRelativeTo(ancestor, &trans);
   gfx::Point3F p(*point);
-  trans.TransformPointReverse(p);
+  trans.TransformPointReverse(&p);
   *point = gfx::ToFlooredPoint(p.AsPointF());
+  return result;
+}
+
+bool View::ConvertRectForAncestor(const View* ancestor,
+                                  gfx::RectF* rect) const {
+  gfx::Transform trans;
+  // TODO(sad): Have some way of caching the transformation results.
+  bool result = GetTransformRelativeTo(ancestor, &trans);
+  trans.TransformRect(rect);
+  return result;
+}
+
+bool View::ConvertRectFromAncestor(const View* ancestor,
+                                   gfx::RectF* rect) const {
+  gfx::Transform trans;
+  bool result = GetTransformRelativeTo(ancestor, &trans);
+  trans.TransformRectReverse(rect);
   return result;
 }
 
@@ -2229,9 +2222,6 @@ void View::UnregisterAccelerators(bool leave_data_intact) {
 
   if (GetWidget()) {
     if (accelerator_focus_manager_) {
-      // We may not have a FocusManager if the window containing us is being
-      // closed, in which case the FocusManager is being deleted so there is
-      // nothing to unregister.
       accelerator_focus_manager_->UnregisterAccelerators(this);
       accelerator_focus_manager_ = NULL;
     }
@@ -2308,8 +2298,8 @@ void View::UpdateTooltip() {
   // TODO(beng): The TooltipManager NULL check can be removed when we
   //             consolidate Init() methods and make views_unittests Init() all
   //             Widgets that it uses.
-  if (widget && widget->native_widget_private()->GetTooltipManager())
-    widget->native_widget_private()->GetTooltipManager()->UpdateTooltip();
+  if (widget && widget->GetTooltipManager())
+    widget->GetTooltipManager()->UpdateTooltip();
 }
 
 // Drag and drop ---------------------------------------------------------------
@@ -2317,9 +2307,18 @@ void View::UpdateTooltip() {
 bool View::DoDrag(const ui::LocatedEvent& event,
                   const gfx::Point& press_pt,
                   ui::DragDropTypes::DragEventSource source) {
-#if !defined(OS_MACOSX)
   int drag_operations = GetDragOperations(press_pt);
   if (drag_operations == ui::DragDropTypes::DRAG_NONE)
+    return false;
+
+  Widget* widget = GetWidget();
+  // We should only start a drag from an event, implying we have a widget.
+  DCHECK(widget);
+
+  // Don't attempt to start a drag while in the process of dragging. This is
+  // especially important on X where we can get multiple mouse move events when
+  // we start the drag.
+  if (widget->dragged_view())
     return false;
 
   OSExchangeData data;
@@ -2329,12 +2328,9 @@ bool View::DoDrag(const ui::LocatedEvent& event,
   // the RootView can detect it and avoid calling us back.
   gfx::Point widget_location(event.location());
   ConvertPointToWidget(this, &widget_location);
-  GetWidget()->RunShellDrag(this, data, widget_location, drag_operations,
-      source);
+  widget->RunShellDrag(this, data, widget_location, drag_operations, source);
+  // WARNING: we may have been deleted.
   return true;
-#else
-  return false;
-#endif  // !defined(OS_MACOSX)
 }
 
 }  // namespace views

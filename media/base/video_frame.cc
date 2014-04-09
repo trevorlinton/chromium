@@ -46,8 +46,8 @@ scoped_refptr<VideoFrame> VideoFrame::CreateFrame(
 // static
 std::string VideoFrame::FormatToString(VideoFrame::Format format) {
   switch (format) {
-    case VideoFrame::INVALID:
-      return "INVALID";
+    case VideoFrame::UNKNOWN:
+      return "UNKNOWN";
     case VideoFrame::RGB32:
       return "RGB32";
     case VideoFrame::YV12:
@@ -76,7 +76,7 @@ bool VideoFrame::IsValidConfig(VideoFrame::Format format,
                                const gfx::Size& coded_size,
                                const gfx::Rect& visible_rect,
                                const gfx::Size& natural_size) {
-  return (format != VideoFrame::INVALID &&
+  return (format != VideoFrame::UNKNOWN &&
           !coded_size.IsEmpty() &&
           coded_size.GetArea() <= limits::kMaxCanvas &&
           coded_size.width() <= limits::kMaxDimension &&
@@ -124,9 +124,13 @@ scoped_refptr<VideoFrame> VideoFrame::WrapExternalSharedMemory(
     const gfx::Rect& visible_rect,
     const gfx::Size& natural_size,
     uint8* data,
+    size_t data_size,
     base::SharedMemoryHandle handle,
     base::TimeDelta timestamp,
     const base::Closure& no_longer_needed_cb) {
+  if (data_size < AllocationSize(format, coded_size))
+    return NULL;
+
   switch (format) {
     case I420: {
       scoped_refptr<VideoFrame> frame(new VideoFrame(
@@ -236,7 +240,7 @@ size_t VideoFrame::NumPlanes(Format format) {
     case VideoFrame::YV12A:
       return 4;
     case VideoFrame::EMPTY:
-    case VideoFrame::INVALID:
+    case VideoFrame::UNKNOWN:
       break;
   }
   NOTREACHED() << "Unsupported video frame format: " << format;
@@ -247,6 +251,39 @@ static inline size_t RoundUp(size_t value, size_t alignment) {
   // Check that |alignment| is a power of 2.
   DCHECK((alignment + (alignment - 1)) == (alignment | (alignment - 1)));
   return ((value + (alignment - 1)) & ~(alignment-1));
+}
+
+// static
+size_t VideoFrame::AllocationSize(Format format, const gfx::Size& coded_size) {
+  switch (format) {
+    case VideoFrame::RGB32:
+      return coded_size.GetArea() * 4;
+    case VideoFrame::YV12:
+    case VideoFrame::I420: {
+      const size_t rounded_size =
+          RoundUp(coded_size.width(), 2) * RoundUp(coded_size.height(), 2);
+      return rounded_size * 3 / 2;
+    }
+    case VideoFrame::YV12A: {
+      const size_t rounded_size =
+          RoundUp(coded_size.width(), 2) * RoundUp(coded_size.height(), 2);
+      return rounded_size * 5 / 2;
+    }
+    case VideoFrame::YV16: {
+      const size_t rounded_size =
+          RoundUp(coded_size.width(), 2) * RoundUp(coded_size.height(), 2);
+      return rounded_size * 2;
+    }
+    case VideoFrame::UNKNOWN:
+    case VideoFrame::EMPTY:
+    case VideoFrame::NATIVE_TEXTURE:
+#if defined(GOOGLE_TV)
+    case VideoFrame::HOLE:
+#endif
+      break;
+  }
+  NOTREACHED() << "Unsupported video frame format: " << format;
+  return 0;
 }
 
 // Release data allocated by AllocateRGB() or AllocateYUV().

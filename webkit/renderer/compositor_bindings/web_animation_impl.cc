@@ -9,12 +9,14 @@
 #include "cc/animation/animation_id_provider.h"
 #include "third_party/WebKit/public/platform/WebAnimation.h"
 #include "third_party/WebKit/public/platform/WebAnimationCurve.h"
+#include "webkit/renderer/compositor_bindings/web_filter_animation_curve_impl.h"
 #include "webkit/renderer/compositor_bindings/web_float_animation_curve_impl.h"
 #include "webkit/renderer/compositor_bindings/web_transform_animation_curve_impl.h"
 
 using cc::Animation;
 using cc::AnimationIdProvider;
 
+using WebKit::WebAnimation;
 using WebKit::WebAnimationCurve;
 
 namespace webkit {
@@ -41,6 +43,12 @@ WebAnimationImpl::WebAnimationImpl(const WebAnimationCurve& web_curve,
       const WebTransformAnimationCurveImpl* transform_curve_impl =
           static_cast<const WebTransformAnimationCurveImpl*>(&web_curve);
       curve = transform_curve_impl->CloneToAnimationCurve();
+      break;
+    }
+    case WebAnimationCurve::AnimationCurveTypeFilter: {
+      const WebFilterAnimationCurveImpl* filter_curve_impl =
+          static_cast<const WebFilterAnimationCurveImpl*>(&web_curve);
+      curve = filter_curve_impl->CloneToAnimationCurve();
       break;
     }
   }
@@ -86,11 +94,20 @@ void WebAnimationImpl::setAlternatesDirection(bool alternates) {
   animation_->set_alternates_direction(alternates);
 }
 
-scoped_ptr<cc::Animation> WebAnimationImpl::CloneToAnimation() {
-  scoped_ptr<cc::Animation> to_return(
-      animation_->Clone(cc::Animation::NonControllingInstance));
-  to_return->set_needs_synchronized_start_time(true);
-  return to_return.Pass();
+scoped_ptr<cc::Animation> WebAnimationImpl::PassAnimation() {
+  animation_->set_needs_synchronized_start_time(true);
+  return animation_.Pass();
 }
+
+#define COMPILE_ASSERT_MATCHING_ENUMS(webkit_name, cc_name)                    \
+    COMPILE_ASSERT(static_cast<int>(webkit_name) == static_cast<int>(cc_name), \
+                   mismatching_enums)
+
+COMPILE_ASSERT_MATCHING_ENUMS(
+    WebAnimation::TargetPropertyTransform, Animation::Transform);
+COMPILE_ASSERT_MATCHING_ENUMS(
+    WebAnimation::TargetPropertyOpacity, Animation::Opacity);
+COMPILE_ASSERT_MATCHING_ENUMS(
+    WebAnimation::TargetPropertyFilter, Animation::Filter);
 
 }  // namespace webkit

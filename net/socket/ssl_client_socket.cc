@@ -4,7 +4,11 @@
 
 #include "net/socket/ssl_client_socket.h"
 
+#include "base/metrics/histogram.h"
 #include "base/strings/string_util.h"
+#include "crypto/ec_private_key.h"
+#include "net/ssl/server_bound_cert_service.h"
+#include "net/ssl/ssl_config_service.h"
 
 namespace net {
 
@@ -20,10 +24,8 @@ NextProto SSLClientSocket::NextProtoFromString(
     const std::string& proto_string) {
   if (proto_string == "http1.1" || proto_string == "http/1.1") {
     return kProtoHTTP11;
-  } else if (proto_string == "spdy/1") {
-    return kProtoSPDY1;
   } else if (proto_string == "spdy/2") {
-    return kProtoSPDY2;
+    return kProtoDeprecatedSPDY2;
   } else if (proto_string == "spdy/3") {
     return kProtoSPDY3;
   } else if (proto_string == "spdy/3.1") {
@@ -44,9 +46,7 @@ const char* SSLClientSocket::NextProtoToString(NextProto next_proto) {
   switch (next_proto) {
     case kProtoHTTP11:
       return "http/1.1";
-    case kProtoSPDY1:
-      return "spdy/1";
-    case kProtoSPDY2:
+    case kProtoDeprecatedSPDY2:
       return "spdy/2";
     case kProtoSPDY3:
       return "spdy/3";
@@ -58,7 +58,6 @@ const char* SSLClientSocket::NextProtoToString(NextProto next_proto) {
       return "HTTP-draft-04/2.0";
     case kProtoQUIC1SPDY3:
       return "quic/1+spdy/3";
-    case kProtoSPDY21:
     case kProtoUnknown:
       break;
   }
@@ -143,6 +142,60 @@ bool SSLClientSocket::WasChannelIDSent() const {
 
 void SSLClientSocket::set_channel_id_sent(bool channel_id_sent) {
   channel_id_sent_ = channel_id_sent;
+}
+
+// static
+void SSLClientSocket::RecordChannelIDSupport(
+    ServerBoundCertService* server_bound_cert_service,
+    bool negotiated_channel_id,
+    bool channel_id_enabled,
+    bool supports_ecc) {
+  // Since this enum is used for a histogram, do not change or re-use values.
+  enum {
+    DISABLED = 0,
+    CLIENT_ONLY = 1,
+    CLIENT_AND_SERVER = 2,
+    CLIENT_NO_ECC = 3,
+    CLIENT_BAD_SYSTEM_TIME = 4,
+    CLIENT_NO_SERVER_BOUND_CERT_SERVICE = 5,
+    DOMAIN_BOUND_CERT_USAGE_MAX
+  } supported = DISABLED;
+  if (negotiated_channel_id) {
+    supported = CLIENT_AND_SERVER;
+  } else if (channel_id_enabled) {
+    if (!server_bound_cert_service)
+      supported = CLIENT_NO_SERVER_BOUND_CERT_SERVICE;
+    else if (!supports_ecc)
+      supported = CLIENT_NO_ECC;
+    else if (!server_bound_cert_service->IsSystemTimeValid())
+      supported = CLIENT_BAD_SYSTEM_TIME;
+    else
+      supported = CLIENT_ONLY;
+  }
+  UMA_HISTOGRAM_ENUMERATION("DomainBoundCerts.Support", supported,
+                            DOMAIN_BOUND_CERT_USAGE_MAX);
+}
+
+// static
+bool SSLClientSocket::IsChannelIDEnabled(
+    const SSLConfig& ssl_config,
+    ServerBoundCertService* server_bound_cert_service) {
+  if (!ssl_config.channel_id_enabled)
+    return false;
+  if (!server_bound_cert_service) {
+    DVLOG(1) << "NULL server_bound_cert_service_, not enabling channel ID.";
+    return false;
+  }
+  if (!crypto::ECPrivateKey::IsSupported()) {
+    DVLOG(1) << "Elliptic Curve not supported, not enabling channel ID.";
+    return false;
+  }
+  if (!server_bound_cert_service->IsSystemTimeValid()) {
+    DVLOG(1) << "System time is not within the supported range for certificate "
+                "generation, not enabling channel ID.";
+    return false;
+  }
+  return true;
 }
 
 }  // namespace net

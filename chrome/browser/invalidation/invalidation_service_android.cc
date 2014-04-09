@@ -5,13 +5,18 @@
 #include "chrome/browser/invalidation/invalidation_service_android.h"
 
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/invalidation/invalidation_controller_android.h"
 #include "content/public/browser/notification_service.h"
 
 namespace invalidation {
 
-InvalidationServiceAndroid::InvalidationServiceAndroid(Profile* profile)
-    : invalidator_state_(syncer::INVALIDATIONS_ENABLED) {
+InvalidationServiceAndroid::InvalidationServiceAndroid(
+    Profile* profile,
+    InvalidationControllerAndroid* invalidation_controller)
+    : invalidator_state_(syncer::INVALIDATIONS_ENABLED),
+      invalidation_controller_(invalidation_controller) {
   DCHECK(CalledOnValidThread());
+  DCHECK(invalidation_controller);
   registrar_.Add(this, chrome::NOTIFICATION_SYNC_REFRESH_REMOTE,
                  content::Source<Profile>(profile));
 }
@@ -29,6 +34,8 @@ void InvalidationServiceAndroid::UpdateRegisteredInvalidationIds(
     const syncer::ObjectIdSet& ids) {
   DCHECK(CalledOnValidThread());
   invalidator_registrar_.UpdateRegisteredIds(handler, ids);
+  invalidation_controller_->SetRegisteredObjectIds(
+      invalidator_registrar_.GetAllRegisteredIds());
 }
 
 void InvalidationServiceAndroid::UnregisterInvalidationHandler(
@@ -70,11 +77,9 @@ void InvalidationServiceAndroid::Observe(
 
   // An empty map implies that we should invalidate all.
   const syncer::ObjectIdInvalidationMap& effective_invalidation_map =
-      object_invalidation_map.empty() ?
-      ObjectIdSetToInvalidationMap(
-          invalidator_registrar_.GetAllRegisteredIds(),
-          syncer::Invalidation::kUnknownVersion,
-          std::string()) :
+      object_invalidation_map.Empty() ?
+      syncer::ObjectIdInvalidationMap::InvalidateAll(
+          invalidator_registrar_.GetAllRegisteredIds()) :
       object_invalidation_map;
 
   invalidator_registrar_.DispatchInvalidationsToHandlers(

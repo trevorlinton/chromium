@@ -17,16 +17,18 @@
 #include "base/debug/trace_event.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
-#include "content/public/browser/android/synchronous_compositor.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/content_switches.h"
 #include "gpu/command_buffer/service/in_process_command_buffer.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "third_party/skia/include/core/SkBitmapDevice.h"
 #include "third_party/skia/include/core/SkCanvas.h"
-#include "third_party/skia/include/core/SkDevice.h"
 #include "third_party/skia/include/core/SkGraphics.h"
 #include "third_party/skia/include/core/SkPicture.h"
+#include "third_party/skia/include/utils/SkCanvasStateUtils.h"
 #include "ui/gfx/skia_util.h"
 #include "ui/gfx/transform.h"
 #include "ui/gfx/vector2d_conversions.h"
@@ -91,7 +93,7 @@ bool RasterizeIntoBitmap(JNIEnv* env,
                      bitmap_info.stride);
     bitmap.setPixels(pixels);
 
-    SkDevice device(bitmap);
+    SkBitmapDevice device(bitmap);
     SkCanvas canvas(&device);
     canvas.translate(-scroll_x, -scroll_y);
     succeeded = renderer.Run(&canvas);
@@ -141,6 +143,13 @@ bool HardwareEnabled() {
 AwDrawSWFunctionTable* g_sw_draw_functions = NULL;
 
 const int64 kFallbackTickTimeoutInMilliseconds = 20;
+
+
+// Used to calculate memory and resource allocation. Determined experimentally.
+size_t g_memory_multiplier = 10;
+size_t g_num_gralloc_limit = 150;
+const size_t kBytesPerPixel = 4;
+const size_t kMemoryAllocationStep = 5 * 1024 * 1024;
 
 class ScopedAllowGL {
  public:
@@ -249,18 +258,11 @@ InProcessViewRenderer::~InProcessViewRenderer() {
   DCHECK(web_contents_ == NULL);  // WebContentsGone should have been called.
 }
 
-
-// TODO(boliu): Should also call this when we know for sure we are no longer,
-// for example, when visible rect becomes 0.
 void InProcessViewRenderer::NoLongerExpectsDrawGL() {
   GLViewRendererManager& mru = g_view_renderer_manager.Get();
   if (manager_key_ != mru.NullKey()) {
     mru.NoLongerExpectsDrawGL(manager_key_);
     manager_key_ = mru.NullKey();
-
-    // TODO(boliu): If this is the first one and there are GL pending,
-    // requestDrawGL on next one.
-    // TODO(boliu): If this is the last one, lose all global contexts.
   }
 }
 
@@ -275,8 +277,98 @@ void InProcessViewRenderer::WebContentsGone() {
   compositor_ = NULL;
 }
 
+// static
+void InProcessViewRenderer::CalculateTileMemoryPolicy() {
+  CommandLine* cl = CommandLine::ForCurrentProcess();
+  if (cl->HasSwitch(switches::kTileMemoryMultiplier)) {
+    std::string string_value =
+        cl->GetSwitchValueASCII(switches::kTileMemoryMultiplier);
+    int int_value = 0;
+    if (base::StringToInt(string_value, &int_value) &&
+        int_value >= 2 && int_value <= 50) {
+      g_memory_multiplier = int_value;
+    }
+  }
+
+  if (cl->HasSwitch(switches::kNumGrallocBuffersPerWebview)) {
+    std::string string_value =
+        cl->GetSwitchValueASCII(switches::kNumGrallocBuffersPerWebview);
+    int int_value = 0;
+    if (base::StringToInt(string_value, &int_value) &&
+        int_value >= 50 && int_value <= 500) {
+      g_num_gralloc_limit = int_value;
+    }
+  }
+
+  const char kDefaultTileSize[] = "384";
+  if (!cl->HasSwitch(switches::kDefaultTileWidth))
+    cl->AppendSwitchASCII(switches::kDefaultTileWidth, kDefaultTileSize);
+
+  if (!cl->HasSwitch(switches::kDefaultTileHeight))
+    cl->AppendSwitchASCII(switches::kDefaultTileHeight, kDefaultTileSize);
+}
+
 bool InProcessViewRenderer::RequestProcessGL() {
   return client_->RequestDrawGL(NULL);
+}
+
+void InProcessViewRenderer::TrimMemory(int level) {
+  // Constants from Android ComponentCallbacks2.
+  enum {
+    TRIM_MEMORY_RUNNING_LOW = 10,
+    TRIM_MEMORY_UI_HIDDEN = 20,
+    TRIM_MEMORY_BACKGROUND = 40,
+  };
+
+  // Not urgent enough. TRIM_MEMORY_UI_HIDDEN is treated specially because
+  // it does not indicate memory pressure, but merely that the app is
+  // backgrounded.
+  if (level < TRIM_MEMORY_RUNNING_LOW || level == TRIM_MEMORY_UI_HIDDEN)
+    return;
+
+  // Nothing to drop.
+  if (!attached_to_window_ || !hardware_initialized_ || !compositor_)
+    return;
+
+  // Do not release resources on view we expect to get DrawGL soon.
+  if (level < TRIM_MEMORY_BACKGROUND) {
+    client_->UpdateGlobalVisibleRect();
+    if (view_visible_ && window_visible_ &&
+        !cached_global_visible_rect_.IsEmpty()) {
+      return;
+    }
+  }
+
+  if (!eglGetCurrentContext()) {
+    NOTREACHED();
+    return;
+  }
+
+  // Just set the memory limit to 0 and drop all tiles. This will be reset to
+  // normal levels in the next DrawGL call.
+  content::SynchronousCompositorMemoryPolicy policy;
+  policy.bytes_limit = 0;
+  policy.num_resources_limit = 0;
+  if (memory_policy_ == policy)
+    return;
+
+  TRACE_EVENT0("android_webview", "InProcessViewRenderer::TrimMemory");
+  ScopedAppGLStateRestore state_restore(
+      ScopedAppGLStateRestore::MODE_RESOURCE_MANAGEMENT);
+  gpu::InProcessCommandBuffer::ProcessGpuWorkOnCurrentThread();
+  ScopedAllowGL allow_gl;
+
+  SetMemoryPolicy(policy);
+  ForceFakeCompositeSW();
+}
+
+void InProcessViewRenderer::SetMemoryPolicy(
+    content::SynchronousCompositorMemoryPolicy& new_policy) {
+  if (memory_policy_ == new_policy)
+    return;
+
+  memory_policy_ = new_policy;
+  compositor_->SetMemoryPolicy(memory_policy_);
 }
 
 void InProcessViewRenderer::UpdateCachedGlobalVisibleRect() {
@@ -295,11 +387,7 @@ bool InProcessViewRenderer::OnDraw(jobject java_canvas,
     return compositor_ && client_->RequestDrawGL(java_canvas);
   }
   // Perform a software draw
-  block_invalidates_ = true;
-  bool result = DrawSWInternal(java_canvas, clip);
-  block_invalidates_ = false;
-  EnsureContinuousInvalidation(NULL, false);
-  return result;
+  return DrawSWInternal(java_canvas, clip);
 }
 
 bool InProcessViewRenderer::InitializeHwDraw() {
@@ -333,18 +421,27 @@ void InProcessViewRenderer::DrawGL(AwDrawGLInfo* draw_info) {
   gpu::InProcessCommandBuffer::ProcessGpuWorkOnCurrentThread();
   ScopedAllowGL allow_gl;
 
-  if (attached_to_window_ && compositor_ && !hardware_initialized_) {
-    if (InitializeHwDraw()) {
-      last_egl_context_ = current_context;
-    } else {
-      return;
-    }
+  if (!attached_to_window_) {
+    TRACE_EVENT_INSTANT0(
+        "android_webview", "EarlyOut_NotAttached", TRACE_EVENT_SCOPE_THREAD);
+    return;
   }
 
   if (draw_info->mode == AwDrawGLInfo::kModeProcess) {
     TRACE_EVENT_INSTANT0(
         "android_webview", "EarlyOut_ModeProcess", TRACE_EVENT_SCOPE_THREAD);
     return;
+  }
+
+  if (compositor_ && !hardware_initialized_) {
+    if (InitializeHwDraw()) {
+      last_egl_context_ = current_context;
+    } else {
+      TRACE_EVENT_INSTANT0(
+          "android_webview", "EarlyOut_HwInitFail", TRACE_EVENT_SCOPE_THREAD);
+      LOG(ERROR) << "WebView hardware initialization failed";
+      return;
+    }
   }
 
   UpdateCachedGlobalVisibleRect();
@@ -354,10 +451,6 @@ void InProcessViewRenderer::DrawGL(AwDrawGLInfo* draw_info) {
                          TRACE_EVENT_SCOPE_THREAD);
     return;
   }
-
-  // DrawGL may be called without OnDraw, so cancel |fallback_tick_| here as
-  // well just to be safe.
-  fallback_tick_.Cancel();
 
   if (last_egl_context_ != current_context) {
     // TODO(boliu): Handle context lost
@@ -370,6 +463,22 @@ void InProcessViewRenderer::DrawGL(AwDrawGLInfo* draw_info) {
         "android_webview", "EarlyOut_NoCompositor", TRACE_EVENT_SCOPE_THREAD);
     return;
   }
+
+  // DrawGL may be called without OnDraw, so cancel |fallback_tick_| here as
+  // well just to be safe.
+  fallback_tick_.Cancel();
+
+  // Update memory budget. This will no-op in compositor if the policy has not
+  // changed since last draw.
+  content::SynchronousCompositorMemoryPolicy policy;
+  policy.bytes_limit = g_memory_multiplier * kBytesPerPixel *
+                       cached_global_visible_rect_.width() *
+                       cached_global_visible_rect_.height();
+  // Round up to a multiple of kMemoryAllocationStep.
+  policy.bytes_limit =
+      (policy.bytes_limit / kMemoryAllocationStep + 1) * kMemoryAllocationStep;
+  policy.num_resources_limit = g_num_gralloc_limit;
+  SetMemoryPolicy(policy);
 
   DCHECK(gl_surface_);
   gl_surface_->SetBackingFrameBufferObject(
@@ -387,15 +496,20 @@ void InProcessViewRenderer::DrawGL(AwDrawGLInfo* draw_info) {
   // Assume we always draw the full visible rect if we are drawing into a layer.
   bool drew_full_visible_rect = true;
 
+  gfx::Rect viewport_rect;
   if (!draw_info->is_layer) {
-    clip_rect.Intersect(cached_global_visible_rect_);
-    drew_full_visible_rect = clip_rect.Contains(cached_global_visible_rect_);
+    viewport_rect = cached_global_visible_rect_;
+    clip_rect.Intersect(viewport_rect);
+    drew_full_visible_rect = clip_rect.Contains(viewport_rect);
+  } else {
+    viewport_rect = clip_rect;
   }
 
   block_invalidates_ = true;
   // TODO(joth): Check return value.
   compositor_->DemandDrawHw(gfx::Size(draw_info->width, draw_info->height),
                             transform,
+                            viewport_rect,
                             clip_rect,
                             state_restore.stencil_enabled());
   block_invalidates_ = false;
@@ -411,8 +525,6 @@ void InProcessViewRenderer::SetGlobalVisibleRect(
 
 bool InProcessViewRenderer::DrawSWInternal(jobject java_canvas,
                                            const gfx::Rect& clip) {
-  fallback_tick_.Cancel();
-
   if (clip.IsEmpty()) {
     TRACE_EVENT_INSTANT0(
         "android_webview", "EarlyOut_EmptyClip", TRACE_EVENT_SCOPE_THREAD);
@@ -449,82 +561,48 @@ bool InProcessViewRenderer::RenderViaAuxilaryBitmapIfNeeded(
   JNIEnv* env = AttachCurrentThread();
   ScopedPixelAccess auto_release_pixels(env, java_canvas);
   AwPixelInfo* pixels = auto_release_pixels.pixels();
-  SkMatrix matrix;
-  SkBitmap::Config config(SkBitmap::kNo_Config);
-  if (pixels) {
-    switch (pixels->config) {
-      case AwConfig_ARGB_8888:
-        config = SkBitmap::kARGB_8888_Config;
-        break;
-      case AwConfig_RGB_565:
-        config = SkBitmap::kRGB_565_Config;
-        break;
-    }
+  if (pixels && pixels->state) {
+    skia::RefPtr<SkCanvas> canvas = skia::AdoptRef(
+        SkCanvasStateUtils::CreateFromCanvasState(pixels->state));
 
-    for (int i = 0; i < 9; i++) {
-      matrix.set(i, pixels->matrix[i]);
+    // Workarounds for http://crbug.com/271096: SW draw only supports
+    // translate & scale transforms, and a simple rectangular clip.
+    if (canvas && (!canvas->getTotalClip().isRect() ||
+          (canvas->getTotalMatrix().getType() &
+           ~(SkMatrix::kTranslate_Mask | SkMatrix::kScale_Mask)))) {
+      canvas.clear();
     }
-    // Workaround for http://crbug.com/271096: SW draw only supports
-    // translate & scale transforms.
-    if (matrix.getType() & ~(SkMatrix::kTranslate_Mask | SkMatrix::kScale_Mask))
-      config = SkBitmap::kNo_Config;
+    if (canvas) {
+      canvas->translate(scroll_correction.x(), scroll_correction.y());
+      return render_source.Run(canvas.get());
+    }
   }
 
-  if (config == SkBitmap::kNo_Config) {
-    // Render into an auxiliary bitmap if pixel info is not available.
-    ScopedJavaLocalRef<jobject> jcanvas(env, java_canvas);
-    TRACE_EVENT0("android_webview", "RenderToAuxBitmap");
-    ScopedJavaLocalRef<jobject> jbitmap(java_helper->CreateBitmap(
-        env, clip.width(), clip.height(), jcanvas, owner_key));
-    if (!jbitmap.obj()) {
-      TRACE_EVENT_INSTANT0("android_webview",
-                           "EarlyOut_BitmapAllocFail",
-                           TRACE_EVENT_SCOPE_THREAD);
-      return false;
-    }
-
-    if (!RasterizeIntoBitmap(env, jbitmap,
-                             clip.x() - scroll_correction.x(),
-                             clip.y() - scroll_correction.y(),
-                             render_source)) {
-      TRACE_EVENT_INSTANT0("android_webview",
-                           "EarlyOut_RasterizeFail",
-                           TRACE_EVENT_SCOPE_THREAD);
-      return false;
-    }
-
-    java_helper->DrawBitmapIntoCanvas(env, jbitmap, jcanvas,
-                                      clip.x(), clip.y());
-    return true;
+  // Render into an auxiliary bitmap if pixel info is not available.
+  ScopedJavaLocalRef<jobject> jcanvas(env, java_canvas);
+  TRACE_EVENT0("android_webview", "RenderToAuxBitmap");
+  ScopedJavaLocalRef<jobject> jbitmap(java_helper->CreateBitmap(
+      env, clip.width(), clip.height(), jcanvas, owner_key));
+  if (!jbitmap.obj()) {
+    TRACE_EVENT_INSTANT0("android_webview",
+                         "EarlyOut_BitmapAllocFail",
+                         TRACE_EVENT_SCOPE_THREAD);
+    return false;
   }
 
-  // Draw in a SkCanvas built over the pixel information.
-  SkBitmap bitmap;
-  bitmap.setConfig(config,
-                   pixels->width,
-                   pixels->height,
-                   pixels->row_bytes);
-  bitmap.setPixels(pixels->pixels);
-  SkDevice device(bitmap);
-  SkCanvas canvas(&device);
-  canvas.setMatrix(matrix);
-
-  if (pixels->clip_rect_count) {
-    SkRegion clip;
-    for (int i = 0; i < pixels->clip_rect_count; ++i) {
-      clip.op(SkIRect::MakeXYWH(pixels->clip_rects[i + 0],
-                                pixels->clip_rects[i + 1],
-                                pixels->clip_rects[i + 2],
-                                pixels->clip_rects[i + 3]),
-              SkRegion::kUnion_Op);
-    }
-    canvas.setClipRegion(clip);
+  if (!RasterizeIntoBitmap(env, jbitmap,
+                           clip.x() - scroll_correction.x(),
+                           clip.y() - scroll_correction.y(),
+                           render_source)) {
+    TRACE_EVENT_INSTANT0("android_webview",
+                         "EarlyOut_RasterizeFail",
+                         TRACE_EVENT_SCOPE_THREAD);
+    return false;
   }
 
-  canvas.translate(scroll_correction.x(),
-                   scroll_correction.y());
-
-  return render_source.Run(&canvas);
+  java_helper->DrawBitmapIntoCanvas(env, jbitmap, jcanvas,
+                                    clip.x(), clip.y());
+  return true;
 }
 
 skia::RefPtr<SkPicture> InProcessViewRenderer::CapturePicture(int width,
@@ -539,7 +617,7 @@ skia::RefPtr<SkPicture> InProcessViewRenderer::CapturePicture(int width,
 
   // Reset scroll back to the origin, will go back to the old
   // value when scroll_reset is out of scope.
-  base::AutoReset<gfx::Vector2dF> scroll_reset(&scroll_offset_css_,
+  base::AutoReset<gfx::Vector2dF> scroll_reset(&scroll_offset_dip_,
                                                gfx::Vector2d());
 
   SkCanvas* rec_canvas = picture->beginRecording(width, height, 0);
@@ -551,6 +629,7 @@ skia::RefPtr<SkPicture> InProcessViewRenderer::CapturePicture(int width,
 
 void InProcessViewRenderer::EnableOnNewPicture(bool enabled) {
   on_new_picture_enable_ = enabled;
+  EnsureContinuousInvalidation(NULL, false);
 }
 
 void InProcessViewRenderer::SetIsPaused(bool paused) {
@@ -615,7 +694,7 @@ void InProcessViewRenderer::OnDetachedFromWindow() {
     DCHECK(compositor_);
 
     ScopedAppGLStateRestore state_restore(
-        ScopedAppGLStateRestore::MODE_DETACH_FROM_WINDOW);
+        ScopedAppGLStateRestore::MODE_RESOURCE_MANAGEMENT);
     gpu::InProcessCommandBuffer::ProcessGpuWorkOnCurrentThread();
     ScopedAllowGL allow_gl;
     compositor_->ReleaseHwDraw();
@@ -681,29 +760,37 @@ void InProcessViewRenderer::SetDipScale(float dip_scale) {
   CHECK(dip_scale_ > 0);
 }
 
-void InProcessViewRenderer::SetPageScaleFactor(float page_scale_factor) {
-  page_scale_factor_ = page_scale_factor;
-  CHECK(page_scale_factor_ > 0);
+gfx::Vector2d InProcessViewRenderer::max_scroll_offset() const {
+  DCHECK_GT(dip_scale_, 0);
+  return gfx::ToCeiledVector2d(gfx::ScaleVector2d(
+      max_scroll_offset_dip_, dip_scale_ * page_scale_factor_));
 }
 
-void InProcessViewRenderer::ScrollTo(gfx::Vector2d new_value) {
-  DCHECK(dip_scale_ > 0);
-  // In general we don't guarantee that the scroll offset transforms are
-  // symmetrical. That is if scrolling from JS to offset1 results in a native
-  // offset2 then scrolling from UI to offset2 results in JS being scrolled to
-  // offset1 again.
-  // The reason we explicitly do rounding here is that it seems to yeld the
-  // most stabile transformation.
-  gfx::Vector2dF new_value_css = gfx::ToRoundedVector2d(
-      gfx::ScaleVector2d(new_value, 1.0f / (dip_scale_ * page_scale_factor_)));
+void InProcessViewRenderer::ScrollTo(gfx::Vector2d scroll_offset) {
+  gfx::Vector2d max_offset = max_scroll_offset();
+  gfx::Vector2dF scroll_offset_dip;
+  // To preserve the invariant that scrolling to the maximum physical pixel
+  // value also scrolls to the maximum dip pixel value we transform the physical
+  // offset into the dip offset by using a proportion (instead of dividing by
+  // dip_scale * page_scale_factor).
+  if (max_offset.x()) {
+    scroll_offset_dip.set_x((scroll_offset.x() * max_scroll_offset_dip_.x()) /
+                            max_offset.x());
+  }
+  if (max_offset.y()) {
+    scroll_offset_dip.set_y((scroll_offset.y() * max_scroll_offset_dip_.y()) /
+                            max_offset.y());
+  }
 
-  // It's possible that more than one set of unique physical coordinates maps
-  // to the same set of CSS coordinates which means we can't reliably early-out
-  // earlier in the call stack.
-  if (scroll_offset_css_ == new_value_css)
+  DCHECK_LE(0, scroll_offset_dip.x());
+  DCHECK_LE(0, scroll_offset_dip.y());
+  DCHECK_LE(scroll_offset_dip.x(), max_scroll_offset_dip_.x());
+  DCHECK_LE(scroll_offset_dip.y(), max_scroll_offset_dip_.y());
+
+  if (scroll_offset_dip_ == scroll_offset_dip)
     return;
 
-  scroll_offset_css_ = new_value_css;
+  scroll_offset_dip_ = scroll_offset_dip;
 
   if (compositor_)
     compositor_->DidChangeRootLayerScrollOffset();
@@ -714,26 +801,66 @@ void InProcessViewRenderer::DidUpdateContent() {
     client_->OnNewPicture();
 }
 
+void InProcessViewRenderer::SetMaxRootLayerScrollOffset(
+    gfx::Vector2dF new_value_dip) {
+  DCHECK_GT(dip_scale_, 0);
+
+  max_scroll_offset_dip_ = new_value_dip;
+  DCHECK_LE(0, max_scroll_offset_dip_.x());
+  DCHECK_LE(0, max_scroll_offset_dip_.y());
+
+  client_->SetMaxContainerViewScrollOffset(max_scroll_offset());
+}
+
 void InProcessViewRenderer::SetTotalRootLayerScrollOffset(
-    gfx::Vector2dF new_value_css) {
+    gfx::Vector2dF scroll_offset_dip) {
   // TOOD(mkosiba): Add a DCHECK to say that this does _not_ get called during
   // DrawGl when http://crbug.com/249972 is fixed.
-  if (scroll_offset_css_ == new_value_css)
+  if (scroll_offset_dip_ == scroll_offset_dip)
     return;
 
-  scroll_offset_css_ = new_value_css;
+  scroll_offset_dip_ = scroll_offset_dip;
 
-  DCHECK(dip_scale_ > 0);
-  DCHECK(page_scale_factor_ > 0);
+  gfx::Vector2d max_offset = max_scroll_offset();
+  gfx::Vector2d scroll_offset;
+  // For an explanation as to why this is done this way see the comment in
+  // InProcessViewRenderer::ScrollTo.
+  if (max_scroll_offset_dip_.x()) {
+    scroll_offset.set_x((scroll_offset_dip.x() * max_offset.x()) /
+                        max_scroll_offset_dip_.x());
+  }
 
-  gfx::Vector2d scroll_offset = gfx::ToRoundedVector2d(
-      gfx::ScaleVector2d(new_value_css, dip_scale_ * page_scale_factor_));
+  if (max_scroll_offset_dip_.y()) {
+    scroll_offset.set_y((scroll_offset_dip.y() * max_offset.y()) /
+                        max_scroll_offset_dip_.y());
+  }
+
+  DCHECK(0 <= scroll_offset.x());
+  DCHECK(0 <= scroll_offset.y());
+  DCHECK(scroll_offset.x() <= max_offset.x());
+  DCHECK(scroll_offset.y() <= max_offset.y());
 
   client_->ScrollContainerViewTo(scroll_offset);
 }
 
 gfx::Vector2dF InProcessViewRenderer::GetTotalRootLayerScrollOffset() {
-  return scroll_offset_css_;
+  return scroll_offset_dip_;
+}
+
+bool InProcessViewRenderer::IsExternalFlingActive() const {
+  return client_->IsFlingActive();
+}
+
+void InProcessViewRenderer::SetRootLayerPageScaleFactor(
+    float page_scale_factor) {
+  page_scale_factor_ = page_scale_factor;
+  DCHECK_GT(page_scale_factor_, 0);
+  client_->SetPageScaleFactor(page_scale_factor);
+}
+
+void InProcessViewRenderer::SetRootLayerScrollableSize(
+    gfx::SizeF scrollable_size) {
+  client_->SetContentsSize(scrollable_size);
 }
 
 void InProcessViewRenderer::DidOverscroll(
@@ -759,7 +886,8 @@ void InProcessViewRenderer::EnsureContinuousInvalidation(
   // This method should be called again when any of these conditions change.
   bool need_invalidate =
       compositor_needs_continuous_invalidate_ || invalidate_ignore_compositor;
-  bool throttle = is_paused_ || (attached_to_window_ && !window_visible_);
+  bool throttle = (is_paused_ && !on_new_picture_enable_) ||
+                  (attached_to_window_ && !window_visible_);
   if (!need_invalidate || block_invalidates_ || throttle)
     return;
 
@@ -773,7 +901,7 @@ void InProcessViewRenderer::EnsureContinuousInvalidation(
     client_->PostInvalidate();
   }
 
-  block_invalidates_ = true;
+  block_invalidates_ = compositor_needs_continuous_invalidate_;
 
   // Unretained here is safe because the callback is cancelled when
   // |fallback_tick_| is destroyed.
@@ -802,19 +930,26 @@ void InProcessViewRenderer::FallbackTickFired() {
   // This should only be called if OnDraw or DrawGL did not come in time, which
   // means block_invalidates_ must still be true.
   DCHECK(block_invalidates_);
-  if (compositor_needs_continuous_invalidate_ && compositor_) {
-    SkDevice device(SkBitmap::kARGB_8888_Config, 1, 1);
-    SkCanvas canvas(&device);
-    block_invalidates_ = true;
-    CompositeSW(&canvas);
-  }
-  block_invalidates_ = false;
-  EnsureContinuousInvalidation(NULL, false);
+  if (compositor_needs_continuous_invalidate_ && compositor_)
+    ForceFakeCompositeSW();
+}
+
+void InProcessViewRenderer::ForceFakeCompositeSW() {
+  DCHECK(compositor_);
+  SkBitmapDevice device(SkBitmap::kARGB_8888_Config, 1, 1);
+  SkCanvas canvas(&device);
+  CompositeSW(&canvas);
 }
 
 bool InProcessViewRenderer::CompositeSW(SkCanvas* canvas) {
   DCHECK(compositor_);
-  return compositor_->DemandDrawSw(canvas);
+
+  fallback_tick_.Cancel();
+  block_invalidates_ = true;
+  bool result = compositor_->DemandDrawSw(canvas);
+  block_invalidates_ = false;
+  EnsureContinuousInvalidation(NULL, false);
+  return result;
 }
 
 std::string InProcessViewRenderer::ToString(AwDrawGLInfo* draw_info) const {
@@ -839,10 +974,12 @@ std::string InProcessViewRenderer::ToString(AwDrawGLInfo* draw_info) const {
                       "scroll_at_start_of_frame: %s ",
                       scroll_at_start_of_frame_.ToString().c_str());
   base::StringAppendF(
-      &str, "scroll_offset_css: %s ", scroll_offset_css_.ToString().c_str());
+      &str, "scroll_offset_dip: %s ", scroll_offset_dip_.ToString().c_str());
   base::StringAppendF(&str,
                       "overscroll_rounding_error_: %s ",
                       overscroll_rounding_error_.ToString().c_str());
+  base::StringAppendF(
+      &str, "on_new_picture_enable: %d ", on_new_picture_enable_);
   if (draw_info) {
     base::StringAppendF(&str,
                         "clip left top right bottom: [%d %d %d %d] ",

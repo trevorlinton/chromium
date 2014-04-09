@@ -76,6 +76,13 @@ const char kLTRHtmlTextDirection[] = "ltr";
 
 static base::LazyInstance<std::set<const WebUIController*> > g_live_new_tabs;
 
+const char* GetHtmlTextDirection(const string16& text) {
+  if (base::i18n::IsRTL() && base::i18n::StringContainsStrongRTLChars(text))
+    return kRTLHtmlTextDirection;
+  else
+    return kLTRHtmlTextDirection;
+}
+
 }  // namespace
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -83,19 +90,14 @@ static base::LazyInstance<std::set<const WebUIController*> > g_live_new_tabs;
 
 NewTabUI::NewTabUI(content::WebUI* web_ui)
     : WebUIController(web_ui),
+      WebContentsObserver(web_ui->GetWebContents()),
       showing_sync_bubble_(false) {
   g_live_new_tabs.Pointer()->insert(this);
   web_ui->OverrideTitle(l10n_util::GetStringUTF16(IDS_NEW_TAB_TITLE));
 
-  content::WebContents* web_contents = web_ui->GetWebContents();
-  NTPUserDataLogger::CreateForWebContents(web_contents);
-  NTPUserDataLogger::FromWebContents(web_contents)->set_ntp_url(
+  NTPUserDataLogger::CreateForWebContents(web_contents());
+  NTPUserDataLogger::FromWebContents(web_contents())->set_ntp_url(
       GURL(chrome::kChromeUINewTabURL));
-
-  registrar_.Add(
-      this,
-      content::NOTIFICATION_WEB_CONTENTS_VISIBILITY_CHANGED,
-      content::Source<content::WebContents>(web_contents));
 
   // We count all link clicks as AUTO_BOOKMARK, so that site can be ranked more
   // highly. Note this means we're including clicks on not only most visited
@@ -116,7 +118,7 @@ NewTabUI::NewTabUI(content::WebUI* web_ui)
     // Android doesn't have a sync promo/username on NTP.
     web_ui->AddMessageHandler(new NewTabPageSyncHandler());
 
-    if (ShouldShowApps()) {
+    if (MightShowApps()) {
       ExtensionService* service = GetProfile()->GetExtensionService();
       // We might not have an ExtensionService (on ChromeOS when not logged in
       // for example).
@@ -222,6 +224,10 @@ void NewTabUI::RenderViewReused(RenderViewHost* render_view_host) {
   StartTimingPaint(render_view_host);
 }
 
+void NewTabUI::WasHidden() {
+  EmitMouseoverCount();
+}
+
 void NewTabUI::Observe(int type,
                        const content::NotificationSource& source,
                        const content::NotificationDetails& details) {
@@ -230,20 +236,13 @@ void NewTabUI::Observe(int type,
       last_paint_ = base::TimeTicks::Now();
       break;
     }
-    case content::NOTIFICATION_WEB_CONTENTS_VISIBILITY_CHANGED: {
-      if (!*content::Details<bool>(details).ptr()) {
-        EmitMouseoverCount(
-            content::Source<content::WebContents>(source).ptr());
-      }
-      break;
-    }
     default:
       CHECK(false) << "Unexpected notification: " << type;
   }
 }
 
-void NewTabUI::EmitMouseoverCount(content::WebContents* web_contents) {
-  NTPUserDataLogger* data = NTPUserDataLogger::FromWebContents(web_contents);
+void NewTabUI::EmitMouseoverCount() {
+  NTPUserDataLogger* data = NTPUserDataLogger::FromWebContents(web_contents());
   if (data->ntp_url() == GURL(chrome::kChromeUINewTabURL))
     data->EmitMouseoverCount();
 }
@@ -266,6 +265,16 @@ void NewTabUI::RegisterProfilePrefs(
 #endif
   MostVisitedHandler::RegisterProfilePrefs(registry);
   browser_sync::ForeignSessionHandler::RegisterProfilePrefs(registry);
+}
+
+// static
+bool NewTabUI::MightShowApps() {
+// Android does not have apps.
+#if defined(OS_ANDROID)
+  return false;
+#else
+  return true;
+#endif
 }
 
 // static
@@ -313,15 +322,20 @@ void NewTabUI::SetUrlTitleAndDirection(DictionaryValue* dictionary,
   // title will be rendered as "!Yahoo" if its "dir" attribute is not set to
   // "ltr".
   std::string direction;
-  if (!using_url_as_the_title &&
-      base::i18n::IsRTL() &&
-      base::i18n::StringContainsStrongRTLChars(title)) {
-    direction = kRTLHtmlTextDirection;
-  } else {
+  if (using_url_as_the_title)
     direction = kLTRHtmlTextDirection;
-  }
+  else
+    direction = GetHtmlTextDirection(title);
+
   dictionary->SetString("title", title_to_set);
   dictionary->SetString("direction", direction);
+}
+
+// static
+void NewTabUI::SetFullNameAndDirection(const string16& full_name,
+                                       base::DictionaryValue* dictionary) {
+  dictionary->SetString("full_name", full_name);
+  dictionary->SetString("full_name_direction", GetHtmlTextDirection(full_name));
 }
 
 // static
@@ -382,10 +396,11 @@ void NewTabUI::NewTabHTMLSource::StartDataRequest(
 
   content::RenderProcessHost* render_host =
       content::RenderProcessHost::FromID(render_process_id);
-  bool is_incognito = render_host->GetBrowserContext()->IsOffTheRecord();
+  NTPResourceCache::WindowType win_type = NTPResourceCache::GetWindowType(
+      profile_, render_host);
   scoped_refptr<base::RefCountedMemory> html_bytes(
       NTPResourceCacheFactory::GetForProfile(profile_)->
-      GetNewTabHTML(is_incognito));
+      GetNewTabHTML(win_type));
 
   callback.Run(html_bytes.get());
 }

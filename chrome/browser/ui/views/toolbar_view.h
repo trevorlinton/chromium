@@ -16,7 +16,6 @@
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "chrome/browser/ui/views/reload_button.h"
 #include "ui/base/accelerators/accelerator.h"
-#include "ui/base/animation/slide_animation.h"
 #include "ui/views/accessible_pane_view.h"
 #include "ui/views/controls/button/menu_button.h"
 #include "ui/views/controls/button/menu_button_listener.h"
@@ -52,11 +51,11 @@ class ToolbarView : public views::AccessiblePaneView,
   // Create the contents of the Browser Toolbar.
   void Init();
 
-  // Updates the toolbar (and transitively the location bar) with the states of
-  // the specified |tab|.  If |should_restore_state| is true, we're switching
-  // (back?) to this tab and should restore any previous location bar state
-  // (such as user editing) as well.
-  void Update(content::WebContents* tab, bool should_restore_state);
+  // Forces the toolbar (and transitively the location bar) to update its
+  // current state.  If |tab| is non-NULL, we're switching (back?) to this tab
+  // and should restore any previous location bar state (such as user editing)
+  // as well.
+  void Update(content::WebContents* tab);
 
   // Set focus to the toolbar with complete keyboard access, with the
   // focus initially set to the app menu. Focus will be restored
@@ -77,6 +76,9 @@ class ToolbarView : public views::AccessiblePaneView,
   // Returns the view to which the bookmark bubble should be anchored.
   views::View* GetBookmarkBubbleAnchor();
 
+  // Returns the view to which the Translate bubble should be anchored.
+  views::View* GetTranslateBubbleAnchor();
+
   // Accessors...
   Browser* browser() const { return browser_; }
   BrowserActionsContainer* browser_actions() const { return browser_actions_; }
@@ -93,7 +95,9 @@ class ToolbarView : public views::AccessiblePaneView,
                                    const gfx::Point& point) OVERRIDE;
 
   // Overridden from LocationBarView::Delegate:
-  virtual content::WebContents* GetWebContents() const OVERRIDE;
+  virtual content::WebContents* GetWebContents() OVERRIDE;
+  virtual ToolbarModel* GetToolbarModel() OVERRIDE;
+  virtual const ToolbarModel* GetToolbarModel() const OVERRIDE;
   virtual InstantController* GetInstant() OVERRIDE;
   virtual views::Widget* CreateViewsBubble(
       views::BubbleDelegateView* bubble_delegate) OVERRIDE;
@@ -104,7 +108,6 @@ class ToolbarView : public views::AccessiblePaneView,
   virtual void ShowWebsiteSettings(content::WebContents* web_contents,
                                    const GURL& url,
                                    const content::SSLStatus& ssl) OVERRIDE;
-  virtual void OnInputInProgress(bool in_progress) OVERRIDE;
 
   // Overridden from CommandObserver:
   virtual void EnabledStateChangedForCommand(int id, bool enabled) OVERRIDE;
@@ -139,6 +142,10 @@ class ToolbarView : public views::AccessiblePaneView,
 
   // Whether the wrench/hotdogs menu is currently showing.
   bool IsWrenchMenuShowing() const;
+
+  // Whether the toolbar view needs its background painted by the
+  // BrowserNonClientFrameView.
+  bool ShouldPaintBackground() const;
 
   // The apparent horizontal space between most items, and the vertical padding
   // above and below them.
@@ -194,9 +201,6 @@ class ToolbarView : public views::AccessiblePaneView,
   void OnShowHomeButtonChanged();
 
   int content_shadow_height() const;
-
-  // The model that contains the security level, text, icon to display...
-  ToolbarModel* model_;
 
   // Controls
   views::ImageButton* back_;

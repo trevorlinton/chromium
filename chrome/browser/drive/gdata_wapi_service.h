@@ -58,12 +58,11 @@ class GDataWapiService : public DriveServiceInterface,
   virtual ~GDataWapiService();
 
   // DriveServiceInterface Overrides
-  virtual void Initialize() OVERRIDE;
+  virtual void Initialize(const std::string& account_id) OVERRIDE;
   virtual void AddObserver(DriveServiceObserver* observer) OVERRIDE;
   virtual void RemoveObserver(DriveServiceObserver* observer) OVERRIDE;
   virtual bool CanSendRequest() const OVERRIDE;
-  virtual std::string CanonicalizeResourceId(
-      const std::string& resource_id) const OVERRIDE;
+  virtual ResourceIdCanonicalizer GetResourceIdCanonicalizer() const OVERRIDE;
   virtual bool HasAccessToken() const OVERRIDE;
   virtual void RequestAccessToken(
       const google_apis::AuthStatusCallback& callback) OVERRIDE;
@@ -86,8 +85,11 @@ class GDataWapiService : public DriveServiceInterface,
   virtual google_apis::CancelCallback GetChangeList(
       int64 start_changestamp,
       const google_apis::GetResourceListCallback& callback) OVERRIDE;
-  virtual google_apis::CancelCallback ContinueGetResourceList(
-      const GURL& override_url,
+  virtual google_apis::CancelCallback GetRemainingChangeList(
+      const GURL& next_link,
+      const google_apis::GetResourceListCallback& callback) OVERRIDE;
+  virtual google_apis::CancelCallback GetRemainingFileList(
+      const GURL& next_link,
       const google_apis::GetResourceListCallback& callback) OVERRIDE;
   virtual google_apis::CancelCallback GetResourceEntry(
       const std::string& resource_id,
@@ -97,9 +99,9 @@ class GDataWapiService : public DriveServiceInterface,
       const GURL& embed_origin,
       const google_apis::GetShareUrlCallback& callback) OVERRIDE;
   virtual google_apis::CancelCallback GetAboutResource(
-      const google_apis::GetAboutResourceCallback& callback) OVERRIDE;
+      const google_apis::AboutResourceCallback& callback) OVERRIDE;
   virtual google_apis::CancelCallback GetAppList(
-      const google_apis::GetAppListCallback& callback) OVERRIDE;
+      const google_apis::AppListCallback& callback) OVERRIDE;
   virtual google_apis::CancelCallback DeleteResource(
       const std::string& resource_id,
       const std::string& etag,
@@ -114,10 +116,17 @@ class GDataWapiService : public DriveServiceInterface,
       const std::string& resource_id,
       const std::string& parent_resource_id,
       const std::string& new_title,
+      const base::Time& last_modified,
       const google_apis::GetResourceEntryCallback& callback) OVERRIDE;
   virtual google_apis::CancelCallback CopyHostedDocument(
       const std::string& resource_id,
       const std::string& new_title,
+      const google_apis::GetResourceEntryCallback& callback) OVERRIDE;
+  virtual google_apis::CancelCallback MoveResource(
+      const std::string& resource_id,
+      const std::string& parent_resource_id,
+      const std::string& new_title,
+      const base::Time& last_modified,
       const google_apis::GetResourceEntryCallback& callback) OVERRIDE;
   virtual google_apis::CancelCallback RenameResource(
       const std::string& resource_id,
@@ -169,13 +178,19 @@ class GDataWapiService : public DriveServiceInterface,
       const std::string& resource_id,
       const std::string& app_id,
       const google_apis::AuthorizeAppCallback& callback) OVERRIDE;
+  virtual google_apis::CancelCallback GetResourceListInDirectoryByWapi(
+      const std::string& directory_resource_id,
+      const google_apis::GetResourceListCallback& callback) OVERRIDE;
+  virtual google_apis::CancelCallback GetRemainingResourceList(
+      const GURL& next_link,
+      const google_apis::GetResourceListCallback& callback) OVERRIDE;
 
  private:
   // AuthService::Observer override.
   virtual void OnOAuth2RefreshTokenChanged() OVERRIDE;
 
   OAuth2TokenService* oauth2_token_service_;  // Not owned.
-  net::URLRequestContextGetter* url_request_context_getter_;  // Not owned.
+  scoped_refptr<net::URLRequestContextGetter> url_request_context_getter_;
   scoped_refptr<base::TaskRunner> blocking_task_runner_;
   scoped_ptr<google_apis::RequestSender> sender_;
   ObserverList<DriveServiceObserver> observers_;

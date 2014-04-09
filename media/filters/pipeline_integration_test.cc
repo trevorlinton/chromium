@@ -5,11 +5,13 @@
 #include "media/filters/pipeline_integration_test_base.h"
 
 #include "base/bind.h"
+#include "base/command_line.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/media_keys.h"
+#include "media/base/media_switches.h"
 #include "media/base/test_data_util.h"
 #include "media/cdm/aes_decryptor.h"
 #include "media/filters/chunk_demuxer.h"
@@ -19,44 +21,54 @@ using testing::AtMost;
 
 namespace media {
 
-static const char kSourceId[] = "SourceId";
-static const char kClearKeySystem[] = "org.w3.clearkey";
-static const uint8 kInitData[] = { 0x69, 0x6e, 0x69, 0x74 };
+const char kSourceId[] = "SourceId";
+const uint8 kInitData[] = { 0x69, 0x6e, 0x69, 0x74 };
 
-static const char kWebM[] = "video/webm; codecs=\"vp8,vorbis\"";
-static const char kWebMVP9[] = "video/webm; codecs=\"vp9\"";
-static const char kAudioOnlyWebM[] = "video/webm; codecs=\"vorbis\"";
-static const char kVideoOnlyWebM[] = "video/webm; codecs=\"vp8\"";
-static const char kMP4[] = "video/mp4; codecs=\"avc1.4D4041,mp4a.40.2\"";
-static const char kMP4Video[] = "video/mp4; codecs=\"avc1.4D4041\"";
-static const char kMP4Audio[] = "audio/mp4; codecs=\"mp4a.40.2\"";
-static const char kMP4AudioType[] = "audio/mp4";
-static const char kMP4VideoType[] = "video/mp4";
+const char kWebM[] = "video/webm; codecs=\"vp8,vorbis\"";
+const char kWebMVP9[] = "video/webm; codecs=\"vp9\"";
+const char kAudioOnlyWebM[] = "video/webm; codecs=\"vorbis\"";
+const char kOpusAudioOnlyWebM[] = "video/webm; codecs=\"opus\"";
+const char kVideoOnlyWebM[] = "video/webm; codecs=\"vp8\"";
+const char kMP4VideoType[] = "video/mp4";
+const char kMP4AudioType[] = "audio/mp4";
+#if defined(USE_PROPRIETARY_CODECS)
+const char kMP4[] = "video/mp4; codecs=\"avc1.4D4041,mp4a.40.2\"";
+const char kMP4Video[] = "video/mp4; codecs=\"avc1.4D4041\"";
+const char kMP4VideoAVC3[] = "video/mp4; codecs=\"avc3.64001f\"";
+const char kMP4Audio[] = "audio/mp4; codecs=\"mp4a.40.2\"";
+const char kMP3[] = "audio/mpeg";
+#endif  // defined(USE_PROPRIETARY_CODECS)
 
 // Key used to encrypt test files.
-static const uint8 kSecretKey[] = {
+const uint8 kSecretKey[] = {
   0xeb, 0xdd, 0x62, 0xf1, 0x68, 0x14, 0xd2, 0x7b,
   0x68, 0xef, 0x12, 0x2a, 0xfc, 0xe4, 0xae, 0x3c
 };
 
 // The key ID for all encrypted files.
-static const uint8 kKeyId[] = {
+const uint8 kKeyId[] = {
   0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
   0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35
 };
 
-static const int kAppendWholeFile = -1;
+const int kAppendWholeFile = -1;
 
 // Constants for the Media Source config change tests.
-static const int kAppendTimeSec = 1;
-static const int kAppendTimeMs = kAppendTimeSec * 1000;
-static const int k320WebMFileDurationMs = 2737;
-static const int k640WebMFileDurationMs = 2763;
-static const int k640IsoFileDurationMs = 2737;
-static const int k640IsoCencFileDurationMs = 2736;
-static const int k1280IsoFileDurationMs = 2736;
-static const int kVP9WebMFileDurationMs = 2735;
-static const int kVP8AWebMFileDurationMs = 2700;
+const int kAppendTimeSec = 1;
+const int kAppendTimeMs = kAppendTimeSec * 1000;
+const int k320WebMFileDurationMs = 2737;
+const int k640WebMFileDurationMs = 2763;
+const int kOpusEndTrimmingWebMFileDurationMs = 2771;
+const uint32 kOpusEndTrimmingWebMFileAudioBytes = 528676;
+const int kVP9WebMFileDurationMs = 2735;
+const int kVP8AWebMFileDurationMs = 2700;
+
+#if defined(USE_PROPRIETARY_CODECS)
+const int k640IsoFileDurationMs = 2737;
+const int k640IsoCencFileDurationMs = 2736;
+const int k1280IsoFileDurationMs = 2736;
+const int k1280IsoAVC3FileDurationMs = 2735;
+#endif  // defined(USE_PROPRIETARY_CODECS)
 
 // Note: Tests using this class only exercise the DecryptingDemuxerStream path.
 // They do not exercise the Decrypting{Audio|Video}Decoder path.
@@ -80,9 +92,8 @@ class FakeEncryptedMedia {
                             const std::vector<uint8>& message,
                             const std::string& default_url) = 0;
 
-    virtual void NeedKey(const std::string& session_id,
-                         const std::string& type,
-                         scoped_ptr<uint8[]> init_data, int init_data_length,
+    virtual void NeedKey(const std::string& type,
+                         const std::vector<uint8>& init_data,
                          AesDecryptor* decryptor) = 0;
   };
 
@@ -117,11 +128,9 @@ class FakeEncryptedMedia {
     app_->KeyMessage(session_id, message, default_url);
   }
 
-  void NeedKey(const std::string& session_id,
-               const std::string& type,
-               scoped_ptr<uint8[]> init_data, int init_data_length) {
-    app_->NeedKey(session_id, type, init_data.Pass(), init_data_length,
-                  &decryptor_);
+  void NeedKey(const std::string& type,
+               const std::vector<uint8>& init_data) {
+    app_->NeedKey(type, init_data, &decryptor_);
   }
 
  private:
@@ -145,12 +154,9 @@ class KeyProvidingApp : public FakeEncryptedMedia::AppBase {
     current_session_id_ = session_id;
   }
 
-  virtual void NeedKey(const std::string& session_id,
-                       const std::string& type,
-                       scoped_ptr<uint8[]> init_data, int init_data_length,
+  virtual void NeedKey(const std::string& type,
+                       const std::vector<uint8>& init_data,
                        AesDecryptor* decryptor) OVERRIDE {
-    current_session_id_ = session_id;
-
     if (current_session_id_.empty()) {
       EXPECT_TRUE(decryptor->GenerateKeyRequest(type, kInitData,
                                                 arraysize(kInitData)));
@@ -161,8 +167,8 @@ class KeyProvidingApp : public FakeEncryptedMedia::AppBase {
     // Clear Key really needs the key ID in |init_data|. For WebM, they are the
     // same, but this is not the case for ISO CENC. Therefore, provide the
     // correct key ID.
-    const uint8* key_id = init_data.get();
-    int key_id_length = init_data_length;
+    const uint8* key_id = init_data.empty() ? NULL : &init_data[0];
+    size_t key_id_length = init_data.size();
     if (type == kMP4AudioType || type == kMP4VideoType) {
       key_id = kKeyId;
       key_id_length = arraysize(kKeyId);
@@ -191,9 +197,8 @@ class NoResponseApp : public FakeEncryptedMedia::AppBase {
     FAIL() << "Unexpected KeyMessage";
   }
 
-  virtual void NeedKey(const std::string& session_id,
-                       const std::string& type,
-                       scoped_ptr<uint8[]> init_data, int init_data_length,
+  virtual void NeedKey(const std::string& type,
+                       const std::vector<uint8>& init_data,
                        AesDecryptor* decryptor) OVERRIDE {
   }
 };
@@ -231,7 +236,7 @@ class MockMediaSource {
 
   scoped_ptr<Demuxer> GetDemuxer() { return owned_chunk_demuxer_.Pass(); }
 
-  void set_need_key_cb(const NeedKeyCB& need_key_cb) {
+  void set_need_key_cb(const Demuxer::NeedKeyCB& need_key_cb) {
     need_key_cb_ = need_key_cb;
   }
 
@@ -281,24 +286,39 @@ class MockMediaSource {
   }
 
   void DemuxerOpenedTask() {
+    // This code assumes that |mimetype_| is one of the following forms.
+    // 1. audio/mpeg
+    // 2. video/webm;codec="vorbis,vp8".
     size_t semicolon = mimetype_.find(";");
-    std::string type = mimetype_.substr(0, semicolon);
-    size_t quote1 = mimetype_.find("\"");
-    size_t quote2 = mimetype_.find("\"", quote1 + 1);
-    std::string codecStr = mimetype_.substr(quote1 + 1, quote2 - quote1 - 1);
+    std::string type = mimetype_;
     std::vector<std::string> codecs;
-    Tokenize(codecStr, ",", &codecs);
+    if (semicolon != std::string::npos) {
+      type = mimetype_.substr(0, semicolon);
+      size_t codecs_param_start = mimetype_.find("codecs=\"", semicolon);
+
+      CHECK_NE(codecs_param_start, std::string::npos);
+
+      codecs_param_start += 8; // Skip over the codecs=".
+
+      size_t codecs_param_end = mimetype_.find("\"", codecs_param_start);
+
+      CHECK_NE(codecs_param_end, std::string::npos);
+
+      std::string codecs_param =
+          mimetype_.substr(codecs_param_start,
+                           codecs_param_end - codecs_param_start);
+      Tokenize(codecs_param, ",", &codecs);
+    }
 
     CHECK_EQ(chunk_demuxer_->AddId(kSourceId, type, codecs), ChunkDemuxer::kOk);
     AppendData(initial_append_size_);
   }
 
   void DemuxerNeedKey(const std::string& type,
-                      scoped_ptr<uint8[]> init_data, int init_data_size) {
-    DCHECK(init_data.get());
-    DCHECK_GT(init_data_size, 0);
+                      const std::vector<uint8>& init_data) {
+    DCHECK(!init_data.empty());
     CHECK(!need_key_cb_.is_null());
-    need_key_cb_.Run(std::string(), type, init_data.Pass(), init_data_size);
+    need_key_cb_.Run(type, init_data);
   }
 
   scoped_ptr<TextTrack> OnTextTrack(TextKind kind,
@@ -315,7 +335,7 @@ class MockMediaSource {
   std::string mimetype_;
   ChunkDemuxer* chunk_demuxer_;
   scoped_ptr<Demuxer> owned_chunk_demuxer_;
-  NeedKeyCB need_key_cb_;
+  Demuxer::NeedKeyCB need_key_cb_;
 };
 
 class PipelineIntegrationTest
@@ -337,6 +357,11 @@ class PipelineIntegrationTest
         base::Closure());
 
     message_loop_.Run();
+  }
+
+  void StartHashedPipelineWithMediaSource(MockMediaSource* source) {
+    hashing_enabled_ = true;
+    StartPipelineWithMediaSource(source);
   }
 
   void StartPipelineWithEncryptedMedia(
@@ -403,8 +428,8 @@ TEST_F(PipelineIntegrationTest, BasicPlayback) {
 }
 
 TEST_F(PipelineIntegrationTest, BasicPlaybackHashed) {
-  ASSERT_TRUE(Start(GetTestDataFilePath("bear-320x240.webm"),
-                    PIPELINE_OK, true));
+  ASSERT_TRUE(Start(
+      GetTestDataFilePath("bear-320x240.webm"), PIPELINE_OK, kHashed));
 
   Play();
 
@@ -415,7 +440,8 @@ TEST_F(PipelineIntegrationTest, BasicPlaybackHashed) {
 }
 
 TEST_F(PipelineIntegrationTest, F32PlaybackHashed) {
-  ASSERT_TRUE(Start(GetTestDataFilePath("sfx_f32le.wav"), PIPELINE_OK, true));
+  ASSERT_TRUE(
+      Start(GetTestDataFilePath("sfx_f32le.wav"), PIPELINE_OK, kHashed));
   Play();
   ASSERT_TRUE(WaitUntilOnEnded());
   EXPECT_EQ(std::string(kNullVideoHash), GetVideoHash());
@@ -487,6 +513,56 @@ TEST_F(PipelineIntegrationTest, BasicPlayback_MediaSource_VP8A_WebM) {
   Play();
 
   ASSERT_TRUE(WaitUntilOnEnded());
+  source.Abort();
+  Stop();
+}
+
+TEST_F(PipelineIntegrationTest, BasicPlayback_MediaSource_Opus_WebM) {
+  EXPECT_CALL(*this, OnSetOpaque(false)).Times(AnyNumber());
+  MockMediaSource source("bear-opus-end-trimming.webm", kOpusAudioOnlyWebM,
+                         kAppendWholeFile);
+  StartPipelineWithMediaSource(&source);
+  source.EndOfStream();
+
+  EXPECT_EQ(1u, pipeline_->GetBufferedTimeRanges().size());
+  EXPECT_EQ(0, pipeline_->GetBufferedTimeRanges().start(0).InMilliseconds());
+  EXPECT_EQ(kOpusEndTrimmingWebMFileDurationMs,
+            pipeline_->GetBufferedTimeRanges().end(0).InMilliseconds());
+  Play();
+
+  ASSERT_TRUE(WaitUntilOnEnded());
+  EXPECT_EQ(kOpusEndTrimmingWebMFileAudioBytes,
+            pipeline_->GetStatistics().audio_bytes_decoded);
+  source.Abort();
+  Stop();
+}
+
+// Flaky. http://crbug.com/304776
+TEST_F(PipelineIntegrationTest, DISABLED_MediaSource_Opus_Seeking_WebM) {
+  EXPECT_CALL(*this, OnSetOpaque(false)).Times(AnyNumber());
+  MockMediaSource source("bear-opus-end-trimming.webm", kOpusAudioOnlyWebM,
+                         kAppendWholeFile);
+  StartHashedPipelineWithMediaSource(&source);
+
+
+  EXPECT_EQ(1u, pipeline_->GetBufferedTimeRanges().size());
+  EXPECT_EQ(0, pipeline_->GetBufferedTimeRanges().start(0).InMilliseconds());
+  EXPECT_EQ(kOpusEndTrimmingWebMFileDurationMs,
+            pipeline_->GetBufferedTimeRanges().end(0).InMilliseconds());
+
+  base::TimeDelta start_seek_time = base::TimeDelta::FromMilliseconds(1000);
+  base::TimeDelta seek_time = base::TimeDelta::FromMilliseconds(2000);
+
+  Play();
+  ASSERT_TRUE(WaitUntilCurrentTimeIsAfter(start_seek_time));
+  source.Seek(seek_time, 0x1D5, 34017);
+  source.EndOfStream();
+  ASSERT_TRUE(Seek(seek_time));
+
+  ASSERT_TRUE(WaitUntilOnEnded());
+
+  EXPECT_EQ("0.76,0.20,-0.82,-0.58,-1.29,-0.29,", GetAudioHash());
+
   source.Abort();
   Stop();
 }
@@ -601,7 +677,28 @@ TEST_F(PipelineIntegrationTest,
   source.Abort();
 }
 
-#if defined(GOOGLE_CHROME_BUILD) || defined(USE_PROPRIETARY_CODECS)
+#if defined(USE_PROPRIETARY_CODECS)
+TEST_F(PipelineIntegrationTest, MediaSource_MP3) {
+  MockMediaSource source("sfx.mp3", kMP3, kAppendWholeFile);
+  StartPipelineWithMediaSource(&source);
+  source.EndOfStream();
+
+  Play();
+
+  EXPECT_TRUE(WaitUntilOnEnded());
+}
+
+
+TEST_F(PipelineIntegrationTest, MediaSource_MP3_Icecast) {
+  MockMediaSource source("icy_sfx.mp3", kMP3, kAppendWholeFile);
+  StartPipelineWithMediaSource(&source);
+  source.EndOfStream();
+
+  Play();
+
+  EXPECT_TRUE(WaitUntilOnEnded());
+}
+
 TEST_F(PipelineIntegrationTest, MediaSource_ConfigChange_MP4) {
   MockMediaSource source("bear-640x360-av_frag.mp4", kMP4, kAppendWholeFile);
   StartPipelineWithMediaSource(&source);
@@ -777,7 +874,7 @@ TEST_F(PipelineIntegrationTest, EncryptedPlayback_NoEncryptedFrames_WebM) {
   Stop();
 }
 
-#if defined(GOOGLE_CHROME_BUILD) || defined(USE_PROPRIETARY_CODECS)
+#if defined(USE_PROPRIETARY_CODECS)
 TEST_F(PipelineIntegrationTest, EncryptedPlayback_MP4_CENC_VideoOnly) {
   MockMediaSource source("bear-1280x720-v_frag-cenc.mp4",
                          kMP4Video, kAppendWholeFile);
@@ -843,6 +940,25 @@ TEST_F(PipelineIntegrationTest,
   source.Abort();
   Stop();
 }
+
+TEST_F(PipelineIntegrationTest, BasicPlayback_MediaSource_VideoOnly_MP4_AVC3) {
+  MockMediaSource source("bear-1280x720-v_frag-avc3.mp4", kMP4VideoAVC3,
+                         kAppendWholeFile);
+  StartPipelineWithMediaSource(&source);
+  source.EndOfStream();
+
+  EXPECT_EQ(1u, pipeline_->GetBufferedTimeRanges().size());
+  EXPECT_EQ(0, pipeline_->GetBufferedTimeRanges().start(0).InMilliseconds());
+  EXPECT_EQ(k1280IsoAVC3FileDurationMs,
+            pipeline_->GetBufferedTimeRanges().end(0).InMilliseconds());
+
+  Play();
+
+  ASSERT_TRUE(WaitUntilOnEnded());
+  source.Abort();
+  Stop();
+}
+
 #endif
 
 // TODO(acolwell): Fix flakiness http://crbug.com/117921
@@ -909,10 +1025,12 @@ TEST_F(PipelineIntegrationTest, ChunkDemuxerAbortRead_VideoOnly) {
 
 // Verify that Opus audio in WebM containers can be played back.
 TEST_F(PipelineIntegrationTest, BasicPlayback_AudioOnly_Opus_WebM) {
-  ASSERT_TRUE(Start(GetTestDataFilePath("bear-opus.webm"),
+  ASSERT_TRUE(Start(GetTestDataFilePath("bear-opus-end-trimming.webm"),
                     PIPELINE_OK));
   Play();
   ASSERT_TRUE(WaitUntilOnEnded());
+  EXPECT_EQ(kOpusEndTrimmingWebMFileAudioBytes,
+            pipeline_->GetStatistics().audio_bytes_decoded);
 }
 
 // Verify that VP9 video in WebM containers can be played back.

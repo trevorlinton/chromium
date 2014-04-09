@@ -147,6 +147,18 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
   // default.
   void OnPrintPreviewScalingDisabled();
 
+  // Allows tests to wait until the print preview dialog is loaded. Optionally
+  // also instructs the dialog to auto-cancel, which is used for testing only.
+  class TestingDelegate {
+   public:
+    virtual bool IsAutoCancelEnabled() = 0;
+    virtual void DidGetPreviewPageCount(int page_count) = 0;
+    virtual void DidRenderPreviewPage(
+        const content::WebContents& preview_dialog) = 0;
+  };
+
+  static void SetDelegateForTesting(TestingDelegate* delegate);
+
  private:
   friend class PrintPreviewHandlerTest;
   FRIEND_TEST_ALL_PREFIXES(PrintPreviewHandlerTest, StickyMarginsCustom);

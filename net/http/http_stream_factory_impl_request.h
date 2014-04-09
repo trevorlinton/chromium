@@ -20,11 +20,12 @@ class SpdySession;
 
 class HttpStreamFactoryImpl::Request : public HttpStreamRequest {
  public:
-  Request(const GURL& url,
-          HttpStreamFactoryImpl* factory,
-          HttpStreamRequest::Delegate* delegate,
-          WebSocketStreamBase::Factory* websocket_stream_factory,
-          const BoundNetLog& net_log);
+  Request(
+      const GURL& url,
+      HttpStreamFactoryImpl* factory,
+      HttpStreamRequest::Delegate* delegate,
+      WebSocketHandshakeStreamBase::Factory* websocket_handshake_stream_factory,
+      const BoundNetLog& net_log);
   virtual ~Request();
 
   // The GURL from the HttpRequestInfo the started the Request.
@@ -66,8 +67,8 @@ class HttpStreamFactoryImpl::Request : public HttpStreamRequest {
                              const base::WeakPtr<SpdySession>& spdy_session,
                              bool direct);
 
-  WebSocketStreamBase::Factory* websocket_stream_factory() {
-    return websocket_stream_factory_;
+  WebSocketHandshakeStreamBase::Factory* websocket_handshake_stream_factory() {
+    return websocket_handshake_stream_factory_;
   }
 
   // HttpStreamRequest::Delegate methods which we implement. Note we don't
@@ -77,10 +78,10 @@ class HttpStreamFactoryImpl::Request : public HttpStreamRequest {
                      const SSLConfig& used_ssl_config,
                      const ProxyInfo& used_proxy_info,
                      HttpStreamBase* stream);
-  void OnWebSocketStreamReady(Job* job,
-                              const SSLConfig& used_ssl_config,
-                              const ProxyInfo& used_proxy_info,
-                              WebSocketStreamBase* stream);
+  void OnWebSocketHandshakeStreamReady(Job* job,
+                                       const SSLConfig& used_ssl_config,
+                                       const ProxyInfo& used_proxy_info,
+                                       WebSocketHandshakeStreamBase* stream);
   void OnStreamFailed(Job* job, int status, const SSLConfig& used_ssl_config);
   void OnCertificateError(Job* job,
                           int status,
@@ -105,6 +106,7 @@ class HttpStreamFactoryImpl::Request : public HttpStreamRequest {
 
   virtual int RestartTunnelWithProxyAuth(
       const AuthCredentials& credentials) OVERRIDE;
+  virtual void SetPriority(RequestPriority priority) OVERRIDE;
   virtual LoadState GetLoadState() const OVERRIDE;
   virtual bool was_npn_negotiated() const OVERRIDE;
   virtual NextProto protocol_negotiated() const OVERRIDE;
@@ -123,7 +125,8 @@ class HttpStreamFactoryImpl::Request : public HttpStreamRequest {
 
   const GURL url_;
   HttpStreamFactoryImpl* const factory_;
-  WebSocketStreamBase::Factory* const websocket_stream_factory_;
+  WebSocketHandshakeStreamBase::Factory* const
+      websocket_handshake_stream_factory_;
   HttpStreamRequest::Delegate* const delegate_;
   const BoundNetLog net_log_;
 

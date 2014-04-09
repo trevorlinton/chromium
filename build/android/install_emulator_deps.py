@@ -21,11 +21,11 @@ from pylib.utils import run_tests_helper
 
 # From the Android Developer's website.
 SDK_BASE_URL = 'http://dl.google.com/android/adt'
-SDK_ZIP = 'adt-bundle-linux-x86_64-20130522.zip'
+SDK_ZIP = 'adt-bundle-linux-x86_64-20130729.zip'
 
 # Android x86 system image from the Intel website:
 # http://software.intel.com/en-us/articles/intel-eula-x86-android-4-2-jelly-bean-bin
-X86_IMG_URL = 'http://download-software.intel.com/sites/landingpage/android/sysimg_x86-17_r01.zip'
+X86_IMG_URL = 'http://download-software.intel.com/sites/landingpage/android/sysimg_x86-18_r01.zip'
 
 # Android API level
 API_TARGET = 'android-%s' % constants.ANDROID_SDK_VERSION
@@ -35,20 +35,19 @@ def CheckSDK():
   """Check if SDK is already installed.
 
   Returns:
-    True if android_tools directory exists in current directory.
+    True if the emulator SDK directory (src/android_emulator_sdk/) exists.
   """
-  return os.path.exists(os.path.join(constants.EMULATOR_SDK_ROOT,
-                                     'android_tools'))
+  return os.path.exists(constants.EMULATOR_SDK_ROOT)
 
 
 def CheckX86Image():
   """Check if Android system images have been installed.
 
   Returns:
-    True if android_tools/sdk/system-images directory exists.
+    True if sdk/system-images/<API TARGET>/x86 exists inside EMULATOR_SDK_ROOT.
   """
   return os.path.exists(os.path.join(constants.EMULATOR_SDK_ROOT,
-                                     'android_tools', 'sdk', 'system-images',
+                                     'sdk', 'system-images',
                                      API_TARGET, 'x86'))
 
 
@@ -66,7 +65,7 @@ def CheckKVM():
 
 
 def GetSDK():
-  """Download the SDK and unzip in android_tools directory."""
+  """Download the SDK and unzip it into EMULATOR_SDK_ROOT."""
   logging.info('Download Android SDK.')
   sdk_url = '%s/%s' % (SDK_BASE_URL, SDK_ZIP)
   try:
@@ -74,14 +73,12 @@ def GetSDK():
     print 'curled unzipping...'
     rc = cmd_helper.RunCmd(['unzip', '-o', '/tmp/sdk.zip', '-d', '/tmp/'])
     if rc:
-      logging.critical('ERROR: could not download/unzip Android SDK.')
-      raise
+      raise Exception('ERROR: could not download/unzip Android SDK.')
     # Get the name of the sub-directory that everything will be extracted to.
     dirname, _ = os.path.splitext(SDK_ZIP)
     zip_dir = '/tmp/%s' % dirname
     # Move the extracted directory to EMULATOR_SDK_ROOT
-    dst = os.path.join(constants.EMULATOR_SDK_ROOT, 'android_tools')
-    shutil.move(zip_dir, dst)
+    shutil.move(zip_dir, constants.EMULATOR_SDK_ROOT)
   finally:
     os.unlink('/tmp/sdk.zip')
 
@@ -113,9 +110,8 @@ def GetX86Image():
     cmd_helper.RunCmd(['curl', '-o', '/tmp/x86_img.zip', X86_IMG_URL])
     rc = cmd_helper.RunCmd(['unzip', '-o', '/tmp/x86_img.zip', '-d', '/tmp/'])
     if rc:
-      logging.critical('ERROR: Could not download/unzip image zip.')
-      raise
-    sys_imgs = os.path.join(constants.EMULATOR_SDK_ROOT, 'android_tools', 'sdk',
+      raise Exception('ERROR: Could not download/unzip image zip.')
+    sys_imgs = os.path.join(constants.EMULATOR_SDK_ROOT, 'sdk',
                             'system-images', API_TARGET, 'x86')
     shutil.move('/tmp/x86', sys_imgs)
   finally:
@@ -129,14 +125,13 @@ def main(argv):
 
   # Calls below will download emulator SDK and/or system images only if needed.
   if CheckSDK():
-    logging.info('android_tools directory already exists (not downloading).')
+    logging.info('android_emulator_sdk/ already exists, skipping download.')
   else:
     GetSDK()
 
-  logging.info('Emulator deps for ARM emulator complete.')
-
+  # Download the x86 system image only if needed.
   if CheckX86Image():
-    logging.info('system-images directory already exists.')
+    logging.info('The x86 image is already present, skipping download.')
   else:
     GetX86Image()
 

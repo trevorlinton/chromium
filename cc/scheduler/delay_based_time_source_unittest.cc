@@ -246,10 +246,10 @@ TEST(DelayBasedTimeSource, HandlesSignificantTimebaseChangesImmediately) {
   timer->SetTimebaseAndInterval(timer->Now() + jitter, Interval());
 
   EXPECT_FALSE(client.TickCalled());  // Make sure pending tasks were canceled.
-  EXPECT_EQ(7, task_runner->NextPendingTaskDelay().InMilliseconds());
+  EXPECT_EQ(16 + 7, task_runner->NextPendingTaskDelay().InMilliseconds());
 
   // Tick, then shift timebase by -7ms.
-  timer->SetNow(timer->Now() + jitter);
+  timer->SetNow(timer->Now() + Interval() + jitter);
   task_runner->RunPendingTasks();
 
   EXPECT_EQ(16, task_runner->NextPendingTaskDelay().InMilliseconds());
@@ -302,6 +302,115 @@ TEST(DelayBasedTimeSource, HanldlesSignificantIntervalChangesImmediately) {
   timer->SetTimebaseAndInterval(base::TimeTicks() + Interval() * 3, Interval());
 
   EXPECT_FALSE(client.TickCalled());  // Make sure pending tasks were canceled.
+  EXPECT_EQ(16, task_runner->NextPendingTaskDelay().InMilliseconds());
+}
+
+TEST(DelayBasedTimeSource, JitteryRuntimeWithFutureTimebases) {
+  scoped_refptr<base::TestSimpleTaskRunner> task_runner =
+      new base::TestSimpleTaskRunner;
+  FakeTimeSourceClient client;
+  scoped_refptr<FakeDelayBasedTimeSource> timer =
+      FakeDelayBasedTimeSource::Create(Interval(), task_runner.get());
+  timer->SetClient(&client);
+  timer->SetActive(true);
+
+  // Run the first tick.
+  task_runner->RunPendingTasks();
+  EXPECT_EQ(16, task_runner->NextPendingTaskDelay().InMilliseconds());
+
+  base::TimeTicks future_timebase = timer->Now() + Interval() * 10;
+
+  // 1ms jitter
+  base::TimeDelta jitter1 = base::TimeDelta::FromMilliseconds(1);
+
+  // Tick with +1ms of jitter
+  future_timebase += Interval();
+  timer->SetTimebaseAndInterval(future_timebase, Interval());
+  timer->SetNow(timer->Now() + Interval() + jitter1);
+  task_runner->RunPendingTasks();
+  EXPECT_EQ(15, task_runner->NextPendingTaskDelay().InMilliseconds());
+
+  // Tick with 0ms of jitter
+  future_timebase += Interval();
+  timer->SetTimebaseAndInterval(future_timebase, Interval());
+  timer->SetNow(timer->Now() + Interval() - jitter1);
+  task_runner->RunPendingTasks();
+  EXPECT_EQ(16, task_runner->NextPendingTaskDelay().InMilliseconds());
+
+  // Tick with -1ms of jitter
+  future_timebase += Interval();
+  timer->SetTimebaseAndInterval(future_timebase, Interval());
+  timer->SetNow(timer->Now() + Interval() - jitter1);
+  task_runner->RunPendingTasks();
+  EXPECT_EQ(17, task_runner->NextPendingTaskDelay().InMilliseconds());
+
+  // Tick with 0ms of jitter
+  future_timebase += Interval();
+  timer->SetTimebaseAndInterval(future_timebase, Interval());
+  timer->SetNow(timer->Now() + Interval() + jitter1);
+  task_runner->RunPendingTasks();
+  EXPECT_EQ(16, task_runner->NextPendingTaskDelay().InMilliseconds());
+
+  // 8 ms jitter
+  base::TimeDelta jitter8 = base::TimeDelta::FromMilliseconds(8);
+
+  // Tick with +8ms of jitter
+  future_timebase += Interval();
+  timer->SetTimebaseAndInterval(future_timebase, Interval());
+  timer->SetNow(timer->Now() + Interval() + jitter8);
+  task_runner->RunPendingTasks();
+  EXPECT_EQ(8, task_runner->NextPendingTaskDelay().InMilliseconds());
+
+  // Tick with 0ms of jitter
+  future_timebase += Interval();
+  timer->SetTimebaseAndInterval(future_timebase, Interval());
+  timer->SetNow(timer->Now() + Interval() - jitter8);
+  task_runner->RunPendingTasks();
+  EXPECT_EQ(16, task_runner->NextPendingTaskDelay().InMilliseconds());
+
+  // Tick with -8ms of jitter
+  future_timebase += Interval();
+  timer->SetTimebaseAndInterval(future_timebase, Interval());
+  timer->SetNow(timer->Now() + Interval() - jitter8);
+  task_runner->RunPendingTasks();
+  EXPECT_EQ(24, task_runner->NextPendingTaskDelay().InMilliseconds());
+
+  // Tick with 0ms of jitter
+  future_timebase += Interval();
+  timer->SetTimebaseAndInterval(future_timebase, Interval());
+  timer->SetNow(timer->Now() + Interval() + jitter8);
+  task_runner->RunPendingTasks();
+  EXPECT_EQ(16, task_runner->NextPendingTaskDelay().InMilliseconds());
+
+  // 15 ms jitter
+  base::TimeDelta jitter15  = base::TimeDelta::FromMilliseconds(15);
+
+  // Tick with +15ms jitter
+  future_timebase += Interval();
+  timer->SetTimebaseAndInterval(future_timebase, Interval());
+  timer->SetNow(timer->Now() + Interval() + jitter15);
+  task_runner->RunPendingTasks();
+  EXPECT_EQ(1, task_runner->NextPendingTaskDelay().InMilliseconds());
+
+  // Tick with 0ms of jitter
+  future_timebase += Interval();
+  timer->SetTimebaseAndInterval(future_timebase, Interval());
+  timer->SetNow(timer->Now() + Interval() - jitter15);
+  task_runner->RunPendingTasks();
+  EXPECT_EQ(16, task_runner->NextPendingTaskDelay().InMilliseconds());
+
+  // Tick with -15ms of jitter
+  future_timebase += Interval();
+  timer->SetTimebaseAndInterval(future_timebase, Interval());
+  timer->SetNow(timer->Now() + Interval() - jitter15);
+  task_runner->RunPendingTasks();
+  EXPECT_EQ(31, task_runner->NextPendingTaskDelay().InMilliseconds());
+
+  // Tick with 0ms of jitter
+  future_timebase += Interval();
+  timer->SetTimebaseAndInterval(future_timebase, Interval());
+  timer->SetNow(timer->Now() + Interval() + jitter15);
+  task_runner->RunPendingTasks();
   EXPECT_EQ(16, task_runner->NextPendingTaskDelay().InMilliseconds());
 }
 
@@ -395,6 +504,23 @@ TEST(DelayBasedTimeSource, TestDeactivateAndReactivateAfterNextTickTime) {
   timer->SetNow(timer->Now() + base::TimeDelta::FromMilliseconds(20));
   timer->SetActive(true);
   EXPECT_EQ(13, task_runner->NextPendingTaskDelay().InMilliseconds());
+}
+
+TEST(DelayBasedTimeSource, TestOverflow) {
+  // int(big_now / interval) < 0, so this causes a crash if the number of
+  // intervals elapsed is attempted to be stored in an int.
+  base::TimeDelta interval = base::TimeDelta::FromInternalValue(4000);
+  base::TimeTicks big_now = base::TimeTicks::FromInternalValue(8635916564000);
+
+  scoped_refptr<base::TestSimpleTaskRunner> task_runner =
+      new base::TestSimpleTaskRunner;
+  FakeTimeSourceClient client;
+  scoped_refptr<FakeDelayBasedTimeSource> timer =
+      FakeDelayBasedTimeSource::Create(interval, task_runner.get());
+  timer->SetClient(&client);
+  timer->SetNow(big_now);
+  timer->SetActive(true);
+  EXPECT_EQ(0, task_runner->NextPendingTaskDelay().InMilliseconds());
 }
 
 }  // namespace

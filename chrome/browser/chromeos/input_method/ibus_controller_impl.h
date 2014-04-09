@@ -8,28 +8,17 @@
 #include <string>
 #include <vector>
 
-#include "base/threading/thread_checker.h"
-#include "chrome/browser/chromeos/input_method/ibus_controller_base.h"
-#include "chromeos/dbus/ibus/ibus_panel_service.h"
-#include "chromeos/ime/ibus_daemon_controller.h"
-
-namespace ui {
-class InputMethodIBus;
-}  // namespace ui
+#include "base/observer_list.h"
+#include "chrome/browser/chromeos/input_method/ibus_controller.h"
+#include "chromeos/ime/ibus_bridge.h"
+#include "chromeos/ime/input_method_property.h"
 
 namespace chromeos {
 namespace input_method {
 
-struct InputMethodConfigValue;
-struct InputMethodProperty;
-typedef std::vector<InputMethodProperty> InputMethodPropertyList;
-
 // The IBusController implementation.
-// TODO(nona): Merge to IBusControllerBase, there is no longer reason to split
-//             this class into Impl and Base.
-class IBusControllerImpl : public IBusControllerBase,
-                           public IBusPanelPropertyHandlerInterface,
-                           public IBusDaemonController::Observer {
+class IBusControllerImpl : public IBusController,
+                           public IBusPanelPropertyHandlerInterface {
  public:
   IBusControllerImpl();
   virtual ~IBusControllerImpl();
@@ -37,41 +26,24 @@ class IBusControllerImpl : public IBusControllerBase,
   // IBusController overrides:
   virtual bool ActivateInputMethodProperty(const std::string& key) OVERRIDE;
 
-  // Calls <anonymous_namespace>::FindAndUpdateProperty. This method is just for
-  // unit testing.
-  static bool FindAndUpdatePropertyForTesting(
-      const InputMethodProperty& new_prop,
-      InputMethodPropertyList* prop_list);
+  // IBusController overrides. Derived classes should not override these 4
+  // functions.
+  virtual void AddObserver(Observer* observer) OVERRIDE;
+  virtual void RemoveObserver(Observer* observer) OVERRIDE;
+  virtual const InputMethodPropertyList& GetCurrentProperties() const OVERRIDE;
+  virtual void ClearProperties() OVERRIDE;
+
+ protected:
+  ObserverList<Observer> observers_;
+
+  // The value which will be returned by GetCurrentProperties(). Derived classes
+  // should update this variable when needed.
+  InputMethodPropertyList current_property_list_;
 
  private:
-  // IBusDaemonController overrides:
-  virtual void OnConnected() OVERRIDE;
-  virtual void OnDisconnected() OVERRIDE;
-
-  // IBusControllerBase overrides:
-  virtual bool SetInputMethodConfigInternal(
-      const ConfigKeyType& key,
-      const InputMethodConfigValue& value) OVERRIDE;
-
   // IBusPanelPropertyHandlerInterface overrides:
   virtual void RegisterProperties(
-      const IBusPropertyList& properties) OVERRIDE;
-  virtual void UpdateProperty(const IBusProperty& property) OVERRIDE;
-
-  // Checks if |ibus_| and |ibus_config_| connections are alive.
-  bool IBusConnectionsAreAlive();
-
-  // Called when the IBusConfigClient is initialized.
-  void OnIBusConfigClientInitialized();
-
-  // Current input context path.
-  std::string current_input_context_path_;
-
-  // IBusControllerImpl should be used only on UI thread.
-  base::ThreadChecker thread_checker_;
-
-  // Used for making callbacks for PostTask.
-  base::WeakPtrFactory<IBusControllerImpl> weak_ptr_factory_;
+      const InputMethodPropertyList& properties) OVERRIDE;
 
   DISALLOW_COPY_AND_ASSIGN(IBusControllerImpl);
 };

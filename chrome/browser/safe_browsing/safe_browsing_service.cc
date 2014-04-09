@@ -34,8 +34,8 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/common/startup_metric_utils.h"
 #include "chrome/common/url_constants.h"
+#include "components/startup_metric_utils/startup_metric_utils.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/cookie_store_factory.h"
 #include "content/public/browser/notification_service.h"
@@ -277,10 +277,12 @@ SafeBrowsingService::database_manager() const {
 }
 
 SafeBrowsingProtocolManager* SafeBrowsingService::protocol_manager() const {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   return protocol_manager_;
 }
 
 SafeBrowsingPingManager* SafeBrowsingService::ping_manager() const {
+  DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   return ping_manager_;
 }
 
@@ -332,7 +334,8 @@ void SafeBrowsingService::DestroyURLRequestContextOnIOThread() {
   url_request_context_.reset();
 }
 
-void SafeBrowsingService::StartOnIOThread() {
+void SafeBrowsingService::StartOnIOThread(
+    net::URLRequestContextGetter* url_request_context_getter) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   if (enabled_)
     return;
@@ -371,13 +374,13 @@ void SafeBrowsingService::StartOnIOThread() {
 
   DCHECK(!protocol_manager_);
   protocol_manager_ = SafeBrowsingProtocolManager::Create(
-      database_manager_.get(), url_request_context_getter_.get(), config);
+      database_manager_.get(), url_request_context_getter, config);
   protocol_manager_->Initialize();
 #endif
 
   DCHECK(!ping_manager_);
   ping_manager_ = SafeBrowsingPingManager::Create(
-      url_request_context_getter_.get(), config);
+      url_request_context_getter, config);
 }
 
 void SafeBrowsingService::StopOnIOThread(bool shutdown) {
@@ -408,7 +411,8 @@ void SafeBrowsingService::Start() {
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&SafeBrowsingService::StartOnIOThread, this));
+      base::Bind(&SafeBrowsingService::StartOnIOThread, this,
+                 url_request_context_getter_));
 }
 
 void SafeBrowsingService::Stop(bool shutdown) {

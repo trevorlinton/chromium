@@ -4,8 +4,11 @@
 
 #include "chrome/browser/sessions/session_service_factory.h"
 
+#include "base/command_line.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/sessions/session_data_deleter.h"
 #include "chrome/browser/sessions/session_service.h"
+#include "chrome/common/chrome_switches.h"
 #include "components/browser_context_keyed_service/browser_context_dependency_manager.h"
 
 // static
@@ -32,7 +35,23 @@ SessionService* SessionServiceFactory::GetForProfileIfExisting(
 }
 
 // static
+SessionService* SessionServiceFactory::GetForProfileForSessionRestore(
+    Profile* profile) {
+  SessionService* service = GetForProfile(profile);
+  if (!service && !CommandLine::ForCurrentProcess()->HasSwitch(
+                       switches::kDisableBatchedShutdown)) {
+    // If the service has been shutdown, remove the reference to NULL for
+    // |profile| so GetForProfile will recreate it.
+    GetInstance()->Disassociate(profile);
+    service = GetForProfile(profile);
+  }
+  return service;
+}
+
+// static
 void SessionServiceFactory::ShutdownForProfile(Profile* profile) {
+  DeleteSessionOnlyData(profile);
+
   // We're about to exit, force creation of the session service if it hasn't
   // been created yet. We do this to ensure session state matches the point in
   // time the user exited.

@@ -690,7 +690,7 @@
     "can_be_recommended": true,
     "test_policy": { "RestoreOnStartupURLs": ["chromium.org"] },
     "pref_mappings": [
-      { "pref": "session.urls_to_restore_on_startup",
+      { "pref": "session.startup_urls",
         "indicator_tests": [
           { "policy": { "RestoreOnStartupURLs": ["chromium.org"] } }
         ]
@@ -766,6 +766,14 @@
     "test_policy": { "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}", "DefaultSearchProviderInstantURL": "http://www.google.com/instant?q={searchTerms}" },
     "pref_mappings": [
       { "pref": "default_search_provider.instant_url" }
+    ]
+  },
+
+  "DefaultSearchProviderNewTabURL": {
+    "os": ["win", "linux", "mac", "chromeos"],
+    "test_policy": { "DefaultSearchProviderSearchURL": "http://www.google.com/?q={searchTerms}", "DefaultSearchProviderNewTabURL": "http://www.google.com/newtab" },
+    "pref_mappings": [
+      { "pref": "default_search_provider.new_tab_url" }
     ]
   },
 
@@ -1529,6 +1537,17 @@
     ]
   },
 
+  "DataCompressionProxyEnabled": {
+    "os": ["android"],
+    "test_policy": { "DataCompressionProxyEnabled": false },
+    "pref_mappings": [
+      { "pref": "spdy_proxy.enabled" }
+    ]
+  },
+
+  "ForceEphemeralProfiles": {
+  },
+
   "----- Chrome OS policies ------------------------------------------------": {},
 
   "ChromeOsLockOnIdleSuspend": {
@@ -1803,6 +1822,16 @@
     ]
   },
 
+  "WaitForInitialUserActivity": {
+    "os": ["chromeos"],
+    "test_policy": { "WaitForInitialUserActivity": true },
+    "pref_mappings": [
+      { "pref": "session.wait_for_initial_user_activity",
+        "local_state": true },
+      { "pref": "power.wait_for_initial_user_activity" }
+    ]
+  },
+
   "TermsOfServiceURL": {
     "os": ["chromeos"],
     "test_policy": { "TermsOfServiceURL": "http://www.example.com/terms_of_service.txt" },
@@ -1900,6 +1929,23 @@
   "ManagedBookmarks": {
   },
 
+  "FullscreenAllowed": {
+    "os": ["win", "linux", "chromeos"],
+    "test_policy": { "FullscreenAllowed": false },
+    "pref_mappings": [
+      { "pref": "fullscreen.allowed" },
+      { "pref": "apps.fullscreen.allowed" }
+    ]
+  },
+
+  "ChromeOsMultiProfileUserBehavior": {
+    "os": ["chromeos"],
+    "test_policy": { "ChromeOsMultiProfileUserBehavior": "unrestricted" },
+    "pref_mappings": [
+      { "pref": "settings.multiprofile_user_behavior" }
+    ]
+  },
+
   "----- Chrome OS device policies ---------------------------------------": {},
 
   "DevicePolicyRefreshRate": {
@@ -1930,6 +1976,9 @@
   },
 
   "ReportDeviceNetworkInterfaces": {
+  },
+
+  "ReportDeviceUsers": {
   },
 
   "DeviceAllowNewUsers": {
@@ -1987,6 +2036,9 @@
   "DeviceAutoUpdateDisabled": {
   },
 
+  "DeviceAutoUpdateP2PEnabled": {
+  },
+
   "DeviceTargetVersionPrefix": {
   },
 
@@ -1994,6 +2046,9 @@
   },
 
   "DeviceUpdateAllowedConnectionTypes": {
+  },
+
+  "DeviceUpdateHttpDownloadsEnabled": {
   },
 
   "ReportDeviceLocation": {
@@ -2050,10 +2105,16 @@
   "AttestationEnabledForDevice": {
   },
 
+  "AttestationForContentProtectionEnabled": {
+  },
+
   "SupervisedUsersEnabled": {
   },
 
   "SupervisedUserCreationEnabled": {
+  },
+
+  "AutoCleanUpStrategy": {
   },
 
   "----- Chrome Frame policies -------------------------------------------": {},
@@ -2077,5 +2138,8 @@
   },
 
   "SuppressChromeFrameTurndownPrompt": {
+  },
+
+  "SkipMetadataCheck": {
   }
 }

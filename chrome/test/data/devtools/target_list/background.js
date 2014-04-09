@@ -32,9 +32,11 @@ function checkTarget(targets, url, type, opt_title, opt_faviconUrl) {
       target.devtoolsFrontendUrl);
   // On some platforms (e.g. Chrome OS) target.faviconUrl might be empty for
   // a freshly created tab. Ignore the check then.
-  if (target.faviconUrl)
+  if (target.faviconUrl && opt_faviconUrl)
     chrome.test.assertEq(opt_faviconUrl, target.faviconUrl);
-  chrome.test.assertEq('/thumb/' + target.id, target.thumbnailUrl);
+  // Sometimes thumbnailUrl is not available for a freshly loaded tab.
+  if (target.thumbnailUrl)
+    chrome.test.assertEq('/thumb/' + target.id, target.thumbnailUrl);
   chrome.test.assertEq(opt_title || target.url, target.title);
   chrome.test.assertEq(type, target.type);
   chrome.test.assertEq('ws://' + wsAddress, target.webSocketDebuggerUrl);
@@ -54,7 +56,8 @@ chrome.test.runTests([
             chrome.extension.getURL('favicon.png'));
         checkTarget(targets,
             chrome.extension.getURL('_generated_background_page.html'),
-            'other');
+            'background_page',
+            'Remote Debugger Test');
 
         chrome.test.succeed();
       });

@@ -31,7 +31,6 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/autofill/content/browser/autofill_driver_impl.h"
 #include "components/autofill/core/browser/autofill_common_test.h"
-#include "components/autofill/core/browser/autofill_external_delegate.h"
 #include "components/autofill/core/browser/autofill_manager.h"
 #include "components/autofill/core/browser/autofill_manager_test_delegate.h"
 #include "components/autofill/core/browser/autofill_profile.h"
@@ -43,6 +42,7 @@
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_view_host.h"
+#include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_renderer_host.h"
@@ -50,7 +50,7 @@
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/base/keycodes/keyboard_codes.h"
+#include "ui/events/keycodes/keyboard_codes.h"
 
 
 namespace autofill {
@@ -190,50 +190,14 @@ class WindowedPersonalDataManagerObserver
   DISALLOW_COPY_AND_ASSIGN(WindowedPersonalDataManagerObserver);
 };
 
-
-// TestAutofillExternalDelegate -----------------------------------------------
-
-class TestAutofillExternalDelegate : public AutofillExternalDelegate {
- public:
-  TestAutofillExternalDelegate(content::WebContents* web_contents,
-                               AutofillManager* autofill_manager,
-                               AutofillDriver* autofill_driver)
-      : AutofillExternalDelegate(web_contents, autofill_manager,
-                                 autofill_driver),
-        keyboard_listener_(NULL) {
-  }
-
-  virtual ~TestAutofillExternalDelegate() {}
-
-  // AutofillExternalDelegate:
-  virtual void OnPopupShown(content::KeyboardListener* listener) OVERRIDE {
-    AutofillExternalDelegate::OnPopupShown(listener);
-    keyboard_listener_ = listener;
-  }
-
-  virtual void OnPopupHidden(content::KeyboardListener* listener) OVERRIDE {
-    keyboard_listener_ = NULL;
-    AutofillExternalDelegate::OnPopupHidden(listener);
-  }
-
-  content::KeyboardListener* keyboard_listener() {
-    return keyboard_listener_;
-  }
-
- private:
-  // The popup that is currently registered as a keyboard listener, or NULL if
-  // there is none.
-  content::KeyboardListener* keyboard_listener_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestAutofillExternalDelegate);
-};
-
-
 // AutofillInteractiveTest ----------------------------------------------------
 
 class AutofillInteractiveTest : public InProcessBrowserTest {
  protected:
-  AutofillInteractiveTest() {}
+  AutofillInteractiveTest() :
+      key_press_event_sink_(
+          base::Bind(&AutofillInteractiveTest::HandleKeyPressEvent,
+                     base::Unretained(this))) {}
   virtual ~AutofillInteractiveTest() {}
 
   // InProcessBrowserTest:
@@ -241,24 +205,17 @@ class AutofillInteractiveTest : public InProcessBrowserTest {
     // Don't want Keychain coming up on Mac.
     test::DisableSystemServices(browser()->profile());
 
-    // When testing the native UI, hook up a test external delegate, which
-    // allows us to forward keyboard events to the popup directly.
-    content::WebContents* web_contents =
-        browser()->tab_strip_model()->GetActiveWebContents();
+    // Inject the test delegate into the AutofillManager.
+    content::WebContents* web_contents = GetWebContents();
     AutofillDriverImpl* autofill_driver =
         AutofillDriverImpl::FromWebContents(web_contents);
     AutofillManager* autofill_manager = autofill_driver->autofill_manager();
-    scoped_ptr<AutofillExternalDelegate> external_delegate(
-        new TestAutofillExternalDelegate(web_contents, autofill_manager,
-                                         autofill_driver));
-    autofill_driver->SetAutofillExternalDelegate(external_delegate.Pass());
     autofill_manager->SetTestDelegate(&test_delegate_);
   }
 
   virtual void CleanUpOnMainThread() OVERRIDE {
     // Make sure to close any showing popups prior to tearing down the UI.
-    content::WebContents* web_contents =
-        browser()->tab_strip_model()->GetActiveWebContents();
+    content::WebContents* web_contents = GetWebContents();
     AutofillManager* autofill_manager =
         AutofillDriverImpl::FromWebContents(web_contents)->autofill_manager();
     autofill_manager->delegate()->HideAutofillPopup();
@@ -268,18 +225,12 @@ class AutofillInteractiveTest : public InProcessBrowserTest {
     return PersonalDataManagerFactory::GetForProfile(browser()->profile());
   }
 
-  content::RenderViewHost* GetRenderViewHost() {
-    return browser()->tab_strip_model()->GetActiveWebContents()->
-        GetRenderViewHost();
+  content::WebContents* GetWebContents() {
+    return browser()->tab_strip_model()->GetActiveWebContents();
   }
 
-  TestAutofillExternalDelegate* GetExternalDelegate() {
-    content::WebContents* web_contents =
-        browser()->tab_strip_model()->GetActiveWebContents();
-    AutofillDriverImpl* autofill_driver =
-        AutofillDriverImpl::FromWebContents(web_contents);
-    return static_cast<TestAutofillExternalDelegate*>(
-        autofill_driver->autofill_external_delegate());
+  content::RenderViewHost* GetRenderViewHost() {
+    return GetWebContents()->GetRenderViewHost();
   }
 
   void CreateTestProfile() {
@@ -325,7 +276,7 @@ class AutofillInteractiveTest : public InProcessBrowserTest {
                         const std::string& expected_value) {
     std::string value;
     ASSERT_TRUE(content::ExecuteScriptAndExtractString(
-        browser()->tab_strip_model()->GetActiveWebContents(),
+        GetWebContents(),
         "window.domAutomationController.send("
         "    document.getElementById('" + field_name + "').value);",
         &value));
@@ -363,7 +314,8 @@ class AutofillInteractiveTest : public InProcessBrowserTest {
         "      };"
         "    }"
         "  };"
-        "})();";
+        "})();"
+        "cr.googleTranslate.onTranslateElementLoad();";
 
     fetcher->set_url(fetcher->GetOriginalURL());
     fetcher->set_status(status);
@@ -399,19 +351,26 @@ class AutofillInteractiveTest : public InProcessBrowserTest {
   void SendKeyToPageAndWait(ui::KeyboardCode key) {
     test_delegate_.Reset();
     content::SimulateKeyPress(
-        browser()->tab_strip_model()->GetActiveWebContents(),
-        key, false, false, false, false);
+        GetWebContents(), key, false, false, false, false);
     test_delegate_.Wait();
   }
 
+  bool HandleKeyPressEvent(const content::NativeWebKeyboardEvent& event) {
+    return true;
+  }
+
   void SendKeyToPopupAndWait(ui::KeyboardCode key) {
-    // When testing the native UI, route popup-targeted key presses via the
-    // external delegate.
+    // Route popup-targeted key presses via the render view host.
     content::NativeWebKeyboardEvent event;
     event.windowsKeyCode = key;
+    event.type = WebKit::WebKeyboardEvent::RawKeyDown;
     test_delegate_.Reset();
-    GetExternalDelegate()->keyboard_listener()->HandleKeyPressEvent(event);
+    // Install the key press event sink to ensure that any events that are not
+    // handled by the installed callbacks do not end up crashing the test.
+    GetRenderViewHost()->AddKeyPressEventCallback(key_press_event_sink_);
+    GetRenderViewHost()->ForwardKeyboardEvent(event);
     test_delegate_.Wait();
+    GetRenderViewHost()->RemoveKeyPressEventCallback(key_press_event_sink_);
   }
 
   void TryBasicFormFill() {
@@ -449,6 +408,14 @@ class AutofillInteractiveTest : public InProcessBrowserTest {
   AutofillManagerTestDelegateImpl test_delegate_;
 
   net::TestURLFetcherFactory url_fetcher_factory_;
+
+  // KeyPressEventCallback that serves as a sink to ensure that every key press
+  // event the tests create and have the WebContents forward is handled by some
+  // key press event callback. It is necessary to have this sinkbecause if no
+  // key press event callback handles the event (at least on Mac), a DCHECK
+  // ends up going off that the |event| doesn't have an |os_event| associated
+  // with it.
+  content::RenderWidgetHost::KeyPressEventCallback key_press_event_sink_;
 
   DISALLOW_COPY_AND_ASSIGN(AutofillInteractiveTest);
 };
@@ -809,8 +776,7 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, AutofillAfterReload) {
       GURL(std::string(kDataURIPrefix) + kTestFormString)));
 
   // Reload the page.
-  content::WebContents* web_contents =
-      browser()->tab_strip_model()->GetActiveWebContents();
+  content::WebContents* web_contents = GetWebContents();
   web_contents->GetController().Reload(false);
   content::WaitForLoadStop(web_contents);
 
@@ -818,9 +784,7 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, AutofillAfterReload) {
   TryBasicFormFill();
 }
 
-// DISABLED: http://crbug.com/150084
-IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
-                       DISABLED_AutofillAfterTranslate) {
+IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, AutofillAfterTranslate) {
   CreateTestProfile();
 
   GURL url(std::string(kDataURIPrefix) +
@@ -853,18 +817,22 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
                " </select><br>"
                "<label for=\"ph\">Phone number:</label>"
                " <input type=\"text\" id=\"ph\"><br>"
-               "</form>");
-  ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(browser(), url));
+               "</form>"
+               // Add additional Japanese characters to ensure the translate bar
+               // will appear.
+               "我々は重要な、興味深いものになるが、時折状況が発生するため苦労や痛みは"
+               "彼にいくつかの素晴らしいを調達することができます。それから、いくつかの利");
 
-  // Get translation bar.
-  LanguageDetectionDetails details;
-  details.adopted_language = "ja";
-  content::RenderViewHostTester::TestOnMessageReceived(
-      GetRenderViewHost(),
-      ChromeViewHostMsg_TranslateLanguageDetermined(0, details, true));
+  content::WindowedNotificationObserver infobar_observer(
+      chrome::NOTIFICATION_TAB_CONTENTS_INFOBAR_ADDED,
+      content::NotificationService::AllSources());
+  ASSERT_NO_FATAL_FAILURE(
+      ui_test_utils::NavigateToURL(browser(), url));
+
+  // Wait for the translation bar to appear and get it.
+  infobar_observer.Wait();
   TranslateInfoBarDelegate* delegate = InfoBarService::FromWebContents(
-      browser()->tab_strip_model()->GetActiveWebContents())->infobar_at(0)->
-          AsTranslateInfoBarDelegate();
+      GetWebContents())->infobar_at(0)->AsTranslateInfoBarDelegate();
   ASSERT_TRUE(delegate);
   EXPECT_EQ(TranslateInfoBarDelegate::BEFORE_TRANSLATE,
             delegate->infobar_type());
@@ -872,19 +840,13 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
   // Simulate translation button press.
   delegate->Translate();
 
-  // Simulate the translate script being retrieved.
-  // Pass fake google.translate lib as the translate script.
-  SimulateURLFetch(true);
-
   content::WindowedNotificationObserver translation_observer(
       chrome::NOTIFICATION_PAGE_TRANSLATED,
       content::NotificationService::AllSources());
 
-  // Simulate translation to kick onTranslateElementLoad.
-  // But right now, the call stucks here.
-  // Once click the text field, it starts again.
-  ASSERT_TRUE(content::ExecuteScript(
-      GetRenderViewHost(), "cr.googleTranslate.onTranslateElementLoad();"));
+  // Simulate the translate script being retrieved.
+  // Pass fake google.translate lib as the translate script.
+  SimulateURLFetch(true);
 
   // Simulate the render notifying the translation has been done.
   translation_observer.Wait();
@@ -974,8 +936,7 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, DISABLED_FormFillableOnReset) {
   PopulateForm("NAME_FIRST");
 
   ASSERT_TRUE(content::ExecuteScript(
-      browser()->tab_strip_model()->GetActiveWebContents(),
-      "document.getElementById('testform').reset()"));
+       GetWebContents(), "document.getElementById('testform').reset()"));
 
   PopulateForm("NAME_FIRST");
 
@@ -1031,7 +992,7 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
   // TODO(isherman): verify entire form.
 }
 
-// http://crbug.com/150084
+// http://crbug.com/281527
 #if defined(OS_MACOSX)
 #define MAYBE_FormFillLatencyAfterSubmit FormFillLatencyAfterSubmit
 #else
@@ -1092,8 +1053,7 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
   content::WindowedNotificationObserver load_stop_observer(
       content::NOTIFICATION_LOAD_STOP,
       content::Source<content::NavigationController>(
-          &browser()->tab_strip_model()->GetActiveWebContents()->
-              GetController()));
+          &GetWebContents()->GetController()));
 
   ASSERT_TRUE(content::ExecuteScript(
       GetRenderViewHost(),
@@ -1126,21 +1086,7 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
 
   // Press the down arrow to select the suggestion and attempt to preview the
   // autofilled form.
-  content::NativeWebKeyboardEvent event;
-  event.windowsKeyCode = ui::VKEY_DOWN;
-  GetExternalDelegate()->keyboard_listener()->HandleKeyPressEvent(event);
-
-  // Wait for any IPCs to complete by performing an action that generates an
-  // IPC that's easy to wait for.  Chrome shouldn't crash.
-  bool result = false;
-  ASSERT_TRUE(content::ExecuteScriptAndExtractBool(
-      GetRenderViewHost(),
-      "var city = document.getElementById('city');"
-      "city.onfocus = function() { domAutomationController.send(true); };"
-      "city.focus()",
-      &result));
-  ASSERT_TRUE(result);
-  SendKeyToPageAndWait(ui::VKEY_A);
+  SendKeyToPopupAndWait(ui::VKEY_DOWN);
 }
 
 }  // namespace autofill

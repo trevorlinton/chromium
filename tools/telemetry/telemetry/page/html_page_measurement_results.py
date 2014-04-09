@@ -7,14 +7,12 @@ import json
 import logging
 import os
 import re
-import sys
 
 from telemetry.core import util
 from telemetry.page import buildbot_page_measurement_results
+from telemetry.page import cloud_storage
 
-# Get build/util scripts into our path.
-sys.path.append(os.path.abspath(os.path.join(
-    util.GetChromiumSrcDir(), 'build', 'util')))
+util.AddDirToPythonPath(util.GetChromiumSrcDir(), 'build', 'util')
 import lastchange  # pylint: disable=F0401
 
 
@@ -30,16 +28,18 @@ _UNIT_JSON = ('tools', 'perf', 'unit-info.json')
 
 class HtmlPageMeasurementResults(
     buildbot_page_measurement_results.BuildbotPageMeasurementResults):
-  def __init__(self, output_stream, test_name, reset_results, browser_type,
-               trace_tag=''):
+  def __init__(self, output_stream, test_name, reset_results, upload_results,
+      browser_type, results_label=None, trace_tag=''):
     super(HtmlPageMeasurementResults, self).__init__(trace_tag)
 
     self._output_stream = output_stream
-    self._reset_results = reset_results
     self._test_name = test_name
+    self._reset_results = reset_results
+    self._upload_results = upload_results
     self._result_json = {
         'buildTime': self._GetBuildTime(),
         'revision': self._GetRevision(),
+        'label': results_label,
         'platform': browser_type,
         'tests': {}
         }
@@ -74,7 +74,7 @@ class HtmlPageMeasurementResults(
     if not m:
       logging.warn('Failed to extract previous results from HTML output')
       return []
-    return json.loads(m.group(1))
+    return json.loads(m.group(1))[:512]
 
   def _SaveResults(self, results):
     self._output_stream.seek(0)
@@ -108,5 +108,13 @@ class HtmlPageMeasurementResults(
     html = html.replace('%plugins%', self._GetPlugins())
     self._SaveResults(html)
 
+    if self._upload_results:
+      file_path = os.path.abspath(self._output_stream.name)
+      file_name = 'html-results/results-%s' % datetime.datetime.now().strftime(
+          '%Y-%m-%d_%H-%M-%S')
+      cloud_storage.Insert(cloud_storage.PUBLIC_BUCKET, file_name, file_path)
+      print
+      print ('View online at '
+          'http://storage.googleapis.com/chromium-telemetry/%s' % file_name)
     print
     print 'View result at file://%s' % os.path.abspath(self._output_stream.name)

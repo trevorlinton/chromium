@@ -74,10 +74,9 @@ DownloadResourceHandler::DownloadResourceHandler(
     net::URLRequest* request,
     const DownloadUrlParameters::OnStartedCallback& started_cb,
     scoped_ptr<DownloadSaveInfo> save_info)
-    : download_id_(id),
-      render_view_id_(0),               // Actually initialized below.
+    : ResourceHandler(request),
+      download_id_(id),
       content_length_(0),
-      request_(request),
       started_cb_(started_cb),
       save_info_(save_info.Pass()),
       last_buffer_size_(0),
@@ -85,10 +84,6 @@ DownloadResourceHandler::DownloadResourceHandler(
       pause_count_(0),
       was_deferred_(false),
       on_response_started_called_(false) {
-  ResourceRequestInfoImpl* info(ResourceRequestInfoImpl::ForRequest(request));
-  global_id_ = info->GetGlobalRequestID();
-  render_view_id_ = info->GetRouteID();
-
   RecordDownloadCount(UNTHROTTLED_COUNT);
 }
 
@@ -103,6 +98,9 @@ bool DownloadResourceHandler::OnRequestRedirected(
     const GURL& url,
     ResourceResponse* response,
     bool* defer) {
+  // We treat a download as a main frame load, and thus update the policy URL
+  // on redirects.
+  request()->set_first_party_for_cookies(url);
   return true;
 }
 
@@ -121,25 +119,24 @@ bool DownloadResourceHandler::OnResponseStarted(
   download_start_time_ = base::TimeTicks::Now();
 
   // If it's a download, we don't want to poison the cache with it.
-  request_->StopCaching();
+  request()->StopCaching();
 
   // Lower priority as well, so downloads don't contend for resources
   // with main frames.
-  request_->SetPriority(net::IDLE);
+  request()->SetPriority(net::IDLE);
 
   std::string content_disposition;
-  request_->GetResponseHeaderByName("content-disposition",
-                                    &content_disposition);
+  request()->GetResponseHeaderByName("content-disposition",
+                                     &content_disposition);
   SetContentDisposition(content_disposition);
   SetContentLength(response->head.content_length);
 
-  const ResourceRequestInfoImpl* request_info =
-      ResourceRequestInfoImpl::ForRequest(request_);
+  const ResourceRequestInfoImpl* request_info = GetRequestInfo();
 
   // Deleted in DownloadManager.
   scoped_ptr<DownloadCreateInfo> info(new DownloadCreateInfo(
       base::Time::Now(), content_length_,
-      request_->net_log(), request_info->HasUserGesture(),
+      request()->net_log(), request_info->HasUserGesture(),
       request_info->GetPageTransition()));
 
   // Create the ByteStream for sending data to the download sink.
@@ -152,23 +149,24 @@ bool DownloadResourceHandler::OnResponseStarted(
       base::Bind(&DownloadResourceHandler::ResumeRequest, AsWeakPtr()));
 
   info->download_id = download_id_;
-  info->url_chain = request_->url_chain();
-  info->referrer_url = GURL(request_->referrer());
+  info->url_chain = request()->url_chain();
+  info->referrer_url = GURL(request()->referrer());
   info->start_time = base::Time::Now();
   info->total_bytes = content_length_;
   info->has_user_gesture = request_info->HasUserGesture();
   info->content_disposition = content_disposition_;
   info->mime_type = response->head.mime_type;
-  info->remote_address = request_->GetSocketAddress().host();
+  info->remote_address = request()->GetSocketAddress().host();
   RecordDownloadMimeType(info->mime_type);
   RecordDownloadContentDisposition(info->content_disposition);
 
   info->request_handle =
-      DownloadRequestHandle(AsWeakPtr(), global_id_.child_id,
-                            render_view_id_, global_id_.request_id);
+      DownloadRequestHandle(AsWeakPtr(), request_info->GetChildID(),
+                            request_info->GetRouteID(),
+                            request_info->GetRequestID());
 
   // Get the last modified time and etag.
-  const net::HttpResponseHeaders* headers = request_->response_headers();
+  const net::HttpResponseHeaders* headers = request()->response_headers();
   if (headers) {
     std::string last_modified_hdr;
     if (headers->EnumerateHeader(NULL, "Last-Modified", &last_modified_hdr))
@@ -233,8 +231,10 @@ bool DownloadResourceHandler::OnWillStart(int request_id,
 
 // Create a new buffer, which will be handed to the download thread for file
 // writing and deletion.
-bool DownloadResourceHandler::OnWillRead(int request_id, net::IOBuffer** buf,
-                                         int* buf_size, int min_size) {
+bool DownloadResourceHandler::OnWillRead(int request_id,
+                                         scoped_refptr<net::IOBuffer>* buf,
+                                         int* buf_size,
+                                         int min_size) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
   DCHECK(buf && buf_size);
   DCHECK(!read_buffer_.get());
@@ -292,7 +292,7 @@ bool DownloadResourceHandler::OnResponseCompleted(
     const net::URLRequestStatus& status,
     const std::string& security_info) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
-  int response_code = status.is_success() ? request_->GetResponseCode() : 0;
+  int response_code = status.is_success() ? request()->GetResponseCode() : 0;
   VLOG(20) << __FUNCTION__ << "()" << DebugString()
            << " request_id = " << request_id
            << " status.status() = " << status.status()
@@ -336,7 +336,7 @@ bool DownloadResourceHandler::OnResponseCompleted(
 
   if (status.is_success() &&
       reason == DOWNLOAD_INTERRUPT_REASON_NONE &&
-      request_->response_headers()) {
+      request()->response_headers()) {
     // Handle server's response codes.
     switch(response_code) {
       case -1:                          // Non-HTTP request.
@@ -448,27 +448,29 @@ void DownloadResourceHandler::ResumeRequest() {
 void DownloadResourceHandler::CancelRequest() {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
 
+  const ResourceRequestInfo* info = GetRequestInfo();
   ResourceDispatcherHostImpl::Get()->CancelRequest(
-      global_id_.child_id,
-      global_id_.request_id,
+      info->GetChildID(),
+      info->GetRequestID(),
       false);
 }
 
 std::string DownloadResourceHandler::DebugString() const {
+  const ResourceRequestInfo* info = GetRequestInfo();
   return base::StringPrintf("{"
                             " url_ = " "\"%s\""
-                            " global_id_ = {"
+                            " info = {"
                             " child_id = " "%d"
                             " request_id = " "%d"
+                            " route_id = " "%d"
                             " }"
-                            " render_view_id_ = " "%d"
                             " }",
-                            request_ ?
-                                request_->url().spec().c_str() :
+                            request() ?
+                                request()->url().spec().c_str() :
                                 "<NULL request>",
-                            global_id_.child_id,
-                            global_id_.request_id,
-                            render_view_id_);
+                            info->GetChildID(),
+                            info->GetRequestID(),
+                            info->GetRouteID());
 }
 
 DownloadResourceHandler::~DownloadResourceHandler() {

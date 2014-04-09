@@ -46,6 +46,8 @@ class CC_EXPORT Animation {
   enum TargetProperty {
     Transform = 0,
     Opacity,
+    Filter,
+    BackgroundColor,
     // This sentinel must be last.
     TargetPropertyEnumSize
   };
@@ -120,14 +122,8 @@ class CC_EXPORT Animation {
   // of iterations, returns the relative time in the current iteration.
   double TrimTimeToCurrentIteration(double monotonic_time) const;
 
-  enum InstanceType {
-    ControllingInstance = 0,
-    NonControllingInstance
-  };
-
-  scoped_ptr<Animation> Clone(InstanceType instance_type) const;
-  scoped_ptr<Animation> CloneAndInitialize(InstanceType instance_type,
-                                           RunState initial_run_state,
+  scoped_ptr<Animation> Clone() const;
+  scoped_ptr<Animation> CloneAndInitialize(RunState initial_run_state,
                                            double start_time) const;
   bool is_controlling_instance() const { return is_controlling_instance_; }
 

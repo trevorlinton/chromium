@@ -250,19 +250,11 @@ SECStatus My_Encrypt(PK11SymKey* key,
 
 }  // namespace
 
-Aes128Gcm12Encrypter::Aes128Gcm12Encrypter() : last_seq_num_(0) {
+Aes128Gcm12Encrypter::Aes128Gcm12Encrypter() {
   ignore_result(g_gcm_support_checker.Get());
 }
 
 Aes128Gcm12Encrypter::~Aes128Gcm12Encrypter() {}
-
-// static
-bool Aes128Gcm12Encrypter::IsSupported() {
-  // NSS 3.15 supports CKM_AES_GCM directly.
-  // NSS 3.14 supports CKM_AES_CTR, which can be used to emulate CKM_AES_GCM.
-  // Versions earlier than NSS 3.14 are not supported.
-  return NSS_VersionCheck("3.14") != PR_FALSE;
-}
 
 bool Aes128Gcm12Encrypter::SetKey(StringPiece key) {
   DCHECK_EQ(key.size(), sizeof(key_));
@@ -350,12 +342,8 @@ QuicData* Aes128Gcm12Encrypter::EncryptPacket(
   size_t ciphertext_size = GetCiphertextSize(plaintext.length());
   scoped_ptr<char[]> ciphertext(new char[ciphertext_size]);
 
-  if (last_seq_num_ != 0 && sequence_number <= last_seq_num_) {
-    DLOG(FATAL) << "Sequence numbers regressed";
-    return NULL;
-  }
-  last_seq_num_ = sequence_number;
-
+  // TODO(ianswett): Introduce a check to ensure that we don't encrypt with the
+  // same sequence number twice.
   uint8 nonce[kNoncePrefixSize + sizeof(sequence_number)];
   COMPILE_ASSERT(sizeof(nonce) == kAESNonceSize, bad_sequence_number_size);
   memcpy(nonce, nonce_prefix_, kNoncePrefixSize);

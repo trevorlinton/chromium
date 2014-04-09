@@ -11,12 +11,13 @@
 
 #include "base/memory/linked_ptr.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/prefs/scoped_user_pref_update.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/blacklist.h"
 #include "chrome/browser/extensions/extension_scoped_prefs.h"
-#include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/common/extensions/extension.h"
+#include "chrome/common/extensions/extension_constants.h"
 #include "components/browser_context_keyed_service/browser_context_keyed_service.h"
 #include "extensions/common/url_pattern_set.h"
 #include "sync/api/string_ordinal.h"
@@ -53,14 +54,6 @@ class URLPatternSet;
 class ExtensionPrefs : public ExtensionScopedPrefs,
                        public BrowserContextKeyedService {
  public:
-  // Key name for a preference that keeps track of per-extension settings. This
-  // is a dictionary object read from the Preferences file, keyed off of
-  // extension ids.
-  static const char kExtensionsPref[];
-
-  // Key for what version chrome was last time the extension prefs were loaded.
-  static const char kExtensionsLastChromeVersion[];
-
   typedef std::vector<linked_ptr<ExtensionInfo> > ExtensionsInfo;
 
   // Vector containing identifiers for preferences.
@@ -182,6 +175,10 @@ class ExtensionPrefs : public ExtensionScopedPrefs,
   // Get/Set the order that the browser actions appear in the toolbar.
   ExtensionIdList GetToolbarOrder();
   void SetToolbarOrder(const ExtensionIdList& extension_ids);
+
+  // Get/Set the list of known disabled extension IDs.
+  ExtensionIdSet GetKnownDisabled();
+  void SetKnownDisabled(const ExtensionIdSet& extension_ids);
 
   // Called when an extension is installed, so that prefs get created.
   // If |page_ordinal| is an invalid ordinal, then a page will be found
@@ -373,14 +370,17 @@ class ExtensionPrefs : public ExtensionScopedPrefs,
   // Returns true if the user enabled this extension to be loaded in incognito
   // mode.
   //
-  // IMPORTANT: you probably want to use ExtensionService::IsIncognitoEnabled
+  // IMPORTANT: you probably want to use extension_utils::IsIncognitoEnabled
   // instead of this method.
-  bool IsIncognitoEnabled(const std::string& extension_id);
+  bool IsIncognitoEnabled(const std::string& extension_id) const;
   void SetIsIncognitoEnabled(const std::string& extension_id, bool enabled);
 
   // Returns true if the user has chosen to allow this extension to inject
   // scripts into pages with file URLs.
-  bool AllowFileAccess(const std::string& extension_id);
+  //
+  // IMPORTANT: you probably want to use extension_utils::AllowFileAccess
+  // instead of this method.
+  bool AllowFileAccess(const std::string& extension_id) const;
   void SetAllowFileAccess(const std::string& extension_id, bool allow);
   bool HasAllowFileAccessSetting(const std::string& extension_id) const;
 
@@ -403,6 +403,10 @@ class ExtensionPrefs : public ExtensionScopedPrefs,
   // and neither will external extensions the user has explicitly uninstalled.
   // Caller takes ownership of returned structure.
   scoped_ptr<ExtensionsInfo> GetInstalledExtensionsInfo() const;
+
+  // Same as above, but only includes external extensions the user has
+  // explicitly uninstalled.
+  scoped_ptr<ExtensionsInfo> GetUninstalledExtensionsInfo() const;
 
   // Returns the ExtensionInfo from the prefs for the given extension. If the
   // extension is not present, NULL is returned.
@@ -467,6 +471,11 @@ class ExtensionPrefs : public ExtensionScopedPrefs,
   // Returns base::Time() if the installation time could not be parsed or
   // found.
   base::Time GetInstallTime(const std::string& extension_id) const;
+
+  // Gets/sets the last launch time of an extension.
+  base::Time GetLastLaunchTime(const std::string& extension_id) const;
+  void SetLastLaunchTime(const std::string& extension_id,
+                         const base::Time& time);
 
   static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
 
@@ -579,10 +588,15 @@ class ExtensionPrefs : public ExtensionScopedPrefs,
   bool DoesExtensionHaveState(const std::string& id,
                               Extension::State check_state) const;
 
-  // Helper function to Get/Set array of strings from/to prefs.
-  ExtensionIdList GetExtensionPrefAsVector(const char* pref);
-  void SetExtensionPrefFromVector(const char* pref,
-                                  const ExtensionIdList& extension_ids);
+  // Reads the list of strings for |pref| from prefs into an
+  // ExtensionIdContainer.
+  template <class ExtensionIdContainer>
+  ExtensionIdContainer GetExtensionPrefAsContainer(const char* pref);
+
+  // Writes the list of strings contained in |strings| to |pref| in prefs.
+  template <class ExtensionIdContainer>
+  void SetExtensionPrefFromContainer(const char* pref,
+                                     const ExtensionIdContainer& strings);
 
   // Helper function to populate |extension_dict| with the values needed
   // by a newly installed extension. Work is broken up between this

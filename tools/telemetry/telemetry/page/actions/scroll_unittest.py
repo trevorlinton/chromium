@@ -3,16 +3,19 @@
 # found in the LICENSE file.
 import os
 
+from telemetry.core import util
 from telemetry.page import page as page_module
 from telemetry.page.actions import scroll
 from telemetry.unittest import tab_test_case
 
 class ScrollActionTest(tab_test_case.TabTestCase):
+  def setUp(self):
+    self._extra_browser_args.append('--enable-gpu-benchmarking')
+    super(ScrollActionTest, self).setUp()
+
   def CreateAndNavigateToPageFromUnittestDataDir(
     self, filename, page_attributes):
-    unittest_data_dir = os.path.join(os.path.dirname(__file__),
-                                     '..', '..', '..', 'unittest_data')
-    self._browser.SetHTTPServerDirectories(unittest_data_dir)
+    self._browser.SetHTTPServerDirectories(util.GetUnittestDataDir())
     page = page_module.Page(
       self._browser.http_server.UrlOf(filename),
       None, # In this test, we don't need a page set.
@@ -34,7 +37,8 @@ class ScrollActionTest(tab_test_case.TabTestCase):
                               (2 * window.innerHeight + 1) + 'px';""")
 
     self.assertEquals(
-        self._tab.EvaluateJavaScript('document.body.scrollTop'), 0)
+        self._tab.EvaluateJavaScript("""document.documentElement.scrollTop
+                                   || document.body.scrollTop"""), 0)
 
     i = scroll.ScrollAction()
     i.WillRunAction(page, self._tab)
@@ -53,16 +57,17 @@ class ScrollActionTest(tab_test_case.TabTestCase):
 
     # Allow for roundoff error in scaled viewport.
     scroll_position = self._tab.EvaluateJavaScript(
-        'document.body.scrollTop + window.innerHeight')
+        """(document.documentElement.scrollTop || document.body.scrollTop)
+        + window.innerHeight""")
     scroll_height = self._tab.EvaluateJavaScript('document.body.scrollHeight')
     difference = scroll_position - scroll_height
-    self.assertTrue(abs(difference) <= 1)
+    self.assertTrue(abs(difference) <= 1,
+                    msg='scroll_position=%d; scroll_height=%d' %
+                            (scroll_position, scroll_height))
 
   def testBoundingClientRect(self):
     self.CreateAndNavigateToPageFromUnittestDataDir('blank.html', {})
-    with open(
-      os.path.join(os.path.dirname(__file__),
-                   'scroll.js')) as f:
+    with open(os.path.join(os.path.dirname(__file__), 'scroll.js')) as f:
       js = f.read()
       self._tab.ExecuteJavaScript(js)
 

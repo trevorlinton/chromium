@@ -14,8 +14,8 @@
 #include "base/gtest_prod_util.h"
 #include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
-#include "content/common/gpu/gpu_memory_allocation.h"
 #include "content/public/common/gpu_memory_stats.h"
+#include "gpu/command_buffer/common/gpu_memory_allocation.h"
 #include "gpu/command_buffer/service/memory_tracking.h"
 
 namespace content {
@@ -28,7 +28,7 @@ class GpuMemoryTrackingGroup;
 class CONTENT_EXPORT GpuMemoryManager :
     public base::SupportsWeakPtr<GpuMemoryManager> {
  public:
-#if defined(OS_ANDROID)
+#if defined(OS_ANDROID) || (defined(OS_LINUX) && !defined(OS_CHROMEOS))
   enum { kDefaultMaxSurfacesWithFrontbufferSoftLimit = 1 };
 #else
   enum { kDefaultMaxSurfacesWithFrontbufferSoftLimit = 8 };
@@ -92,6 +92,8 @@ class CONTENT_EXPORT GpuMemoryManager :
   FRIEND_TEST_ALL_PREFIXES(GpuMemoryManagerTest,
                            BackgroundMru);
   FRIEND_TEST_ALL_PREFIXES(GpuMemoryManagerTest,
+                           AllowNonvisibleMemory);
+  FRIEND_TEST_ALL_PREFIXES(GpuMemoryManagerTest,
                            BackgroundDiscardPersistent);
   FRIEND_TEST_ALL_PREFIXES(GpuMemoryManagerTest,
                            UnmanagedTracking);
@@ -114,7 +116,6 @@ class CONTENT_EXPORT GpuMemoryManager :
 
   // Compute the allocation for clients when visible and not visible.
   void ComputeVisibleSurfacesAllocations();
-  void ComputeNonvisibleSurfacesAllocations();
   void DistributeRemainingMemoryToVisibleSurfaces();
 
   // Compute the budget for a client. Allow at most bytes_above_required_cap
@@ -126,8 +127,6 @@ class CONTENT_EXPORT GpuMemoryManager :
       uint64 bytes_above_required_cap,
       uint64 bytes_above_minimum_cap,
       uint64 bytes_overall_cap);
-  uint64 ComputeClientAllocationWhenNonvisible(
-      GpuMemoryManagerClientState* client_state);
 
   // Update the amount of GPU memory we think we have in the system, based
   // on what the stubs' contexts report.
@@ -180,7 +179,7 @@ class CONTENT_EXPORT GpuMemoryManager :
       GpuMemoryManagerClientState* client_state, bool visible);
   void SetClientStateManagedMemoryStats(
       GpuMemoryManagerClientState* client_state,
-      const GpuManagedMemoryStats& stats);
+      const gpu::ManagedMemoryStats& stats);
   void OnDestroyClientState(GpuMemoryManagerClientState* client);
 
   // Add or remove a client from its clients list (visible, nonvisible, or
@@ -230,17 +229,12 @@ class CONTENT_EXPORT GpuMemoryManager :
   uint64 bytes_available_gpu_memory_;
   bool bytes_available_gpu_memory_overridden_;
 
-  // Whether or not clients can be allocated memory when nonvisible.
-  bool allow_nonvisible_memory_;
-
   // The minimum and default allocations for a single client.
   uint64 bytes_minimum_per_client_;
   uint64 bytes_default_per_client_;
 
   // The current total memory usage, and historical maximum memory usage
   uint64 bytes_allocated_managed_current_;
-  uint64 bytes_allocated_managed_visible_;
-  uint64 bytes_allocated_managed_nonvisible_;
   uint64 bytes_allocated_unmanaged_current_;
   uint64 bytes_allocated_historical_max_;
 

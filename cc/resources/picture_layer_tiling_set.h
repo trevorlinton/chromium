@@ -37,6 +37,7 @@ class CC_EXPORT PictureLayerTilingSet {
 
   PictureLayerTiling* AddTiling(float contents_scale);
   size_t num_tilings() const { return tilings_.size(); }
+  int NumHighResTilings() const;
   PictureLayerTiling* tiling_at(size_t idx) { return tilings_[idx]; }
   const PictureLayerTiling* tiling_at(size_t idx) const {
     return tilings_[idx];
@@ -68,6 +69,7 @@ class CC_EXPORT PictureLayerTilingSet {
       size_t max_tiles_for_interest_area);
 
   void DidBecomeActive();
+  void DidBecomeRecycled();
 
   // For a given rect, iterates through tiles that can fill it.  If no
   // set of tiles with resources can fill the rect, then it will iterate

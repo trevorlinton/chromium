@@ -12,6 +12,7 @@
 #include "chrome/browser/thumbnails/simple_thumbnail_crop.h"
 #include "chrome/browser/thumbnails/thumbnailing_context.h"
 #include "chrome/common/chrome_switches.h"
+#include "url/gurl.h"
 
 namespace {
 
@@ -28,13 +29,13 @@ bool IsThumbnailRetargetingEnabled() {
       switches::kEnableThumbnailRetargeting);
 }
 
-}
+}  // namespace
 
 namespace thumbnails {
 
 ThumbnailServiceImpl::ThumbnailServiceImpl(Profile* profile)
     : top_sites_(profile->GetTopSites()),
-      use_thumbnail_retargeting_(IsThumbnailRetargetingEnabled()){
+      use_thumbnail_retargeting_(IsThumbnailRetargetingEnabled()) {
 }
 
 ThumbnailServiceImpl::~ThumbnailServiceImpl() {
@@ -51,12 +52,13 @@ bool ThumbnailServiceImpl::SetPageThumbnail(const ThumbnailingContext& context,
 
 bool ThumbnailServiceImpl::GetPageThumbnail(
     const GURL& url,
+    bool prefix_match,
     scoped_refptr<base::RefCountedMemory>* bytes) {
   scoped_refptr<history::TopSites> local_ptr(top_sites_);
   if (local_ptr.get() == NULL)
     return false;
 
-  return local_ptr->GetPageThumbnail(url, bytes);
+  return local_ptr->GetPageThumbnail(url, prefix_match, bytes);
 }
 
 ThumbnailingAlgorithm* ThumbnailServiceImpl::GetThumbnailingAlgorithm()

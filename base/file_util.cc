@@ -23,8 +23,6 @@ namespace base {
 
 namespace {
 
-const FilePath::CharType kExtensionSeparator = FILE_PATH_LITERAL('.');
-
 // The maximum number of 'uniquified' files we will try to create.
 // This is used when the filename we're trying to download is already in use,
 // so we create a new unique filename by appending " (nnn)" before the
@@ -33,8 +31,6 @@ const FilePath::CharType kExtensionSeparator = FILE_PATH_LITERAL('.');
 static const int kMaxUniqueFiles = 100;
 
 }  // namespace
-
-bool g_bug108724_debug = false;
 
 int64 ComputeDirectorySize(const FilePath& root_path) {
   int64 running_size = 0;
@@ -130,21 +126,10 @@ bool TextContentsEqual(const FilePath& filename1, const FilePath& filename2) {
   return true;
 }
 
-}  // namespace base
-
-// -----------------------------------------------------------------------------
-
-namespace file_util {
-
-using base::FileEnumerator;
-using base::FilePath;
-using base::kExtensionSeparator;
-using base::kMaxUniqueFiles;
-
 bool ReadFileToString(const FilePath& path, std::string* contents) {
   if (path.ReferencesParent())
     return false;
-  FILE* file = OpenFile(path, "rb");
+  FILE* file = file_util::OpenFile(path, "rb");
   if (!file) {
     return false;
   }
@@ -155,10 +140,20 @@ bool ReadFileToString(const FilePath& path, std::string* contents) {
     if (contents)
       contents->append(buf, len);
   }
-  CloseFile(file);
+  file_util::CloseFile(file);
 
   return true;
 }
+
+}  // namespace base
+
+// -----------------------------------------------------------------------------
+
+namespace file_util {
+
+using base::FileEnumerator;
+using base::FilePath;
+using base::kMaxUniqueFiles;
 
 bool IsDirectoryEmpty(const FilePath& dir_path) {
   FileEnumerator files(dir_path, false,

@@ -140,8 +140,12 @@ PlatformFileError NativeFileUtil::CreateDirectory(
   if (!file_util::CreateDirectory(path))
     return base::PLATFORM_FILE_ERROR_FAILED;
 
-  if (!SetPlatformSpecificDirectoryPermissions(path))
-    return base::PLATFORM_FILE_ERROR_FAILED;
+  if (!SetPlatformSpecificDirectoryPermissions(path)) {
+    // Since some file systems don't support permission setting, we do not treat
+    // an error from the function as the failure of copying. Just log it.
+    LOG(WARNING) << "Setting directory permission failed: "
+        << path.AsUTF8Unsafe();
+  }
 
   return base::PLATFORM_FILE_OK;
 }
@@ -205,6 +209,7 @@ bool NativeFileUtil::DirectoryExists(const base::FilePath& path) {
 PlatformFileError NativeFileUtil::CopyOrMoveFile(
     const base::FilePath& src_path,
     const base::FilePath& dest_path,
+    FileSystemOperation::CopyOrMoveOption option,
     bool copy) {
   base::PlatformFileInfo info;
   base::PlatformFileError error = NativeFileUtil::GetFileInfo(src_path, &info);
@@ -212,6 +217,7 @@ PlatformFileError NativeFileUtil::CopyOrMoveFile(
     return error;
   if (info.is_directory)
     return base::PLATFORM_FILE_ERROR_NOT_A_FILE;
+  base::Time last_modified = info.last_modified;
 
   error = NativeFileUtil::GetFileInfo(dest_path, &info);
   if (error != base::PLATFORM_FILE_OK &&
@@ -228,13 +234,19 @@ PlatformFileError NativeFileUtil::CopyOrMoveFile(
   }
 
   if (copy) {
-    if (base::CopyFile(src_path, dest_path))
-      return base::PLATFORM_FILE_OK;
+    if (!base::CopyFile(src_path, dest_path))
+      return base::PLATFORM_FILE_ERROR_FAILED;
   } else {
-    if (base::Move(src_path, dest_path))
-      return base::PLATFORM_FILE_OK;
+    if (!base::Move(src_path, dest_path))
+      return base::PLATFORM_FILE_ERROR_FAILED;
   }
-  return base::PLATFORM_FILE_ERROR_FAILED;
+
+  // Preserve the last modified time. Do not return error here even if
+  // the setting is failed, because the copy itself is successfully done.
+  if (option == FileSystemOperation::OPTION_PRESERVE_LAST_MODIFIED)
+    file_util::SetLastModifiedTime(dest_path, last_modified);
+
+  return base::PLATFORM_FILE_OK;
 }
 
 PlatformFileError NativeFileUtil::DeleteFile(const base::FilePath& path) {

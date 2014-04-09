@@ -14,9 +14,6 @@
 #include "base/strings/string_piece.h"
 #include "base/time/time.h"
 #include "url/gurl.h"
-// TODO(kochi): Eliminate this dependency once dependency to EntryKind is gone.
-// http://crbug.com/142293
-#include "chrome/browser/google_apis/gdata_wapi_parser.h"
 
 namespace base {
 class Value;
@@ -30,10 +27,6 @@ class RepeatedMessageConverter;
 }  // namespace base
 
 namespace google_apis {
-
-class AccountMetadata;
-class AppIcon;
-class InstalledApp;
 
 // About resource represents the account information about the current user.
 // https://developers.google.com/drive/v2/reference/about
@@ -49,15 +42,6 @@ class AboutResource {
 
   // Creates about resource from parsed JSON.
   static scoped_ptr<AboutResource> CreateFrom(const base::Value& value);
-
-  // Creates drive app icon instance from parsed AccountMetadata.
-  // It is also necessary to set |root_resource_id|, which is contained by
-  // AboutResource but not by AccountMetadata.
-  // This method is designed to migrate GData WAPI to Drive API v2.
-  // TODO(hidehiko): Remove this method once the migration is completed.
-  static scoped_ptr<AboutResource> CreateFromAccountMetadata(
-      const AccountMetadata& account_metadata,
-      const std::string& root_resource_id);
 
   // Returns the largest change ID number.
   int64 largest_change_id() const { return largest_change_id_; }
@@ -119,11 +103,6 @@ class DriveAppIcon {
   // Creates drive app icon instance from parsed JSON.
   static scoped_ptr<DriveAppIcon> CreateFrom(const base::Value& value);
 
-  // Creates drive app icon instance from parsed Icon.
-  // This method is designed to migrate GData WAPI to Drive API v2.
-  // TODO(hidehiko): Remove this method once the migration is completed.
-  static scoped_ptr<DriveAppIcon> CreateFromAppIcon(const AppIcon& app_icon);
-
   // Category of the icon.
   IconCategory category() const { return category_; }
 
@@ -177,12 +156,6 @@ class AppResource {
 
   // Creates app resource from parsed JSON.
   static scoped_ptr<AppResource> CreateFrom(const base::Value& value);
-
-  // Creates app resource from parsed InstalledApp.
-  // This method is designed to migrate GData WAPI to Drive API v2.
-  // TODO(hidehiko): Remove this method once the migration is completed.
-  static scoped_ptr<AppResource> CreateFromInstalledApp(
-      const InstalledApp& installed_app);
 
   // Returns application ID, which is 12-digit decimals (e.g. "123456780123").
   const std::string& application_id() const { return application_id_; }
@@ -265,23 +238,23 @@ class AppResource {
     product_url_ = product_url;
   }
   void set_primary_mimetypes(
-      ScopedVector<std::string>* primary_mimetypes) {
-    primary_mimetypes_.swap(*primary_mimetypes);
+      ScopedVector<std::string> primary_mimetypes) {
+    primary_mimetypes_ = primary_mimetypes.Pass();
   }
   void set_secondary_mimetypes(
-      ScopedVector<std::string>* secondary_mimetypes) {
-    secondary_mimetypes_.swap(*secondary_mimetypes);
+      ScopedVector<std::string> secondary_mimetypes) {
+    secondary_mimetypes_ = secondary_mimetypes.Pass();
   }
   void set_primary_file_extensions(
-      ScopedVector<std::string>* primary_file_extensions) {
-    primary_file_extensions_.swap(*primary_file_extensions);
+      ScopedVector<std::string> primary_file_extensions) {
+    primary_file_extensions_ = primary_file_extensions.Pass();
   }
   void set_secondary_file_extensions(
-      ScopedVector<std::string>* secondary_file_extensions) {
-    secondary_file_extensions_.swap(*secondary_file_extensions);
+      ScopedVector<std::string> secondary_file_extensions) {
+    secondary_file_extensions_ = secondary_file_extensions.Pass();
   }
-  void set_icons(ScopedVector<DriveAppIcon>* icons) {
-    icons_.swap(*icons);
+  void set_icons(ScopedVector<DriveAppIcon> icons) {
+    icons_ = icons.Pass();
   }
 
  private:
@@ -324,12 +297,6 @@ class AppList {
   // Creates app list from parsed JSON.
   static scoped_ptr<AppList> CreateFrom(const base::Value& value);
 
-  // Creates app list from parsed AccountMetadata.
-  // This method is designed to migrate GData WAPI to Drive API v2.
-  // TODO(hidehiko): Remove this method once the migration is completed.
-  static scoped_ptr<AppList> CreateFromAccountMetadata(
-      const AccountMetadata& account_metadata);
-
   // ETag for this resource.
   const std::string& etag() const { return etag_; }
 
@@ -339,8 +306,8 @@ class AppList {
   void set_etag(const std::string& etag) {
     etag_ = etag;
   }
-  void set_items(ScopedVector<AppResource>* items) {
-    items_.swap(*items);
+  void set_items(ScopedVector<AppResource> items) {
+    items_ = items.Pass();
   }
 
  private:
@@ -449,6 +416,47 @@ class FileLabels {
   DISALLOW_COPY_AND_ASSIGN(FileLabels);
 };
 
+// ImageMediaMetadata represents image metadata for a file.
+// https://developers.google.com/drive/v2/reference/files
+class ImageMediaMetadata {
+ public:
+  ImageMediaMetadata();
+  ~ImageMediaMetadata();
+
+  // Registers the mapping between JSON field names and the members in this
+  // class.
+  static void RegisterJSONConverter(
+      base::JSONValueConverter<ImageMediaMetadata>* converter);
+
+  // Creates about resource from parsed JSON.
+  static scoped_ptr<ImageMediaMetadata> CreateFrom(const base::Value& value);
+
+  // Width of the image in pixels.
+  int width() const { return width_; }
+  // Height of the image in pixels.
+  int height() const { return height_; }
+  // Rotation of the image in clockwise degrees.
+  int rotation() const { return rotation_; }
+
+  void set_width(int width) { width_ = width; }
+  void set_height(int height) { height_ = height; }
+  void set_rotation(int rotation) { rotation_ = rotation; }
+
+ private:
+  friend class FileResource;
+
+  // Parses and initializes data members from content of |value|.
+  // Return false if parsing fails.
+  bool Parse(const base::Value& value);
+
+  int width_;
+  int height_;
+  int rotation_;
+
+  DISALLOW_COPY_AND_ASSIGN(ImageMediaMetadata);
+};
+
+
 // FileResource represents a file or folder metadata in Drive.
 // https://developers.google.com/drive/v2/reference/files
 class FileResource {
@@ -475,11 +483,6 @@ class FileResource {
   // but outside this file we use "directory" to match HTML5 filesystem API.
   bool IsDirectory() const;
 
-  // Returns EntryKind for this file.
-  // TODO(kochi): Remove this once FileResource is directly converted to proto.
-  // http://crbug.com/142293
-  DriveEntryKind GetKind() const;
-
   // Returns file ID.  This is unique in all files in Google Drive.
   const std::string& file_id() const { return file_id_; }
 
@@ -497,6 +500,11 @@ class FileResource {
 
   // Returns labels for this file.
   const FileLabels& labels() const { return labels_; }
+
+  // Returns image media metadata for this file.
+  const ImageMediaMetadata& image_media_metadata() const {
+    return image_media_metadata_;
+  }
 
   // Returns created time of this file.
   const base::Time& created_date() const { return created_date_; }
@@ -567,8 +575,11 @@ class FileResource {
   void set_mime_type(const std::string& mime_type) {
     mime_type_ = mime_type;
   }
-  void set_labels(const FileLabels& labels) {
-    labels_ = labels;
+  FileLabels* mutable_labels() {
+    return &labels_;
+  }
+  ImageMediaMetadata* mutable_image_media_metadata() {
+    return &image_media_metadata_;
   }
   void set_created_date(const base::Time& created_date) {
     created_date_ = created_date;
@@ -581,6 +592,9 @@ class FileResource {
   }
   void set_last_viewed_by_me_date(const base::Time& last_viewed_by_me_date) {
     last_viewed_by_me_date_ = last_viewed_by_me_date;
+  }
+  void set_shared_with_me_date(const base::Time& shared_with_me_date) {
+    shared_with_me_date_ = shared_with_me_date;
   }
   void set_download_url(const GURL& download_url) {
     download_url_ = download_url;
@@ -600,8 +614,8 @@ class FileResource {
   void set_embed_link(const GURL& embed_link) {
     embed_link_ = embed_link;
   }
-  void set_parents(ScopedVector<ParentReference>* parents) {
-    parents_.swap(*parents);
+  void set_parents(ScopedVector<ParentReference> parents) {
+    parents_ = parents.Pass();
   }
   void set_thumbnail_link(const GURL& thumbnail_link) {
     thumbnail_link_ = thumbnail_link;
@@ -625,6 +639,7 @@ class FileResource {
   std::string title_;
   std::string mime_type_;
   FileLabels labels_;
+  ImageMediaMetadata image_media_metadata_;
   base::Time created_date_;
   base::Time modified_date_;
   base::Time modified_by_me_date_;
@@ -685,8 +700,8 @@ class FileList {
   void set_next_link(const GURL& next_link) {
     next_link_ = next_link;
   }
-  void set_items(ScopedVector<FileResource>* items) {
-    items_.swap(*items);
+  void set_items(ScopedVector<FileResource> items) {
+    items_ = items.Pass();
   }
 
  private:
@@ -809,8 +824,8 @@ class ChangeList {
   void set_largest_change_id(int64 largest_change_id) {
     largest_change_id_ = largest_change_id;
   }
-  void set_items(ScopedVector<ChangeResource>* items) {
-    items_.swap(*items);
+  void set_items(ScopedVector<ChangeResource> items) {
+    items_ = items.Pass();
   }
 
  private:

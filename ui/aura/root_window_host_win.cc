@@ -9,11 +9,10 @@
 #include <algorithm>
 
 #include "base/message_loop/message_loop.h"
-#include "ui/aura/client/capture_client.h"
 #include "ui/aura/client/cursor_client.h"
 #include "ui/aura/root_window.h"
 #include "ui/base/cursor/cursor_loader_win.h"
-#include "ui/base/events/event.h"
+#include "ui/events/event.h"
 #include "ui/base/view_prop.h"
 #include "ui/gfx/display.h"
 #include "ui/gfx/insets.h"
@@ -208,13 +207,6 @@ bool RootWindowHostWin::ConfineCursorToRootWindow() {
   RECT window_rect;
   GetWindowRect(hwnd(), &window_rect);
   return ClipCursor(&window_rect) != 0;
-}
-
-bool RootWindowHostWin::CopyAreaToSkCanvas(const gfx::Rect& source_bounds,
-                                           const gfx::Point& dest_offset,
-                                           SkCanvas* canvas) {
-  NOTIMPLEMENTED();
-  return false;
 }
 
 void RootWindowHostWin::UnConfineCursor() {

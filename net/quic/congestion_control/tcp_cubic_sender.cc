@@ -4,12 +4,18 @@
 
 #include "net/quic/congestion_control/tcp_cubic_sender.h"
 
+#include <algorithm>
+
+#include "base/metrics/histogram.h"
+
 namespace net {
 
 namespace {
 // Constants based on TCP defaults.
+//TODO(rch): set to 2.
+const QuicTcpCongestionWindow kMinimumCongestionWindow = 1;
 const int64 kHybridStartLowWindow = 16;
-const QuicByteCount kMaxSegmentSize = kMaxPacketSize;
+const QuicByteCount kMaxSegmentSize = kDefaultTCPMSS;
 const QuicByteCount kDefaultReceiveWindow = 64000;
 const int64 kInitialCongestionWindow = 10;
 const int kMaxBurstLength = 3;
@@ -28,7 +34,7 @@ TcpCubicSender::TcpCubicSender(
       cubic_(clock),
       reno_(reno),
       congestion_window_count_(0),
-      receiver_congestion_window_(kDefaultReceiveWindow),
+      receive_window_(kDefaultReceiveWindow),
       last_received_accumulated_number_of_lost_packets_(0),
       bytes_in_flight_(0),
       update_end_sequence_number_(true),
@@ -42,6 +48,15 @@ TcpCubicSender::TcpCubicSender(
 }
 
 TcpCubicSender::~TcpCubicSender() {
+  UMA_HISTOGRAM_COUNTS("Net.QuicSession.FinalTcpCwnd", congestion_window_);
+}
+
+void TcpCubicSender::SetFromConfig(const QuicConfig& config, bool is_server) {
+  if (is_server) {
+    // Set the initial window size.
+    // Ignoring the max packet size and always using TCP's default MSS.
+    congestion_window_ = config.server_initial_congestion_window();
+  }
 }
 
 void TcpCubicSender::OnIncomingQuicCongestionFeedbackFrame(
@@ -59,12 +74,13 @@ void TcpCubicSender::OnIncomingQuicCongestionFeedbackFrame(
       OnIncomingLoss(feedback_receive_time);
     }
   }
-  receiver_congestion_window_ = feedback.tcp.receive_window;
+  receive_window_ = feedback.tcp.receive_window;
 }
 
 void TcpCubicSender::OnIncomingAck(
     QuicPacketSequenceNumber acked_sequence_number, QuicByteCount acked_bytes,
     QuicTime::Delta rtt) {
+  DCHECK_GE(bytes_in_flight_, acked_bytes);
   bytes_in_flight_ -= acked_bytes;
   CongestionAvoidance(acked_sequence_number);
   AckAccounting(rtt);
@@ -88,61 +104,68 @@ void TcpCubicSender::OnIncomingLoss(QuicTime /*ack_receive_time*/) {
   }
   // Sanity, make sure that we don't end up with an empty window.
   if (congestion_window_ == 0) {
-    congestion_window_ = 1;
+    congestion_window_ = kMinimumCongestionWindow;
   }
   DLOG(INFO) << "Incoming loss; congestion window:" << congestion_window_;
 }
 
-void TcpCubicSender::SentPacket(QuicTime /*sent_time*/,
-                                QuicPacketSequenceNumber sequence_number,
-                                QuicByteCount bytes,
-                                Retransmission is_retransmission) {
+bool TcpCubicSender::OnPacketSent(QuicTime /*sent_time*/,
+                                  QuicPacketSequenceNumber sequence_number,
+                                  QuicByteCount bytes,
+                                  TransmissionType transmission_type,
+                                  HasRetransmittableData is_retransmittable) {
+  // Only update bytes_in_flight_ for data packets.
+  if (is_retransmittable != HAS_RETRANSMITTABLE_DATA) {
+    return false;
+  }
+
   bytes_in_flight_ += bytes;
-  if (is_retransmission == NOT_RETRANSMISSION && update_end_sequence_number_) {
+  if (transmission_type == NOT_RETRANSMISSION && update_end_sequence_number_) {
     end_sequence_number_ = sequence_number;
-    if (AvailableCongestionWindow() == 0) {
+    if (AvailableSendWindow() == 0) {
       update_end_sequence_number_ = false;
       DLOG(INFO) << "Stop update end sequence number @" << sequence_number;
     }
   }
+  return true;
 }
 
-void TcpCubicSender::AbandoningPacket(QuicPacketSequenceNumber sequence_number,
+void TcpCubicSender::OnPacketAbandoned(QuicPacketSequenceNumber sequence_number,
                                       QuicByteCount abandoned_bytes) {
+  DCHECK_GE(bytes_in_flight_, abandoned_bytes);
   bytes_in_flight_ -= abandoned_bytes;
 }
 
 QuicTime::Delta TcpCubicSender::TimeUntilSend(
-    QuicTime now,
-    Retransmission is_retransmission,
+    QuicTime /* now */,
+    TransmissionType transmission_type,
     HasRetransmittableData has_retransmittable_data,
     IsHandshake handshake) {
-  if (is_retransmission == IS_RETRANSMISSION ||
+  if (transmission_type == NACK_RETRANSMISSION ||
       has_retransmittable_data == NO_RETRANSMITTABLE_DATA ||
       handshake == IS_HANDSHAKE) {
-    // For TCP we can always send a retransmission,  or an ACK immediately.
+    // For TCP we can always send an ACK immediately.
     // We also immediately send any handshake packet (CHLO, etc.).  We provide
-    // this  special dispensation for handshake messages in QUIC, although the
+    // this special dispensation for handshake messages in QUIC, although the
     // concept is not present in TCP.
     return QuicTime::Delta::Zero();
   }
-  if (AvailableCongestionWindow() == 0) {
+  if (AvailableSendWindow() == 0) {
     return QuicTime::Delta::Infinite();
   }
   return QuicTime::Delta::Zero();
 }
 
-QuicByteCount TcpCubicSender::AvailableCongestionWindow() {
-  if (bytes_in_flight_ > CongestionWindow()) {
+QuicByteCount TcpCubicSender::AvailableSendWindow() {
+  if (bytes_in_flight_ > SendWindow()) {
     return 0;
   }
-  return CongestionWindow() - bytes_in_flight_;
+  return SendWindow() - bytes_in_flight_;
 }
 
-QuicByteCount TcpCubicSender::CongestionWindow() {
-  // What's the current congestion window in bytes.
-  return std::min(receiver_congestion_window_,
-                  congestion_window_ * kMaxSegmentSize);
+QuicByteCount TcpCubicSender::SendWindow() {
+  // What's the current send window in bytes.
+  return std::min(receive_window_, GetCongestionWindow());
 }
 
 QuicBandwidth TcpCubicSender::BandwidthEstimate() {
@@ -164,6 +187,17 @@ QuicTime::Delta TcpCubicSender::RetransmissionDelay() {
       smoothed_rtt_.ToMicroseconds() + 4 * mean_deviation_.ToMicroseconds());
 }
 
+QuicByteCount TcpCubicSender::GetCongestionWindow() {
+  return congestion_window_ * kMaxSegmentSize;
+}
+
+void TcpCubicSender::SetCongestionWindow(QuicByteCount window) {
+  congestion_window_ = window / kMaxSegmentSize;
+  if (congestion_window_ < kMinimumCongestionWindow) {
+    congestion_window_ = kMinimumCongestionWindow;
+  }
+}
+
 void TcpCubicSender::Reset() {
   delay_min_ = QuicTime::Delta::Zero();
   hybrid_slow_start_.Restart();
@@ -180,7 +214,7 @@ bool TcpCubicSender::IsCwndLimited() const {
   return left <= tcp_max_burst;
 }
 
-// Called when we receive and ack. Normal TCP tracks how many packets one ack
+// Called when we receive an ack. Normal TCP tracks how many packets one ack
 // represents, but quic has a separate ack for each packet.
 void TcpCubicSender::CongestionAvoidance(QuicPacketSequenceNumber ack) {
   if (!IsCwndLimited()) {
@@ -195,7 +229,7 @@ void TcpCubicSender::CongestionAvoidance(QuicPacketSequenceNumber ack) {
     }
     // congestion_window_cnt is the number of acks since last change of snd_cwnd
     if (congestion_window_ < max_tcp_congestion_window_) {
-      // TCP slow start, exponentail growth, increase by one for each ACK.
+      // TCP slow start, exponential growth, increase by one for each ACK.
       congestion_window_++;
     }
     DLOG(INFO) << "Slow start; congestion window:" << congestion_window_;
@@ -211,8 +245,9 @@ void TcpCubicSender::CongestionAvoidance(QuicPacketSequenceNumber ack) {
         }
         DLOG(INFO) << "Reno; congestion window:" << congestion_window_;
       } else {
-        congestion_window_ = cubic_.CongestionWindowAfterAck(congestion_window_,
-                                                             delay_min_);
+        congestion_window_ = std::min(
+            max_tcp_congestion_window_,
+            cubic_.CongestionWindowAfterAck(congestion_window_, delay_min_));
         DLOG(INFO) << "Cubic; congestion window:" << congestion_window_;
       }
     }
@@ -227,6 +262,8 @@ void TcpCubicSender::OnTimeOut() {
 
 void TcpCubicSender::AckAccounting(QuicTime::Delta rtt) {
   if (rtt.IsInfinite() || rtt.IsZero()) {
+    DLOG(INFO) << "Ignoring rtt, because it's "
+               << (rtt.IsZero() ? "Zero" : "Infinite");
     return;
   }
   // RTT can't be negative.
@@ -251,7 +288,8 @@ void TcpCubicSender::AckAccounting(QuicTime::Delta rtt) {
     smoothed_rtt_ = QuicTime::Delta::FromMicroseconds(
         kOneMinusAlpha * smoothed_rtt_.ToMicroseconds() +
         kAlpha * rtt.ToMicroseconds());
-    DLOG(INFO) << "Cubic; mean_deviation_:" << mean_deviation_.ToMicroseconds();
+    DLOG(INFO) << "Cubic; smoothed_rtt_:" << smoothed_rtt_.ToMicroseconds()
+               << " mean_deviation_:" << mean_deviation_.ToMicroseconds();
   }
 
   // Hybrid start triggers when cwnd is larger than some threshold.

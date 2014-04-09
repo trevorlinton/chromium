@@ -10,7 +10,6 @@
 #include "chrome/browser/extensions/extension_system.h"
 #include "chrome/browser/extensions/process_map.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/blocked_content/blocked_content_tab_helper.h"
 #include "chrome/browser/ui/blocked_content/popup_blocker_tab_helper.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -588,15 +587,6 @@ IN_PROC_BROWSER_TEST_F(AppApiTest, ReloadIntoAppProcessWithJavaScript) {
       contents->GetRenderProcessHost()->GetID()));
 }
 
-namespace {
-
-void RenderViewHostCreated(std::vector<content::RenderViewHost*>* rvh_vector,
-                           content::RenderViewHost* rvh) {
-  rvh_vector->push_back(rvh);
-}
-
-}  // namespace
-
 // Tests that if we have a non-app process (path3/container.html) that has an
 // iframe with  a URL in the app's extent (path1/iframe.html), then opening a
 // link from that iframe to a new window to a URL in the app's extent (path1/
@@ -622,20 +612,21 @@ IN_PROC_BROWSER_TEST_F(AppApiTest, OpenAppFromIframe) {
       LoadExtension(test_data_dir_.AppendASCII("app_process"));
   ASSERT_TRUE(app);
 
-  std::vector<content::RenderViewHost*> rvh_vector;
-  content::RenderViewHost::CreatedCallback rvh_callback(
-      base::Bind(&RenderViewHostCreated, &rvh_vector));
-  content::RenderViewHost::AddCreatedCallback(rvh_callback);
   ui_test_utils::NavigateToURL(browser(),
                                base_url.Resolve("path3/container.html"));
-  content::RenderViewHost::RemoveCreatedCallback(rvh_callback);
   EXPECT_FALSE(process_map->Contains(
       browser()->tab_strip_model()->GetWebContentsAt(0)->
           GetRenderProcessHost()->GetID()));
 
+  const BrowserList* active_browser_list =
+      BrowserList::GetInstance(chrome::GetActiveDesktop());
+  EXPECT_EQ(2U, active_browser_list->size());
+  content::WebContents* popup_contents =
+      active_browser_list->get(1)->tab_strip_model()->GetActiveWebContents();
+  content::WaitForLoadStop(popup_contents);
+
   // Popup window should be in the app's process.
-  ASSERT_EQ(3U, rvh_vector.size());
-  RenderViewHost* popup_host = rvh_vector[2];
+  RenderViewHost* popup_host = popup_contents->GetRenderViewHost();
   EXPECT_TRUE(process_map->Contains(popup_host->GetProcess()->GetID()));
 }
 
@@ -660,24 +651,16 @@ IN_PROC_BROWSER_TEST_F(BlockedAppApiTest, MAYBE_OpenAppFromIframe) {
       browser(), GetTestBaseURL("app_process").Resolve("path3/container.html"));
 
   WebContents* tab = browser()->tab_strip_model()->GetActiveWebContents();
-  BlockedContentTabHelper* blocked_content_tab_helper =
-      BlockedContentTabHelper::FromWebContents(tab);
   PopupBlockerTabHelper* popup_blocker_tab_helper =
       PopupBlockerTabHelper::FromWebContents(tab);
-  if (!blocked_content_tab_helper->GetBlockedContentsCount() &&
-      (!popup_blocker_tab_helper ||
-       !popup_blocker_tab_helper->GetBlockedPopupsCount())) {
+  if (!popup_blocker_tab_helper->GetBlockedPopupsCount()) {
     content::WindowedNotificationObserver observer(
         chrome::NOTIFICATION_WEB_CONTENT_SETTINGS_CHANGED,
         content::NotificationService::AllSources());
     observer.Wait();
   }
 
-  EXPECT_EQ(1u,
-            blocked_content_tab_helper->GetBlockedContentsCount() +
-                (popup_blocker_tab_helper
-                     ? popup_blocker_tab_helper->GetBlockedPopupsCount()
-                     : 0));
+  EXPECT_EQ(1u, popup_blocker_tab_helper->GetBlockedPopupsCount());
 }
 
 // Tests that if an extension launches an app via chrome.tabs.create with an URL
@@ -708,10 +691,7 @@ IN_PROC_BROWSER_TEST_F(AppApiTest, ServerRedirectToAppFromExtension) {
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
 
   // Wait for app tab to be created and loaded.
-  test_navigation_observer.WaitForObservation(
-      base::Bind(&content::RunMessageLoop),
-      base::Bind(&base::MessageLoop::Quit,
-                 base::Unretained(base::MessageLoopForUI::current())));
+  test_navigation_observer.Wait();
 
   // App has loaded, and chrome.app.isInstalled should be true.
   bool is_installed = false;
@@ -750,10 +730,7 @@ IN_PROC_BROWSER_TEST_F(AppApiTest, ClientRedirectToAppFromExtension) {
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
 
   // Wait for app tab to be created and loaded.
-  test_navigation_observer.WaitForObservation(
-      base::Bind(&content::RunMessageLoop),
-      base::Bind(&base::MessageLoop::Quit,
-                 base::Unretained(base::MessageLoopForUI::current())));
+  test_navigation_observer.Wait();
 
   // App has loaded, and chrome.app.isInstalled should be true.
   bool is_installed = false;
@@ -785,20 +762,21 @@ IN_PROC_BROWSER_TEST_F(AppApiTest, OpenWebPopupFromWebIframe) {
       LoadExtension(test_data_dir_.AppendASCII("app_process"));
   ASSERT_TRUE(app);
 
-  std::vector<content::RenderViewHost*> rvh_vector;
-  content::RenderViewHost::CreatedCallback rvh_callback(
-      base::Bind(&RenderViewHostCreated, &rvh_vector));
-  content::RenderViewHost::AddCreatedCallback(rvh_callback);
   ui_test_utils::NavigateToURL(browser(),
                                base_url.Resolve("path1/container.html"));
-  content::RenderViewHost::RemoveCreatedCallback(rvh_callback);
   content::RenderProcessHost* process =
       browser()->tab_strip_model()->GetWebContentsAt(0)->GetRenderProcessHost();
   EXPECT_TRUE(process_map->Contains(process->GetID()));
 
   // Popup window should be in the app's process.
-  ASSERT_EQ(2U, rvh_vector.size());
-  RenderViewHost* popup_host = rvh_vector[1];
+  const BrowserList* active_browser_list =
+      BrowserList::GetInstance(chrome::GetActiveDesktop());
+  EXPECT_EQ(2U, active_browser_list->size());
+  content::WebContents* popup_contents =
+      active_browser_list->get(1)->tab_strip_model()->GetActiveWebContents();
+  content::WaitForLoadStop(popup_contents);
+
+  RenderViewHost* popup_host = popup_contents->GetRenderViewHost();
   EXPECT_EQ(process, popup_host->GetProcess());
 }
 

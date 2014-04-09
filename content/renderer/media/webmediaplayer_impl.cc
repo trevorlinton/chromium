@@ -13,6 +13,7 @@
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/debug/crash_logging.h"
+#include "base/debug/trace_event.h"
 #include "base/message_loop/message_loop_proxy.h"
 #include "base/metrics/histogram.h"
 #include "base/strings/string_number_conversions.h"
@@ -27,7 +28,7 @@
 #include "content/renderer/media/webmediaplayer_delegate.h"
 #include "content/renderer/media/webmediaplayer_params.h"
 #include "content/renderer/media/webmediaplayer_util.h"
-#include "content/renderer/media/webmediasourceclient_impl.h"
+#include "content/renderer/media/webmediasource_impl.h"
 #include "content/renderer/pepper/pepper_webplugin_impl.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "media/audio/null_audio_sink.h"
@@ -43,16 +44,17 @@
 #include "media/filters/ffmpeg_audio_decoder.h"
 #include "media/filters/ffmpeg_demuxer.h"
 #include "media/filters/ffmpeg_video_decoder.h"
+#include "media/filters/gpu_video_accelerator_factories.h"
 #include "media/filters/gpu_video_decoder.h"
-#include "media/filters/gpu_video_decoder_factories.h"
 #include "media/filters/opus_audio_decoder.h"
 #include "media/filters/video_renderer_base.h"
 #include "media/filters/vpx_video_decoder.h"
+#include "third_party/WebKit/public/platform/WebMediaSource.h"
 #include "third_party/WebKit/public/platform/WebRect.h"
 #include "third_party/WebKit/public/platform/WebSize.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/web/WebMediaSource.h"
+#include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebRuntimeFeatures.h"
 #include "third_party/WebKit/public/web/WebView.h"
 #include "v8/include/v8.h"
@@ -127,11 +129,13 @@ static void LogMediaSourceError(const scoped_refptr<media::MediaLog>& media_log,
 }
 
 WebMediaPlayerImpl::WebMediaPlayerImpl(
+    content::RenderView* render_view,
     WebKit::WebFrame* frame,
     WebKit::WebMediaPlayerClient* client,
     base::WeakPtr<WebMediaPlayerDelegate> delegate,
     const WebMediaPlayerParams& params)
-    : frame_(frame),
+    : content::RenderViewObserver(render_view),
+      frame_(frame),
       network_state_(WebMediaPlayer::NetworkStateEmpty),
       ready_state_(WebMediaPlayer::ReadyStateHaveNothing),
       main_loop_(base::MessageLoopProxy::current()),
@@ -152,6 +156,8 @@ WebMediaPlayerImpl::WebMediaPlayerImpl(
       supports_save_(true),
       starting_(false),
       chunk_demuxer_(NULL),
+      current_frame_painted_(false),
+      frames_dropped_before_paint_(0),
       pending_repaint_(false),
       pending_size_change_(false),
       video_frame_provider_client_(NULL),
@@ -160,6 +166,11 @@ WebMediaPlayerImpl::WebMediaPlayerImpl(
       media_log_->CreateEvent(media::MediaLogEvent::WEBMEDIAPLAYER_CREATED));
 
   pipeline_.reset(new media::Pipeline(media_loop_, media_log_.get()));
+
+  // |gpu_factories_| requires that its entry points be called on its
+  // |GetMessageLoop()|.  Since |pipeline_| will own decoders created from the
+  // factories, require that their message loops are identical.
+  DCHECK(!gpu_factories_ || (gpu_factories_->GetMessageLoop() == media_loop_));
 
   // Let V8 know we started new thread if we did not do it yet.
   // Made separate task to avoid deletion of player currently being created.
@@ -172,10 +183,7 @@ WebMediaPlayerImpl::WebMediaPlayerImpl(
       base::Bind(&WebMediaPlayerImpl::IncrementExternallyAllocatedMemory,
                  AsWeakPtr()));
 
-  // Also we want to be notified of |main_loop_| destruction.
-  base::MessageLoop::current()->AddDestructionObserver(this);
-
-  if (WebKit::WebRuntimeFeatures::isLegacyEncryptedMediaEnabled()) {
+  if (WebKit::WebRuntimeFeatures::isPrefixedEncryptedMediaEnabled()) {
     decryptor_.reset(new ProxyDecryptor(
 #if defined(ENABLE_PEPPER_CDMS)
         client,
@@ -205,11 +213,6 @@ WebMediaPlayerImpl::~WebMediaPlayerImpl() {
     delegate_->PlayerGone(this);
 
   Destroy();
-
-  // Remove destruction observer if we're being destroyed but the main thread is
-  // still running.
-  if (base::MessageLoop::current())
-    base::MessageLoop::current()->RemoveDestructionObserver(this);
 }
 
 namespace {
@@ -246,24 +249,18 @@ URLSchemeForHistogram URLScheme(const GURL& url) {
 
 }  // anonymous namespace
 
-void WebMediaPlayerImpl::load(const WebKit::WebURL& url, CORSMode cors_mode) {
-  load(url, NULL, cors_mode);
-}
-
-void WebMediaPlayerImpl::load(const WebKit::WebURL& url,
-                              WebKit::WebMediaSource* media_source,
+void WebMediaPlayerImpl::load(LoadType load_type, const WebKit::WebURL& url,
                               CORSMode cors_mode) {
   if (!defer_load_cb_.is_null()) {
     defer_load_cb_.Run(base::Bind(
-        &WebMediaPlayerImpl::DoLoad, AsWeakPtr(), url, media_source,
-        cors_mode));
+        &WebMediaPlayerImpl::DoLoad, AsWeakPtr(), load_type, url, cors_mode));
     return;
   }
-  DoLoad(url, media_source, cors_mode);
+  DoLoad(load_type, url, cors_mode);
 }
 
-void WebMediaPlayerImpl::DoLoad(const WebKit::WebURL& url,
-                                WebKit::WebMediaSource* media_source,
+void WebMediaPlayerImpl::DoLoad(LoadType load_type,
+                                const WebKit::WebURL& url,
                                 CORSMode cors_mode) {
   DCHECK(main_loop_->BelongsToCurrentThread());
 
@@ -272,6 +269,8 @@ void WebMediaPlayerImpl::DoLoad(const WebKit::WebURL& url,
 
   // Set subresource URL for crash reporting.
   base::debug::SetCrashKeyValue("subresource_url", gurl.spec());
+
+  load_type_ = load_type;
 
   // Handle any volume/preload changes that occurred before load().
   setVolume(GetClient()->volume());
@@ -282,9 +281,9 @@ void WebMediaPlayerImpl::DoLoad(const WebKit::WebURL& url,
   media_log_->AddEvent(media_log_->CreateLoadEvent(url.spec()));
 
   // Media source pipelines can start immediately.
-  if (media_source) {
+  if (load_type == LoadTypeMediaSource) {
     supports_save_ = false;
-    StartPipeline(media_source);
+    StartPipeline();
     return;
   }
 
@@ -300,7 +299,7 @@ void WebMediaPlayerImpl::DoLoad(const WebKit::WebURL& url,
           &WebMediaPlayerImpl::DataSourceInitialized,
           AsWeakPtr(), gurl));
 
-  is_local_source_ = !gurl.SchemeIs("http") && !gurl.SchemeIs("https");
+  is_local_source_ = !gurl.SchemeIsHTTPOrHTTPS();
 }
 
 void WebMediaPlayerImpl::play() {
@@ -308,6 +307,8 @@ void WebMediaPlayerImpl::play() {
 
   paused_ = false;
   pipeline_->SetPlaybackRate(playback_rate_);
+  if (data_source_)
+    data_source_->MediaIsPlaying();
 
   media_log_->AddEvent(media_log_->CreateEvent(media::MediaLogEvent::PLAY));
 
@@ -320,6 +321,8 @@ void WebMediaPlayerImpl::pause() {
 
   paused_ = true;
   pipeline_->SetPlaybackRate(0.0f);
+  if (data_source_)
+    data_source_->MediaIsPaused();
   paused_time_ = pipeline_->GetMediaTime();
 
   media_log_->AddEvent(media_log_->CreateEvent(media::MediaLogEvent::PAUSE));
@@ -387,6 +390,8 @@ void WebMediaPlayerImpl::setRate(double rate) {
   playback_rate_ = rate;
   if (!paused_) {
     pipeline_->SetPlaybackRate(rate);
+    if (data_source_)
+      data_source_->MediaPlaybackRateChanged(rate);
   }
 }
 
@@ -518,8 +523,10 @@ void WebMediaPlayerImpl::paint(WebCanvas* canvas,
   scoped_refptr<media::VideoFrame> video_frame;
   {
     base::AutoLock auto_lock(lock_);
+    DoneWaitingForPaint(true);
     video_frame = current_frame_;
   }
+  TRACE_EVENT0("media", "WebMediaPlayerImpl:paint");
   gfx::Rect gfx_rect(rect);
   skcanvas_video_renderer_.Paint(video_frame.get(), canvas, gfx_rect, alpha);
 }
@@ -551,7 +558,12 @@ unsigned WebMediaPlayerImpl::droppedFrameCount() const {
   DCHECK(main_loop_->BelongsToCurrentThread());
 
   media::PipelineStatistics stats = pipeline_->GetStatistics();
-  return stats.video_frames_dropped;
+
+  base::AutoLock auto_lock(lock_);
+  unsigned frames_dropped =
+      stats.video_frames_dropped + frames_dropped_before_paint_;
+  DCHECK_LE(frames_dropped, stats.video_frames_decoded);
+  return frames_dropped;
 }
 
 unsigned WebMediaPlayerImpl::audioDecodedByteCount() const {
@@ -579,6 +591,9 @@ void WebMediaPlayerImpl::SetVideoFrameProviderClient(
 
 scoped_refptr<media::VideoFrame> WebMediaPlayerImpl::GetCurrentFrame() {
   base::AutoLock auto_lock(lock_);
+  DoneWaitingForPaint(true);
+  TRACE_EVENT_ASYNC_BEGIN0(
+      "media", "WebMediaPlayerImpl:compositing", this);
   return current_frame_;
 }
 
@@ -589,6 +604,7 @@ void WebMediaPlayerImpl::PutCurrentFrame(
     DCHECK(frame_->view()->isAcceleratedCompositingActive());
     UMA_HISTOGRAM_BOOLEAN("Media.AcceleratedCompositingActive", true);
   }
+  TRACE_EVENT_ASYNC_END0("media", "WebMediaPlayerImpl:compositing", this);
 }
 
 bool WebMediaPlayerImpl::copyVideoTextureToPlatformTexture(
@@ -605,12 +621,26 @@ bool WebMediaPlayerImpl::copyVideoTextureToPlatformTexture(
     video_frame = current_frame_;
   }
 
-  if (!video_frame.get())
+  TRACE_EVENT0("media", "WebMediaPlayerImpl:copyVideoTextureToPlatformTexture");
+
+  if (!video_frame)
     return false;
   if (video_frame->format() != media::VideoFrame::NATIVE_TEXTURE)
     return false;
   if (video_frame->texture_target() != GL_TEXTURE_2D)
     return false;
+
+  // Since this method changes which texture is bound to the TEXTURE_2D target,
+  // ideally it would restore the currently-bound texture before returning.
+  // The cost of getIntegerv is sufficiently high, however, that we want to
+  // avoid it in user builds. As a result assume (below) that |texture| is
+  // bound when this method is called, and only verify this fact when
+  // DCHECK_IS_ON.
+  if (DCHECK_IS_ON()) {
+    GLint bound_texture = 0;
+    web_graphics_context->getIntegerv(GL_TEXTURE_BINDING_2D, &bound_texture);
+    DCHECK_EQ(static_cast<GLuint>(bound_texture), texture);
+  }
 
   scoped_refptr<media::VideoFrame::MailboxHolder> mailbox_holder =
       video_frame->texture_mailbox();
@@ -640,6 +670,9 @@ bool WebMediaPlayerImpl::copyVideoTextureToPlatformTexture(
   web_graphics_context->pixelStorei(GL_UNPACK_FLIP_Y_CHROMIUM, false);
   web_graphics_context->pixelStorei(GL_UNPACK_PREMULTIPLY_ALPHA_CHROMIUM,
                                     false);
+
+  // Restore the state for TEXTURE_2D binding point as mentioned above.
+  web_graphics_context->bindTexture(GL_TEXTURE_2D, texture);
 
   web_graphics_context->deleteTexture(source_texture);
 
@@ -727,12 +760,12 @@ WebMediaPlayerImpl::GenerateKeyRequestInternal(
            << std::string(reinterpret_cast<const char*>(init_data),
                           static_cast<size_t>(init_data_length));
 
-  if (!IsSupportedKeySystem(key_system))
+  if (!IsConcreteSupportedKeySystem(key_system))
     return WebMediaPlayer::MediaKeyExceptionKeySystemNotSupported;
 
   // We do not support run-time switching between key systems for now.
   if (current_key_system_.isEmpty()) {
-    if (!decryptor_->InitializeCDM(key_system.utf8()))
+    if (!decryptor_->InitializeCDM(key_system.utf8(), frame_->document().url()))
       return WebMediaPlayer::MediaKeyExceptionKeySystemNotSupported;
     current_key_system_ = key_system;
   }
@@ -782,7 +815,7 @@ WebMediaPlayer::MediaKeyException WebMediaPlayerImpl::AddKeyInternal(
            << " [" << session_id.utf8().data() << "]";
 
 
-  if (!IsSupportedKeySystem(key_system))
+  if (!IsConcreteSupportedKeySystem(key_system))
     return WebMediaPlayer::MediaKeyExceptionKeySystemNotSupported;
 
   if (current_key_system_.isEmpty() || key_system != current_key_system_)
@@ -806,7 +839,7 @@ WebMediaPlayer::MediaKeyException
 WebMediaPlayerImpl::CancelKeyRequestInternal(
     const WebString& key_system,
     const WebString& session_id) {
-  if (!IsSupportedKeySystem(key_system))
+  if (!IsConcreteSupportedKeySystem(key_system))
     return WebMediaPlayer::MediaKeyExceptionKeySystemNotSupported;
 
   if (current_key_system_.isEmpty() || key_system != current_key_system_)
@@ -816,23 +849,31 @@ WebMediaPlayerImpl::CancelKeyRequestInternal(
   return WebMediaPlayer::MediaKeyExceptionNoError;
 }
 
-void WebMediaPlayerImpl::WillDestroyCurrentMessageLoop() {
+void WebMediaPlayerImpl::OnDestruct() {
   Destroy();
 }
 
 void WebMediaPlayerImpl::Repaint() {
   DCHECK(main_loop_->BelongsToCurrentThread());
+  TRACE_EVENT0("media", "WebMediaPlayerImpl:repaint");
 
   bool size_changed = false;
   {
     base::AutoLock auto_lock(lock_);
     std::swap(pending_size_change_, size_changed);
-    pending_repaint_ = false;
+    if (pending_repaint_) {
+      TRACE_EVENT_ASYNC_END0(
+          "media", "WebMediaPlayerImpl:repaintPending", this);
+      pending_repaint_ = false;
+    }
   }
 
-  if (size_changed)
+  if (size_changed) {
+    TRACE_EVENT0("media", "WebMediaPlayerImpl:clientSizeChanged");
     GetClient()->sizeChanged();
+  }
 
+  TRACE_EVENT0("media", "WebMediaPlayerImpl:clientRepaint");
   GetClient()->repaint();
 }
 
@@ -912,10 +953,9 @@ void WebMediaPlayerImpl::OnPipelineBufferingState(
   Repaint();
 }
 
-void WebMediaPlayerImpl::OnDemuxerOpened(
-    scoped_ptr<WebKit::WebMediaSource> media_source) {
+void WebMediaPlayerImpl::OnDemuxerOpened() {
   DCHECK(main_loop_->BelongsToCurrentThread());
-  media_source->open(new WebMediaSourceClientImpl(
+  GetClient()->mediaSourceOpened(new WebMediaSourceImpl(
       chunk_demuxer_, base::Bind(&LogMediaSourceError, media_log_)));
 }
 
@@ -926,10 +966,8 @@ void WebMediaPlayerImpl::OnKeyAdded(const std::string& session_id) {
                         WebString::fromUTF8(session_id));
 }
 
-void WebMediaPlayerImpl::OnNeedKey(const std::string& session_id,
-                                   const std::string& type,
-                                   scoped_ptr<uint8[]> init_data,
-                                   int init_data_size) {
+void WebMediaPlayerImpl::OnNeedKey(const std::string& type,
+                                   const std::vector<uint8>& init_data) {
   DCHECK(main_loop_->BelongsToCurrentThread());
 
   // Do not fire NeedKey event if encrypted media is not enabled.
@@ -942,10 +980,11 @@ void WebMediaPlayerImpl::OnNeedKey(const std::string& session_id,
   if (init_data_type_.empty())
     init_data_type_ = type;
 
+  const uint8* init_data_ptr = init_data.empty() ? NULL : &init_data[0];
   GetClient()->keyNeeded(WebString(),
-                         WebString::fromUTF8(session_id),
-                         init_data.get(),
-                         init_data_size);
+                         WebString(),
+                         init_data_ptr,
+                         init_data.size());
 }
 
 scoped_ptr<media::TextTrack>
@@ -1011,7 +1050,7 @@ void WebMediaPlayerImpl::DataSourceInitialized(const GURL& gurl, bool success) {
     return;
   }
 
-  StartPipeline(NULL);
+  StartPipeline();
 }
 
 void WebMediaPlayerImpl::NotifyDownloading(bool is_downloading) {
@@ -1025,21 +1064,22 @@ void WebMediaPlayerImpl::NotifyDownloading(bool is_downloading) {
           "is_downloading_data", is_downloading));
 }
 
-void WebMediaPlayerImpl::StartPipeline(WebKit::WebMediaSource* media_source) {
+void WebMediaPlayerImpl::StartPipeline() {
   const CommandLine* cmd_line = CommandLine::ForCurrentProcess();
   bool increase_preroll_on_underflow = true;
 
   // Keep track if this is a MSE or non-MSE playback.
-  UMA_HISTOGRAM_BOOLEAN("Media.MSE.Playback", (media_source != NULL));
+  UMA_HISTOGRAM_BOOLEAN("Media.MSE.Playback",
+                        (load_type_ == LoadTypeMediaSource));
 
   // Figure out which demuxer to use.
-  if (!media_source) {
+  if (load_type_ != LoadTypeMediaSource) {
     DCHECK(!chunk_demuxer_);
     DCHECK(data_source_);
 
     demuxer_.reset(new media::FFmpegDemuxer(
         media_loop_, data_source_.get(),
-        BIND_TO_RENDER_LOOP_1(&WebMediaPlayerImpl::OnNeedKey, ""),
+        BIND_TO_RENDER_LOOP(&WebMediaPlayerImpl::OnNeedKey),
         media_log_));
   } else {
     DCHECK(!chunk_demuxer_);
@@ -1052,11 +1092,9 @@ void WebMediaPlayerImpl::StartPipeline(WebKit::WebMediaSource* media_source) {
           base::Bind(&WebMediaPlayerImpl::OnTextTrack, base::Unretained(this));
     }
 
-    scoped_ptr<WebKit::WebMediaSource> ms(media_source);
     chunk_demuxer_ = new media::ChunkDemuxer(
-        BIND_TO_RENDER_LOOP_1(&WebMediaPlayerImpl::OnDemuxerOpened,
-                              base::Passed(&ms)),
-        BIND_TO_RENDER_LOOP_1(&WebMediaPlayerImpl::OnNeedKey, ""),
+        BIND_TO_RENDER_LOOP(&WebMediaPlayerImpl::OnDemuxerOpened),
+        BIND_TO_RENDER_LOOP(&WebMediaPlayerImpl::OnNeedKey),
         add_text_track_cb,
         base::Bind(&LogMediaSourceError, media_log_));
     demuxer_.reset(chunk_demuxer_);
@@ -1104,8 +1142,10 @@ void WebMediaPlayerImpl::StartPipeline(WebKit::WebMediaSource* media_source) {
   // Create our video decoders and renderer.
   ScopedVector<media::VideoDecoder> video_decoders;
 
-  if (gpu_factories_.get())
-    video_decoders.push_back(new media::GpuVideoDecoder(gpu_factories_));
+  if (gpu_factories_.get()) {
+    video_decoders.push_back(
+        new media::GpuVideoDecoder(gpu_factories_, media_log_));
+  }
 
   // TODO(phajdan.jr): Remove ifdefs when libvpx with vp9 support is released
   // (http://crbug.com/174287) .
@@ -1231,20 +1271,51 @@ void WebMediaPlayerImpl::FrameReady(
     const scoped_refptr<media::VideoFrame>& frame) {
   base::AutoLock auto_lock(lock_);
 
-  if (current_frame_.get() &&
+  if (current_frame_ &&
       current_frame_->natural_size() != frame->natural_size() &&
       !pending_size_change_) {
     pending_size_change_ = true;
   }
 
+  DoneWaitingForPaint(false);
+
   current_frame_ = frame;
+  current_frame_painted_ = false;
+  TRACE_EVENT_FLOW_BEGIN0("media", "WebMediaPlayerImpl:waitingForPaint", this);
 
   if (pending_repaint_)
     return;
 
+  TRACE_EVENT_ASYNC_BEGIN0("media", "WebMediaPlayerImpl:repaintPending", this);
   pending_repaint_ = true;
   main_loop_->PostTask(FROM_HERE, base::Bind(
       &WebMediaPlayerImpl::Repaint, AsWeakPtr()));
+}
+
+void WebMediaPlayerImpl::DoneWaitingForPaint(bool painting_frame) {
+  lock_.AssertAcquired();
+  if (!current_frame_ || current_frame_painted_)
+    return;
+
+  TRACE_EVENT_FLOW_END0("media", "WebMediaPlayerImpl:waitingForPaint", this);
+
+  if (painting_frame) {
+    current_frame_painted_ = true;
+    return;
+  }
+
+  // The frame wasn't painted, but we aren't waiting for a Repaint() call so
+  // assume that the frame wasn't painted because the video wasn't visible.
+  if (!pending_repaint_)
+    return;
+
+  // The |current_frame_| wasn't painted, it is being replaced, and we haven't
+  // even gotten the chance to request a repaint for it yet. Mark it as dropped.
+  TRACE_EVENT0("media", "WebMediaPlayerImpl:frameDropped");
+  DVLOG(1) << "Frame dropped before being painted: "
+           << current_frame_->GetTimestamp().InSecondsF();
+  if (frames_dropped_before_paint_ < kuint32max)
+    frames_dropped_before_paint_++;
 }
 
 }  // namespace content

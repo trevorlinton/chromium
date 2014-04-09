@@ -21,9 +21,8 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/policy/device_policy_cros_browser_test.h"
 #include "chrome/browser/chromeos/policy/network_configuration_updater.h"
-#include "chrome/browser/policy/profile_policy_connector.h"
-#include "chrome/browser/policy/profile_policy_connector_factory.h"
 #include "chromeos/network/onc/onc_test_utils.h"
 #include "crypto/nss_util.h"
 #endif
@@ -39,6 +38,9 @@ class CertificateManagerBrowserTest : public options::OptionsUIBrowserTest {
 
  protected:
   virtual void SetUpInProcessBrowserTestFixture() OVERRIDE {
+#if defined(OS_CHROMEOS)
+    device_policy_test_helper_.MarkAsEnterpriseOwned();
+#endif
     // Setup the policy provider for injecting certs through ONC policy.
     EXPECT_CALL(provider_, IsInitializationComplete(_))
         .WillRepeatedly(Return(true));
@@ -47,16 +49,6 @@ class CertificateManagerBrowserTest : public options::OptionsUIBrowserTest {
   }
 
   virtual void SetUpOnMainThread() OVERRIDE {
-#if defined(OS_CHROMEOS)
-    Profile* profile = browser()->profile();
-    policy::ProfilePolicyConnector* connector =
-        policy::ProfilePolicyConnectorFactory::GetForProfile(profile);
-
-    // Enable web trust certs from policy.
-    g_browser_process->browser_policy_connector()->
-        network_configuration_updater()->SetUserPolicyService(
-            true, "", connector->policy_service());
-#endif
     content::RunAllPendingInMessageLoop();
   }
 
@@ -95,6 +87,7 @@ class CertificateManagerBrowserTest : public options::OptionsUIBrowserTest {
 
   policy::MockConfigurationPolicyProvider provider_;
 #if defined(OS_CHROMEOS)
+  policy::DevicePolicyCrosTestHelper device_policy_test_helper_;
   crypto::ScopedTestNSSDB test_nssdb_;
 #endif
 };

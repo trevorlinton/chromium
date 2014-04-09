@@ -10,6 +10,8 @@
 #include "tools/gn/label.h"
 
 class Config;
+class ItemNode;
+class Settings;
 class Target;
 class Toolchain;
 
@@ -17,10 +19,21 @@ class Toolchain;
 // graph.
 class Item {
  public:
-  Item(const Label& label);
+  Item(const Settings* settings, const Label& label);
   virtual ~Item();
 
+  const Settings* settings() const { return settings_; }
+
+  // This is guaranteed to never change after construction so this can be
+  // accessed from any thread with no locking once the item is constructed.
   const Label& label() const { return label_; }
+
+  // The Item and the ItemNode make a pair. This will be set when the ItemNode
+  // is constructed that owns this Item. The ItemNode should only be
+  // dereferenced with the ItemTree lock held.
+  ItemNode* item_node() { return item_node_; }
+  const ItemNode* item_node() const { return item_node_; }
+  void set_item_node(ItemNode* in) { item_node_ = in; }
 
   // Manual RTTI.
   virtual Config* AsConfig();
@@ -39,7 +52,10 @@ class Item {
   virtual void OnResolved() {}
 
  private:
+  const Settings* settings_;
   Label label_;
+
+  ItemNode* item_node_;
 };
 
 #endif  // TOOLS_GN_ITEM_H_

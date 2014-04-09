@@ -36,10 +36,12 @@ class VideoFrameStreamTest : public testing::TestWithParam<bool> {
         decoder_(new FakeVideoDecoder(kDecodingDelay)),
         is_initialized_(false),
         num_decoded_frames_(0),
+        pending_initialize_(false),
         pending_read_(false),
         pending_reset_(false),
         pending_stop_(false),
-        total_bytes_decoded_(0) {
+        total_bytes_decoded_(0),
+        has_no_key_(false) {
     ScopedVector<VideoDecoder> decoders;
     decoders.push_back(decoder_);
 
@@ -48,9 +50,6 @@ class VideoFrameStreamTest : public testing::TestWithParam<bool> {
         decoders.Pass(),
         base::Bind(&VideoFrameStreamTest::SetDecryptorReadyCallback,
                    base::Unretained(this))));
-
-    EXPECT_CALL(*this, SetDecryptorReadyCallback(_))
-        .WillRepeatedly(RunCallback<0>(decryptor_.get()));
 
     // Decryptor can only decrypt (not decrypt-and-decode) so that
     // DecryptingDemuxerStream will be used.
@@ -61,13 +60,10 @@ class VideoFrameStreamTest : public testing::TestWithParam<bool> {
   }
 
   ~VideoFrameStreamTest() {
+    DCHECK(!pending_initialize_);
     DCHECK(!pending_read_);
     DCHECK(!pending_reset_);
     DCHECK(!pending_stop_);
-
-    // Check that the pipeline statistics callback was fired correctly.
-    if (decoder_)
-      EXPECT_EQ(decoder_->total_bytes_decoded(), total_bytes_decoded_);
 
     if (is_initialized_)
       Stop();
@@ -75,10 +71,30 @@ class VideoFrameStreamTest : public testing::TestWithParam<bool> {
   }
 
   MOCK_METHOD1(SetDecryptorReadyCallback, void(const media::DecryptorReadyCB&));
-  MOCK_METHOD2(OnInitialized, void(bool, bool));
 
   void OnStatistics(const PipelineStatistics& statistics) {
     total_bytes_decoded_ += statistics.video_bytes_decoded;
+  }
+
+  void OnInitialized(bool success, bool has_alpha) {
+    DCHECK(!pending_read_);
+    DCHECK(!pending_reset_);
+    DCHECK(pending_initialize_);
+    pending_initialize_ = false;
+
+    is_initialized_ = success;
+    if (!success)
+      decoder_ = NULL;
+  }
+
+  void InitializeVideoFrameStream() {
+    pending_initialize_ = true;
+    video_frame_stream_->Initialize(
+        demuxer_stream_.get(),
+        base::Bind(&VideoFrameStreamTest::OnStatistics, base::Unretained(this)),
+        base::Bind(&VideoFrameStreamTest::OnInitialized,
+                   base::Unretained(this)));
+    message_loop_.RunUntilIdle();
   }
 
   // Fake Decrypt() function used by DecryptingDemuxerStream. It does nothing
@@ -86,6 +102,11 @@ class VideoFrameStreamTest : public testing::TestWithParam<bool> {
   void Decrypt(Decryptor::StreamType stream_type,
                const scoped_refptr<DecoderBuffer>& encrypted,
                const Decryptor::DecryptCB& decrypt_cb) {
+    if (has_no_key_) {
+      decrypt_cb.Run(Decryptor::kNoKey, NULL);
+      return;
+    }
+
     DCHECK_EQ(stream_type, Decryptor::kVideo);
     scoped_refptr<DecoderBuffer> decrypted = DecoderBuffer::CopyFrom(
         encrypted->data(), encrypted->data_size());
@@ -101,7 +122,7 @@ class VideoFrameStreamTest : public testing::TestWithParam<bool> {
     // TODO(xhwang): Add test cases where the fake decoder returns error or
     // the fake demuxer aborts demuxer read.
     ASSERT_TRUE(status == VideoFrameStream::OK ||
-                status == VideoFrameStream::ABORTED);
+                status == VideoFrameStream::ABORTED) << status;
     frame_read_ = frame;
     if (frame.get() && !frame->IsEndOfStream())
       num_decoded_frames_++;
@@ -120,15 +141,20 @@ class VideoFrameStreamTest : public testing::TestWithParam<bool> {
     DCHECK(pending_stop_);
     pending_stop_ = false;
     is_initialized_ = false;
+    decoder_ = NULL;
+  }
+
+  void ReadOneFrame() {
+    frame_read_ = NULL;
+    pending_read_ = true;
+    video_frame_stream_->Read(base::Bind(
+        &VideoFrameStreamTest::FrameReady, base::Unretained(this)));
+    message_loop_.RunUntilIdle();
   }
 
   void ReadUntilPending() {
     do {
-      frame_read_ = NULL;
-      pending_read_ = true;
-      video_frame_stream_->Read(base::Bind(
-          &VideoFrameStreamTest::FrameReady, base::Unretained(this)));
-      message_loop_.RunUntilIdle();
+      ReadOneFrame();
     } while (!pending_read_);
   }
 
@@ -136,6 +162,8 @@ class VideoFrameStreamTest : public testing::TestWithParam<bool> {
     NOT_PENDING,
     DEMUXER_READ_NORMAL,
     DEMUXER_READ_CONFIG_CHANGE,
+    SET_DECRYPTOR,
+    DECRYPTOR_NO_KEY,
     DECODER_INIT,
     DECODER_REINIT,
     DECODER_READ,
@@ -156,15 +184,26 @@ class VideoFrameStreamTest : public testing::TestWithParam<bool> {
         ReadUntilPending();
         break;
 
+      case SET_DECRYPTOR:
+        // Hold DecryptorReadyCB.
+        EXPECT_CALL(*this, SetDecryptorReadyCallback(_))
+            .Times(2);
+        // Initialize will fail because no decryptor is available.
+        InitializeVideoFrameStream();
+        break;
+
+      case DECRYPTOR_NO_KEY:
+        EXPECT_CALL(*this, SetDecryptorReadyCallback(_))
+            .WillRepeatedly(RunCallback<0>(decryptor_.get()));
+        has_no_key_ = true;
+        ReadOneFrame();
+        break;
+
       case DECODER_INIT:
+        EXPECT_CALL(*this, SetDecryptorReadyCallback(_))
+            .WillRepeatedly(RunCallback<0>(decryptor_.get()));
         decoder_->HoldNextInit();
-        video_frame_stream_->Initialize(
-            demuxer_stream_.get(),
-            base::Bind(&VideoFrameStreamTest::OnStatistics,
-                       base::Unretained(this)),
-            base::Bind(&VideoFrameStreamTest::OnInitialized,
-                       base::Unretained(this)));
-        message_loop_.RunUntilIdle();
+        InitializeVideoFrameStream();
         break;
 
       case DECODER_REINIT:
@@ -187,6 +226,8 @@ class VideoFrameStreamTest : public testing::TestWithParam<bool> {
 
       case DECODER_STOP:
         decoder_->HoldNextStop();
+        // Check that the pipeline statistics callback was fired correctly.
+        EXPECT_EQ(decoder_->total_bytes_decoded(), total_bytes_decoded_);
         pending_stop_ = true;
         video_frame_stream_->Stop(base::Bind(&VideoFrameStreamTest::OnStopped,
                                              base::Unretained(this)));
@@ -207,9 +248,14 @@ class VideoFrameStreamTest : public testing::TestWithParam<bool> {
         demuxer_stream_->SatisfyRead();
         break;
 
+      // These two cases are only interesting to test during
+      // VideoFrameStream::Stop().  There's no need to satisfy a callback.
+      case SET_DECRYPTOR:
+      case DECRYPTOR_NO_KEY:
+        NOTREACHED();
+        break;
+
       case DECODER_INIT:
-        EXPECT_CALL(*this, OnInitialized(true, false))
-            .WillOnce(SaveArg<0>(&is_initialized_));
         decoder_->SatisfyInit();
         break;
 
@@ -218,12 +264,10 @@ class VideoFrameStreamTest : public testing::TestWithParam<bool> {
         break;
 
       case DECODER_READ:
-        DCHECK(pending_read_);
         decoder_->SatisfyRead();
         break;
 
       case DECODER_RESET:
-        DCHECK(pending_reset_);
         decoder_->SatisfyReset();
         break;
 
@@ -238,8 +282,6 @@ class VideoFrameStreamTest : public testing::TestWithParam<bool> {
     }
 
     message_loop_.RunUntilIdle();
-    if (!is_initialized_)
-      decoder_ = NULL;
   }
 
   void Initialize() {
@@ -273,11 +315,15 @@ class VideoFrameStreamTest : public testing::TestWithParam<bool> {
 
   bool is_initialized_;
   int num_decoded_frames_;
+  bool pending_initialize_;
   bool pending_read_;
   bool pending_reset_;
   bool pending_stop_;
   int total_bytes_decoded_;
   scoped_refptr<VideoFrame> frame_read_;
+
+  // Decryptor has no key to decrypt a frame.
+  bool has_no_key_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(VideoFrameStreamTest);
@@ -382,7 +428,26 @@ TEST_P(VideoFrameStreamTest, Reset_AfterDemuxerRead_ConfigChange) {
   Read();
 }
 
+TEST_P(VideoFrameStreamTest, Reset_DuringNoKeyRead) {
+  Initialize();
+  EnterPendingState(DECRYPTOR_NO_KEY);
+  Reset();
+}
+
 TEST_P(VideoFrameStreamTest, Stop_BeforeInitialization) {
+  pending_stop_ = true;
+  video_frame_stream_->Stop(
+      base::Bind(&VideoFrameStreamTest::OnStopped, base::Unretained(this)));
+  message_loop_.RunUntilIdle();
+}
+
+TEST_P(VideoFrameStreamTest, Stop_DuringSetDecryptor) {
+  if (!GetParam()) {
+    DVLOG(1) << "SetDecryptor test only runs when the stream is encrytped.";
+    return;
+  }
+
+  EnterPendingState(SET_DECRYPTOR);
   pending_stop_ = true;
   video_frame_stream_->Stop(
       base::Bind(&VideoFrameStreamTest::OnStopped, base::Unretained(this)));
@@ -450,6 +515,12 @@ TEST_P(VideoFrameStreamTest, Stop_AfterConfigChangeRead) {
   Initialize();
   EnterPendingState(DEMUXER_READ_CONFIG_CHANGE);
   SatisfyPendingCallback(DEMUXER_READ_CONFIG_CHANGE);
+  Stop();
+}
+
+TEST_P(VideoFrameStreamTest, Stop_DuringNoKeyRead) {
+  Initialize();
+  EnterPendingState(DECRYPTOR_NO_KEY);
   Stop();
 }
 

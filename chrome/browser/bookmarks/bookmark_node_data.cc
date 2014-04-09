@@ -13,7 +13,6 @@
 #include "chrome/browser/bookmarks/bookmark_model.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "net/base/escape.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 
 const char* BookmarkNodeData::kClipboardFormatString =
@@ -26,6 +25,8 @@ BookmarkNodeData::Element::Element(const BookmarkNode* node)
     : is_url(node->is_url()),
       url(node->url()),
       title(node->GetTitle()),
+      date_added(node->date_added()),
+      date_folder_modified(node->date_folder_modified()),
       id_(node->id()) {
   for (int i = 0; i < node->child_count(); ++i)
     children.push_back(Element(node->GetChild(i)));
@@ -58,6 +59,8 @@ bool BookmarkNodeData::Element::ReadFromPickle(Pickle* pickle,
     return false;
   }
   url = GURL(url_spec);
+  date_added = base::Time();
+  date_folder_modified = base::Time();
   children.clear();
   if (!is_url) {
     uint64 children_count;
@@ -95,7 +98,7 @@ BookmarkNodeData::~BookmarkNodeData() {
 bool BookmarkNodeData::ClipboardContainsBookmarks() {
   return ui::Clipboard::GetForCurrentThread()->IsFormatAvailable(
       ui::Clipboard::GetFormatType(kClipboardFormatString),
-      ui::Clipboard::BUFFER_STANDARD);
+      ui::CLIPBOARD_TYPE_COPY_PASTE);
 }
 #endif
 
@@ -129,9 +132,10 @@ bool BookmarkNodeData::ReadFromTuple(const GURL& url, const string16& title) {
 }
 
 #if !defined(OS_MACOSX)
-void BookmarkNodeData::WriteToClipboard() const {
+void BookmarkNodeData::WriteToClipboard(ui::ClipboardType type) {
+  DCHECK_EQ(type, ui::CLIPBOARD_TYPE_COPY_PASTE);
   ui::ScopedClipboardWriter scw(ui::Clipboard::GetForCurrentThread(),
-                                ui::Clipboard::BUFFER_STANDARD);
+                                ui::CLIPBOARD_TYPE_COPY_PASTE);
 
   // If there is only one element and it is a URL, write the URL to the
   // clipboard.
@@ -140,7 +144,10 @@ void BookmarkNodeData::WriteToClipboard() const {
     const std::string url = elements[0].url.spec();
 
     scw.WriteBookmark(title, url);
-    scw.WriteHyperlink(net::EscapeForHTML(title), url);
+
+    // Don't call scw.WriteHyperlink() here, since some rich text editors will
+    // change fonts when such data is pasted in; besides, most such editors
+    // auto-linkify at some point anyway.
 
     // Also write the URL to the clipboard as text so that it can be pasted
     // into text fields. We use WriteText instead of WriteURL because we don't
@@ -152,11 +159,12 @@ void BookmarkNodeData::WriteToClipboard() const {
 
   Pickle pickle;
   WriteToPickle(NULL, &pickle);
-  scw.WritePickledData(
-      pickle, ui::Clipboard::GetFormatType(kClipboardFormatString));
+  scw.WritePickledData(pickle,
+                       ui::Clipboard::GetFormatType(kClipboardFormatString));
 }
 
-bool BookmarkNodeData::ReadFromClipboard() {
+bool BookmarkNodeData::ReadFromClipboard(ui::ClipboardType type) {
+  DCHECK_EQ(type, ui::CLIPBOARD_TYPE_COPY_PASTE);
   std::string data;
   ui::Clipboard* clipboard = ui::Clipboard::GetForCurrentThread();
   clipboard->ReadData(ui::Clipboard::GetFormatType(kClipboardFormatString),

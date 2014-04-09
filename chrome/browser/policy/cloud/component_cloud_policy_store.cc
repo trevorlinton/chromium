@@ -27,7 +27,6 @@ namespace {
 
 const char kValue[] = "Value";
 const char kLevel[] = "Level";
-const char kMandatory[] = "Mandatory";
 const char kRecommended[] = "Recommended";
 
 const struct DomainConstants {
@@ -262,7 +261,8 @@ bool ComponentCloudPolicyStore::ValidateProto(
     return false;
 
   scoped_ptr<ComponentCloudPolicyValidator> validator(
-      ComponentCloudPolicyValidator::Create(proto.Pass()));
+      ComponentCloudPolicyValidator::Create(
+          proto.Pass(), scoped_refptr<base::SequencedTaskRunner>()));
   validator->ValidateUsername(username_);
   validator->ValidateDMToken(dm_token_,
                              ComponentCloudPolicyValidator::DM_TOKEN_REQUIRED);

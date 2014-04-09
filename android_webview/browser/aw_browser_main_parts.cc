@@ -5,12 +5,11 @@
 #include "android_webview/browser/aw_browser_main_parts.h"
 
 #include "android_webview/browser/aw_browser_context.h"
-#include "android_webview/browser/aw_devtools_delegate.h"
 #include "android_webview/browser/aw_result_codes.h"
 #include "base/android/build_info.h"
+#include "base/android/memory_pressure_listener_android.h"
 #include "base/files/file_path.h"
 #include "base/path_service.h"
-#include "content/public/browser/android/compositor.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/result_codes.h"
@@ -33,8 +32,6 @@ AwBrowserMainParts::~AwBrowserMainParts() {
 void AwBrowserMainParts::PreEarlyInitialization() {
   net::NetworkChangeNotifier::SetFactory(
       new net::NetworkChangeNotifierFactoryAndroid());
-  content::Compositor::InitializeWithFlags(
-      content::Compositor::DIRECT_CONTEXT_ON_DRAW_THREAD);
 
   // Android WebView does not use default MessageLoop. It has its own
   // Android specific MessageLoop. Also see MainMessageLoopRun.
@@ -44,8 +41,6 @@ void AwBrowserMainParts::PreEarlyInitialization() {
 }
 
 int AwBrowserMainParts::PreCreateThreads() {
-  browser_context_->InitializeBeforeThreadCreation();
-
   ui::ResourceBundle::InitSharedInstanceLocaleOnly(
       l10n_util::GetDefaultLocale(), NULL);
 
@@ -56,23 +51,20 @@ int AwBrowserMainParts::PreCreateThreads() {
       pak_path.AppendASCII("webviewchromium.pak"),
       ui::SCALE_FACTOR_NONE);
 
+  base::android::MemoryPressureListenerAndroid::RegisterSystemCallback(
+      base::android::AttachCurrentThread());
+
   return content::RESULT_CODE_NORMAL_EXIT;
 }
 
 void AwBrowserMainParts::PreMainMessageLoopRun() {
   browser_context_->PreMainMessageLoopRun();
-  devtools_delegate_ = new AwDevToolsDelegate(browser_context_);
 }
 
 bool AwBrowserMainParts::MainMessageLoopRun(int* result_code) {
   // Android WebView does not use default MessageLoop. It has its own
   // Android specific MessageLoop.
   return true;
-}
-
-void AwBrowserMainParts::PostMainMessageLoopRun() {
-  if (devtools_delegate_)
-    devtools_delegate_->Stop();
 }
 
 }  // namespace android_webview

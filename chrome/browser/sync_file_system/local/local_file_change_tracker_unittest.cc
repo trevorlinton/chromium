@@ -43,7 +43,8 @@ class LocalFileChangeTrackerTest : public testing::Test {
     file_system_.SetUp();
 
     sync_context_ =
-        new LocalFileSyncContext(base::MessageLoopProxy::current().get(),
+        new LocalFileSyncContext(base::FilePath(),
+                                 base::MessageLoopProxy::current().get(),
                                  base::MessageLoopProxy::current().get());
     ASSERT_EQ(
         sync_file_system::SYNC_STATUS_OK,
@@ -102,8 +103,9 @@ class LocalFileChangeTrackerTest : public testing::Test {
 
   ScopedEnableSyncFSDirectoryOperation enable_directory_operation_;
   base::MessageLoop message_loop_;
-
   CannedSyncableFileSystem file_system_;
+
+ private:
   scoped_refptr<LocalFileSyncContext> sync_context_;
 
   DISALLOW_COPY_AND_ASSIGN(LocalFileChangeTrackerTest);
@@ -204,10 +206,9 @@ TEST_F(LocalFileChangeTrackerTest, RestoreCreateAndModifyChanges) {
   file_system_.GetChangedURLsInTracker(&urls);
   ASSERT_EQ(0U, urls.size());
 
-  const GURL blob_url("blob:test");
   const std::string kData("Lorem ipsum.");
   MockBlobURLRequestContext url_request_context(file_system_context());
-  ScopedTextBlob blob(url_request_context, blob_url, kData);
+  ScopedTextBlob blob(url_request_context, "blob_id:test", kData);
 
   // Create files and nested directories.
   EXPECT_EQ(base::PLATFORM_FILE_OK,
@@ -222,9 +223,9 @@ TEST_F(LocalFileChangeTrackerTest, RestoreCreateAndModifyChanges) {
             file_system_.TruncateFile(URL(kPath3), 1));  // Modifies the file.
   EXPECT_EQ(base::PLATFORM_FILE_OK,
             file_system_.CreateFile(URL(kPath4)));    // Creates another file.
-  EXPECT_EQ(static_cast<int64>(kData.size()),
+  EXPECT_EQ(static_cast<int64>(kData.size()),         // Modifies the file.
             file_system_.Write(&url_request_context,
-                               URL(kPath4), blob_url));  // Modifies the file.
+                               URL(kPath4), blob.GetBlobDataHandle()));
 
   // Verify the changes.
   file_system_.GetChangedURLsInTracker(&urls);
@@ -356,10 +357,9 @@ TEST_F(LocalFileChangeTrackerTest, RestoreCopyChanges) {
   file_system_.GetChangedURLsInTracker(&urls);
   ASSERT_EQ(0U, urls.size());
 
-  const GURL blob_url("blob:test");
   const std::string kData("Lorem ipsum.");
   MockBlobURLRequestContext url_request_context(file_system_context());
-  ScopedTextBlob blob(url_request_context, blob_url, kData);
+  ScopedTextBlob blob(url_request_context, "blob_id:test", kData);
 
   // Create files and nested directories.
   EXPECT_EQ(base::PLATFORM_FILE_OK,
@@ -375,8 +375,8 @@ TEST_F(LocalFileChangeTrackerTest, RestoreCopyChanges) {
   EXPECT_EQ(base::PLATFORM_FILE_OK,
             file_system_.CreateFile(URL(kPath4)));    // Creates another file.
   EXPECT_EQ(static_cast<int64>(kData.size()),
-            file_system_.Write(&url_request_context,
-                               URL(kPath4), blob_url));  // Modifies the file.
+            file_system_.Write(&url_request_context,   // Modifies the file.
+                               URL(kPath4), blob.GetBlobDataHandle()));
 
   // Verify we have 5 changes for preparation.
   file_system_.GetChangedURLsInTracker(&urls);
@@ -492,14 +492,17 @@ TEST_F(LocalFileChangeTrackerTest, RestoreMoveChanges) {
 
   // Make sure the changes are restored from the DB.
   file_system_.GetChangedURLsInTracker(&urls);
-  // Deletion for children in the deleted directory cannot be restored,
-  // so we will only have 7 changes.
-  EXPECT_EQ(7U, urls.size());
+  // Deletion for child files in the deleted directory cannot be restored,
+  // so we will only have 8 changes.
+  EXPECT_EQ(8U, urls.size());
 
   VerifyAndClearChange(URL(kPath0),
                        FileChange(FileChange::FILE_CHANGE_DELETE,
                                   sync_file_system::SYNC_FILE_TYPE_UNKNOWN));
   VerifyAndClearChange(URL(kPath1),
+                       FileChange(FileChange::FILE_CHANGE_DELETE,
+                                  sync_file_system::SYNC_FILE_TYPE_UNKNOWN));
+  VerifyAndClearChange(URL(kPath3),
                        FileChange(FileChange::FILE_CHANGE_DELETE,
                                   sync_file_system::SYNC_FILE_TYPE_UNKNOWN));
   VerifyAndClearChange(URL(kPath5),

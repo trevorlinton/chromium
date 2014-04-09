@@ -10,8 +10,8 @@
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/platform_file.h"
+#include "base/run_loop.h"
 #include "base/threading/thread.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -60,8 +60,7 @@ void QuitLoop() {
 class LocalFileStreamReaderTest : public testing::Test {
  public:
   LocalFileStreamReaderTest()
-      : message_loop_(base::MessageLoop::TYPE_IO),
-        file_thread_("FileUtilProxyTestFileThread") {}
+      : file_thread_("FileUtilProxyTestFileThread") {}
 
   virtual void SetUp() OVERRIDE {
     ASSERT_TRUE(file_thread_.Start());
@@ -75,9 +74,9 @@ class LocalFileStreamReaderTest : public testing::Test {
 
   virtual void TearDown() OVERRIDE {
     // Give another chance for deleted streams to perform Close.
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     file_thread_.Stop();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
  protected:
@@ -117,7 +116,7 @@ class LocalFileStreamReaderTest : public testing::Test {
   }
 
  private:
-  base::MessageLoop message_loop_;
+  base::MessageLoopForIO message_loop_;
   base::Thread file_thread_;
   base::ScopedTempDir dir_;
   base::Time test_file_modification_time_;

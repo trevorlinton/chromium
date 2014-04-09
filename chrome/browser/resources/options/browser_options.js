@@ -106,7 +106,7 @@ cr.define('options', function() {
       Preferences.getInstance().addEventListener('session.restore_on_startup',
           this.onRestoreOnStartupChanged_.bind(this));
       Preferences.getInstance().addEventListener(
-          'session.urls_to_restore_on_startup',
+          'session.startup_urls',
           function(event) {
             $('startup-set-pages').disabled = event.value.disabled;
           });
@@ -210,9 +210,18 @@ cr.define('options', function() {
 
       if (cr.isChromeOS) {
         if (!UIAccountTweaks.loggedInAsGuest()) {
-          $('account-picture-wrapper').onclick = function(event) {
-            OptionsPage.navigateToPage('changePicture');
+          var pictureWrapper = $('account-picture-wrapper');
+          pictureWrapper.setAttribute('role', 'button');
+          pictureWrapper.tabIndex = 0;
+          function activate(event) {
+            if (event.type == 'click' ||
+                (event.type == 'keydown' && event.keyCode == 32)) {
+              OptionsPage.navigateToPage('changePicture');
+            }
           };
+          pictureWrapper.onclick = activate;
+          pictureWrapper.addEventListener('keydown', activate);
+
         }
 
         // Username (canonical email) of the currently logged in user or
@@ -293,12 +302,6 @@ cr.define('options', function() {
           OptionsPage.closeOverlay();
         };
 
-        $('bluetooth-reconnect-device').onmousedown = function(event) {
-          // Prevent 'blur' event, which would reset the list selection,
-          // thereby disabling the apply button.
-          event.preventDefault();
-        };
-
         $('bluetooth-paired-devices-list').addEventListener('change',
             function() {
           var item = $('bluetooth-paired-devices-list').selectedItem;
@@ -373,9 +376,6 @@ cr.define('options', function() {
       $('language-button').onclick = showLanguageOptions;
       $('manage-languages').onclick = showLanguageOptions;
 
-      if (!loadTimeData.getBoolean('enableTranslateSettings'))
-        $('manage-languages').hidden = true;
-
       // Downloads section.
       Preferences.getInstance().addEventListener('download.default_directory',
           this.onDefaultDownloadDirectoryChanged_.bind(this));
@@ -423,6 +423,14 @@ cr.define('options', function() {
       $('cloudPrintManageButton').onclick = function(event) {
         chrome.send('showCloudPrintManagePage');
       };
+
+      if (loadTimeData.getBoolean('cloudPrintShowMDnsOptions')) {
+        $('cloudprint-options-mdns').hidden = false;
+        $('cloudprint-options-nomdns').hidden = true;
+        $('cloudPrintDevicesPageButton').onclick = function() {
+          chrome.send('showCloudPrintDevicesPage');
+        };
+      }
 
       // Accessibility section (CrOS only).
       if (cr.isChromeOS) {
@@ -472,8 +480,6 @@ cr.define('options', function() {
       }
 
       // Reset profile settings section.
-      $('reset-profile-settings-section').hidden =
-          !loadTimeData.getValue('enableResetProfileSettingsSection');
       $('reset-profile-settings').onclick = function(event) {
         OptionsPage.navigateToPage('resetProfileSettings');
       };
@@ -631,19 +637,20 @@ cr.define('options', function() {
       }
 
       var pageContainer = $('page-container');
-      var pageTop = parseFloat(pageContainer.style.top);
-      var topSection = document.querySelector('#page-container section');
-      var pageHeight = document.body.scrollHeight - topSection.offsetTop;
+      // pageContainer.offsetTop is relative to the screen.
+      var pageTop = pageContainer.offsetTop;
+      var sectionBottom = section.offsetTop + section.offsetHeight;
+      // section.offsetTop is relative to the 'page-container'.
       var sectionTop = section.offsetTop;
-      var sectionHeight = section.offsetHeight;
-      var marginBottom = window.getComputedStyle(section).marginBottom;
-      if (marginBottom)
-        sectionHeight += parseFloat(marginBottom);
-      if (pageHeight - pageTop < sectionTop + sectionHeight) {
-        pageContainer.oldScrollTop = sectionTop + sectionHeight - pageHeight;
-        var verticalPosition = pageContainer.getBoundingClientRect().top -
-            pageContainer.oldScrollTop;
-        pageContainer.style.top = verticalPosition + 'px';
+      if (pageTop + sectionBottom > document.body.scrollHeight ||
+          pageTop + sectionTop < 0) {
+        // Currently not all layout updates are guaranteed to precede the
+        // initializationComplete event (for example 'set-as-default-browser'
+        // button) leaving some uncertainty in the optimal scroll position.
+        // The section is placed approximately in the middle of the screen.
+        var top = Math.min(0, document.body.scrollHeight / 2 - sectionBottom);
+        pageContainer.style.top = top + 'px';
+        pageContainer.oldScrollTop = -top;
       }
     },
 
@@ -725,9 +732,13 @@ cr.define('options', function() {
 
       // If the user gets signed out while the advanced sync settings dialog is
       // visible, say, due to a dashboard clear, close the dialog.
+      // However, if the user gets signed out as a result of abandoning first
+      // time sync setup, do not call closeOverlay as it will redirect the
+      // browser to the main settings page and override any in-progress
+      // user-initiated navigation. See crbug.com/278030.
       // Note: SyncSetupOverlay.closeOverlay is a no-op if the overlay is
       // already hidden.
-      if (this.signedIn_ && !syncData.signedIn)
+      if (this.signedIn_ && !syncData.signedIn && !syncData.setupInProgress)
         SyncSetupOverlay.closeOverlay();
 
       this.signedIn_ = syncData.signedIn;
@@ -796,13 +807,30 @@ cr.define('options', function() {
       else
         $('sync-status').classList.remove('sync-error');
 
-      customizeSyncButton.disabled = syncData.hasUnrecoverableError;
+      // Disable the "customize / set up sync" button if sync has an
+      // unrecoverable error. Also disable the button if sync has not been set
+      // up and the user is being presented with a link to re-auth.
+      // See crbug.com/289791.
+      customizeSyncButton.disabled =
+          syncData.hasUnrecoverableError ||
+          (!syncData.setupCompleted && !$('sync-action-link').hidden);
+
       // Move #enable-auto-login-checkbox to a different location on CrOS.
       if (cr.isChromeOs) {
         $('sync-general').insertBefore($('sync-status').nextSibling,
                                        $('enable-auto-login-checkbox'));
       }
       $('enable-auto-login-checkbox').hidden = !syncData.autoLoginVisible;
+    },
+
+    /**
+     * Update the UI depending on whether the current profile manages any
+     * supervised users.
+     * @param {boolean} value True if the current profile manages any supervised
+     *     users.
+     */
+    updateManagesSupervisedUsers_: function(value) {
+      $('profiles-supervised-dashboard-tip').hidden = !value;
     },
 
     /**
@@ -885,19 +913,18 @@ cr.define('options', function() {
     onDefaultDownloadDirectoryChanged_: function(event) {
       $('downloadLocationPath').value = event.value.value;
       if (cr.isChromeOS) {
-        // On ChromeOS, replace /special/drive with Drive for drive paths, and
-        // /home/chronos/user/Downloads with Downloads for local files.
-        // Also replace '/' with ' \u203a ' (angled quote sign) everywhere.
+        // On ChromeOS, replace /special/drive/root with Drive for drive paths,
+        // /home/chronos/user/Downloads or /home/chronos/u-<hash>/Downloads
+        // with Downloads for local paths, and '/' with ' \u203a ' (angled quote
+        // sign) everywhere. The modified path is used only for display purpose.
         var path = $('downloadLocationPath').value;
         path = path.replace(/^\/special\/drive\/root/, 'Google Drive');
-        path = path.replace(/^\/home\/chronos\/user\//, '');
+        path = path.replace(/^\/home\/chronos\/(user|u-[^\/]*)\//, '');
         path = path.replace(/\//g, ' \u203a ');
         $('downloadLocationPath').value = path;
       }
-      if (event.value.disabled)
-        $('download-location-label').classList.add('disabled');
-      else
-        $('download-location-label').classList.remove('disabled');
+      $('download-location-label').classList.toggle('disabled',
+                                                    event.value.disabled);
       $('downloadLocationChangeButton').disabled = event.value.disabled;
     },
 
@@ -1073,21 +1100,39 @@ cr.define('options', function() {
     },
 
     /**
-     * Reports a local error (e.g., disk full) to the "create" overlay during
-     * profile creation.
+     * Reports managed user import errors to the ManagedUserImportOverlay.
+     * @param {string} error The error message to display.
      * @private
      */
-    showCreateProfileLocalError_: function() {
-      CreateProfileOverlay.onLocalError();
+    showManagedUserImportError_: function(error) {
+      ManagedUserImportOverlay.onError(error);
     },
 
     /**
-    * Reports a remote error (e.g., a network error during managed-user
-    * registration) to the "create" overlay during profile creation.
+     * Reports successful importing of a managed user to
+     * the ManagedUserImportOverlay.
+     * @private
+     */
+    showManagedUserImportSuccess_: function() {
+      ManagedUserImportOverlay.onSuccess();
+    },
+
+    /**
+     * Reports an error to the "create" overlay during profile creation.
+     * @param {string} error The error message to display.
+     * @private
+     */
+    showCreateProfileError_: function(error) {
+      CreateProfileOverlay.onError(error);
+    },
+
+    /**
+    * Sends a warning message to the "create" overlay during profile creation.
+    * @param {string} warning The warning message to display.
     * @private
     */
-    showCreateProfileRemoteError_: function() {
-      CreateProfileOverlay.onRemoteError();
+    showCreateProfileWarning_: function(warning) {
+      CreateProfileOverlay.onWarning(warning);
     },
 
     /**
@@ -1152,6 +1197,14 @@ cr.define('options', function() {
     },
 
     /**
+     * Enables or disables the Manage SSL Certificates button.
+     * @private
+     */
+    enableCertificateButton_: function(enabled) {
+      $('certificatesManageButton').disabled = !enabled;
+    },
+
+    /**
      * Enables factory reset section.
      * @private
      */
@@ -1205,7 +1258,7 @@ cr.define('options', function() {
       selectCtl.disabled = pref.disabled;
       // Create a synthetic pref change event decorated as
       // CoreOptionsHandler::CreateValueForPref() does.
-      var event = new cr.Event('synthetic-font-size');
+      var event = new Event('synthetic-font-size');
       event.value = {
         value: pref.value,
         controlledBy: pref.controlledBy,
@@ -1461,6 +1514,7 @@ cr.define('options', function() {
   //Forward public APIs to private implementations.
   [
     'addBluetoothDevice',
+    'enableCertificateButton',
     'enableFactoryResetSection',
     'getCurrentProfile',
     'getStartStopSyncButton',
@@ -1485,14 +1539,17 @@ cr.define('options', function() {
     'setupPageZoomSelector',
     'setupProxySettingsSection',
     'showBluetoothSettings',
-    'showCreateProfileLocalError',
-    'showCreateProfileRemoteError',
+    'showCreateProfileError',
     'showCreateProfileSuccess',
+    'showCreateProfileWarning',
+    'showManagedUserImportError',
+    'showManagedUserImportSuccess',
     'showMouseControls',
     'showTouchpadControls',
     'updateAccountPicture',
     'updateAutoLaunchState',
     'updateDefaultBrowserState',
+    'updateManagesSupervisedUsers',
     'updateSearchEngines',
     'updateStartupPages',
     'updateSyncState',

@@ -11,6 +11,7 @@
 
 #include <ppapi/c/pp_errors.h>
 
+#include "nacl_io/kernel_handle.h"
 #include "nacl_io/mount_http.h"
 #include "nacl_io/osinttypes.h"
 
@@ -204,16 +205,18 @@ Error MountNodeHttp::GetStat(struct stat* stat) {
     stat_.st_atime = 0;  // TODO(binji): Use "Last-Modified".
     stat_.st_mtime = 0;
     stat_.st_ctime = 0;
+
+    stat_.st_mode |= S_IFREG;
   }
 
   // Fill the stat structure if provided
   if (stat)
-    memcpy(stat, &stat_, sizeof(stat_));
+    *stat = stat_;
 
   return 0;
 }
 
-Error MountNodeHttp::Read(size_t offs,
+Error MountNodeHttp::Read(const HandleAttr& attr,
                           void* buf,
                           size_t count,
                           int* out_bytes) {
@@ -227,15 +230,15 @@ Error MountNodeHttp::Read(size_t offs,
         return error;
     }
 
-    return ReadPartialFromCache(offs, buf, count, out_bytes);
+    return ReadPartialFromCache(attr.offs, buf, count, out_bytes);
   }
 
-  return DownloadPartial(offs, buf, count, out_bytes);
+  return DownloadPartial(attr.offs, buf, count, out_bytes);
 }
 
 Error MountNodeHttp::FTruncate(off_t size) { return ENOSYS; }
 
-Error MountNodeHttp::Write(size_t offs,
+Error MountNodeHttp::Write(const HandleAttr& attr,
                            const void* buf,
                            size_t count,
                            int* out_bytes) {
@@ -271,6 +274,10 @@ MountNodeHttp::MountNodeHttp(Mount* mount,
       url_(url),
       cache_content_(cache_content),
       has_cached_size_(false) {}
+
+void MountNodeHttp::SetMode(int mode) {
+  stat_.st_mode = mode;
+}
 
 Error MountNodeHttp::OpenUrl(const char* method,
                              StringMap_t* request_headers,

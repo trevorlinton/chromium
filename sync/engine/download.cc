@@ -7,11 +7,10 @@
 #include <string>
 
 #include "base/command_line.h"
-#include "sync/engine/process_updates_command.h"
-#include "sync/engine/store_timestamps_command.h"
+#include "sync/engine/process_updates_util.h"
+#include "sync/engine/sync_directory_update_handler.h"
 #include "sync/engine/syncer.h"
 #include "sync/engine/syncer_proto_util.h"
-#include "sync/internal_api/public/base/model_type_invalidation_map.h"
 #include "sync/sessions/nudge_tracker.h"
 #include "sync/syncable/directory.h"
 #include "sync/syncable/nigori_handler.h"
@@ -27,6 +26,8 @@ using sessions::SyncSessionContext;
 using std::string;
 
 namespace {
+
+typedef std::map<ModelType, size_t> TypeToIndexMap;
 
 SyncerError HandleGetEncryptionKeyResponse(
     const sync_pb::ClientToServerResponse& update_response,
@@ -79,55 +80,27 @@ bool ShouldRequestEncryptionKey(
   return need_encryption_key;
 }
 
-SyncerError ExecuteDownloadUpdates(
+void AppendClientDebugInfoIfNeeded(
     SyncSession* session,
-    sync_pb::ClientToServerMessage* msg) {
-  sync_pb::ClientToServerResponse update_response;
-  StatusController* status = session->mutable_status_controller();
-  bool need_encryption_key = ShouldRequestEncryptionKey(session->context());
-
-  SyncerError result = SyncerProtoUtil::PostClientToServerMessage(
-      msg,
-      &update_response,
-      session);
-
-  DVLOG(2) << SyncerProtoUtil::ClientToServerResponseDebugString(
-      update_response);
-
-  if (result != SYNCER_OK) {
-    status->mutable_updates_response()->Clear();
-    LOG(ERROR) << "PostClientToServerMessage() failed during GetUpdates";
-  } else {
-    status->mutable_updates_response()->CopyFrom(update_response);
-
-    DVLOG(1) << "GetUpdates "
-             << " returned " << update_response.get_updates().entries_size()
-             << " updates and indicated "
-             << update_response.get_updates().changes_remaining()
-             << " updates left on server.";
-
-    if (need_encryption_key ||
-        update_response.get_updates().encryption_keys_size() > 0) {
-      syncable::Directory* dir = session->context()->directory();
-      status->set_last_get_key_result(
-          HandleGetEncryptionKeyResponse(update_response, dir));
+    DebugInfo* debug_info) {
+  // We want to send the debug info only once per sync cycle. Check if it has
+  // already been sent.
+  if (!session->status_controller().debug_info_sent()) {
+    DVLOG(1) << "Sending client debug info ...";
+    // Could be null in some unit tests.
+    if (session->context()->debug_info_getter()) {
+      session->context()->debug_info_getter()->GetAndClearDebugInfo(
+          debug_info);
     }
+    session->mutable_status_controller()->set_debug_info_sent();
   }
-
-  ProcessUpdatesCommand process_updates;
-  process_updates.Execute(session);
-
-  StoreTimestampsCommand store_timestamps;
-  store_timestamps.Execute(session);
-
-  return result;
 }
 
 void InitDownloadUpdatesRequest(
     SyncSession* session,
     bool create_mobile_bookmarks_folder,
     sync_pb::ClientToServerMessage* message,
-    ModelTypeSet request_types) {
+    ModelTypeSet proto_request_types) {
   message->set_share(session->context()->account_name());
   message->set_message_contents(sync_pb::ClientToServerMessage::GET_UPDATES);
 
@@ -151,34 +124,108 @@ void InitDownloadUpdatesRequest(
       session->context()->notifications_enabled());
 
   StatusController* status = session->mutable_status_controller();
-  status->set_updates_request_types(request_types);
+  status->set_updates_request_types(proto_request_types);
 
-  syncable::Directory* dir = session->context()->directory();
-  for (ModelTypeSet::Iterator it = request_types.First();
+  UpdateHandlerMap* handler_map = session->context()->update_handler_map();
+
+  for (ModelTypeSet::Iterator it = proto_request_types.First();
        it.Good(); it.Inc()) {
-    if (ProxyTypes().Has(it.Get()))
-      continue;
+    UpdateHandlerMap::iterator handler_it = handler_map->find(it.Get());
+    DCHECK(handler_it != handler_map->end());
     sync_pb::DataTypeProgressMarker* progress_marker =
         get_updates->add_from_progress_marker();
-    dir->GetDownloadProgress(it.Get(), progress_marker);
+    handler_it->second->GetDownloadProgress(progress_marker);
   }
+}
+
+// Builds a map of ModelTypes to indices to progress markers in the given
+// |gu_response| message.  The map is returned in the |index_map| parameter.
+void PartitionProgressMarkersByType(
+    const sync_pb::GetUpdatesResponse& gu_response,
+    ModelTypeSet request_types,
+    TypeToIndexMap* index_map) {
+  for (int i = 0; i < gu_response.new_progress_marker_size(); ++i) {
+    int field_number = gu_response.new_progress_marker(i).data_type_id();
+    ModelType model_type = GetModelTypeFromSpecificsFieldNumber(field_number);
+    if (!IsRealDataType(model_type)) {
+      DLOG(WARNING) << "Unknown field number " << field_number;
+      continue;
+    }
+    if (!request_types.Has(model_type)) {
+      DLOG(WARNING)
+          << "Skipping unexpected progress marker for non-enabled type "
+          << ModelTypeToString(model_type);
+      continue;
+    }
+    index_map->insert(std::make_pair(model_type, i));
+  }
+}
+
+// Examines the contents of the GetUpdates response message and forwards
+// relevant data to the UpdateHandlers for processing and persisting.
+bool ProcessUpdateResponseMessage(
+    const sync_pb::GetUpdatesResponse& gu_response,
+    ModelTypeSet proto_request_types,
+    UpdateHandlerMap* handler_map,
+    StatusController* status) {
+  TypeSyncEntityMap updates_by_type;
+  PartitionUpdatesByType(gu_response, proto_request_types, &updates_by_type);
+  DCHECK_EQ(proto_request_types.Size(), updates_by_type.size());
+
+  TypeToIndexMap progress_index_by_type;
+  PartitionProgressMarkersByType(gu_response,
+                                 proto_request_types,
+                                 &progress_index_by_type);
+  if (proto_request_types.Size() != progress_index_by_type.size()) {
+    NOTREACHED() << "Missing progress markers in GetUpdates response.";
+    return false;
+  }
+
+  // Iterate over these maps in parallel, processing updates for each type.
+  TypeToIndexMap::iterator progress_marker_iter =
+      progress_index_by_type.begin();
+  TypeSyncEntityMap::iterator updates_iter = updates_by_type.begin();
+  for ( ; (progress_marker_iter != progress_index_by_type.end()
+           && updates_iter != updates_by_type.end());
+       ++progress_marker_iter, ++updates_iter) {
+    DCHECK_EQ(progress_marker_iter->first, updates_iter->first);
+    ModelType type = progress_marker_iter->first;
+
+    UpdateHandlerMap::iterator update_handler_iter = handler_map->find(type);
+
+    if (update_handler_iter != handler_map->end()) {
+      update_handler_iter->second->ProcessGetUpdatesResponse(
+          gu_response.new_progress_marker(progress_marker_iter->second),
+          updates_iter->second,
+          status);
+    } else {
+      DLOG(WARNING)
+          << "Ignoring received updates of a type we can't handle.  "
+          << "Type is: " << ModelTypeToString(type);
+      continue;
+    }
+  }
+  DCHECK(progress_marker_iter == progress_index_by_type.end()
+         && updates_iter == updates_by_type.end());
+
+  return true;
 }
 
 }  // namespace
 
-SyncerError NormalDownloadUpdates(
+void BuildNormalDownloadUpdates(
     SyncSession* session,
     bool create_mobile_bookmarks_folder,
     ModelTypeSet request_types,
-    const sessions::NudgeTracker& nudge_tracker) {
-  sync_pb::ClientToServerMessage client_to_server_message;
+    const sessions::NudgeTracker& nudge_tracker,
+    sync_pb::ClientToServerMessage* client_to_server_message) {
   InitDownloadUpdatesRequest(
       session,
       create_mobile_bookmarks_folder,
-      &client_to_server_message,
-      request_types);
+      client_to_server_message,
+      Intersection(request_types, ProtocolTypes()));
   sync_pb::GetUpdatesMessage* get_updates =
-      client_to_server_message.mutable_get_updates();
+      client_to_server_message->mutable_get_updates();
 
   // Request updates for all requested types.
   DVLOG(1) << "Getting updates for types "
@@ -207,23 +254,21 @@ SyncerError NormalDownloadUpdates(
         type,
         progress_marker->mutable_get_update_triggers());
   }
-
-  return ExecuteDownloadUpdates(session, &client_to_server_message);
 }
 
-SyncerError DownloadUpdatesForConfigure(
+void BuildDownloadUpdatesForConfigure(
     SyncSession* session,
     bool create_mobile_bookmarks_folder,
     sync_pb::GetUpdatesCallerInfo::GetUpdatesSource source,
-    ModelTypeSet request_types) {
-  sync_pb::ClientToServerMessage client_to_server_message;
+    ModelTypeSet request_types,
+    sync_pb::ClientToServerMessage* client_to_server_message) {
   InitDownloadUpdatesRequest(
       session,
       create_mobile_bookmarks_folder,
-      &client_to_server_message,
-      request_types);
+      client_to_server_message,
+      Intersection(request_types, ProtocolTypes()));
   sync_pb::GetUpdatesMessage* get_updates =
-      client_to_server_message.mutable_get_updates();
+      client_to_server_message->mutable_get_updates();
 
   // Request updates for all enabled types.
   DVLOG(1) << "Initial download for types "
@@ -237,22 +282,20 @@ SyncerError DownloadUpdatesForConfigure(
   sync_pb::SyncEnums::GetUpdatesOrigin origin =
       ConvertConfigureSourceToOrigin(source);
   get_updates->set_get_updates_origin(origin);
-
-  return ExecuteDownloadUpdates(session, &client_to_server_message);
 }
 
-SyncerError DownloadUpdatesForPoll(
+void BuildDownloadUpdatesForPoll(
     SyncSession* session,
     bool create_mobile_bookmarks_folder,
-    ModelTypeSet request_types) {
-  sync_pb::ClientToServerMessage client_to_server_message;
+    ModelTypeSet request_types,
+    sync_pb::ClientToServerMessage* client_to_server_message) {
   InitDownloadUpdatesRequest(
       session,
       create_mobile_bookmarks_folder,
-      &client_to_server_message,
-      request_types);
+      client_to_server_message,
+      Intersection(request_types, ProtocolTypes()));
   sync_pb::GetUpdatesMessage* get_updates =
-      client_to_server_message.mutable_get_updates();
+      client_to_server_message->mutable_get_updates();
 
   DVLOG(1) << "Polling for types "
            << ModelTypeSetToString(request_types);
@@ -264,23 +307,61 @@ SyncerError DownloadUpdatesForPoll(
 
   // Set the new and improved version of source, too.
   get_updates->set_get_updates_origin(sync_pb::SyncEnums::PERIODIC);
-
-  return ExecuteDownloadUpdates(session, &client_to_server_message);
 }
 
-void AppendClientDebugInfoIfNeeded(
+SyncerError ExecuteDownloadUpdates(
+    ModelTypeSet request_types,
     SyncSession* session,
-    DebugInfo* debug_info) {
-  // We want to send the debug info only once per sync cycle. Check if it has
-  // already been sent.
-  if (!session->status_controller().debug_info_sent()) {
-    DVLOG(1) << "Sending client debug info ...";
-    // could be null in some unit tests.
-    if (session->context()->debug_info_getter()) {
-      session->context()->debug_info_getter()->GetAndClearDebugInfo(
-          debug_info);
-    }
-    session->mutable_status_controller()->set_debug_info_sent();
+    sync_pb::ClientToServerMessage* msg) {
+  sync_pb::ClientToServerResponse update_response;
+  StatusController* status = session->mutable_status_controller();
+  bool need_encryption_key = ShouldRequestEncryptionKey(session->context());
+
+  SyncerError result = SyncerProtoUtil::PostClientToServerMessage(
+      msg,
+      &update_response,
+      session);
+
+  DVLOG(2) << SyncerProtoUtil::ClientToServerResponseDebugString(
+      update_response);
+
+  if (result != SYNCER_OK) {
+    status->mutable_updates_response()->Clear();
+    LOG(ERROR) << "PostClientToServerMessage() failed during GetUpdates";
+    return result;
+  }
+
+  status->mutable_updates_response()->CopyFrom(update_response);
+
+  DVLOG(1) << "GetUpdates "
+           << " returned " << update_response.get_updates().entries_size()
+           << " updates and indicated "
+           << update_response.get_updates().changes_remaining()
+           << " updates left on server.";
+
+  if (need_encryption_key ||
+      update_response.get_updates().encryption_keys_size() > 0) {
+    syncable::Directory* dir = session->context()->directory();
+    status->set_last_get_key_result(
+        HandleGetEncryptionKeyResponse(update_response, dir));
+  }
+
+  const sync_pb::GetUpdatesResponse& gu_response =
+      update_response.get_updates();
+  status->increment_num_updates_downloaded_by(gu_response.entries_size());
+  DCHECK(gu_response.has_changes_remaining());
+  status->set_num_server_changes_remaining(gu_response.changes_remaining());
+
+  const ModelTypeSet proto_request_types =
+      Intersection(request_types, ProtocolTypes());
+
+  if (!ProcessUpdateResponseMessage(gu_response,
+                                    proto_request_types,
+                                    session->context()->update_handler_map(),
+                                    status)) {
+    return SERVER_RESPONSE_VALIDATION_FAILED;
+  } else {
+    return result;
   }
 }
 

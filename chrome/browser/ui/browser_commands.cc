@@ -30,24 +30,27 @@
 #include "chrome/browser/sessions/tab_restore_service.h"
 #include "chrome/browser/sessions/tab_restore_service_delegate.h"
 #include "chrome/browser/sessions/tab_restore_service_factory.h"
+#include "chrome/browser/translate/translate_tab_helper.h"
 #include "chrome/browser/ui/bookmarks/bookmark_prompt_controller.h"
 #include "chrome/browser/ui/bookmarks/bookmark_utils.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_command_controller.h"
 #include "chrome/browser/ui/browser_dialogs.h"
-#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_instant_controller.h"
 #include "chrome/browser/ui/browser_tab_restore_service_delegate.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/chrome_pages.h"
+#include "chrome/browser/ui/find_bar/find_bar.h"
 #include "chrome/browser/ui/find_bar/find_bar_controller.h"
 #include "chrome/browser/ui/find_bar/find_tab_helper.h"
 #include "chrome/browser/ui/fullscreen/fullscreen_controller.h"
 #include "chrome/browser/ui/omnibox/location_bar.h"
+#include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/browser/ui/status_bubble.h"
 #include "chrome/browser/ui/tab_contents/core_tab_helper.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/translate/translate_bubble_model.h"
 #include "chrome/browser/ui/webui/ntp/core_app_launcher_handler.h"
 #include "chrome/browser/upgrade_detector.h"
 #include "chrome/browser/web_applications/web_app.h"
@@ -70,10 +73,6 @@
 #include "content/public/common/url_utils.h"
 #include "net/base/escape.h"
 #include "webkit/common/user_agent/user_agent_util.h"
-
-#if defined(OS_MACOSX)
-#include "ui/base/cocoa/find_pasteboard.h"
-#endif
 
 #if defined(OS_WIN)
 #include "chrome/browser/ui/metro_pin_tab_helper_win.h"
@@ -190,7 +189,7 @@ bool IsShowingWebContentsModalDialog(const Browser* browser) {
 
   WebContentsModalDialogManager* web_contents_modal_dialog_manager =
       WebContentsModalDialogManager::FromWebContents(web_contents);
-  return web_contents_modal_dialog_manager->IsShowingDialog();
+  return web_contents_modal_dialog_manager->IsDialogActive();
 }
 
 bool PrintPreviewShowing(const Browser* browser) {
@@ -290,7 +289,8 @@ void NewEmptyWindow(Profile* profile, HostDesktopType desktop_type) {
   } else {
     content::RecordAction(UserMetricsAction("NewWindow"));
     SessionService* session_service =
-        SessionServiceFactory::GetForProfile(profile->GetOriginalProfile());
+        SessionServiceFactory::GetForProfileForSessionRestore(
+            profile->GetOriginalProfile());
     if (!session_service ||
         !session_service->RestoreIfNecessary(std::vector<GURL>())) {
       OpenEmptyWindow(profile->GetOriginalProfile(), desktop_type);
@@ -316,10 +316,10 @@ void OpenWindowWithRestoredTabs(Profile* profile,
 void OpenURLOffTheRecord(Profile* profile,
                          const GURL& url,
                          chrome::HostDesktopType desktop_type) {
-  Browser* browser = chrome::FindOrCreateTabbedBrowser(
-      profile->GetOffTheRecordProfile(), desktop_type);
-  AddSelectedTabWithURL(browser, url, content::PAGE_TRANSITION_LINK);
-  browser->window()->Show();
+  ScopedTabbedBrowserDisplayer displayer(profile->GetOffTheRecordProfile(),
+                                         desktop_type);
+  AddSelectedTabWithURL(displayer.browser(), url,
+      content::PAGE_TRANSITION_LINK);
 }
 
 bool CanGoBack(const Browser* browser) {
@@ -411,7 +411,7 @@ void OpenCurrentURL(Browser* browser) {
   if (!location_bar)
     return;
 
-  GURL url(location_bar->GetInputString());
+  GURL url(location_bar->GetDestinationURL());
 
   content::PageTransition page_transition = location_bar->GetPageTransition();
   content::PageTransition page_transition_without_qualifier(
@@ -486,9 +486,9 @@ void NewTab(Browser* browser) {
     browser->tab_strip_model()->GetActiveWebContents()->GetView()->
         RestoreFocus();
   } else {
-    Browser* b =
-        chrome::FindOrCreateTabbedBrowser(browser->profile(),
-                                          browser->host_desktop_type());
+    ScopedTabbedBrowserDisplayer displayer(browser->profile(),
+                                           browser->host_desktop_type());
+    Browser* b = displayer.browser();
     AddBlankTabAt(b, -1, true);
     b->window()->Show();
     // The call to AddBlankTabAt above did not set the focus to the tab as its
@@ -682,6 +682,26 @@ bool CanBookmarkAllTabs(const Browser* browser) {
              CanBookmarkCurrentPage(browser);
 }
 
+void Translate(Browser* browser) {
+  if (!browser->window()->IsActive())
+    return;
+
+  WebContents* web_contents =
+      browser->tab_strip_model()->GetActiveWebContents();
+  TranslateTabHelper* translate_tab_helper =
+      TranslateTabHelper::FromWebContents(web_contents);
+
+  TranslateBubbleModel::ViewState view_state =
+      TranslateBubbleModel::VIEW_STATE_BEFORE_TRANSLATE;
+  if (translate_tab_helper) {
+    if (translate_tab_helper->language_state().translation_pending())
+      view_state = TranslateBubbleModel::VIEW_STATE_TRANSLATING;
+    else if (translate_tab_helper->language_state().IsPageTranslated())
+      view_state = TranslateBubbleModel::VIEW_STATE_AFTER_TRANSLATE;
+  }
+  browser->window()->ShowTranslateBubble(web_contents, view_state);
+}
+
 void TogglePagePinnedToStartScreen(Browser* browser) {
 #if defined(OS_WIN)
   MetroPinTabHelper::FromWebContents(
@@ -760,7 +780,15 @@ void AdvancedPrint(Browser* browser) {
 
 bool CanAdvancedPrint(const Browser* browser) {
   // If printing is not disabled via pref or policy, it is always possible to
-  // advanced print when the print preview is visible.
+  // advanced print when the print preview is visible.  The exception to this
+  // is under Win8 ash, since showing the advanced print dialog will open it
+  // modally on the Desktop and hang the browser.  We can remove this check
+  // once we integrate with the system print charm.
+#if defined(OS_WIN)
+  if (chrome::GetActiveDesktop() == chrome::HOST_DESKTOP_TYPE_ASH)
+    return false;
+#endif
+
   return browser->profile()->GetPrefs()->GetBoolean(prefs::kPrintingEnabled) &&
       (PrintPreviewShowing(browser) || CanPrint(browser));
 }
@@ -829,12 +857,12 @@ void FindInPage(Browser* browser, bool find_next, bool forward_direction) {
     FindTabHelper* find_helper = FindTabHelper::FromWebContents(
         browser->tab_strip_model()->GetActiveWebContents());
 #if defined(OS_MACOSX)
-    // We always want to search for the contents of the find pasteboard on OS X.
-    // But Incognito window doesn't write to the find pboard. Therefore, its own
-    // find text has higher priority.
-    if (!browser->profile()->IsOffTheRecord() ||
-        find_helper->find_text().empty())
-      find_text = GetFindPboardText();
+    // We always want to search for the current contents of the find bar on
+    // OS X. For regular profile it's always the current find pboard. For
+    // Incognito window it's the newest value of the find pboard content and
+    // user-typed text.
+    FindBar* find_bar = browser->GetFindBarController()->find_bar();
+    find_text = find_bar->GetFindText();
 #endif
     find_helper->StartFinding(find_text, forward_direction, false);
   }
@@ -890,7 +918,7 @@ void FocusPreviousPane(Browser* browser) {
 }
 
 void ToggleDevToolsWindow(Browser* browser, DevToolsToggleAction action) {
-  if (action == DEVTOOLS_TOGGLE_ACTION_SHOW_CONSOLE)
+  if (action.type() == DevToolsToggleAction::kShowConsole)
     content::RecordAction(UserMetricsAction("DevTools_ToggleConsole"));
   else
     content::RecordAction(UserMetricsAction("DevTools_ToggleWindow"));
@@ -918,7 +946,7 @@ void OpenFeedbackDialog(Browser* browser) {
 
 void ToggleBookmarkBar(Browser* browser) {
   content::RecordAction(UserMetricsAction("ShowBookmarksBar"));
-  browser->window()->ToggleBookmarkBar();
+  ToggleBookmarkBarWhenVisible(browser->profile());
 }
 
 void ShowAppMenu(Browser* browser) {

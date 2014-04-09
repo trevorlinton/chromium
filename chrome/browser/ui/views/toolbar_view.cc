@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/toolbar_view.h"
 
+#include "base/command_line.h"
 #include "base/debug/trace_event.h"
 #include "base/i18n/number_formatting.h"
 #include "base/prefs/pref_service.h"
@@ -31,10 +32,12 @@
 #include "chrome/browser/ui/views/home_button.h"
 #include "chrome/browser/ui/views/location_bar/page_action_image_view.h"
 #include "chrome/browser/ui/views/location_bar/star_view.h"
+#include "chrome/browser/ui/views/location_bar/translate_icon_view.h"
 #include "chrome/browser/ui/views/outdated_upgrade_bubble_view.h"
 #include "chrome/browser/ui/views/wrench_menu.h"
 #include "chrome/browser/ui/views/wrench_toolbar_button.h"
 #include "chrome/browser/upgrade_detector.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/browser_accessibility_state.h"
 #include "content/public/browser/notification_service.h"
@@ -91,13 +94,14 @@ const int kContentShadowHeightAsh = 2;
 // Non-ash uses a rounded content area with no shadow in the assets.
 const int kContentShadowHeight = 0;
 
-// Top margin for the wrench menu badges (badge is placed in the upper right
-// corner of the wrench menu).
-const int kBadgeTopMargin = 2;
-
 int GetButtonSpacing() {
   return (ui::GetDisplayLayout() == ui::LAYOUT_TOUCH) ?
       ToolbarView::kStandardSpacing : 0;
+}
+
+bool IsStreamlinedHostedAppsEnabled() {
+  return CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kEnableStreamlinedHostedApps);
 }
 
 }  // namespace
@@ -115,8 +119,7 @@ const int ToolbarView::kVertSpacing = 5;
 // ToolbarView, public:
 
 ToolbarView::ToolbarView(Browser* browser)
-    : model_(browser->toolbar_model()),
-      back_(NULL),
+    : back_(NULL),
       forward_(NULL),
       reload_(NULL),
       home_(NULL),
@@ -132,8 +135,10 @@ ToolbarView::ToolbarView(Browser* browser)
   chrome::AddCommandObserver(browser_, IDC_HOME, this);
   chrome::AddCommandObserver(browser_, IDC_LOAD_NEW_TAB_PAGE, this);
 
-  display_mode_ = browser->SupportsWindowFeature(Browser::FEATURE_TABSTRIP) ?
-      DISPLAYMODE_NORMAL : DISPLAYMODE_LOCATION;
+  display_mode_ = DISPLAYMODE_LOCATION;
+  if (browser->SupportsWindowFeature(Browser::FEATURE_TABSTRIP) ||
+      (browser->is_app() && IsStreamlinedHostedAppsEnabled()))
+    display_mode_ = DISPLAYMODE_NORMAL;
 
   registrar_.Add(this, chrome::NOTIFICATION_UPGRADE_RECOMMENDED,
                  content::NotificationService::AllSources());
@@ -187,8 +192,9 @@ void ToolbarView::Init() {
   // Have to create this before |reload_| as |reload_|'s constructor needs it.
   location_bar_ = new LocationBarView(
       browser_, browser_->profile(),
-      browser_->command_controller()->command_updater(), model_, this,
-      display_mode_ == DISPLAYMODE_LOCATION);
+      browser_->command_controller()->command_updater(), this,
+      display_mode_ == DISPLAYMODE_LOCATION ||
+          (browser_->is_app() && IsStreamlinedHostedAppsEnabled()));
 
   reload_ = new ReloadButton(location_bar_,
                              browser_->command_controller()->command_updater());
@@ -219,8 +225,6 @@ void ToolbarView::Init() {
   app_menu_->SetTooltipText(l10n_util::GetStringUTF16(IDS_APPMENU_TOOLTIP));
   app_menu_->set_id(VIEW_ID_APP_MENU);
 
-  // Add any necessary badges to the menu item based on the system state.
-  UpdateAppMenuState();
   LoadImages();
 
   // Always add children in order from left to right, for accessibility.
@@ -231,6 +235,11 @@ void ToolbarView::Init() {
   AddChildView(location_bar_);
   AddChildView(browser_actions_);
   AddChildView(app_menu_);
+
+  // Add any necessary badges to the menu item based on the system state.
+  // Do this after |app_menu_| has been added as a bubble may be shown that
+  // needs the widget (widget found by way of app_menu_->GetWidget()).
+  UpdateAppMenuState();
 
   location_bar_->Init();
   show_home_button_.Init(prefs::kShowHomeButton,
@@ -250,9 +259,9 @@ void ToolbarView::Init() {
   }
 }
 
-void ToolbarView::Update(WebContents* tab, bool should_restore_state) {
+void ToolbarView::Update(WebContents* tab) {
   if (location_bar_)
-    location_bar_->Update(should_restore_state ? tab : NULL);
+    location_bar_->Update(tab);
 
   if (browser_actions_)
     browser_actions_->RefreshBrowserActionViews();
@@ -281,6 +290,13 @@ views::View* ToolbarView::GetBookmarkBubbleAnchor() {
   views::View* star_view = location_bar()->star_view();
   if (star_view && star_view->visible())
     return star_view;
+  return app_menu_;
+}
+
+views::View* ToolbarView::GetTranslateBubbleAnchor() {
+  views::View* translate_icon_view = location_bar()->translate_icon_view();
+  if (translate_icon_view)
+    return translate_icon_view;
   return app_menu_;
 }
 
@@ -344,8 +360,16 @@ void ToolbarView::OnMenuButtonClicked(views::View* source,
 ////////////////////////////////////////////////////////////////////////////////
 // ToolbarView, LocationBarView::Delegate implementation:
 
-WebContents* ToolbarView::GetWebContents() const {
+WebContents* ToolbarView::GetWebContents() {
   return browser_->tab_strip_model()->GetActiveWebContents();
+}
+
+ToolbarModel* ToolbarView::GetToolbarModel() {
+  return browser_->toolbar_model();
+}
+
+const ToolbarModel* ToolbarView::GetToolbarModel() const {
+  return browser_->toolbar_model();
 }
 
 InstantController* ToolbarView::GetInstant() {
@@ -372,14 +396,6 @@ views::Widget* ToolbarView::CreateViewsBubble(
 PageActionImageView* ToolbarView::CreatePageActionImageView(
     LocationBarView* owner, ExtensionAction* action) {
   return new PageActionImageView(owner, action, browser_);
-}
-
-void ToolbarView::OnInputInProgress(bool in_progress) {
-  // The edit should make sure we're only notified when something changes.
-  DCHECK(model_->GetInputInProgress() != in_progress);
-
-  model_->SetInputInProgress(in_progress);
-  location_bar_->Update(NULL);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -566,9 +582,10 @@ void ToolbarView::Layout() {
 }
 
 bool ToolbarView::HitTestRect(const gfx::Rect& rect) const {
-  // Don't take hits in our top shadow edge.  Let them fall through to the
-  // tab strip above us.
-  if (rect.y() < content_shadow_height())
+  // Fall through to the tab strip above us if none of |rect| intersects
+  // with this view (intersection with the top shadow edge does not
+  // count as intersection with this view).
+  if (rect.bottom() < content_shadow_height())
     return false;
   // Otherwise let our superclass take care of it.
   return AccessiblePaneView::HitTestRect(rect);
@@ -633,6 +650,10 @@ bool ToolbarView::AcceleratorPressed(const ui::Accelerator& accelerator) {
 
 bool ToolbarView::IsWrenchMenuShowing() const {
   return wrench_menu_.get() && wrench_menu_->IsShowing();
+}
+
+bool ToolbarView::ShouldPaintBackground() const {
+  return display_mode_ == DISPLAYMODE_NORMAL;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -745,6 +766,10 @@ void ToolbarView::UpdateAppMenuState() {
 }
 
 void ToolbarView::UpdateWrenchButtonSeverity() {
+  // Showing the bubble requires |app_menu_| to be in a widget. See comment
+  // in ConflictingModuleView for details.
+  DCHECK(app_menu_->GetWidget());
+
   // Keep track of whether we were showing the badge before, so we don't send
   // multiple UMA events for example when multiple Chrome windows are open.
   static bool incompatibility_badge_showing = false;

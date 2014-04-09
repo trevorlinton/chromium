@@ -93,7 +93,7 @@ void RenderViewTest::ExecuteJavaScript(const char* js) {
 bool RenderViewTest::ExecuteJavaScriptAndReturnIntValue(
     const string16& script,
     int* int_result) {
-  v8::HandleScope handle_scope;
+  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
   v8::Handle<v8::Value> result =
       GetMainFrame()->executeScriptAndReturnValue(WebScriptSource(script));
   if (result.IsEmpty() || !result->IsInt32())
@@ -169,15 +169,15 @@ void RenderViewTest::SetUp() {
       kOpenerId,
       RendererPreferences(),
       WebPreferences(),
-      new SharedRenderViewCounter(0),
       kRouteId,
       kMainFrameRouteId,
       kSurfaceId,
       kInvalidSessionStorageNamespaceId,
       string16(),
-      false,
-      false,
-      1,
+      false, // is_renderer_created
+      false, // swapped_out
+      false, // hidden
+      1, // next_page_id
       WebKit::WebScreenInfo(),
       AccessibilityModeOff,
       true);
@@ -187,11 +187,16 @@ void RenderViewTest::SetUp() {
 
 void RenderViewTest::TearDown() {
   // Try very hard to collect garbage before shutting down.
-  GetMainFrame()->collectGarbage();
-  GetMainFrame()->collectGarbage();
+  // "5" was chosen following http://crbug.com/46571#c9
+  const int kGCIterations = 5;
+  for (int i = 0; i < kGCIterations; i++)
+    GetMainFrame()->collectGarbage();
 
   // Run the loop so the release task from the renderwidget executes.
   ProcessPendingMessages();
+
+  for (int i = 0; i < kGCIterations; i++)
+    GetMainFrame()->collectGarbage();
 
   render_thread_->SendCloseMessage();
   view_ = NULL;
@@ -254,7 +259,7 @@ gfx::Rect RenderViewTest::GetElementBounds(const std::string& element_id) {
   std::string script =
       ReplaceStringPlaceholders(kGetCoordinatesScript, params, NULL);
 
-  v8::HandleScope handle_scope;
+  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
   v8::Handle<v8::Value>  value = GetMainFrame()->executeScriptAndReturnValue(
       WebScriptSource(WebString::fromUTF8(script)));
   if (value.IsEmpty() || !value->IsArray())

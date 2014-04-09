@@ -7,16 +7,16 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/prefs/pref_service.h"
+#include "base/prefs/scoped_user_pref_update.h"
 #include "base/sha1.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/api/tab_capture/tab_capture_registry.h"
-#include "chrome/browser/extensions/api/tab_capture/tab_capture_registry_factory.h"
 #include "chrome/browser/media/audio_stream_indicator.h"
+#include "chrome/browser/media/desktop_streams_registry.h"
 #include "chrome/browser/media/media_stream_capture_indicator.h"
 #include "chrome/browser/media/media_stream_infobar_delegate.h"
-#include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/screen_capture_notification_ui.h"
 #include "chrome/browser/ui/simple_message_box.h"
@@ -34,11 +34,8 @@
 #include "content/public/common/media_stream_request.h"
 #include "extensions/common/constants.h"
 #include "grit/generated_resources.h"
+#include "media/audio/audio_manager_base.h"
 #include "ui/base/l10n/l10n_util.h"
-
-#if defined(USE_CRAS)
-#include "media/audio/cras/audio_manager_cras.h"
-#endif
 
 using content::BrowserThread;
 using content::MediaStreamDevices;
@@ -57,6 +54,16 @@ const content::MediaStreamDevice* FindDeviceWithId(
   }
   return NULL;
 };
+
+// This is a short-term solution to grant microphone access to the
+// virtual keyboard extension and the Google Voice Search Hotword
+// extension for voice input. Once http://crbug.com/292856 is fixed,
+// remove this whitelist.
+bool IsMediaRequestWhitelistedForExtension(
+    const extensions::Extension* extension) {
+  return extension->id() == "mppnpdlheglhdfmldimlhpnegondlapf" ||
+      extension->id() == "bepbmhgboaologfdajaanbcjmnhjmhfn";
+}
 
 // This is a short-term solution to allow testing of the the Screen Capture API
 // with Google Hangouts in M27.
@@ -84,6 +91,20 @@ bool IsOriginWhitelistedForScreenCapture(const GURL& origin) {
 #else
   return false;
 #endif
+}
+
+// Helper to get title of the calling application shown in the screen capture
+// notification.
+string16 GetApplicationTitle(content::WebContents* web_contents,
+                             const extensions::Extension* extension) {
+  // Use extension name as title for extensions and origin for drive-by web.
+  std::string title;
+  if (extension) {
+    title = extension->name();
+  } else {
+    title = web_contents->GetURL().GetOrigin().spec();
+  }
+  return UTF8ToUTF16(title);
 }
 
 }  // namespace
@@ -181,19 +202,24 @@ void MediaCaptureDevicesDispatcher::ProcessMediaAccessRequest(
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
 
   if (request.video_type == content::MEDIA_DESKTOP_VIDEO_CAPTURE ||
-      request.audio_type == content::MEDIA_SYSTEM_AUDIO_CAPTURE) {
-    ProcessScreenCaptureAccessRequest(
+      request.audio_type == content::MEDIA_LOOPBACK_AUDIO_CAPTURE) {
+    ProcessDesktopCaptureAccessRequest(
         web_contents, request, callback, extension);
-  } else if (extension) {
+  } else if (request.video_type == content::MEDIA_TAB_VIDEO_CAPTURE ||
+             request.audio_type == content::MEDIA_TAB_AUDIO_CAPTURE) {
+    ProcessTabCaptureAccessRequest(
+        web_contents, request, callback, extension);
+  } else if (extension && (extension->is_platform_app() ||
+                           IsMediaRequestWhitelistedForExtension(extension))) {
     // For extensions access is approved based on extension permissions.
-    ProcessMediaAccessRequestFromExtension(
+    ProcessMediaAccessRequestFromPlatformAppOrExtension(
         web_contents, request, callback, extension);
   } else {
     ProcessRegularMediaAccessRequest(web_contents, request, callback);
   }
 }
 
-void MediaCaptureDevicesDispatcher::ProcessScreenCaptureAccessRequest(
+void MediaCaptureDevicesDispatcher::ProcessDesktopCaptureAccessRequest(
     content::WebContents* web_contents,
     const content::MediaStreamRequest& request,
     const content::MediaResponseCallback& callback,
@@ -206,6 +232,58 @@ void MediaCaptureDevicesDispatcher::ProcessScreenCaptureAccessRequest(
     return;
   }
 
+  // First check if Desktop Capture API (i.e.
+  // chrome.desktopCapture.chooseDesktopMedia()) was used to generate device Id.
+  content::DesktopMediaID media_id =
+      GetDesktopStreamsRegistry()->RequestMediaForStreamId(
+          request.requested_video_device_id, request.render_process_id,
+          request.render_view_id, request.security_origin);
+
+  // If the id wasn't generated using Desktop Capture API then process it as a
+  // screen capture request.
+  if (media_id.type == content::DesktopMediaID::TYPE_NONE) {
+    ProcessScreenCaptureAccessRequest(
+        web_contents, request, callback, extension);
+    return;
+  }
+
+  // Add selected desktop source to the list.
+  devices.push_back(content::MediaStreamDevice(
+      content::MEDIA_DESKTOP_VIDEO_CAPTURE, media_id.ToString(),
+      std::string()));
+
+  bool loopback_audio_supported = false;
+#if defined(USE_CRAS) || defined(OS_WIN)
+  // Currently loopback audio capture is supported only on Windows and ChromeOS.
+  loopback_audio_supported = true;
+#endif
+
+  // Audio is only supported for screen capture streams.
+  if (media_id.type == content::DesktopMediaID::TYPE_SCREEN &&
+      request.audio_type == content::MEDIA_LOOPBACK_AUDIO_CAPTURE &&
+      loopback_audio_supported) {
+    devices.push_back(content::MediaStreamDevice(
+        content::MEDIA_LOOPBACK_AUDIO_CAPTURE,
+        media::AudioManagerBase::kLoopbackInputDeviceId, "System Audio"));
+  }
+
+  ui = ScreenCaptureNotificationUI::Create(l10n_util::GetStringFUTF16(
+      IDS_MEDIA_SCREEN_CAPTURE_NOTIFICATION_TEXT,
+      GetApplicationTitle(web_contents, extension)));
+
+  callback.Run(devices, ui.Pass());
+}
+
+void MediaCaptureDevicesDispatcher::ProcessScreenCaptureAccessRequest(
+    content::WebContents* web_contents,
+    const content::MediaStreamRequest& request,
+    const content::MediaResponseCallback& callback,
+    const extensions::Extension* extension) {
+  content::MediaStreamDevices devices;
+  scoped_ptr<content::MediaStreamUI> ui;
+
+  DCHECK_EQ(request.video_type, content::MEDIA_DESKTOP_VIDEO_CAPTURE);
+
   content::DesktopMediaID media_id =
       content::DesktopMediaID::Parse(request.requested_video_device_id);
   if (media_id.is_null()) {
@@ -215,21 +293,19 @@ void MediaCaptureDevicesDispatcher::ProcessScreenCaptureAccessRequest(
     return;
   }
 
-  const bool system_audio_capture_requested =
-      request.audio_type == content::MEDIA_SYSTEM_AUDIO_CAPTURE;
-
-#if defined(USE_CRAS)
-  const bool system_audio_capture_supported = true;
-#else
-  const bool system_audio_capture_supported = false;
-#endif
-
-  // Reject request when audio capture was requested but is not supported on
-  // this system.
-  if (system_audio_capture_requested && !system_audio_capture_supported) {
+  // Only screen capture can be requested without using desktop media picker.
+  if (media_id.type != content::DesktopMediaID::TYPE_SCREEN) {
+    LOG(ERROR) << "Unsupported desktop media ID: "
+               << request.requested_video_device_id;
     callback.Run(devices, ui.Pass());
     return;
   }
+
+  bool loopback_audio_supported = false;
+#if defined(USE_CRAS) || defined(OS_WIN)
+  // Currently loopback audio capture is supported only on Windows and ChromeOS.
+  loopback_audio_supported = true;
+#endif
 
   const bool component_extension =
       extension && extension->location() == extensions::Manifest::COMPONENT;
@@ -253,7 +329,8 @@ void MediaCaptureDevicesDispatcher::ProcessScreenCaptureAccessRequest(
     // For component extensions, bypass message box.
     bool user_approved = false;
     if (!component_extension) {
-      string16 application_name = UTF8ToUTF16(request.security_origin.spec());
+      string16 application_name = UTF8ToUTF16(
+          extension ? extension->name() : request.security_origin.spec());
       string16 confirmation_text = l10n_util::GetStringFUTF16(
           request.audio_type == content::MEDIA_NO_SERVICE ?
               IDS_MEDIA_SCREEN_CAPTURE_CONFIRMATION_TEXT :
@@ -271,14 +348,12 @@ void MediaCaptureDevicesDispatcher::ProcessScreenCaptureAccessRequest(
     if (user_approved || component_extension) {
       devices.push_back(content::MediaStreamDevice(
           content::MEDIA_DESKTOP_VIDEO_CAPTURE, media_id.ToString(), "Screen"));
-      if (system_audio_capture_requested) {
-#if defined(USE_CRAS)
+      if (request.audio_type == content::MEDIA_LOOPBACK_AUDIO_CAPTURE &&
+          loopback_audio_supported) {
         // Use the special loopback device ID for system audio capture.
         devices.push_back(content::MediaStreamDevice(
-            content::MEDIA_SYSTEM_AUDIO_CAPTURE,
-            media::AudioManagerCras::kLoopbackDeviceId,
-            "System Audio"));
-#endif
+            content::MEDIA_LOOPBACK_AUDIO_CAPTURE,
+            media::AudioManagerBase::kLoopbackInputDeviceId, "System Audio"));
       }
     }
   }
@@ -286,50 +361,44 @@ void MediaCaptureDevicesDispatcher::ProcessScreenCaptureAccessRequest(
   // Unless we're being invoked from a component extension, register to display
   // the notification for stream capture.
   if (!devices.empty() && !component_extension) {
-    // Use extension name as title for extensions and origin for drive-by web.
-    std::string title;
-    if (extension) {
-      title = extension->name();
-    } else {
-      title = web_contents->GetURL().GetOrigin().spec();
-    }
-
     ui = ScreenCaptureNotificationUI::Create(l10n_util::GetStringFUTF16(
-        IDS_MEDIA_SCREEN_CAPTURE_NOTIFICATION_TEXT, UTF8ToUTF16(title)));
+        IDS_MEDIA_SCREEN_CAPTURE_NOTIFICATION_TEXT,
+        GetApplicationTitle(web_contents, extension)));
   }
 
   callback.Run(devices, ui.Pass());
 }
 
-void MediaCaptureDevicesDispatcher::ProcessMediaAccessRequestFromExtension(
+void MediaCaptureDevicesDispatcher::ProcessTabCaptureAccessRequest(
     content::WebContents* web_contents,
     const content::MediaStreamRequest& request,
     const content::MediaResponseCallback& callback,
     const extensions::Extension* extension) {
   content::MediaStreamDevices devices;
-  Profile* profile =
-      Profile::FromBrowserContext(web_contents->GetBrowserContext());
+  scoped_ptr<content::MediaStreamUI> ui;
 
 #if defined(OS_ANDROID)
   // Tab capture is not supported on Android.
-  bool tab_capture_allowed = false;
-#else
+  callback.Run(devices, ui.Pass());
+#else  // defined(OS_ANDROID)
+  Profile* profile =
+      Profile::FromBrowserContext(web_contents->GetBrowserContext());
   extensions::TabCaptureRegistry* tab_capture_registry =
-      extensions::TabCaptureRegistryFactory::GetForProfile(profile);
+      extensions::TabCaptureRegistry::Get(profile);
+  if (!tab_capture_registry) {
+    NOTREACHED();
+    callback.Run(devices, ui.Pass());
+    return;
+  }
   bool tab_capture_allowed =
       tab_capture_registry->VerifyRequest(request.render_process_id,
                                           request.render_view_id);
-#endif
 
   if (request.audio_type == content::MEDIA_TAB_AUDIO_CAPTURE &&
       tab_capture_allowed &&
       extension->HasAPIPermission(extensions::APIPermission::kTabCapture)) {
     devices.push_back(content::MediaStreamDevice(
         content::MEDIA_TAB_AUDIO_CAPTURE, std::string(), std::string()));
-  } else if (request.audio_type == content::MEDIA_DEVICE_AUDIO_CAPTURE &&
-             extension->HasAPIPermission(
-                 extensions::APIPermission::kAudioCapture)) {
-    GetDefaultDevicesForProfile(profile, true, false, &devices);
   }
 
   if (request.video_type == content::MEDIA_TAB_VIDEO_CAPTURE &&
@@ -337,8 +406,33 @@ void MediaCaptureDevicesDispatcher::ProcessMediaAccessRequestFromExtension(
       extension->HasAPIPermission(extensions::APIPermission::kTabCapture)) {
     devices.push_back(content::MediaStreamDevice(
         content::MEDIA_TAB_VIDEO_CAPTURE, std::string(), std::string()));
-  } else if (request.video_type == content::MEDIA_DEVICE_VIDEO_CAPTURE &&
-       extension->HasAPIPermission(extensions::APIPermission::kVideoCapture)) {
+  }
+
+  if (!devices.empty()) {
+    ui = media_stream_capture_indicator_->RegisterMediaStream(
+        web_contents, devices);
+  }
+  callback.Run(devices, ui.Pass());
+#endif  // !defined(OS_ANDROID)
+}
+
+void MediaCaptureDevicesDispatcher::
+    ProcessMediaAccessRequestFromPlatformAppOrExtension(
+        content::WebContents* web_contents,
+        const content::MediaStreamRequest& request,
+        const content::MediaResponseCallback& callback,
+        const extensions::Extension* extension) {
+  content::MediaStreamDevices devices;
+  Profile* profile =
+      Profile::FromBrowserContext(web_contents->GetBrowserContext());
+
+  if (request.audio_type == content::MEDIA_DEVICE_AUDIO_CAPTURE &&
+      extension->HasAPIPermission(extensions::APIPermission::kAudioCapture)) {
+    GetDefaultDevicesForProfile(profile, true, false, &devices);
+  }
+
+  if (request.video_type == content::MEDIA_DEVICE_VIDEO_CAPTURE &&
+      extension->HasAPIPermission(extensions::APIPermission::kVideoCapture)) {
     GetDefaultDevicesForProfile(profile, false, true, &devices);
   }
 
@@ -491,13 +585,20 @@ void MediaCaptureDevicesDispatcher::DisableDeviceEnumerationForTesting() {
 }
 
 scoped_refptr<MediaStreamCaptureIndicator>
-    MediaCaptureDevicesDispatcher::GetMediaStreamCaptureIndicator() {
+MediaCaptureDevicesDispatcher::GetMediaStreamCaptureIndicator() {
   return media_stream_capture_indicator_;
 }
 
 scoped_refptr<AudioStreamIndicator>
 MediaCaptureDevicesDispatcher::GetAudioStreamIndicator() {
   return audio_stream_indicator_;
+}
+
+DesktopStreamsRegistry*
+MediaCaptureDevicesDispatcher::GetDesktopStreamsRegistry() {
+  if (!desktop_streams_registry_)
+    desktop_streams_registry_.reset(new DesktopStreamsRegistry());
+  return desktop_streams_registry_.get();
 }
 
 void MediaCaptureDevicesDispatcher::OnAudioCaptureDevicesChanged(
@@ -531,7 +632,6 @@ void MediaCaptureDevicesDispatcher::OnMediaRequestStateChanged(
           &MediaCaptureDevicesDispatcher::UpdateMediaRequestStateOnUIThread,
           base::Unretained(this), render_process_id, render_view_id,
           page_request_id, device, state));
-
 }
 
 void MediaCaptureDevicesDispatcher::OnAudioStreamPlayingChanged(
@@ -563,7 +663,7 @@ void MediaCaptureDevicesDispatcher::UpdateAudioDevicesOnUIThread(
 }
 
 void MediaCaptureDevicesDispatcher::UpdateVideoDevicesOnUIThread(
-    const content::MediaStreamDevices& devices){
+    const content::MediaStreamDevices& devices) {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   devices_enumerated_ = true;
   video_devices_ = devices;

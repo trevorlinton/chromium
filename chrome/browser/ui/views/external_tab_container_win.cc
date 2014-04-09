@@ -37,7 +37,6 @@
 #include "chrome/browser/repost_form_warning_controller.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/app_modal_dialogs/javascript_dialog_manager.h"
-#include "chrome/browser/ui/blocked_content/blocked_content_tab_helper.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_tab_contents.h"
@@ -67,10 +66,10 @@
 #include "grit/generated_resources.h"
 #include "grit/locale_settings.h"
 #include "third_party/WebKit/public/platform/WebReferrerPolicy.h"
-#include "ui/base/events/event_utils.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/menu_model.h"
 #include "ui/base/view_prop.h"
+#include "ui/events/event_utils.h"
 #include "ui/views/controls/webview/webview.h"
 #include "ui/views/layout/grid_layout.h"
 #include "ui/views/widget/widget.h"
@@ -215,7 +214,7 @@ class ContainerWindow : public ATL::CWindowImpl<ContainerWindow,
     MSG_WM_SIZE(OnSize)
   END_MSG_MAP()
 
-  ContainerWindow(HWND parent, const gfx::Rect& bounds) : child_(NULL) {
+  ContainerWindow(HWND parent, const gfx::Rect& bounds) : widget_(NULL) {
     RECT rect = bounds.ToRECT();
     Create(parent, rect);
   }
@@ -225,11 +224,12 @@ class ContainerWindow : public ATL::CWindowImpl<ContainerWindow,
     return m_hWnd;
   }
 
-  // Sets the child window (the DRWHW). The child is made activateable as part
-  // of the operation.
-  void SetChild(HWND window) {
-    child_ = window;
+  // Sets the Widget. The widget's HWND is made activateable as part of the
+  // operation.
+  void SetWidget(views::Widget* widget) {
+    widget_ = widget;
 
+    HWND window = child();
     ::SetWindowLong(
         window, GWL_STYLE,
         (::GetWindowLong(window, GWL_STYLE) & ~WS_POPUP) | WS_CHILD);
@@ -245,21 +245,35 @@ class ContainerWindow : public ATL::CWindowImpl<ContainerWindow,
   }
 
  private:
+  HWND child() {
+    return views::HWNDForWidget(widget_);
+  }
+
   void OnMove(const CPoint& position) {
-    ::SetWindowPos(child_, NULL, position.x, position.y, 0, 0,
+    if (!widget_)
+      return;
+    ::SetWindowPos(child(), NULL, position.x, position.y, 0, 0,
                    SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER);
   }
 
   void OnShowWindow(BOOL show, UINT status) {
-    ::ShowWindow(child_, SW_SHOWNA);
+    if (!widget_)
+      return;
+    // We need to show |widget_| without changing focus. Contrary to the name,
+    // Widget::ShowInactive() still changes activation.  So, we inline the
+    // implementation minus the focus change.
+    ::ShowWindow(child(), SW_SHOWNA);
+    widget_->GetNativeView()->Show();
   }
 
   void OnSize(UINT type, const CSize& size) {
-    ::SetWindowPos(child_, NULL, 0, 0, size.cx, size.cy,
+    if (!widget_)
+      return;
+    ::SetWindowPos(child(), NULL, 0, 0, size.cx, size.cy,
                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOZORDER);
   }
 
-  HWND child_;
+  views::Widget* widget_;
 
   DISALLOW_COPY_AND_ASSIGN(ContainerWindow);
 };
@@ -272,11 +286,9 @@ class ExternalTabRootWindowHost : public views::DesktopRootWindowHostWin {
  public:
   ExternalTabRootWindowHost(
       views::internal::NativeWidgetDelegate* native_widget_delegate,
-      views::DesktopNativeWidgetAura* desktop_native_widget_aura,
-      const gfx::Rect& initial_bounds)
+      views::DesktopNativeWidgetAura* desktop_native_widget_aura)
       : views::DesktopRootWindowHostWin(native_widget_delegate,
-                                        desktop_native_widget_aura,
-                                        initial_bounds) {}
+                                        desktop_native_widget_aura) {}
 
  protected:
   // HWNDMessageHandlerDelegate methods:
@@ -303,9 +315,6 @@ ExternalTabContainerWin::ExternalTabContainerWin(
     AutomationResourceMessageFilter* filter)
     : widget_(NULL),
       automation_(automation),
-      rvh_callback_(base::Bind(
-          &ExternalTabContainerWin::RegisterRenderViewHostForAutomation,
-          base::Unretained(this), false)),
       tab_contents_container_(NULL),
       tab_handle_(0),
       ignore_next_load_notification_(false),
@@ -371,14 +380,14 @@ bool ExternalTabContainerWin::Init(Profile* profile,
       new views::DesktopNativeWidgetAura(widget_);
   params.native_widget = native_widget;
   params.desktop_root_window_host =
-      new ExternalTabRootWindowHost(widget_, native_widget, params.bounds);
+      new ExternalTabRootWindowHost(widget_, native_widget);
   params.type = views::Widget::InitParams::TYPE_WINDOW_FRAMELESS;
   params.opacity = views::Widget::InitParams::OPAQUE_WINDOW;
 #endif
   widget_->Init(params);
 
 #if defined(USE_AURA)
-  tab_container_window_->SetChild(views::HWNDForWidget(widget_));
+  tab_container_window_->SetWidget(widget_);
 #endif
 
   // TODO(jcampan): limit focus traversal to contents.
@@ -406,8 +415,6 @@ bool ExternalTabContainerWin::Init(Profile* profile,
   registrar_.Add(this,
                  content::NOTIFICATION_WEB_CONTENTS_RENDER_VIEW_HOST_CREATED,
                  content::Source<WebContents>(existing_contents));
-
-  content::RenderViewHost::AddCreatedCallback(rvh_callback_);
   content::WebContentsObserver::Observe(existing_contents);
 
   BrowserTabContents::AttachTabHelpers(existing_contents);
@@ -447,14 +454,11 @@ bool ExternalTabContainerWin::Init(Profile* profile,
 
   LoadAccelerators();
   SetupExternalTabView();
-  BlockedContentTabHelper::FromWebContents(existing_contents)->
-      set_delegate(this);
   return true;
 }
 
 void ExternalTabContainerWin::Uninitialize() {
   registrar_.RemoveAll();
-  content::RenderViewHost::RemoveCreatedCallback(rvh_callback_);
   if (web_contents_.get()) {
     tab_contents_container_->SetWebContents(NULL);
     UnregisterRenderViewHost(web_contents_->GetRenderViewHost());
@@ -789,11 +793,6 @@ void ExternalTabContainerWin::MoveContents(WebContents* source,
     automation_->Send(new AutomationMsg_MoveWindow(tab_handle_, pos));
 }
 
-content::WebContents* ExternalTabContainerWin::GetConstrainingWebContents(
-    content::WebContents* source) {
-  return source;
-}
-
 ExternalTabContainerWin::~ExternalTabContainerWin() {
   Uninitialize();
 }
@@ -1073,6 +1072,7 @@ bool ExternalTabContainerWin::OnMessageReceived(const IPC::Message& message) {
 
 void ExternalTabContainerWin::DidFailProvisionalLoad(
     int64 frame_id,
+    const string16& frame_unique_name,
     bool is_main_frame,
     const GURL& validated_url,
     int error_code,
@@ -1278,22 +1278,22 @@ bool ExternalTabContainerWin::AcceleratorPressed(
     case IDC_DEV_TOOLS:
       DevToolsWindow::ToggleDevToolsWindow(web_contents_->GetRenderViewHost(),
                                            false,
-                                           DEVTOOLS_TOGGLE_ACTION_SHOW);
+                                           DevToolsToggleAction::Show());
       break;
     case IDC_DEV_TOOLS_CONSOLE:
       DevToolsWindow::ToggleDevToolsWindow(web_contents_->GetRenderViewHost(),
                                            false,
-                                           DEVTOOLS_TOGGLE_ACTION_SHOW_CONSOLE);
+                                           DevToolsToggleAction::ShowConsole());
       break;
     case IDC_DEV_TOOLS_INSPECT:
       DevToolsWindow::ToggleDevToolsWindow(web_contents_->GetRenderViewHost(),
                                            false,
-                                           DEVTOOLS_TOGGLE_ACTION_INSPECT);
+                                           DevToolsToggleAction::Inspect());
       break;
     case IDC_DEV_TOOLS_TOGGLE:
       DevToolsWindow::ToggleDevToolsWindow(web_contents_->GetRenderViewHost(),
                                            false,
-                                           DEVTOOLS_TOGGLE_ACTION_TOGGLE);
+                                           DevToolsToggleAction::Toggle());
       break;
     default:
       NOTREACHED() << "Unsupported accelerator: " << command_id;

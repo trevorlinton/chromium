@@ -18,6 +18,7 @@
 #include "base/time/time.h"
 #include "content/browser/accessibility/browser_accessibility_delegate_mac.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
+#include "content/browser/renderer_host/software_frame_manager.h"
 #include "content/common/edit_command.h"
 #import "content/public/browser/render_widget_host_view_mac_base.h"
 #include "ipc/ipc_sender.h"
@@ -196,7 +197,8 @@ class RenderWidgetHostImpl;
 //
 // RenderWidgetHostView class hierarchy described in render_widget_host_view.h.
 class RenderWidgetHostViewMac : public RenderWidgetHostViewBase,
-                                public IPC::Sender {
+                                public IPC::Sender,
+                                public SoftwareFrameManagerClient {
  public:
   virtual ~RenderWidgetHostViewMac();
 
@@ -248,11 +250,11 @@ class RenderWidgetHostViewMac : public RenderWidgetHostViewBase,
   virtual void UpdateCursor(const WebCursor& cursor) OVERRIDE;
   virtual void SetIsLoading(bool is_loading) OVERRIDE;
   virtual void TextInputTypeChanged(ui::TextInputType type,
-                                    bool can_compose_inline,
-                                    ui::TextInputMode input_mode) OVERRIDE;
+                                    ui::TextInputMode input_mode,
+                                    bool can_compose_inline) OVERRIDE;
   virtual void ImeCancelComposition() OVERRIDE;
   virtual void ImeCompositionRangeChanged(
-      const ui::Range& range,
+      const gfx::Range& range,
       const std::vector<gfx::Rect>& character_bounds) OVERRIDE;
   virtual void DidUpdateBackingStore(
       const gfx::Rect& scroll_rect,
@@ -265,7 +267,7 @@ class RenderWidgetHostViewMac : public RenderWidgetHostViewBase,
   virtual void SetTooltipText(const string16& tooltip_text) OVERRIDE;
   virtual void SelectionChanged(const string16& text,
                                 size_t offset,
-                                const ui::Range& range) OVERRIDE;
+                                const gfx::Range& range) OVERRIDE;
   virtual void SelectionBoundsChanged(
       const ViewHostMsg_SelectionBounds_Params& params) OVERRIDE;
   virtual void ScrollOffsetChanged() OVERRIDE;
@@ -283,9 +285,11 @@ class RenderWidgetHostViewMac : public RenderWidgetHostViewBase,
   virtual void BeginFrameSubscription(
       scoped_ptr<RenderWidgetHostViewFrameSubscriber> subscriber) OVERRIDE;
   virtual void EndFrameSubscription() OVERRIDE;
+  virtual void OnSwapCompositorFrame(
+      uint32 output_surface_id, scoped_ptr<cc::CompositorFrame> frame) OVERRIDE;
   virtual void OnAcceleratedCompositingStateChange() OVERRIDE;
-  virtual void OnAccessibilityNotifications(
-      const std::vector<AccessibilityHostMsg_NotificationParams>& params
+  virtual void OnAccessibilityEvents(
+      const std::vector<AccessibilityHostMsg_EventParams>& params
       ) OVERRIDE;
   virtual bool PostProcessEventForPluginIme(
       const NativeWebKeyboardEvent& event) OVERRIDE;
@@ -315,6 +319,11 @@ class RenderWidgetHostViewMac : public RenderWidgetHostViewBase,
 
   // IPC::Sender implementation.
   virtual bool Send(IPC::Message* message) OVERRIDE;
+
+  // SoftwareFrameManagerClient implementation:
+  virtual void SoftwareFrameWasFreed(
+      uint32 output_surface_id, unsigned frame_id) OVERRIDE;
+  virtual void ReleaseReferencesToSoftwareFrame() OVERRIDE;
 
   // Forwards the mouse event to the renderer.
   void ForwardMouseEvent(const WebKit::WebMouseEvent& event);
@@ -354,19 +363,19 @@ class RenderWidgetHostViewMac : public RenderWidgetHostViewBase,
   // point to |line_breaking_point|. The |line_break_point| is valid only if
   // this function returns true.
   bool GetLineBreakIndex(const std::vector<gfx::Rect>& bounds,
-                         const ui::Range& range,
+                         const gfx::Range& range,
                          size_t* line_break_point);
 
   // Returns composition character boundary rectangle. The |range| is
   // composition based range. Also stores |actual_range| which is corresponding
   // to actually used range for returned rectangle.
-  gfx::Rect GetFirstRectForCompositionRange(const ui::Range& range,
-                                            ui::Range* actual_range);
+  gfx::Rect GetFirstRectForCompositionRange(const gfx::Range& range,
+                                            gfx::Range* actual_range);
 
   // Converts from given whole character range to composition oriented range. If
-  // the conversion failed, return ui::Range::InvalidRange.
-  ui::Range ConvertCharacterRangeToCompositionRange(
-      const ui::Range& request_range);
+  // the conversion failed, return gfx::Range::InvalidRange.
+  gfx::Range ConvertCharacterRangeToCompositionRange(
+      const gfx::Range& request_range);
 
   // These member variables should be private, but the associated ObjC class
   // needs access to them and can't be made a friend.
@@ -412,6 +421,9 @@ class RenderWidgetHostViewMac : public RenderWidgetHostViewBase,
   scoped_ptr<CompositingIOSurfaceMac> compositing_iosurface_;
   scoped_refptr<CompositingIOSurfaceContext> compositing_iosurface_context_;
 
+  // This holds the current software compositing framebuffer, if any.
+  scoped_ptr<SoftwareFrameManager> software_frame_manager_;
+
   // Whether to allow overlapping views.
   bool allow_overlapping_views_;
 
@@ -437,8 +449,6 @@ class RenderWidgetHostViewMac : public RenderWidgetHostViewBase,
   int window_number() const;
 
   float scale_factor() const;
-
-  bool is_hidden() const { return is_hidden_; }
 
   void FrameSwapped();
 
@@ -513,9 +523,6 @@ class RenderWidgetHostViewMac : public RenderWidgetHostViewBase,
   // Indicates if the page is loading.
   bool is_loading_;
 
-  // true if the View is not visible.
-  bool is_hidden_;
-
   // The text to be shown in the tooltip, supplied by the renderer.
   string16 tooltip_text_;
 
@@ -548,7 +555,7 @@ class RenderWidgetHostViewMac : public RenderWidgetHostViewBase,
   base::Time next_swap_ack_time_;
 
   // The current composition character range and its bounds.
-  ui::Range composition_range_;
+  gfx::Range composition_range_;
   std::vector<gfx::Rect> composition_bounds_;
 
   // The current caret bounds.
@@ -557,6 +564,8 @@ class RenderWidgetHostViewMac : public RenderWidgetHostViewBase,
   // Subscriber that listens to frame presentation events.
   scoped_ptr<RenderWidgetHostViewFrameSubscriber> frame_subscriber_;
 
+  base::WeakPtrFactory<RenderWidgetHostViewMac>
+      software_frame_weak_ptr_factory_;
   DISALLOW_COPY_AND_ASSIGN(RenderWidgetHostViewMac);
 };
 

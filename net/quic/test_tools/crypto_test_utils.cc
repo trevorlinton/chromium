@@ -7,7 +7,7 @@
 #include "net/quic/crypto/channel_id.h"
 #include "net/quic/crypto/common_cert_set.h"
 #include "net/quic/crypto/crypto_handshake.h"
-#include "net/quic/crypto/crypto_server_config.h"
+#include "net/quic/crypto/quic_crypto_server_config.h"
 #include "net/quic/crypto/quic_decrypter.h"
 #include "net/quic/crypto/quic_encrypter.h"
 #include "net/quic/crypto/quic_random.h"
@@ -136,7 +136,7 @@ int CryptoTestUtils::HandshakeWithFakeServer(
   IPEndPoint addr = IPEndPoint(ip, 1);
   PacketSavingConnection* server_conn =
       new PacketSavingConnection(guid, addr, true);
-  TestSession server_session(server_conn, QuicConfig(), true);
+  TestSession server_session(server_conn, DefaultQuicConfig(), true);
 
   QuicCryptoServerConfig crypto_config(QuicCryptoServerConfig::TESTING,
                                        QuicRandom::GetInstance());
@@ -169,7 +169,7 @@ int CryptoTestUtils::HandshakeWithFakeClient(
   IPEndPoint addr = IPEndPoint(ip, 1);
   PacketSavingConnection* client_conn =
       new PacketSavingConnection(guid, addr, false);
-  TestSession client_session(client_conn, QuicConfig(), false);
+  TestSession client_session(client_conn, DefaultQuicConfig(), false);
   QuicCryptoClientConfig crypto_config;
 
   client_session.config()->SetDefaults();

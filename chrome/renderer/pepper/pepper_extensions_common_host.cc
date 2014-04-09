@@ -22,8 +22,6 @@
 #include "third_party/WebKit/public/web/WebFrame.h"
 #include "third_party/WebKit/public/web/WebPluginContainer.h"
 
-namespace chrome {
-
 PepperExtensionsCommonHost::PepperExtensionsCommonHost(
     content::RendererPpapiHost* host,
     PP_Instance instance,
@@ -76,7 +74,7 @@ extensions::ChromeV8Context* PepperExtensionsCommonHost::GetContext() {
     return NULL;
 
   WebKit::WebFrame* frame = container->element().document().frame();
-  v8::HandleScope scope;
+  v8::HandleScope scope(v8::Isolate::GetCurrent());
   return dispatcher_->v8_context_set().GetByV8Context(
       frame->mainWorldScriptContext());
 }
@@ -130,6 +128,3 @@ int32_t PepperExtensionsCommonHost::OnCall(
                                               true, false, &args);
   return PP_OK_COMPLETIONPENDING;
 }
-
-}  // namespace chrome
-

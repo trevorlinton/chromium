@@ -2,13 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-window.assertions = (function() {
+(function() {
 
 // We are going to kill all of the builtins, so hold onto the ones we need.
 var defineGetter = Object.prototype.__defineGetter__;
 var defineSetter = Object.prototype.__defineSetter__;
 var Error = window.Error;
 var forEach = Array.prototype.forEach;
+var push = Array.prototype.push;
 var hasOwnProperty = Object.prototype.hasOwnProperty;
 var getOwnPropertyNames = Object.getOwnPropertyNames;
 var stringify = JSON.stringify;
@@ -69,11 +70,25 @@ var results = {
   COULD_NOT_ESTABLISH_CONNECTION_ERROR: 3,
   OTHER_ERROR: 4,
   INCORRECT_RESPONSE_SENDER: 5,
-  INCORRECT_RESPONSE_MESSAGE: 6
+  INCORRECT_RESPONSE_MESSAGE: 6,
 };
 
 // Make the messages sent vaguely complex, but unambiguously JSON-ifiable.
-var message = [{'a': {'b': 10}}, 20, 'c\x10\x11'];
+var kMessage = [{'a': {'b': 10}}, 20, 'c\x10\x11'];
+
+// Our tab's location. Normally this would be our document's location but if
+// we're an iframe it will be the location of the parent - in which case,
+// expect to be told.
+var tabLocationHref = null;
+
+if (parent == window) {
+  tabLocationHref = document.location.href;
+} else {
+  window.addEventListener('message', function listener(event) {
+    window.removeEventListener(listener);
+    tabLocationHref = event.data;
+  });
+}
 
 function checkLastError(reply) {
   if (!chrome.runtime.lastError)
@@ -87,7 +102,7 @@ function checkLastError(reply) {
   return false;
 }
 
-function checkResponse(response, reply) {
+function checkResponse(response, reply, expectedMessage) {
   // The response will be an echo of both the original message *and* the
   // MessageSender (with the tab field stripped down).
   //
@@ -97,8 +112,8 @@ function checkResponse(response, reply) {
     console.warn('Expected a tab, got none');
     incorrectSender = true;
   }
-  if (response.sender.tab.url != document.location.href) {
-    console.warn('Expected tab url ' + document.location.href + ' got ' +
+  if (response.sender.tab.url != tabLocationHref) {
+    console.warn('Expected tab url ' + tabLocationHref + ' got ' +
                  response.sender.tab.url);
     incorrectSender = true;
   }
@@ -117,7 +132,7 @@ function checkResponse(response, reply) {
   }
 
   // Check the correct content was echoed.
-  var expectedJson = stringify(message);
+  var expectedJson = stringify(expectedMessage);
   var actualJson = stringify(response.message);
   if (actualJson == expectedJson)
     return true;
@@ -130,21 +145,78 @@ function sendToBrowser(msg) {
   domAutomationController.send(msg);
 }
 
-return {
-  canConnectAndSendMessages: function(extensionId) {
-    if (!chrome.runtime) {
-      sendToBrowser(results.NAMESPACE_NOT_DEFINED);
-      return;
-    }
+function sendToBrowserForTlsChannelId(result) {
+  // Because the TLS channel ID tests read the TLS either an error code or the
+  // TLS channel ID string from the same value, they require the result code
+  // to be sent as a string.
+  // String() is clobbered, so coerce string creation with +.
+  sendToBrowser("" + result);
+}
 
-    if (!chrome.runtime.sendMessage || !chrome.runtime.connect) {
-      sendToBrowser(results.FUNCTION_NOT_DEFINED);
+function checkRuntime(reply) {
+  if (!reply)
+    reply = sendToBrowser;
+
+  if (!chrome.runtime) {
+    reply(results.NAMESPACE_NOT_DEFINED);
+    return false;
+  }
+
+  if (!chrome.runtime.connect || !chrome.runtime.sendMessage) {
+    reply(results.FUNCTION_NOT_DEFINED);
+    return false;
+  }
+  return true;
+}
+
+function checkRuntimeForTlsChannelId() {
+  return checkRuntime(sendToBrowserForTlsChannelId);
+}
+
+function checkTlsChannelIdResponse(response) {
+  if (chrome.runtime.lastError) {
+    if (chrome.runtime.lastError.message == kCouldNotEstablishConnection)
+      sendToBrowserForTlsChannelId(
+          results.COULD_NOT_ESTABLISH_CONNECTION_ERROR);
+    else
+      sendToBrowserForTlsChannelId(results.OTHER_ERROR);
+    return;
+  }
+  if (response.sender.tlsChannelId !== undefined)
+    sendToBrowserForTlsChannelId(response.sender.tlsChannelId);
+  else
+    sendToBrowserForTlsChannelId('');
+}
+
+window.actions = {
+  appendIframe: function(src) {
+    var iframe = document.createElement('iframe');
+    // When iframe has loaded, notify it of our tab location (probably
+    // document.location) to use in its assertions, then continue.
+    iframe.addEventListener('load', function listener() {
+      iframe.removeEventListener('load', listener);
+      iframe.contentWindow.postMessage(tabLocationHref, '*');
+      sendToBrowser(true);
+    });
+    iframe.src = src;
+    document.body.appendChild(iframe);
+  }
+};
+
+window.assertions = {
+  canConnectAndSendMessages: function(extensionId, message) {
+    if (!checkRuntime())
       return;
-    }
+
+    if (!message)
+      message = kMessage;
+
+    if (!message)
+      message = kMessage;
 
     function canSendMessage(reply) {
       chrome.runtime.sendMessage(extensionId, message, function(response) {
-        if (checkLastError(reply) && checkResponse(response, reply))
+        if (checkLastError(reply) && checkResponse(response, reply, message))
           reply(results.OK);
       });
     }
@@ -161,7 +233,8 @@ return {
       var ok = true;
       port.onMessage.addListener(function(response) {
         pendingResponses--;
-        ok = ok && checkLastError(reply) && checkResponse(response, reply);
+        ok = ok && checkLastError(reply) &&
+            checkResponse(response, reply, message);
         if (pendingResponses == 0 && ok)
           reply(results.OK);
       });
@@ -186,7 +259,34 @@ return {
       });
     }
     sendToBrowser(result);
+  },
+
+  getTlsChannelIdFromPortConnect: function(extensionId, includeTlsChannelId,
+                                           message) {
+    if (!checkRuntimeForTlsChannelId())
+      return;
+
+    if (!message)
+      message = kMessage;
+
+    var port = chrome.runtime.connect(extensionId,
+        {'includeTlsChannelId': includeTlsChannelId});
+    port.onMessage.addListener(checkTlsChannelIdResponse);
+    port.postMessage(message);
+  },
+
+  getTlsChannelIdFromSendMessage: function(extensionId, includeTlsChannelId,
+                                           message) {
+    if (!checkRuntimeForTlsChannelId())
+      return;
+
+    if (!message)
+      message = kMessage;
+
+    chrome.runtime.sendMessage(extensionId, message,
+        {'includeTlsChannelId': includeTlsChannelId},
+        checkTlsChannelIdResponse);
   }
 };
 
-}());  // window.assertions
+}());

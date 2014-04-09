@@ -297,14 +297,6 @@ class DriveFileStreamReaderTest : public ::testing::Test {
     // Create a testee instance.
     fake_file_system_.reset(
         new test_util::FakeFileSystem(fake_drive_service_.get()));
-    fake_file_system_->Initialize();
-  }
-
-  virtual void TearDown() OVERRIDE {
-    fake_file_system_.reset();
-    fake_drive_service_.reset();
-
-    worker_thread_.reset();
   }
 
   FileSystemInterface* GetFileSystem() {

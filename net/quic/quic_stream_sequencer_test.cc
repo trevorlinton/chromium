@@ -8,7 +8,9 @@
 #include <vector>
 
 #include "base/rand_util.h"
+#include "net/base/ip_endpoint.h"
 #include "net/quic/reliable_quic_stream.h"
+#include "net/quic/test_tools/quic_test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -58,11 +60,8 @@ class QuicStreamSequencerPeer : public QuicStreamSequencer {
   void SetMemoryLimit(size_t limit) {
     max_frame_memory_ = limit;
   }
-
-  const ReliableQuicStream* stream() const { return stream_; }
   uint64 num_bytes_consumed() const { return num_bytes_consumed_; }
   const FrameMap* frames() const { return &frames_; }
-  int32 max_frame_memory() const { return max_frame_memory_; }
   QuicStreamOffset close_offset() const { return close_offset_; }
 };
 
@@ -74,6 +73,8 @@ class MockStream : public ReliableQuicStream {
 
   MOCK_METHOD1(TerminateFromPeer, void(bool half_close));
   MOCK_METHOD2(ProcessData, uint32(const char* data, uint32 data_len));
+  MOCK_METHOD2(CloseConnectionWithDetails, void(QuicErrorCode error,
+                                                const string& details));
   MOCK_METHOD1(Close, void(QuicRstStreamErrorCode error));
   MOCK_METHOD0(OnCanWrite, void());
 };
@@ -86,8 +87,9 @@ static const char kPayload[] =
 class QuicStreamSequencerTest : public ::testing::Test {
  protected:
   QuicStreamSequencerTest()
-      : session_(NULL),
-        stream_(session_,  1),
+      : connection_(new MockConnection(1, IPEndPoint(), false)),
+        session_(connection_, true),
+        stream_(&session_, 1),
         sequencer_(new QuicStreamSequencerPeer(&stream_)) {
   }
 
@@ -129,7 +131,8 @@ class QuicStreamSequencerTest : public ::testing::Test {
     return true;
   }
 
-  QuicSession* session_;
+  MockConnection* connection_;
+  MockSession session_;
   testing::StrictMock<MockStream> stream_;
   scoped_ptr<QuicStreamSequencerPeer> sequencer_;
 };
@@ -185,7 +188,9 @@ TEST_F(QuicStreamSequencerTest, FullFrameConsumed) {
 }
 
 TEST_F(QuicStreamSequencerTest, EmptyFrame) {
-  EXPECT_TRUE(sequencer_->OnFrame(0, ""));
+  EXPECT_CALL(stream_,
+              CloseConnectionWithDetails(QUIC_INVALID_STREAM_FRAME, _));
+  EXPECT_FALSE(sequencer_->OnFrame(0, ""));
   EXPECT_EQ(0u, sequencer_->frames()->size());
   EXPECT_EQ(0u, sequencer_->num_bytes_consumed());
 }
@@ -402,7 +407,7 @@ TEST_F(QuicStreamSequencerTest, MarkConsumedError) {
 
   // Now, attempt to mark consumed more data than was readable
   // and expect the stream to be closed.
-  EXPECT_CALL(stream_, Close(QUIC_SERVER_ERROR_PROCESSING_STREAM));
+  EXPECT_CALL(stream_, Close(QUIC_ERROR_PROCESSING_STREAM));
   EXPECT_DFATAL(sequencer_->MarkConsumed(4),
                 "Invalid argument to MarkConsumed.  num_bytes_consumed_: 3 "
                 "end_offset: 4 offset: 9 length: 17");

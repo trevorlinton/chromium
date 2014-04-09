@@ -72,7 +72,7 @@ class MEDIA_EXPORT VideoCaptureDevice {
     // In the shared build, all methods from the STL container will be exported
     // so even though they're not used, they're still depended upon.
     bool operator==(const Name& other) const {
-      return other.id() == unique_id_ && other.name() == device_name_;
+      return other.id() == unique_id_;
     }
     bool operator<(const Name& other) const {
       return unique_id_ < other.id();
@@ -90,7 +90,7 @@ class MEDIA_EXPORT VideoCaptureDevice {
 #if defined(OS_WIN)
     // This class wraps the CaptureApiType, so it has a by default value if not
     // inititalized, and I (mcasas) do a DCHECK on reading its value.
-    class CaptureApiClass{
+    class CaptureApiClass {
      public:
       CaptureApiClass():  capture_api_type_(API_TYPE_UNKNOWN) {}
       CaptureApiClass(const CaptureApiType api_type)
@@ -118,29 +118,24 @@ class MEDIA_EXPORT VideoCaptureDevice {
     // Allow generated copy constructor and assignment.
   };
 
-  class MEDIA_EXPORT EventHandler {
+  class MEDIA_EXPORT Client {
    public:
+    virtual ~Client() {}
 
     // Reserve an output buffer into which a video frame can be captured
     // directly. If all buffers are currently busy, returns NULL.
     //
-    // The returned VideoFrames will always be allocated with a YV12 format. The
-    // size will match that specified by an earlier call to OnFrameInfo. It is
-    // the VideoCaptureDevice's responsibility to obey whatever stride and
-    // memory layout are indicated on the returned VideoFrame object.
+    // The returned VideoFrames will always be allocated with a YV12 format and
+    // have dimensions matching |size|. It is the VideoCaptureDevice's
+    // responsibility to obey whatever stride and memory layout are indicated on
+    // the returned VideoFrame object.
     //
     // The output buffer stays reserved for use by the calling
     // VideoCaptureDevice until either the last reference to the VideoFrame is
-    // released, or until the buffer is passed back to the EventHandler's
+    // released, or until the buffer is passed back to the Client's
     // OnIncomingCapturedFrame() method.
-    //
-    // Threading note: After VideoCaptureDevice::DeAllocate() occurs, the
-    // VideoCaptureDevice is not permitted to make any additional calls through
-    // its EventHandler. However, any VideoFrames returned from the EventHandler
-    // DO remain valid after DeAllocate(). The VideoCaptureDevice must still
-    // eventually release them, but it may do so later -- e.g., after a queued
-    // capture operation completes.
-    virtual scoped_refptr<media::VideoFrame> ReserveOutputBuffer() = 0;
+    virtual scoped_refptr<media::VideoFrame> ReserveOutputBuffer(
+        const gfx::Size& size) = 0;
 
     // Captured a new video frame as a raw buffer. The size, color format, and
     // layout are taken from the parameters specified by an earlier call to
@@ -177,50 +172,52 @@ class MEDIA_EXPORT VideoCaptureDevice {
         base::Time timestamp) = 0;
 
     // An error has occurred that cannot be handled and VideoCaptureDevice must
-    // be DeAllocate()-ed.
+    // be StopAndDeAllocate()-ed.
     virtual void OnError() = 0;
 
-    // Called when VideoCaptureDevice::Allocate() has been called to inform of
-    // the resulting frame size.
+    // Called when VideoCaptureDevice::AllocateAndStart() has been called to
+    // inform of the resulting frame size.
     virtual void OnFrameInfo(const VideoCaptureCapability& info) = 0;
 
     // Called when the native resolution of VideoCaptureDevice has been changed
     // and it needs to inform its client of the new frame size.
     virtual void OnFrameInfoChanged(const VideoCaptureCapability& info) {};
-
-   protected:
-    virtual ~EventHandler() {}
   };
   // Creates a VideoCaptureDevice object.
   // Return NULL if the hardware is not available.
   static VideoCaptureDevice* Create(const Name& device_name);
-  virtual ~VideoCaptureDevice() {}
+  virtual ~VideoCaptureDevice();
 
   // Gets the names of all video capture devices connected to this computer.
   static void GetDeviceNames(Names* device_names);
 
+  // Gets the capabilities of a particular device attached to the system. This
+  // method should be called before allocating or starting a device. In case
+  // format enumeration is not supported, or there was a problem, the formats
+  // array will be empty.
+  static void GetDeviceSupportedFormats(const Name& device,
+                                        VideoCaptureCapabilities* formats);
+
   // Prepare the camera for use. After this function has been called no other
-  // applications can use the camera. On completion EventHandler::OnFrameInfo()
+  // applications can use the camera. On completion Client::OnFrameInfo()
   // is called informing of the resulting resolution and frame rate.
-  // DeAllocate() must be called before this function can be called again and
-  // before the object is deleted.
-  virtual void Allocate(const VideoCaptureCapability& capture_format,
-                        EventHandler* observer) = 0;
+  // StopAndDeAllocate() must be called before the object is deleted.
+  virtual void AllocateAndStart(
+      const VideoCaptureCapability& capture_format,
+      scoped_ptr<Client> client) = 0;
 
-  // Start capturing video frames. Allocate must be called before this function.
-  virtual void Start() = 0;
-
-  // Stop capturing video frames.
-  virtual void Stop() = 0;
-
-  // Deallocates the camera. This means other applications can use it. After
-  // this function has been called the capture device is reset to the state it
-  // was when created. After DeAllocate() is called, the VideoCaptureDevice is
-  // not permitted to make any additional calls to its EventHandler.
-  virtual void DeAllocate() = 0;
-
-  // Get the name of the capture device.
-  virtual const Name& device_name() = 0;
+  // Deallocates the camera, possibly asynchronously.
+  //
+  // This call requires the device to do the following things, eventually: put
+  // camera hardware into a state where other applications could use it, free
+  // the memory associated with capture, and delete the |client| pointer passed
+  // into AllocateAndStart.
+  //
+  // If deallocation is done asynchronously, then the device implementation must
+  // ensure that a subsequent AllocateAndStart() operation targeting the same ID
+  // would be sequenced through the same task runner, so that deallocation
+  // happens first.
+  virtual void StopAndDeAllocate() = 0;
 };
 
 }  // namespace media

@@ -49,7 +49,6 @@ class CONTENT_EXPORT DownloadResourceHandler
                                 uint64 position,
                                 uint64 size) OVERRIDE;
 
-  // Not needed, as this event handler ought to be the final resource.
   virtual bool OnRequestRedirected(int request_id,
                                    const GURL& url,
                                    ResourceResponse* response,
@@ -68,7 +67,7 @@ class CONTENT_EXPORT DownloadResourceHandler
   // Create a new buffer, which will be handed to the download thread for file
   // writing and deletion.
   virtual bool OnWillRead(int request_id,
-                          net::IOBuffer** buf,
+                          scoped_refptr<net::IOBuffer>* buf,
                           int* buf_size,
                           int min_size) OVERRIDE;
 
@@ -104,11 +103,8 @@ class CONTENT_EXPORT DownloadResourceHandler
   void SetContentDisposition(const std::string& content_disposition);
 
   uint32 download_id_;
-  GlobalRequestID global_id_;
-  int render_view_id_;
   std::string content_disposition_;
   int64 content_length_;
-  net::URLRequest* request_;
   // This is read only on the IO thread, but may only
   // be called on the UI thread.
   DownloadUrlParameters::OnStartedCallback started_cb_;

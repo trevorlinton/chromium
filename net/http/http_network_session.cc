@@ -71,7 +71,6 @@ HttpNetworkSession::Params::Params()
       testing_fixed_https_port(0),
       force_spdy_single_domain(false),
       enable_spdy_ip_pooling(true),
-      enable_spdy_credential_frames(false),
       enable_spdy_compression(true),
       enable_spdy_ping_based_connection_checking(true),
       spdy_default_protocol(kProtoUnknown),
@@ -107,6 +106,7 @@ HttpNetworkSession::HttpNetworkSession(const Params& params)
                            params.client_socket_factory ?
                                params.client_socket_factory :
                                net::ClientSocketFactory::GetDefaultFactory(),
+                           params.http_server_properties,
                            params.quic_crypto_client_stream_factory,
                            params.quic_random ? params.quic_random :
                                QuicRandom::GetInstance(),
@@ -117,7 +117,6 @@ HttpNetworkSession::HttpNetworkSession(const Params& params)
                          params.http_server_properties,
                          params.force_spdy_single_domain,
                          params.enable_spdy_ip_pooling,
-                         params.enable_spdy_credential_frames,
                          params.enable_spdy_compression,
                          params.enable_spdy_ping_based_connection_checking,
                          params.spdy_default_protocol,
@@ -127,7 +126,8 @@ HttpNetworkSession::HttpNetworkSession(const Params& params)
                          params.time_func,
                          params.trusted_spdy_proxy),
       http_stream_factory_(new HttpStreamFactoryImpl(this, false)),
-      websocket_stream_factory_(new HttpStreamFactoryImpl(this, true)),
+      websocket_handshake_stream_factory_(
+          new HttpStreamFactoryImpl(this, true)),
       params_(params) {
   DCHECK(proxy_service_);
   DCHECK(ssl_config_service_.get());

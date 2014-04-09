@@ -20,6 +20,7 @@
 #include "base/strings/string_util.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
 #include "chrome/browser/chromeos/login/authenticator.h"
 #include "chrome/browser/chromeos/login/login_performer.h"
 #include "chrome/browser/chromeos/login/login_utils.h"
@@ -44,6 +45,7 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/user_metrics.h"
 #include "grit/generated_resources.h"
+#include "media/audio/sounds/sounds_manager.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
@@ -118,11 +120,6 @@ class ScreenLockObserver : public chromeos::SessionManagerClient::Observer,
     }
   }
 
-  virtual void UnlockScreen() OVERRIDE {
-    VLOG(1) << "Received UnlockScreen D-Bus signal from session manager";
-    chromeos::ScreenLocker::Hide();
-  }
-
   virtual void OnUserAddingFinished() OVERRIDE {
     chromeos::UserAddingScreen::Get()->RemoveObserver(this);
     LockScreen();
@@ -137,6 +134,11 @@ class ScreenLockObserver : public chromeos::SessionManagerClient::Observer,
 
   DISALLOW_COPY_AND_ASSIGN(ScreenLockObserver);
 };
+
+void PlaySound(media::SoundsManager::Sound sound) {
+  if (chromeos::AccessibilityManager::Get()->IsSpokenFeedbackEnabled())
+    media::SoundsManager::Get()->Play(sound);
+}
 
 static base::LazyInstance<ScreenLockObserver> g_screen_lock_observer =
     LAZY_INSTANCE_INITIALIZER;
@@ -160,6 +162,10 @@ ScreenLocker::ScreenLocker(const UserList& users)
       weak_factory_(this) {
   DCHECK(!screen_locker_);
   screen_locker_ = this;
+
+  ash::Shell::GetInstance()->lock_state_controller()->
+      SetLockScreenDisplayedCallback(
+          base::Bind(&PlaySound, media::SoundsManager::SOUND_LOCK));
 }
 
 void ScreenLocker::Init() {
@@ -191,10 +197,7 @@ void ScreenLocker::OnLoginFailure(const LoginFailure& error) {
     login_status_consumer_->OnLoginFailure(error);
 }
 
-void ScreenLocker::OnLoginSuccess(
-    const UserContext& user_context,
-    bool pending_requests,
-    bool using_oauth) {
+void ScreenLocker::OnLoginSuccess(const UserContext& user_context) {
   incorrect_passwords_count_ = 0;
   if (authentication_start_time_.is_null()) {
     if (!user_context.username.empty())
@@ -232,23 +235,16 @@ void ScreenLocker::OnLoginSuccess(
   }
 
   authentication_capture_.reset(new AuthenticationParametersCapture());
-  authentication_capture_->username = user_context.username;
-  authentication_capture_->pending_requests = pending_requests;
-  authentication_capture_->using_oauth = using_oauth;
+  authentication_capture_->user_context = user_context;
 
-  CommandLine* command_line = CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(ash::switches::kAshDisableNewLockAnimations)) {
-    UnlockOnLoginSuccess();
-  } else {
-    // Add guard for case when something get broken in call chain to unlock
-    // for sure.
-    base::MessageLoop::current()->PostDelayedTask(
-        FROM_HERE,
-        base::Bind(&ScreenLocker::UnlockOnLoginSuccess,
-            weak_factory_.GetWeakPtr()),
-        base::TimeDelta::FromMilliseconds(kUnlockGuardTimeoutMs));
-    delegate_->AnimateAuthenticationSuccess();
-  }
+  // Add guard for case when something get broken in call chain to unlock
+  // for sure.
+  base::MessageLoop::current()->PostDelayedTask(
+      FROM_HERE,
+      base::Bind(&ScreenLocker::UnlockOnLoginSuccess,
+          weak_factory_.GetWeakPtr()),
+      base::TimeDelta::FromMilliseconds(kUnlockGuardTimeoutMs));
+  delegate_->AnimateAuthenticationSuccess();
 }
 
 void ScreenLocker::UnlockOnLoginSuccess() {
@@ -259,19 +255,19 @@ void ScreenLocker::UnlockOnLoginSuccess() {
     return;
   }
 
-  VLOG(1) << "Calling session manager's UnlockScreen D-Bus method";
-  DBusThreadManager::Get()->GetSessionManagerClient()->RequestUnlockScreen();
-
   if (login_status_consumer_) {
     login_status_consumer_->OnLoginSuccess(
-        UserContext(authentication_capture_->username,
-                    std::string(),   // password
-                    std::string()),  // auth_code
-        authentication_capture_->pending_requests,
-        authentication_capture_->using_oauth);
+        UserContext(authentication_capture_->user_context.username,
+                    authentication_capture_->user_context.password,
+                    authentication_capture_->user_context.auth_code,
+                    authentication_capture_->user_context.username_hash,
+                    authentication_capture_->user_context.using_oauth));
   }
   authentication_capture_.reset();
   weak_factory_.InvalidateWeakPtrs();
+
+  VLOG(1) << "Hiding the lock screen.";
+  chromeos::ScreenLocker::Hide();
 }
 
 void ScreenLocker::Authenticate(const UserContext& user_context) {
@@ -349,7 +345,7 @@ void ScreenLocker::Show() {
 
   if (!screen_locker_) {
     ScreenLocker* locker =
-        new ScreenLocker(UserManager::Get()->GetLRULoggedInUsers());
+        new ScreenLocker(UserManager::Get()->GetUnlockUsers());
     VLOG(1) << "Created ScreenLocker " << locker;
     locker->Init();
   } else {
@@ -381,10 +377,12 @@ void ScreenLocker::ScheduleDeletion() {
   // Avoid possible multiple calls.
   if (screen_locker_ == NULL)
     return;
-  VLOG(1) << "Posting task to delete ScreenLocker " << screen_locker_;
-  ScreenLocker* screen_locker = screen_locker_;
+  VLOG(1) << "Deleting ScreenLocker " << screen_locker_;
+
+  PlaySound(media::SoundsManager::SOUND_UNLOCK);
+
+  delete screen_locker_;
   screen_locker_ = NULL;
-  base::MessageLoopForUI::current()->DeleteSoon(FROM_HERE, screen_locker);
 }
 
 // static
@@ -457,4 +455,3 @@ bool ScreenLocker::IsUserLoggedIn(const std::string& username) {
 }
 
 }  // namespace chromeos
-

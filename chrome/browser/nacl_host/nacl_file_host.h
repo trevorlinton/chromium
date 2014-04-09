@@ -7,10 +7,8 @@
 
 #include <string>
 
-#include "base/callback_forward.h"
 #include "base/memory/ref_counted.h"
 
-class ExtensionInfoMap;
 class GURL;
 class NaClHostMessageFilter;
 
@@ -22,25 +20,9 @@ namespace IPC {
 class Message;
 }
 
-namespace nacl {
-struct PnaclInstallProgress;
-}
-
 // Opens NaCl Files in the Browser process, on behalf of the NaCl plugin.
 
 namespace nacl_file_host {
-typedef base::Callback<void(bool)> InstallCallback;
-typedef base::Callback<void(const nacl::PnaclInstallProgress&)>
-    InstallProgressCallback;
-
-// Ensure that PNaCl is installed.  Calls |done_callback| if PNaCl is already
-// installed.  Otherwise, issues a request to install and calls |done_callback|
-// after that request completes w/ success or failure.
-// If a request to install is issued, then |progress_callback| is called
-// with progress updates.
-void EnsurePnaclInstalled(
-    const InstallCallback& done_callback,
-    const InstallProgressCallback& progress_callback);
 
 // Open a PNaCl file (readonly) on behalf of the NaCl plugin.
 void GetReadonlyPnaclFd(
@@ -56,7 +38,6 @@ bool PnaclCanOpenFile(const std::string& filename,
 // Opens a NaCl executable file for reading and executing.
 void OpenNaClExecutable(
     scoped_refptr<NaClHostMessageFilter> nacl_host_message_filter,
-    scoped_refptr<ExtensionInfoMap> extension_info_map,
     int render_view_id,
     const GURL& file_url,
     IPC::Message* reply_msg);

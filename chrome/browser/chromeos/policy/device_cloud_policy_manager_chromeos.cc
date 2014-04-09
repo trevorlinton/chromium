@@ -9,16 +9,17 @@
 #include "base/prefs/pref_registry_simple.h"
 #include "base/prefs/pref_service.h"
 #include "chrome/browser/chromeos/attestation/attestation_policy_observer.h"
+#include "chrome/browser/chromeos/login/startup_utils.h"
 #include "chrome/browser/chromeos/policy/device_cloud_policy_store_chromeos.h"
 #include "chrome/browser/chromeos/policy/enrollment_handler_chromeos.h"
 #include "chrome/browser/chromeos/policy/enterprise_install_attributes.h"
-#include "chrome/browser/chromeos/system/statistics_provider.h"
 #include "chrome/browser/policy/cloud/cloud_policy_constants.h"
 #include "chrome/browser/policy/cloud/cloud_policy_store.h"
 #include "chrome/browser/policy/cloud/device_management_service.h"
 #include "chrome/browser/policy/proto/cloud/device_management_backend.pb.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/chromeos_constants.h"
+#include "chromeos/system/statistics_provider.h"
 
 namespace em = enterprise_management;
 
@@ -80,12 +81,16 @@ bool GetMachineFlag(const std::string& key, bool default_value) {
 
 DeviceCloudPolicyManagerChromeOS::DeviceCloudPolicyManagerChromeOS(
     scoped_ptr<DeviceCloudPolicyStoreChromeOS> store,
+    const scoped_refptr<base::SequencedTaskRunner>& task_runner,
+    const scoped_refptr<base::SequencedTaskRunner>& background_task_runner,
     EnterpriseInstallAttributes* install_attributes)
     : CloudPolicyManager(
           PolicyNamespaceKey(dm_protocol::kChromeDevicePolicyType,
                              std::string()),
-          store.get()),
+          store.get(),
+          task_runner),
       device_store_(store.Pass()),
+      background_task_runner_(background_task_runner),
       install_attributes_(install_attributes),
       device_management_service_(NULL),
       local_state_(NULL) {}
@@ -117,7 +122,8 @@ void DeviceCloudPolicyManagerChromeOS::StartEnrollment(
 
   enrollment_handler_.reset(
       new EnrollmentHandlerChromeOS(
-          device_store_.get(), install_attributes_, CreateClient(), auth_token,
+          device_store_.get(), install_attributes_, CreateClient(),
+          background_task_runner_, auth_token,
           install_attributes_->GetDeviceId(), is_auto_enrollment,
           GetDeviceRequisition(), allowed_device_modes,
           base::Bind(&DeviceCloudPolicyManagerChromeOS::EnrollmentCompleted,
@@ -136,7 +142,8 @@ std::string DeviceCloudPolicyManagerChromeOS::GetDeviceRequisition() const {
   std::string requisition;
   const PrefService::Preference* pref = local_state_->FindPreference(
       prefs::kDeviceEnrollmentRequisition);
-  if (pref->IsDefaultValue()) {
+  if (pref->IsDefaultValue() && !chromeos::StartupUtils::IsOobeCompleted()) {
+    // OEM statistics are only loaded when OOBE is not completed.
     requisition =
         GetMachineStatistic(chromeos::system::kOemDeviceRequisitionKey);
   } else {
@@ -239,7 +246,7 @@ void DeviceCloudPolicyManagerChromeOS::EnrollmentCompleted(
     EnrollmentStatus status) {
   if (status.status() == EnrollmentStatus::STATUS_SUCCESS) {
     core()->Connect(enrollment_handler_->ReleaseClient());
-    StartRefreshScheduler();
+    core()->StartRefreshScheduler();
     core()->TrackRefreshDelayPref(local_state_,
                                   prefs::kDevicePolicyRefreshRate);
     attestation_policy_observer_.reset(
@@ -260,7 +267,7 @@ void DeviceCloudPolicyManagerChromeOS::StartIfManaged() {
       store()->is_managed() &&
       !service()) {
     core()->Connect(CreateClient());
-    StartRefreshScheduler();
+    core()->StartRefreshScheduler();
     core()->TrackRefreshDelayPref(local_state_,
                                   prefs::kDevicePolicyRefreshRate);
     attestation_policy_observer_.reset(

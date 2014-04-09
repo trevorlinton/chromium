@@ -24,9 +24,11 @@ const char kHostConfigSwitchName[] = "host-config";
 const base::FilePath::CharType kDefaultHostConfigFile[] =
     FILE_PATH_LITERAL("host.json");
 
+#if defined(OS_WIN)
 // Maximum number of times to try reading the configuration file before
 // reporting an error.
 const int kMaxRetries = 3;
+#endif  // defined(OS_WIN)
 
 class ConfigFileWatcherImpl
     : public base::RefCountedThreadSafe<ConfigFileWatcherImpl> {
@@ -180,7 +182,7 @@ void ConfigFileWatcherImpl::ReloadConfig() {
   DCHECK(io_task_runner_->BelongsToCurrentThread());
 
   std::string config;
-  if (!file_util::ReadFileToString(config_path_, &config)) {
+  if (!base::ReadFileToString(config_path_, &config)) {
 #if defined(OS_WIN)
     // EACCESS may indicate a locking or sharing violation. Retry a few times
     // before reporting an error.

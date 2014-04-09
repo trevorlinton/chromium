@@ -6,10 +6,10 @@
 
 #include "base/bind_helpers.h"
 #include "base/message_loop/message_loop.h"
+#include "base/sequenced_task_runner.h"
 #include "base/stl_util.h"
 #include "chrome/browser/policy/cloud/cloud_policy_constants.h"
 #include "chrome/browser/policy/proto/cloud/device_management_backend.pb.h"
-#include "content/public/browser/browser_thread.h"
 #include "crypto/signature_verifier.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 
@@ -114,7 +114,8 @@ void CloudPolicyValidatorBase::ValidateAgainstCurrentPolicy(
 
 CloudPolicyValidatorBase::CloudPolicyValidatorBase(
     scoped_ptr<em::PolicyFetchResponse> policy_response,
-    google::protobuf::MessageLite* payload)
+    google::protobuf::MessageLite* payload,
+    scoped_refptr<base::SequencedTaskRunner> background_task_runner)
     : status_(VALIDATION_OK),
       policy_(policy_response.Pass()),
       payload_(payload),
@@ -123,12 +124,13 @@ CloudPolicyValidatorBase::CloudPolicyValidatorBase(
       timestamp_not_after_(0),
       timestamp_option_(TIMESTAMP_REQUIRED),
       dm_token_option_(DM_TOKEN_REQUIRED),
-      allow_key_rotation_(false) {}
+      allow_key_rotation_(false),
+      background_task_runner_(background_task_runner) {}
 
 void CloudPolicyValidatorBase::PostValidationTask(
     const base::Closure& completion_callback) {
-  content::BrowserThread::PostTask(
-      content::BrowserThread::FILE, FROM_HERE,
+  background_task_runner_->PostTask(
+      FROM_HERE,
       base::Bind(&CloudPolicyValidatorBase::PerformValidation,
                  base::Passed(scoped_ptr<CloudPolicyValidatorBase>(this)),
                  base::MessageLoop::current()->message_loop_proxy(),
@@ -274,11 +276,15 @@ CloudPolicyValidatorBase::Status CloudPolicyValidatorBase::CheckTimestamp() {
     }
   }
 
-  if (policy_data_->timestamp() < timestamp_not_before_) {
+  if (timestamp_option_ != TIMESTAMP_NOT_REQUIRED &&
+      policy_data_->timestamp() < timestamp_not_before_) {
+    // If |timestamp_option_| is TIMESTAMP_REQUIRED or TIMESTAMP_NOT_BEFORE
+    // then this is a failure.
     LOG(ERROR) << "Policy too old: " << policy_data_->timestamp();
     return VALIDATION_BAD_TIMESTAMP;
   }
-  if (policy_data_->timestamp() > timestamp_not_after_) {
+  if (timestamp_option_ == TIMESTAMP_REQUIRED &&
+      policy_data_->timestamp() > timestamp_not_after_) {
     LOG(ERROR) << "Policy from the future: " << policy_data_->timestamp();
     return VALIDATION_BAD_TIMESTAMP;
   }

@@ -7,6 +7,7 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/memory/scoped_ptr.h"
+#include "ui/base/layout.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/views/controls/button/custom_button.h"
 
@@ -20,6 +21,8 @@ namespace views {
 
 class VIEWS_EXPORT ImageButton : public CustomButton {
  public:
+  static const char kViewClassName[];
+
   enum HorizontalAlignment {
     ALIGN_LEFT = 0,
     ALIGN_CENTER,
@@ -56,12 +59,18 @@ class VIEWS_EXPORT ImageButton : public CustomButton {
 
   // Overridden from View:
   virtual gfx::Size GetPreferredSize() OVERRIDE;
+  virtual const char* GetClassName() const OVERRIDE;
   virtual void OnPaint(gfx::Canvas* canvas) OVERRIDE;
 
   // Sets preferred size, so it could be correctly positioned in layout even if
   // it is NULL.
   void SetPreferredSize(const gfx::Size& preferred_size) {
     preferred_size_ = preferred_size;
+  }
+
+  // Whether we should draw our images resources horizontally flipped.
+  void SetDrawImageMirrored(bool mirrored) {
+    draw_image_mirrored_ = mirrored;
   }
 
  protected:
@@ -91,6 +100,12 @@ class VIEWS_EXPORT ImageButton : public CustomButton {
   HorizontalAlignment h_alignment_;
   VerticalAlignment v_alignment_;
   gfx::Size preferred_size_;
+
+  // Whether we draw our resources horizontally flipped. This can happen in the
+  // linux titlebar, where image resources were designed to be flipped so a
+  // small curved corner in the close button designed to fit into the frame
+  // resources.
+  bool draw_image_mirrored_;
 
   DISALLOW_COPY_AND_ASSIGN(ImageButton);
 };

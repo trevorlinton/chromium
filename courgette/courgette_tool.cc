@@ -53,7 +53,7 @@ std::string ReadOrFail(const base::FilePath& file_name, const char* kind) {
     Problem("Can't read %s file.", kind);
   std::string buffer;
   buffer.reserve(static_cast<size_t>(file_size));
-  if (!file_util::ReadFileToString(file_name, &buffer))
+  if (!base::ReadFileToString(file_name, &buffer))
     Problem("Can't read %s file.", kind);
   return buffer;
 }
@@ -138,6 +138,11 @@ bool Supported(const base::FilePath& input_file) {
 
     case courgette::EXE_ELF_32_ARM:
       format = "ELF 32 ARM";
+      result = true;
+      break;
+
+    case courgette::EXE_WIN_32_X64:
+      format = "Windows 64 PE";
       result = true;
       break;
   }

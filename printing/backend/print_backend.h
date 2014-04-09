@@ -42,6 +42,11 @@ struct PRINTING_EXPORT PrinterSemanticCapsAndDefaults {
   bool color_changeable;
   bool duplex_capable;
 
+#if defined(USE_CUPS)
+  ColorModel color_model;
+  ColorModel bw_model;
+#endif
+
   // Current defaults.
   bool color_default;
   DuplexMode duplex_default;
@@ -94,7 +99,7 @@ class PRINTING_EXPORT PrintBackend
   virtual bool IsValidPrinter(const std::string& printer_name) = 0;
 
   // Simplify title to resolve issue with some drivers.
-  static string16 SimplifyDocumentTitle(const string16& title);
+  static base::string16 SimplifyDocumentTitle(const base::string16& title);
 
   // Allocate a print backend. If |print_backend_settings| is NULL, default
   // settings will be used.

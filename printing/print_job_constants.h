@@ -53,10 +53,7 @@ PRINTING_EXPORT extern const char kSettingShouldPrintSelectionOnly[];
 
 PRINTING_EXPORT extern const int FIRST_PAGE_INDEX;
 PRINTING_EXPORT extern const int COMPLETE_PREVIEW_DOCUMENT_INDEX;
-
-#if defined(OS_MACOSX)
 PRINTING_EXPORT extern const char kSettingOpenPDFInPreview[];
-#endif  // defined(OS_MACOSX)
 
 #if defined (USE_CUPS)
 // Printer color models
@@ -99,7 +96,7 @@ enum VerticalHeaderFooterPosition {
 };
 
 // Print job color mode values.
-enum ColorModels {
+enum ColorModel {
   UNKNOWN_COLOR_MODEL,
   GRAY,
   COLOR,

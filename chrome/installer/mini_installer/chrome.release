@@ -3,10 +3,9 @@
 # found in the LICENSE file.
 
 [GENERAL]
-app_host.exe: %(ChromeDir)s\
 chrome.exe: %(ChromeDir)s\
 wow_helper.exe: %(ChromeDir)s\
-asan_rtl.dll: %(VersionDir)s\
+syzyasan_rtl.dll: %(VersionDir)s\
 chrome.dll: %(VersionDir)s\
 chrome_child.dll: %(VersionDir)s\
 nacl64.exe: %(VersionDir)s\

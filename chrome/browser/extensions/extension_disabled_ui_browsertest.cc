@@ -10,6 +10,7 @@
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_prefs.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/extension_sync_service.h"
 #include "chrome/browser/extensions/updater/extension_updater.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -185,8 +186,10 @@ IN_PROC_BROWSER_TEST_F(ExtensionDisabledGlobalErrorTest,
   // Get data for extension v2 (disabled) into sync.
   const Extension* extension = InstallAndUpdateIncreasingPermissionsExtension();
   std::string extension_id = extension->id();
+  ExtensionSyncService* sync_service = ExtensionSyncService::Get(
+      browser()->profile());
   extensions::ExtensionSyncData sync_data =
-      service_->GetExtensionSyncData(*extension);
+      sync_service->GetExtensionSyncData(*extension);
   UninstallExtension(extension_id);
   extension = NULL;
 
@@ -205,11 +208,10 @@ IN_PROC_BROWSER_TEST_F(ExtensionDisabledGlobalErrorTest,
       scoped_temp_dir_.path().AppendASCII("permissions2.crx"));
 
   extensions::ExtensionUpdater::CheckParams params;
-  params.check_blacklist = false;
   service_->updater()->set_default_check_params(params);
 
   // Sync is replacing an older version, so it pends.
-  EXPECT_FALSE(service_->ProcessExtensionSyncData(sync_data));
+  EXPECT_FALSE(sync_service->ProcessExtensionSyncData(sync_data));
 
   WaitForExtensionInstall();
   content::BrowserThread::GetBlockingPool()->FlushForTesting();

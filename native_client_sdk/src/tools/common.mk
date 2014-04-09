@@ -10,11 +10,11 @@
 #
 # Toolchain
 #
-# By default the VALID_TOOLCHAINS list contains newlib and glibc.  If your
-# project only builds in one or the other then this should be overridden
+# By default the VALID_TOOLCHAINS list contains pnacl, newlib and glibc.  If
+# your project only builds in one or the other then this should be overridden
 # accordingly.
 #
-VALID_TOOLCHAINS ?= newlib glibc
+VALID_TOOLCHAINS ?= pnacl newlib glibc
 TOOLCHAIN ?= $(word 1,$(VALID_TOOLCHAINS))
 
 
@@ -58,7 +58,7 @@ endef
 #
 # The target for all versions
 #
-USABLE_TOOLCHAINS=$(filter $(OSNAME) newlib glibc pnacl,$(VALID_TOOLCHAINS))
+USABLE_TOOLCHAINS=$(filter $(OSNAME) pnacl newlib glibc,$(VALID_TOOLCHAINS))
 
 ifeq ($(NO_HOST_BUILDS),1)
 USABLE_TOOLCHAINS:=$(filter-out $(OSNAME),$(USABLE_TOOLCHAINS))
@@ -101,9 +101,14 @@ else  # TOOLCHAIN is valid...
 #
 # The SDK provides two sets of libraries, Debug and Release.  Debug libraries
 # are compiled without optimizations to make debugging easier.  By default
-# this will build a Debug configuration.
+# this will build a Release configuration. When debugging via "make debug",
+# build the debug configuration by default instead.
 #
+ifneq (,$(findstring debug,$(MAKECMDGOALS)))
 CONFIG ?= Debug
+else
+CONFIG ?= Release
+endif
 
 
 #
@@ -284,8 +289,13 @@ endif
 #
 # Common Compile Options
 #
+# For example, -DNDEBUG is added to release builds by default
+# so that calls to assert(3) are not included in the build.
+#
 ifeq ($(CONFIG),Release)
-POSIX_FLAGS ?= -g -O2 -pthread -MMD
+POSIX_FLAGS ?= -g -O2 -pthread -MMD -DNDEBUG
+NACL_LDFLAGS ?= -O2
+PNACL_LDFLAGS ?= -O2
 else
 POSIX_FLAGS ?= -g -O0 -pthread -MMD -DNACL_SDK_DEBUG
 endif
@@ -296,7 +306,7 @@ endif
 
 NACL_CFLAGS ?= -Wno-long-long -Werror
 NACL_CXXFLAGS ?= -Wno-long-long -Werror
-NACL_LDFLAGS ?= -Wl,-as-needed
+NACL_LDFLAGS += -Wl,-as-needed
 
 #
 # Default Paths
@@ -423,6 +433,7 @@ endif
 # Variables for running examples with Chrome.
 #
 RUN_PY := python $(NACL_SDK_ROOT)/tools/run.py
+HTTPD_PY := python $(NACL_SDK_ROOT)/tools/httpd.py
 
 # Add this to launch Chrome with additional environment variables defined.
 # Each element should be specified as KEY=VALUE, with whitespace separating
@@ -455,13 +466,13 @@ run: all
 ifndef NACL_ARCH
 	$(error Cannot run in sel_ldr unless $$NACL_ARCH is set)
 endif
-	$(SEL_LDR_PATH) $(SEL_LDR_ARGS) $(OUTDIR)/$(TARGET)_$(NACL_ARCH).nexe
+	$(SEL_LDR_PATH) $(SEL_LDR_ARGS) $(OUTDIR)/$(TARGET)_$(NACL_ARCH).nexe -- $(NEXE_ARGS)
 
 debug: all
 ifndef NACL_ARCH
 	$(error Cannot run in sel_ldr unless $$NACL_ARCH is set)
 endif
-	$(SEL_LDR_PATH) -d $(SEL_LDR_ARGS) $(OUTDIR)/$(TARGET)_$(NACL_ARCH).nexe
+	$(SEL_LDR_PATH) -d $(SEL_LDR_ARGS) $(OUTDIR)/$(TARGET)_$(NACL_ARCH).nexe -- $(NEXE_ARGS)
 else
 PAGE ?= index.html
 PAGE_TC_CONFIG ?= "$(PAGE)?tc=$(TOOLCHAIN)&config=$(CONFIG)"
@@ -474,6 +485,7 @@ run: check_for_chrome all $(PAGE)
 
 .PHONY: run_package
 run_package: check_for_chrome all
+	@echo "$(TOOLCHAIN) $(CONFIG)" > $(CURDIR)/run_package_config
 	$(CHROME_PATH) --load-and-launch-app=$(CURDIR) $(CHROME_ARGS)
 
 GDB_ARGS += -D $(TC_PATH)/$(OSNAME)_x86_newlib/bin/$(SYSARCH)-nacl-gdb
@@ -488,6 +500,10 @@ debug: check_for_chrome all $(PAGE)
 	    --enable-nacl-debug \
 	    --register-pepper-plugins="$(PPAPI_DEBUG),$(PPAPI_RELEASE)"
 endif
+
+.PHONY: serve
+serve: all
+	$(HTTPD_PY) -C $(CURDIR)
 
 
 # uppercase aliases (for backward compatibility)

@@ -69,3 +69,7 @@ TEST_F(MessageCenterSettingsControllerTest, NotifierGroups) {
   EXPECT_EQ(controller->GetActiveNotifierGroup().name,
             UTF8ToUTF16("Profile-1"));
 }
+
+// TODO(mukai): write a test case to reproduce the actual guest session scenario
+// in ChromeOS -- no profiles in the profile_info_cache but GetDefaultProfile
+// returns a new one.

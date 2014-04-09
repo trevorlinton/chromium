@@ -22,7 +22,10 @@
 #include <string>
 #include <vector>
 
+#include "base/stl_util.h"
 #include "sync/base/sync_export.h"
+#include "sync/engine/sync_directory_commit_contributor.h"
+#include "sync/engine/sync_directory_update_handler.h"
 #include "sync/engine/sync_engine_event.h"
 #include "sync/engine/syncer_types.h"
 #include "sync/engine/traffic_recorder.h"
@@ -71,8 +74,14 @@ class SYNC_EXPORT_PRIVATE SyncSessionContext {
     return routing_info_;
   }
 
-  void set_routing_info(const ModelSafeRoutingInfo& routing_info) {
-    routing_info_ = routing_info;
+  void set_routing_info(const ModelSafeRoutingInfo& routing_info);
+
+  UpdateHandlerMap* update_handler_map() {
+    return &update_handler_map_;
+  }
+
+  CommitContributorMap* commit_contributor_map() {
+    return &commit_contributor_map_;
   }
 
   const std::vector<scoped_refptr<ModelSafeWorker> >& workers() const {
@@ -153,6 +162,22 @@ class SYNC_EXPORT_PRIVATE SyncSessionContext {
   // A cached copy of SyncBackendRegistrar's routing info.
   // Must be updated manually when SBR's state is modified.
   ModelSafeRoutingInfo routing_info_;
+
+  // A map of 'update handlers', one for each enabled type.
+  // This must be kept in sync with the routing info.  Our temporary solution to
+  // that problem is to initialize this map in set_routing_info().
+  UpdateHandlerMap update_handler_map_;
+
+  // Deleter for the |update_handler_map_|.
+  STLValueDeleter<UpdateHandlerMap> update_handler_deleter_;
+
+  // A map of 'commit contributors', one for each enabled type.
+  // This must be kept in sync with the routing info.  Our temporary solution to
+  // that problem is to initialize this map in set_routing_info().
+  CommitContributorMap commit_contributor_map_;
+
+  // Deleter for the |commit_contributor_map_|.
+  STLValueDeleter<CommitContributorMap> commit_contributor_deleter_;
 
   // The set of ModelSafeWorkers.  Used to execute tasks of various threads.
   std::vector<scoped_refptr<ModelSafeWorker> > workers_;

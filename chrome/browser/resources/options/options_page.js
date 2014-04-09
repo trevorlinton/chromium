@@ -226,10 +226,8 @@ cr.define('options', function() {
 
     // The page is already in history (the user may have clicked the same link
     // twice). Do nothing.
-    if (path == page.name &&
-        !document.documentElement.classList.contains('loading')) {
+    if (path == page.name && !OptionsPage.isLoading())
       return;
-    }
 
     var hash = opt_params && opt_params.ignoreHash ? '' : window.location.hash;
 
@@ -287,8 +285,6 @@ cr.define('options', function() {
         document.activeElement.blur();
       }
     }
-
-    $('searchBox').setAttribute('aria-hidden', true);
 
     if ($('search-field').value == '') {
       var section = overlay.associatedSection;
@@ -348,8 +344,6 @@ cr.define('options', function() {
     this.updateHistoryState_(false, {ignoreHash: true});
 
     this.restoreLastFocusedElement_();
-    if (!this.isOverlayVisible_())
-      $('searchBox').removeAttribute('aria-hidden');
   };
 
   /**
@@ -617,7 +611,7 @@ cr.define('options', function() {
     if (freeze) {
       // Lock the width, since auto width computation may change.
       container.style.width = window.getComputedStyle(container).width;
-      container.oldScrollTop = document.body.scrollTop;
+      container.oldScrollTop = document.documentElement.scrollTop;
       container.classList.add('frozen');
       var verticalPosition =
           container.getBoundingClientRect().top - container.oldScrollTop;
@@ -750,6 +744,14 @@ cr.define('options', function() {
     return document.documentElement.classList.contains('settings-app');
   };
 
+  /**
+   * Whether the page is still loading (i.e. onload hasn't finished running).
+   * @return {boolean} Whether the page is still loading.
+   */
+  OptionsPage.isLoading = function() {
+    return document.documentElement.classList.contains('loading');
+  };
+
   OptionsPage.prototype = {
     __proto__: cr.EventTarget.prototype,
 
@@ -855,15 +857,8 @@ cr.define('options', function() {
       var pageDiv = this.pageDiv;
       var container = this.container;
 
-      if (visible) {
+      if (visible)
         uber.invokeMethodOnParent('beginInterceptingEvents');
-        this.pageDiv.removeAttribute('aria-hidden');
-        if (this.parentPage)
-          this.parentPage.pageDiv.setAttribute('aria-hidden', true);
-      } else {
-        if (this.parentPage)
-          this.parentPage.pageDiv.removeAttribute('aria-hidden');
-      }
 
       if (container.hidden != visible) {
         if (visible) {
@@ -884,6 +879,19 @@ cr.define('options', function() {
         return;
       }
 
+      var self = this;
+      var loading = OptionsPage.isLoading();
+      if (!loading) {
+        // TODO(flackr): Use an event delegate to avoid having to subscribe and
+        // unsubscribe for webkitTransitionEnd events.
+        container.addEventListener('webkitTransitionEnd', function f(e) {
+            if (e.target != e.currentTarget || e.propertyName != 'opacity')
+              return;
+            container.removeEventListener('webkitTransitionEnd', f);
+            self.fadeCompleted_();
+        });
+      }
+
       if (visible) {
         container.hidden = false;
         pageDiv.hidden = false;
@@ -891,23 +899,23 @@ cr.define('options', function() {
         // NOTE: This is a hacky way to force the container to layout which
         // will allow us to trigger the webkit transition.
         container.scrollTop;
+
+        this.pageDiv.removeAttribute('aria-hidden');
+        if (this.parentPage) {
+          this.parentPage.pageDiv.parentElement.setAttribute('aria-hidden',
+                                                             true);
+        }
         container.classList.remove('transparent');
         this.onVisibilityChanged_();
       } else {
         // Kick change events for text fields.
         if (pageDiv.contains(document.activeElement))
           document.activeElement.blur();
-        var self = this;
-        // TODO: Use an event delegate to avoid having to subscribe and
-        // unsubscribe for webkitTransitionEnd events.
-        container.addEventListener('webkitTransitionEnd', function f(e) {
-          if (e.target != e.currentTarget || e.propertyName != 'opacity')
-            return;
-          container.removeEventListener('webkitTransitionEnd', f);
-          self.fadeCompleted_();
-        });
         container.classList.add('transparent');
       }
+
+      if (loading)
+        this.fadeCompleted_();
     },
 
     /**
@@ -918,9 +926,14 @@ cr.define('options', function() {
       if (this.container.classList.contains('transparent')) {
         this.pageDiv.hidden = true;
         this.container.hidden = true;
-        this.onVisibilityChanged_();
+
+        if (this.parentPage)
+          this.parentPage.pageDiv.parentElement.removeAttribute('aria-hidden');
+
         if (this.nestingLevel == 1)
           uber.invokeMethodOnParent('stopInterceptingEvents');
+
+        this.onVisibilityChanged_();
       }
     },
 

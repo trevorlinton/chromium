@@ -9,9 +9,12 @@
 #include <vector>
 
 #include "base/basictypes.h"
+#include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "base/version.h"
 #include "chrome/browser/component_updater/component_updater_service.h"
+
+class CUResourceThrottle;
 
 // This is the one and only per-item state structure. Designed to be hosted
 // in a std::vector or a std::list. The two main members are |component|
@@ -19,12 +22,13 @@
 // is modified as the item is processed by the update pipeline. The expected
 // transition graph is:
 //
-//                                 kNew
-//                                  |
-//                                  V
-//     +----------------------> kChecking -<---------+-----<-------+
-//     |                            |                |             |
-//     |              error         V       no       |             |
+//                  on-demand                on-demand
+//   +---------------------------> kNew <--------------+-------------+
+//   |                              |                  |             |
+//   |                              V                  |             |
+//   |   +--------------------> kChecking -<-------+---|---<-----+   |
+//   |   |                          |              |   |         |   |
+//   |   |            error         V       no     |   |         |   |
 //  kNoUpdate <---------------- [update?] ->---- kUpToDate     kUpdated
 //     ^                            |                              ^
 //     |                        yes |                              |
@@ -63,7 +67,10 @@ struct CrxUpdateItem {
     kLastStatus
   };
 
+  // Call CrxUpdateService::ChangeItemState to change |status|. The function may
+  // enforce conditions or notify observers of the change.
   Status status;
+
   std::string id;
   CrxComponent component;
 
@@ -78,6 +85,9 @@ struct CrxUpdateItem {
   Version next_version;
   std::string previous_fp;
   std::string next_fp;
+
+  // True if the current update check cycle is on-demand.
+  bool on_demand;
 
   // True if the differential update failed for any reason.
   bool diff_update_failed;
@@ -94,6 +104,8 @@ struct CrxUpdateItem {
   int diff_error_category;
   int diff_error_code;
   int diff_extra_code1;
+
+  std::vector<base::WeakPtr<CUResourceThrottle> > throttles;
 
   CrxUpdateItem();
   ~CrxUpdateItem();

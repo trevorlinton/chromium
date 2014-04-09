@@ -13,11 +13,11 @@
 #include "ui/app_list/views/cached_label.h"
 #include "ui/app_list/views/progress_bar_view.h"
 #include "ui/base/accessibility/accessible_view_state.h"
-#include "ui/base/animation/throb_animation.h"
 #include "ui/base/dragdrop/drag_utils.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
+#include "ui/gfx/animation/throb_animation.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font.h"
 #include "ui/gfx/image/image_skia_operations.h"
@@ -32,12 +32,9 @@ namespace app_list {
 
 namespace {
 
-const int kTopBottomPadding = 10;
 const int kTopPadding = 20;
 const int kIconTitleSpacing = 7;
 const int kProgressBarHorizontalPadding = 12;
-const int kProgressBarVerticalPadding = 4;
-const int kProgressBarHeight = 4;
 
 const int kLeftRightPaddingChars = 1;
 
@@ -130,6 +127,11 @@ void AppListItemView::UpdateIcon() {
   icon_->SetImage(resized);
 }
 
+void AppListItemView::UpdateTooltip() {
+  title_->SetTooltipText(model_->title() == model_->full_name() ?
+                             string16() : UTF8ToUTF16(model_->full_name()));
+}
+
 void AppListItemView::SetUIState(UIState state) {
   if (ui_state_ == state)
     return;
@@ -179,11 +181,7 @@ void AppListItemView::CancelContextMenu() {
 }
 
 gfx::ImageSkia AppListItemView::GetDragImage() {
-  gfx::Canvas canvas(size(), ui::SCALE_FACTOR_100P, false /* is_opaque */);
-  gfx::Rect bounds(size());
-  canvas.DrawColor(SK_ColorTRANSPARENT);
-  PaintChildren(&canvas);
-  return gfx::ImageSkia(canvas.ExtractImageRep());
+  return icon_->GetImage();
 }
 
 void AppListItemView::ItemIconChanged() {
@@ -193,6 +191,7 @@ void AppListItemView::ItemIconChanged() {
 void AppListItemView::ItemTitleChanged() {
   title_->SetText(UTF8ToUTF16(model_->title()));
   title_->Invalidate();
+  UpdateTooltip();
   Layout();
 }
 

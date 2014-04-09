@@ -135,22 +135,6 @@ class CHROMEOS_EXPORT InputMethodManager {
   virtual bool EnableInputMethod(
       const std::string& new_active_input_method_id) = 0;
 
-  // Remaps old input methods like "mozc" to new input methods. Return true if
-  // at least one IME is migrated.
-  // TODO(nona): Remove this function after few milestones are passed.
-  //             (http://crbug.com/236747)
-  virtual bool MigrateOldInputMethods(
-      std::vector<std::string>* input_method_ids) = 0;
-  virtual bool MigrateKoreanKeyboard(
-      const std::string& keyboard_id,
-      std::vector<std::string>* input_method_ids) = 0;
-
-  // Updates a configuration of a system input method engine with |value|.
-  // Returns true if the configuration is correctly set.
-  virtual bool SetInputMethodConfig(const std::string& section,
-                                    const std::string& config_name,
-                                    const InputMethodConfigValue& value) = 0;
-
   // Adds an input method extension. This function does not takes ownership of
   // |instance|.
   virtual void AddInputMethodExtension(
@@ -201,7 +185,7 @@ class CHROMEOS_EXPORT InputMethodManager {
   virtual bool SwitchInputMethod(const ui::Accelerator& accelerator) = 0;
 
   // If keyboard layout can be uset at login screen
-  virtual bool IsFullLatinKeyboard(const std::string& layout) const = 0;
+  virtual bool IsLoginKeyboard(const std::string& layout) const = 0;
 };
 
 }  // namespace input_method

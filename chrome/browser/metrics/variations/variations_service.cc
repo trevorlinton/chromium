@@ -18,14 +18,13 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/version.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/metrics/proto/trials_seed.pb.h"
-#include "chrome/browser/metrics/variations/variations_seed_processor.h"
-#include "chrome/browser/net/network_time_tracker.h"
+#include "chrome/browser/network_time/network_time_tracker.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/metrics/variations/variations_util.h"
 #include "chrome/common/pref_names.h"
+#include "components/variations/proto/variations_seed.pb.h"
+#include "components/variations/variations_seed_processor.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/common/url_fetcher.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_change_notifier.h"
@@ -187,8 +186,8 @@ VariationsService::~VariationsService() {
 bool VariationsService::CreateTrialsFromSeed() {
   create_trials_from_seed_called_ = true;
 
-  TrialsSeed seed;
-  if (!LoadTrialsSeedFromPref(&seed))
+  VariationsSeed seed;
+  if (!LoadVariationsSeedFromPref(&seed))
     return false;
 
   const int64 date_value = local_state_->GetInt64(prefs::kVariationsSeedDate);
@@ -398,6 +397,10 @@ void VariationsService::OnURLFetchComplete(const net::URLFetcher* source) {
     if (response_code == net::HTTP_NOT_MODIFIED) {
       UMA_HISTOGRAM_MEDIUM_TIMES("Variations.FetchNotModifiedLatency", latency);
       RecordLastFetchTime();
+      // Update the seed date value in local state (used for expiry check on
+      // next start up), since 304 is a successful response.
+      local_state_->SetInt64(prefs::kVariationsSeedDate,
+                             response_date.ToInternalValue());
     } else {
       UMA_HISTOGRAM_MEDIUM_TIMES("Variations.FetchOtherLatency", latency);
     }
@@ -436,7 +439,7 @@ bool VariationsService::StoreSeedData(const std::string& seed_data,
   }
 
   // Only store the seed data if it parses correctly.
-  TrialsSeed seed;
+  VariationsSeed seed;
   if (!seed.ParseFromString(seed_data)) {
     VLOG(1) << "Variations Seed data from server is not in valid proto format, "
             << "rejecting the seed.";
@@ -461,7 +464,7 @@ bool VariationsService::StoreSeedData(const std::string& seed_data,
   return true;
 }
 
-bool VariationsService::LoadTrialsSeedFromPref(TrialsSeed* seed) {
+bool VariationsService::LoadVariationsSeedFromPref(VariationsSeed* seed) {
   const std::string base64_seed_data =
       local_state_->GetString(prefs::kVariationsSeed);
   if (base64_seed_data.empty()) {

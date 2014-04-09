@@ -20,6 +20,7 @@
 #include "net/base/net_util.h"
 #include "net/base/winsock_init.h"
 #include "net/base/winsock_util.h"
+#include "net/socket/socket_descriptor.h"
 #include "net/udp/udp_net_log_parameters.h"
 
 namespace {
@@ -750,6 +751,12 @@ int UDPSocketWin::SetMulticastLoopbackMode(bool loopback) {
   else
     socket_options_ &= ~SOCKET_OPTION_MULTICAST_LOOP;
   return OK;
+}
+
+// TODO(hubbe): Implement differentiated services for windows.
+// Note: setsockopt(IP_TOS) does not work on windows XP and later.
+int UDPSocketWin::SetDiffServCodePoint(DiffServCodePoint dscp) {
+  return ERR_NOT_IMPLEMENTED;
 }
 
 }  // namespace net

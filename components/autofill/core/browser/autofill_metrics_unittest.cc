@@ -16,7 +16,6 @@
 #include "chrome/browser/ui/autofill/tab_autofill_manager_delegate.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/autofill/content/browser/autocheckout_page_meta_data.h"
 #include "components/autofill/core/browser/autofill_common_test.h"
 #include "components/autofill/core/browser/autofill_external_delegate.h"
 #include "components/autofill/core/browser/autofill_manager.h"
@@ -99,6 +98,10 @@ class TestPersonalDataManager : public PersonalDataManager {
     set_browser_context(context);
   }
 
+  void SetPrefService(PrefService* pref_service) {
+    set_pref_service(pref_service);
+  }
+
   // Overridden to avoid a trip to the database. This should be a no-op except
   // for the side-effect of logging the profile count.
   virtual void LoadProfiles() OVERRIDE {
@@ -126,7 +129,7 @@ class TestPersonalDataManager : public PersonalDataManager {
   }
 
   MOCK_METHOD1(SaveImportedCreditCard,
-               void(const CreditCard& imported_credit_card));
+               std::string(const CreditCard& imported_credit_card));
 
  private:
   void CreateTestAutofillProfiles(ScopedVector<AutofillProfile>* profiles) {
@@ -154,8 +157,7 @@ class TestPersonalDataManager : public PersonalDataManager {
 
 class TestFormStructure : public FormStructure {
  public:
-  explicit TestFormStructure(const FormData& form)
-      : FormStructure(form, std::string()) {}
+  explicit TestFormStructure(const FormData& form) : FormStructure(form) {}
   virtual ~TestFormStructure() {}
 
   void SetFieldTypes(const std::vector<ServerFieldType>& heuristic_types,
@@ -195,10 +197,6 @@ class TestAutofillManager : public AutofillManager {
     set_metric_logger(new testing::NiceMock<MockAutofillMetrics>);
   }
   virtual ~TestAutofillManager() {}
-
-  virtual std::string GetAutocheckoutURLPrefix() const OVERRIDE {
-    return std::string();
-  }
 
   virtual bool IsAutofillEnabled() const OVERRIDE { return autofill_enabled_; }
 
@@ -293,6 +291,7 @@ void AutofillMetricsTest::SetUp() {
 
   personal_data_.reset(new TestPersonalDataManager());
   personal_data_->SetBrowserContext(profile());
+  personal_data_->SetPrefService(profile()->GetPrefs());
   autofill_driver_.reset(new TestAutofillDriver(web_contents()));
   autofill_manager_.reset(new TestAutofillManager(
       autofill_driver_.get(),
@@ -325,8 +324,9 @@ scoped_ptr<ConfirmInfoBarDelegate> AutofillMetricsTest::CreateDelegate(
   CreditCard credit_card;
   return AutofillCCInfoBarDelegate::Create(
       metric_logger,
-      base::Bind(&TestPersonalDataManager::SaveImportedCreditCard,
-                 base::Unretained(personal_data_.get()), credit_card));
+      base::Bind(
+          base::IgnoreResult(&TestPersonalDataManager::SaveImportedCreditCard),
+          base::Unretained(personal_data_.get()), credit_card));
 }
 
 // Test that we log quality metrics appropriately.
@@ -1009,7 +1009,7 @@ TEST_F(AutofillMetricsTest, AutofillIsEnabledAtStartup) {
   personal_data_->set_autofill_enabled(true);
   EXPECT_CALL(*personal_data_->metric_logger(),
               LogIsAutofillEnabledAtStartup(true)).Times(1);
-  personal_data_->Init(profile());
+  personal_data_->Init(profile(), profile()->GetPrefs());
 }
 
 // Test that we correctly log when Autofill is disabled.
@@ -1017,7 +1017,7 @@ TEST_F(AutofillMetricsTest, AutofillIsDisabledAtStartup) {
   personal_data_->set_autofill_enabled(false);
   EXPECT_CALL(*personal_data_->metric_logger(),
               LogIsAutofillEnabledAtStartup(false)).Times(1);
-  personal_data_->Init(profile());
+  personal_data_->Init(profile(), profile()->GetPrefs());
 }
 
 // Test that we log the number of Autofill suggestions when filling a form.
@@ -1176,11 +1176,9 @@ TEST_F(AutofillMetricsTest, ServerQueryExperimentIdForQuery) {
   EXPECT_CALL(metric_logger,
               LogServerQueryMetric(
                   AutofillMetrics::QUERY_RESPONSE_MATCHED_LOCAL_HEURISTICS));
-  AutocheckoutPageMetaData page_meta_data;
   FormStructure::ParseQueryResponse(
       "<autofillqueryresponse></autofillqueryresponse>",
       std::vector<FormStructure*>(),
-      &page_meta_data,
       metric_logger);
 
   // Experiment "ar1" specified.
@@ -1196,7 +1194,6 @@ TEST_F(AutofillMetricsTest, ServerQueryExperimentIdForQuery) {
   FormStructure::ParseQueryResponse(
       "<autofillqueryresponse experimentid=\"ar1\"></autofillqueryresponse>",
       std::vector<FormStructure*>(),
-      &page_meta_data,
       metric_logger);
 }
 

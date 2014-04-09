@@ -12,8 +12,8 @@
 #include "build/build_config.h"
 #include "chrome/browser/infobars/infobar_delegate.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "ui/base/animation/animation_delegate.h"
-#include "ui/base/animation/slide_animation.h"
+#include "ui/gfx/animation/animation_delegate.h"
+#include "ui/gfx/animation/slide_animation.h"
 #include "ui/gfx/size.h"
 
 // TODO(sail): These functions should be static methods in the InfoBar class
@@ -26,13 +26,10 @@ typedef InfoBarDelegate InfoBarAddedDetails;
 typedef std::pair<InfoBarDelegate*, bool> InfoBarRemovedDetails;
 typedef std::pair<InfoBarDelegate*, InfoBarDelegate*> InfoBarReplacedDetails;
 
-// TODO(pkasting): Port Mac to use this.
-#if defined(TOOLKIT_VIEWS) || defined(TOOLKIT_GTK) || defined(OS_ANDROID)
-
 class InfoBarContainer;
 class InfoBarService;
 
-class InfoBar : public ui::AnimationDelegate {
+class InfoBar : public gfx::AnimationDelegate {
  public:
   InfoBar(InfoBarService* owner, InfoBarDelegate* delegate);
   virtual ~InfoBar();
@@ -67,22 +64,22 @@ class InfoBar : public ui::AnimationDelegate {
   // delegate once it is invisible.
   void CloseSoon();
 
-  const ui::SlideAnimation& animation() const { return animation_; }
+  // Changes the target height of the main ("bar") portion of the infobar.
+  void SetBarTargetHeight(int height);
+
+  const gfx::SlideAnimation& animation() const { return animation_; }
   int arrow_height() const { return arrow_height_; }
   int arrow_target_height() const { return arrow_target_height_; }
   int arrow_half_width() const { return arrow_half_width_; }
   int total_height() const { return arrow_height_ + bar_height_; }
 
  protected:
-  // ui::AnimationDelegate:
-  virtual void AnimationProgressed(const ui::Animation* animation) OVERRIDE;
+  // gfx::AnimationDelegate:
+  virtual void AnimationProgressed(const gfx::Animation* animation) OVERRIDE;
 
   // Forwards a close request to our owner.
   // NOTE: Subclasses should not call this if we're already unowned.
   void RemoveSelf();
-
-  // Changes the target height of the main ("bar") portion of the infobar.
-  void SetBarTargetHeight(int height);
 
   // Given a control with size |prefsize|, returns the centered y position
   // within us, taking into account animation so the control "slides in" (or
@@ -92,7 +89,7 @@ class InfoBar : public ui::AnimationDelegate {
   InfoBarService* owner() const { return owner_; }
   const InfoBarContainer* container() const { return container_; }
   InfoBarContainer* container() { return container_; }
-  ui::SlideAnimation* animation() { return &animation_; }
+  gfx::SlideAnimation* animation() { return &animation_; }
   int bar_height() const { return bar_height_; }
   int bar_target_height() const { return bar_target_height_; }
 
@@ -104,8 +101,8 @@ class InfoBar : public ui::AnimationDelegate {
   virtual void PlatformSpecificOnHeightsRecalculated() {}
 
  private:
-  // ui::AnimationDelegate:
-  virtual void AnimationEnded(const ui::Animation* animation) OVERRIDE;
+  // gfx::AnimationDelegate:
+  virtual void AnimationEnded(const gfx::Animation* animation) OVERRIDE;
 
   // Finds the new desired arrow and bar heights, and if they differ from the
   // current ones, calls PlatformSpecificOnHeightRecalculated().  Informs our
@@ -121,7 +118,7 @@ class InfoBar : public ui::AnimationDelegate {
   InfoBarService* owner_;
   InfoBarDelegate* delegate_;
   InfoBarContainer* container_;
-  ui::SlideAnimation animation_;
+  gfx::SlideAnimation animation_;
 
   // The current and target heights of the arrow and bar portions, and half the
   // current arrow width.  (It's easier to work in half-widths as we draw the
@@ -134,9 +131,5 @@ class InfoBar : public ui::AnimationDelegate {
 
   DISALLOW_COPY_AND_ASSIGN(InfoBar);
 };
-
-#elif defined(OS_MACOSX)
-#include "chrome/browser/ui/cocoa/infobars/infobar.h"
-#endif
 
 #endif  // CHROME_BROWSER_INFOBARS_INFOBAR_H_

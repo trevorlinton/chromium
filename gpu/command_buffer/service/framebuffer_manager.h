@@ -5,6 +5,8 @@
 #ifndef GPU_COMMAND_BUFFER_SERVICE_FRAMEBUFFER_MANAGER_H_
 #define GPU_COMMAND_BUFFER_SERVICE_FRAMEBUFFER_MANAGER_H_
 
+#include <vector>
+
 #include "base/basictypes.h"
 #include "base/containers/hash_tables.h"
 #include "base/memory/ref_counted.h"
@@ -41,7 +43,7 @@ class GPU_EXPORT Framebuffer : public base::RefCounted<Framebuffer> {
     virtual bool IsRenderbuffer(
         Renderbuffer* renderbuffer) const = 0;
     virtual bool CanRenderTo() const = 0;
-    virtual void DetachFromFramebuffer() const = 0;
+    virtual void DetachFromFramebuffer(Framebuffer* framebuffer) const = 0;
     virtual bool ValidForAttachmentType(
         GLenum attachment_type, uint32 max_color_attachments) = 0;
     virtual void AddToSignature(
@@ -130,6 +132,8 @@ class GPU_EXPORT Framebuffer : public base::RefCounted<Framebuffer> {
     return allow_framebuffer_combo_complete_map_;
   }
 
+  void OnTextureRefDetached(TextureRef* texture);
+
  private:
   friend class FramebufferManager;
   friend class base::RefCounted<Framebuffer>;
@@ -180,10 +184,34 @@ class GPU_EXPORT Framebuffer : public base::RefCounted<Framebuffer> {
   DISALLOW_COPY_AND_ASSIGN(Framebuffer);
 };
 
+struct DecoderFramebufferState {
+  DecoderFramebufferState();
+  ~DecoderFramebufferState();
+
+  // State saved for clearing so we can clear render buffers and then
+  // restore to these values.
+  bool clear_state_dirty;
+
+  // The currently bound framebuffers
+  scoped_refptr<Framebuffer> bound_read_framebuffer;
+  scoped_refptr<Framebuffer> bound_draw_framebuffer;
+};
+
 // This class keeps track of the frambebuffers and their attached renderbuffers
 // so we can correctly clear them.
 class GPU_EXPORT FramebufferManager {
  public:
+  class GPU_EXPORT TextureDetachObserver {
+   public:
+    TextureDetachObserver();
+    virtual ~TextureDetachObserver();
+
+    virtual void OnTextureRefDetachedFromFramebuffer(TextureRef* texture) = 0;
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(TextureDetachObserver);
+  };
+
   FramebufferManager(uint32 max_draw_buffers, uint32 max_color_attachments);
   ~FramebufferManager();
 
@@ -217,11 +245,25 @@ class GPU_EXPORT FramebufferManager {
         (framebuffer_state_change_count_ + 1) | 0x80000000U;
   }
 
+  void AddObserver(TextureDetachObserver* observer) {
+    texture_detach_observers_.push_back(observer);
+  }
+
+  void RemoveObserver(TextureDetachObserver* observer) {
+    texture_detach_observers_.erase(
+        std::remove(texture_detach_observers_.begin(),
+                    texture_detach_observers_.end(),
+                    observer),
+        texture_detach_observers_.end());
+  }
+
  private:
   friend class Framebuffer;
 
   void StartTracking(Framebuffer* framebuffer);
   void StopTracking(Framebuffer* framebuffer);
+
+  void OnTextureRefDetached(TextureRef* texture);
 
   // Info for each framebuffer in the system.
   typedef base::hash_map<GLuint, scoped_refptr<Framebuffer> >
@@ -240,6 +282,9 @@ class GPU_EXPORT FramebufferManager {
 
   uint32 max_draw_buffers_;
   uint32 max_color_attachments_;
+
+  typedef std::vector<TextureDetachObserver*> TextureDetachObserverVector;
+  TextureDetachObserverVector texture_detach_observers_;
 
   DISALLOW_COPY_AND_ASSIGN(FramebufferManager);
 };

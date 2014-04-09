@@ -14,7 +14,6 @@
 #include "chrome/browser/download/chrome_download_manager_delegate.h"
 #include "chrome/browser/download/download_item_model.h"
 #include "chrome/browser/download/download_shelf_context_menu.h"
-#include "chrome/browser/download/download_util.h"
 #import "chrome/browser/themes/theme_properties.h"
 #import "chrome/browser/themes/theme_service.h"
 #import "chrome/browser/ui/cocoa/download/download_item_button.h"
@@ -30,7 +29,7 @@
 #include "third_party/GTM/AppKit/GTMUILocalizerAndLayoutTweaker.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/base/text/text_elider.h"
+#include "ui/gfx/text_elider.h"
 #include "ui/gfx/font.h"
 #include "ui/gfx/image/image.h"
 
@@ -109,7 +108,9 @@ class DownloadShelfContextMenuMac : public DownloadShelfContextMenu {
     shelf_ = shelf;
     state_ = kNormal;
     creationTime_ = base::Time::Now();
-    font_.reset(new gfx::Font());
+    font_list_.reset(new gfx::FontList(
+        ui::ResourceBundle::GetSharedInstance().GetFontList(
+            ui::ResourceBundle::BaseFont)));
   }
   return self;
 }
@@ -161,17 +162,17 @@ class DownloadShelfContextMenuMac : public DownloadShelfContextMenu {
   if (downloadModel->IsDangerous()) {
     [self setState:kDangerous];
 
-    ResourceBundle& rb = ResourceBundle::GetSharedInstance();
+    ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
     NSString* dangerousWarning;
     NSString* confirmButtonTitle;
     NSImage* alertIcon;
 
     dangerousWarning =
         base::SysUTF16ToNSString(downloadModel->GetWarningText(
-            *font_, kTextWidth));
+            *font_list_, kTextWidth));
     confirmButtonTitle =
         base::SysUTF16ToNSString(downloadModel->GetWarningConfirmButtonText());
-    if (downloadModel->IsMalicious())
+    if (downloadModel->MightBeMalicious())
       alertIcon = rb.GetNativeImageNamed(IDR_SAFEBROWSING_WARNING).ToNSImage();
     else
       alertIcon = rb.GetNativeImageNamed(IDR_WARNING).ToNSImage();
@@ -241,7 +242,7 @@ class DownloadShelfContextMenuMac : public DownloadShelfContextMenu {
 
 - (void)updateToolTip {
   string16 tooltip_text =
-      bridge_->download_model()->GetTooltipText(*font_, kToolTipMaxWidth);
+      bridge_->download_model()->GetTooltipText(*font_list_, kToolTipMaxWidth);
   [progressView_ setToolTip:base::SysUTF16ToNSString(tooltip_text)];
 }
 

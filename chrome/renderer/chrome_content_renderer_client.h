@@ -21,6 +21,7 @@ class ChromeRenderProcessObserver;
 class ExtensionSet;
 class PrescientNetworkingDispatcher;
 class RendererNetPredictor;
+class SearchBouncer;
 #if defined(ENABLE_SPELLCHECK)
 class SpellCheck;
 class SpellCheckProvider;
@@ -81,10 +82,12 @@ class ChromeContentRendererClient : public content::ContentRendererClient {
       const base::FilePath& plugin_path) OVERRIDE;
   virtual bool HasErrorPage(int http_status_code,
                             std::string* error_domain) OVERRIDE;
+  virtual bool ShouldSuppressErrorPage(const GURL& url) OVERRIDE;
   virtual void GetNavigationErrorStrings(
       WebKit::WebFrame* frame,
       const WebKit::WebURLRequest& failed_request,
       const WebKit::WebURLError& error,
+      const std::string& accept_languages,
       std::string* error_html,
       string16* error_description) OVERRIDE;
   virtual void DeferMediaLoad(content::RenderView* render_view,
@@ -136,7 +139,15 @@ class ChromeContentRendererClient : public content::ContentRendererClient {
       WebKit::WebPluginContainer* container) OVERRIDE;
   virtual WebKit::WebSpeechSynthesizer* OverrideSpeechSynthesizer(
       WebKit::WebSpeechSynthesizerClient* client) OVERRIDE;
+  virtual bool ShouldReportDetailedMessageForSource(
+      const base::string16& source) const OVERRIDE;
+  virtual bool ShouldEnableSiteIsolationPolicy() const OVERRIDE;
+  virtual WebKit::WebWorkerPermissionClientProxy*
+      CreateWorkerPermissionClientProxy(content::RenderView* render_view,
+                                        WebKit::WebFrame* frame) OVERRIDE;
   virtual bool AllowPepperMediaStreamAPI(const GURL& url) OVERRIDE;
+  virtual void AddKeySystems(
+      std::vector<content::KeySystemInfo>* key_systems) OVERRIDE;
 
   // For testing.
   void SetExtensionDispatcher(extensions::Dispatcher* extension_dispatcher);
@@ -167,8 +178,12 @@ class ChromeContentRendererClient : public content::ContentRendererClient {
 
  private:
   FRIEND_TEST_ALL_PREFIXES(ChromeContentRendererClientTest, NaClRestriction);
+  FRIEND_TEST_ALL_PREFIXES(ChromeContentRendererClientTest,
+                           ShouldSuppressErrorPage);
 
-  const extensions::Extension* GetExtension(
+  // Gets extension by the given origin, regardless of whether the extension
+  // is active in the current process.
+  const extensions::Extension* GetExtensionByOrigin(
       const WebKit::WebSecurityOrigin& origin) const;
 
   // Returns true if the frame is navigating to an URL either into or out of an
@@ -181,6 +196,9 @@ class ChromeContentRendererClient : public content::ContentRendererClient {
 
   static GURL GetNaClContentHandlerURL(const std::string& actual_mime_type,
                                        const content::WebPluginInfo& plugin);
+
+  // Determines if a NaCl app is allowed, and modifies params to pass the app's
+  // permissions to the trusted NaCl plugin.
   static bool IsNaClAllowed(const GURL& manifest_url,
                             const GURL& app_url,
                             bool is_nacl_unrestricted,
@@ -202,6 +220,7 @@ class ChromeContentRendererClient : public content::ContentRendererClient {
 #if defined(ENABLE_WEBRTC)
   scoped_refptr<WebRtcLoggingMessageFilter> webrtc_logging_message_filter_;
 #endif
+  scoped_ptr<SearchBouncer> search_bouncer_;
 
 #if defined(ENABLE_PLUGINS)
   std::set<std::string> allowed_file_handle_origins_;

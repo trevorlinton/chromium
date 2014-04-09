@@ -19,6 +19,7 @@
 #include "content/public/browser/android/content_view_core.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
+#include "content/public/browser/web_contents_observer.h"
 #include "third_party/WebKit/public/web/WebInputEvent.h"
 #include "ui/gfx/rect.h"
 #include "ui/gfx/rect_f.h"
@@ -35,7 +36,8 @@ struct MenuItem;
 
 // TODO(jrg): this is a shell.  Upstream the rest.
 class ContentViewCoreImpl : public ContentViewCore,
-                            public NotificationObserver {
+                            public NotificationObserver,
+                            public WebContentsObserver {
  public:
   static ContentViewCoreImpl* FromWebContents(WebContents* web_contents);
   ContentViewCoreImpl(JNIEnv* env,
@@ -60,6 +62,7 @@ class ContentViewCoreImpl : public ContentViewCore,
   virtual float GetDpiScale() const OVERRIDE;
   virtual void RequestContentClipping(const gfx::Rect& clipping,
                                       const gfx::Size& content_size) OVERRIDE;
+  virtual void PauseVideo() OVERRIDE;
 
   // --------------------------------------------------------------------------
   // Methods called from Java via JNI
@@ -107,8 +110,7 @@ class ContentViewCoreImpl : public ContentViewCore,
   void ScrollBegin(JNIEnv* env, jobject obj, jlong time_ms, jfloat x, jfloat y);
   void ScrollEnd(JNIEnv* env, jobject obj, jlong time_ms);
   void ScrollBy(JNIEnv* env, jobject obj, jlong time_ms,
-                jfloat x, jfloat y, jfloat dx, jfloat dy,
-                jboolean last_input_event_for_vsync);
+                jfloat x, jfloat y, jfloat dx, jfloat dy);
   void FlingStart(JNIEnv* env, jobject obj, jlong time_ms,
                   jfloat x, jfloat y, jfloat vx, jfloat vy);
   void FlingCancel(JNIEnv* env, jobject obj, jlong time_ms);
@@ -121,6 +123,8 @@ class ContentViewCoreImpl : public ContentViewCore,
                       jfloat x, jfloat y);
   void ShowPressCancel(JNIEnv* env, jobject obj, jlong time_ms,
                        jfloat x, jfloat y);
+  void TapDown(JNIEnv* env, jobject obj, jlong time_ms,
+               jfloat x, jfloat y);
   void DoubleTap(JNIEnv* env, jobject obj, jlong time_ms,
                  jfloat x, jfloat y) ;
   void LongPress(JNIEnv* env, jobject obj, jlong time_ms,
@@ -132,8 +136,7 @@ class ContentViewCoreImpl : public ContentViewCore,
   void PinchBegin(JNIEnv* env, jobject obj, jlong time_ms, jfloat x, jfloat y);
   void PinchEnd(JNIEnv* env, jobject obj, jlong time_ms);
   void PinchBy(JNIEnv* env, jobject obj, jlong time_ms,
-               jfloat x, jfloat y, jfloat delta,
-               jboolean last_input_event_for_vsync);
+               jfloat x, jfloat y, jfloat delta);
   void SelectBetweenCoordinates(JNIEnv* env, jobject obj,
                                 jfloat x1, jfloat y1,
                                 jfloat x2, jfloat y2);
@@ -146,11 +149,12 @@ class ContentViewCoreImpl : public ContentViewCore,
   void GoForward(JNIEnv* env, jobject obj);
   void GoToOffset(JNIEnv* env, jobject obj, jint offset);
   void GoToNavigationIndex(JNIEnv* env, jobject obj, jint index);
+  void LoadIfNecessary(JNIEnv* env, jobject obj);
+  void RequestRestoreLoad(JNIEnv* env, jobject obj);
   void StopLoading(JNIEnv* env, jobject obj);
   void Reload(JNIEnv* env, jobject obj);
   void CancelPendingReload(JNIEnv* env, jobject obj);
   void ContinuePendingReload(JNIEnv* env, jobject obj);
-  jboolean NeedsReload(JNIEnv* env, jobject obj);
   void ClearHistory(JNIEnv* env, jobject obj);
   void EvaluateJavaScript(JNIEnv* env,
                           jobject obj,
@@ -247,14 +251,14 @@ class ContentViewCoreImpl : public ContentViewCore,
                         const std::string& text,
                         int selection_start, int selection_end,
                         int composition_start, int composition_end,
-                        bool show_ime_if_needed);
-  void ProcessImeBatchStateAck(bool is_begin);
+                        bool show_ime_if_needed, bool require_ack);
   void SetTitle(const string16& title);
   void OnBackgroundColorChanged(SkColor color);
 
   bool HasFocus();
   void ConfirmTouchEvent(InputEventAckState ack_result);
   void UnhandledFlingStartEvent();
+  void OnScrollUpdateGestureConsumed();
   void HasTouchEventHandlers(bool need_touch_events);
   void OnSelectionChanged(const std::string& text);
   void OnSelectionBoundsChanged(
@@ -268,10 +272,16 @@ class ContentViewCoreImpl : public ContentViewCore,
   void ShowDisambiguationPopup(
       const gfx::Rect& target_rect, const SkBitmap& zoomed_bitmap);
 
-  // Creates a java-side smooth scroller. Used by
+  // Creates a java-side touch gesture, e.g. used by
   // chrome.gpuBenchmarking.smoothScrollBy.
-  base::android::ScopedJavaLocalRef<jobject> CreateSmoothScroller(
-      bool scroll_down, int mouse_event_x, int mouse_event_y);
+  base::android::ScopedJavaLocalRef<jobject> CreateOnePointTouchGesture(
+      int start_x, int start_y, int delta_x, int delta_y);
+
+  // Creates a java-side touch gesture with two pointers, e.g. used by
+  // chrome.gpuBenchmarking.pinchBy.
+  base::android::ScopedJavaLocalRef<jobject> CreateTwoPointTouchGesture(
+      int start_x0, int start_y0, int delta_x0, int delta_y0,
+      int start_x1, int start_y1, int delta_x1, int delta_y1);
 
   // Notifies the java object about the external surface, requesting for one if
   // necessary.
@@ -295,7 +305,8 @@ class ContentViewCoreImpl : public ContentViewCore,
 
   void AttachLayer(scoped_refptr<cc::Layer> layer);
   void RemoveLayer(scoped_refptr<cc::Layer> layer);
-  void SetNeedsBeginFrame(bool enabled);
+  void AddBeginFrameSubscriber();
+  void RemoveBeginFrameSubscriber();
   void SetNeedsAnimate();
 
  private:
@@ -308,6 +319,9 @@ class ContentViewCoreImpl : public ContentViewCore,
   virtual void Observe(int type,
                        const NotificationSource& source,
                        const NotificationDetails& details) OVERRIDE;
+
+  // WebContentsObserver implementation.
+  virtual void RenderViewReady() OVERRIDE;
 
   // --------------------------------------------------------------------------
   // Other private methods and data
@@ -334,6 +348,12 @@ class ContentViewCoreImpl : public ContentViewCore,
   // Checks if there there is a corresponding renderer process and updates
   // |tab_crashed_| accordingly.
   void UpdateTabCrashedFlag();
+
+  // Update focus state of the RenderWidgetHostView.
+  void SetFocusInternal(bool focused);
+
+  // Send device_orientation_ to renderer.
+  void SendOrientationChangeEventInternal();
 
   // A weak reference to the Java ContentViewCore object.
   JavaObjectWeakGlobalRef java_ref_;
@@ -363,6 +383,10 @@ class ContentViewCoreImpl : public ContentViewCore,
 
   // The owning window that has a hold of main application activity.
   ui::WindowAndroid* window_android_;
+
+  // The cache of device's current orientation set from Java side, this value
+  // will be sent to Renderer once it is ready.
+  int device_orientation_;
 
   DISALLOW_COPY_AND_ASSIGN(ContentViewCoreImpl);
 };

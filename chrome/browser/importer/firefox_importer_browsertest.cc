@@ -21,7 +21,7 @@
 #include "chrome/common/importer/imported_favicon_usage.h"
 #include "chrome/common/importer/importer_data_types.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "content/public/common/password_form.h"
+#include "components/autofill/core/common/password_form.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 // TODO(estade): some of these are disabled on mac. http://crbug.com/48007
@@ -94,8 +94,6 @@ const KeywordInfo kFirefoxKeywords[] = {
   { L"\x4E2D\x6587", "http://www.google.com/" },
 };
 
-const int kDefaultFirefoxKeywordIndex = 8;
-
 class FirefoxObserver : public ProfileWriter,
                         public importer::ImporterProgressObserver {
  public:
@@ -132,7 +130,7 @@ class FirefoxObserver : public ProfileWriter,
     return true;
   }
 
-  virtual void AddPasswordForm(const content::PasswordForm& form) OVERRIDE {
+  virtual void AddPasswordForm(const autofill::PasswordForm& form) OVERRIDE {
     PasswordInfo p = kFirefoxPasswords[password_count_];
     EXPECT_EQ(p.origin, form.origin.spec());
     EXPECT_EQ(p.realm, form.signon_realm);

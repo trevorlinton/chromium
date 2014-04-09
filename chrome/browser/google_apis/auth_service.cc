@@ -13,6 +13,7 @@
 #include "base/metrics/histogram.h"
 #include "chrome/browser/google_apis/auth_service_observer.h"
 #include "google_apis/gaia/google_service_auth_error.h"
+#include "net/url_request/url_request_context_getter.h"
 
 namespace google_apis {
 
@@ -30,6 +31,7 @@ const int kSuccessRatioHistogramMaxValue = 4;  // The max value is exclusive.
 class AuthRequest : public OAuth2TokenService::Consumer {
  public:
   AuthRequest(OAuth2TokenService* oauth2_token_service,
+              const std::string& account_id,
               net::URLRequestContextGetter* url_request_context_getter,
               const AuthStatusCallback& callback,
               const std::vector<std::string>& scopes);
@@ -52,6 +54,7 @@ class AuthRequest : public OAuth2TokenService::Consumer {
 
 AuthRequest::AuthRequest(
     OAuth2TokenService* oauth2_token_service,
+    const std::string& account_id,
     net::URLRequestContextGetter* url_request_context_getter,
     const AuthStatusCallback& callback,
     const std::vector<std::string>& scopes)
@@ -59,6 +62,7 @@ AuthRequest::AuthRequest(
   DCHECK(!callback_.is_null());
   request_ = oauth2_token_service->
       StartRequestWithContext(
+          account_id,
           url_request_context_getter,
           OAuth2TokenService::ScopeSet(scopes.begin(), scopes.end()),
           this);
@@ -117,9 +121,11 @@ void AuthRequest::OnGetTokenFailure(const OAuth2TokenService::Request* request,
 
 AuthService::AuthService(
     OAuth2TokenService* oauth2_token_service,
+    const std::string& account_id,
     net::URLRequestContextGetter* url_request_context_getter,
     const std::vector<std::string>& scopes)
     : oauth2_token_service_(oauth2_token_service),
+      account_id_(account_id),
       url_request_context_getter_(url_request_context_getter),
       scopes_(scopes),
       weak_ptr_factory_(this) {
@@ -127,7 +133,8 @@ AuthService::AuthService(
 
   // Get OAuth2 refresh token (if we have any) and register for its updates.
   oauth2_token_service_->AddObserver(this);
-  has_refresh_token_ = oauth2_token_service_->RefreshTokenIsAvailable();
+  has_refresh_token_ = oauth2_token_service_->RefreshTokenIsAvailable(
+      account_id_);
 }
 
 AuthService::~AuthService() {
@@ -146,6 +153,7 @@ void AuthService::StartAuthentication(const AuthStatusCallback& callback) {
   } else if (HasRefreshToken()) {
     // We have refresh token, let's get an access token.
     new AuthRequest(oauth2_token_service_,
+                    account_id_,
                     url_request_context_getter_,
                     base::Bind(&AuthService::OnAuthCompleted,
                                weak_ptr_factory_.GetWeakPtr(),
@@ -200,7 +208,6 @@ void AuthService::OnAuthCompleted(const AuthStatusCallback& callback,
     ClearRefreshToken();
   }
 
-  // TODO(zelidrag): Add retry, back-off logic when things go wrong here.
   callback.Run(error, access_token);
 }
 
@@ -216,8 +223,7 @@ void AuthService::OnRefreshTokenAvailable(const std::string& account_id) {
   OnHandleRefreshToken(true);
 }
 
-void AuthService::OnRefreshTokenRevoked(const std::string& account_id,
-                                        const GoogleServiceAuthError& error) {
+void AuthService::OnRefreshTokenRevoked(const std::string& account_id) {
   OnHandleRefreshToken(false);
 }
 

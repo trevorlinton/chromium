@@ -327,6 +327,14 @@ cr.define('login', function() {
     },
 
     /**
+     * Gets the locked user indicator box.
+     * @type {!HTMLInputElement}
+     */
+    get lockedIndicatorElement() {
+      return this.querySelector('.locked-indicator');
+    },
+
+    /**
      * Updates the user pod element.
      */
     update: function() {
@@ -336,7 +344,7 @@ cr.define('login', function() {
       this.nameElement.textContent = this.user_.displayName;
       this.signedInIndicatorElement.hidden = !this.user_.signedIn;
 
-      var needSignin = this.needGaiaSignin;
+      var needSignin = this.needSignin;
       this.passwordElement.hidden = needSignin;
       this.signinButtonElement.hidden = !needSignin;
 
@@ -381,15 +389,14 @@ cr.define('login', function() {
     },
 
     /**
-     * Whether Gaia signin is required for this user.
+     * Whether signin is required for this user.
      */
-    get needGaiaSignin() {
-      // Gaia signin is performed if the user has an invalid oauth token and is
+    get needSignin() {
+      // Signin is performed if the user has an invalid oauth token and is
       // not currently signed in (i.e. not the lock screen).
-      // Locally managed users never require GAIA signin.
       return this.user.oauthTokenStatus != OAuthTokenStatus.VALID_OLD &&
           this.user.oauthTokenStatus != OAuthTokenStatus.VALID_NEW &&
-          !this.user.signedIn && !this.user.locallyManagedUser;
+          !this.user.signedIn;
     },
 
     /**
@@ -443,8 +450,10 @@ cr.define('login', function() {
 
       if (hovered) {
         this.actionBoxAreaElement.classList.add('hovered');
+        this.classList.add('hovered');
       } else {
         this.actionBoxAreaElement.classList.remove('hovered');
+        this.classList.remove('hovered');
       }
     },
 
@@ -460,7 +469,7 @@ cr.define('login', function() {
      * Focuses on input element.
      */
     focusInput: function() {
-      var needSignin = this.needGaiaSignin;
+      var needSignin = this.needSignin;
       this.signinButtonElement.hidden = !needSignin;
       this.passwordElement.hidden = needSignin;
 
@@ -476,7 +485,6 @@ cr.define('login', function() {
      */
     activate: function() {
       if (!this.signinButtonElement.hidden) {
-        // Switch to Gaia signin.
         this.showSigninUI();
       } else if (!this.passwordElement.value) {
         return false;
@@ -489,11 +497,35 @@ cr.define('login', function() {
       return true;
     },
 
+    showSupervisedUserSigninWarning: function() {
+      // Locally managed user token has been invalidated.
+      // Make sure that pod is focused i.e. "Sign in" button is seen.
+      this.parentNode.focusPod(this);
+
+      var error = document.createElement('div');
+      var messageDiv = document.createElement('div');
+      messageDiv.className = 'error-message-bubble';
+      messageDiv.textContent =
+          loadTimeData.getString('supervisedUserExpiredTokenWarning');
+      error.appendChild(messageDiv);
+
+      $('bubble').showContentForElement(
+          this.signinButtonElement,
+          cr.ui.Bubble.Attachment.TOP,
+          error,
+          this.signinButtonElement.offsetWidth / 2,
+          4);
+    },
+
     /**
      * Shows signin UI for this user.
      */
     showSigninUI: function() {
-      this.parentNode.showSigninUI(this.user.emailAddress);
+      if (this.user.locallyManagedUser) {
+        this.showSupervisedUserSigninWarning();
+      } else {
+        this.parentNode.showSigninUI(this.user.emailAddress);
+      }
     },
 
     /**
@@ -697,7 +729,7 @@ cr.define('login', function() {
     },
 
     /** @override */
-    get needGaiaSignin() {
+    get needSignin() {
       return false;
     },
 
@@ -835,20 +867,16 @@ cr.define('login', function() {
     __proto__: UserPod.prototype,
 
     /** @override */
-    decorate: function() {
-      UserPod.prototype.decorate.call(this);
+    get mainInput() {
+      if (!this.passwordElement.hidden)
+        return this.passwordElement;
+      else
+        return this.nameElement;
     },
 
     /** @override */
-    focusInput: function() {
-      var isLockedUser = this.user.needsSignin;
-      this.signinButtonElement.hidden = isLockedUser;
-      this.passwordElement.hidden = !isLockedUser;
-
-      // Move tabIndex from the whole pod to the main input.
-      this.tabIndex = -1;
-      this.mainInput.tabIndex = UserPodTabOrder.POD_INPUT;
-      this.mainInput.focus();
+    decorate: function() {
+      UserPod.prototype.decorate.call(this);
     },
 
     /** @override */
@@ -858,12 +886,38 @@ cr.define('login', function() {
       this.imageElement.src = this.user.emailAddress == '' ?
           'chrome://theme/IDR_USER_MANAGER_DEFAULT_AVATAR' :
           this.user.userImage;
-      this.nameElement.textContent = this.user_.displayName;
+      this.nameElement.textContent = this.user.displayName;
+
       var isLockedUser = this.user.needsSignin;
+      this.signinButtonElement.hidden = true;
+      this.lockedIndicatorElement.hidden = !isLockedUser;
       this.passwordElement.hidden = !isLockedUser;
-      this.signinButtonElement.hidden = isLockedUser;
+      this.nameElement.hidden = isLockedUser;
 
       UserPod.prototype.updateActionBoxArea.call(this);
+    },
+
+    /** @override */
+    focusInput: function() {
+      // For focused pods, display the name unless the pod is locked.
+      var isLockedUser = this.user.needsSignin;
+      this.signinButtonElement.hidden = true;
+      this.lockedIndicatorElement.hidden = !isLockedUser;
+      this.passwordElement.hidden = !isLockedUser;
+      this.nameElement.hidden = isLockedUser;
+
+      // Move tabIndex from the whole pod to the main input.
+      this.tabIndex = -1;
+      this.mainInput.tabIndex = UserPodTabOrder.POD_INPUT;
+      this.mainInput.focus();
+    },
+
+    /** @override */
+    reset: function(takeFocus) {
+      // Always display the user's name for unfocused pods.
+      if (!takeFocus)
+        this.nameElement.hidden = false;
+      UserPod.prototype.reset.call(this, takeFocus);
     },
 
     /** @override */
@@ -877,10 +931,13 @@ cr.define('login', function() {
       if (this.parentNode.disabled)
         return;
 
-      // Don't sign in until the user presses the button. Just activate the pod.
       Oobe.clearErrors();
-      this.parentNode.lastFocusedPod_ =
-          this.parentNode.getPodWithUsername_(this.user.emailAddress);
+      this.parentNode.lastFocusedPod_ = this;
+
+      // If this is an unlocked pod, then open a browser window. Otherwise
+      // just activate the pod and show the password field.
+      if (!this.user.needsSignin && !this.isActionBoxMenuActive)
+        this.activate();
     },
 
     /** @override */
@@ -936,8 +993,8 @@ cr.define('login', function() {
       // Event listeners that are installed for the time period during which
       // the element is visible.
       this.listeners_ = {
-        focus: [this.handleFocus_.bind(this), true],
-        click: [this.handleClick_.bind(this), false],
+        focus: [this.handleFocus_.bind(this), true /* useCapture */],
+        click: [this.handleClick_.bind(this), true],
         mousemove: [this.handleMouseMove_.bind(this), false],
         keydown: [this.handleKeyDown.bind(this), false]
       };
@@ -1095,6 +1152,13 @@ cr.define('login', function() {
       // Cancel any pending resize operation.
       this.removeEventListener('mouseout', this.deferredResizeListener_);
 
+      // If this pod row is used in the desktop user manager, we need to
+      // force a resize, as it may be a background window which won't get a
+      // mouseout event for a while; the pods would be displayed incorrectly
+      // until then.
+      if (this.preselectedPod && this.preselectedPod.user.isDesktopUser)
+        this.resize_(columns, rows);
+
       if (!this.columns || !this.rows) {
         // Set initial dimensions.
         this.resize_(columns, rows);
@@ -1201,6 +1265,7 @@ cr.define('login', function() {
         podToFocus.classList.remove('faded');
         podToFocus.classList.add('focused');
         podToFocus.reset(true);  // Reset and give focus.
+        chrome.send('focusPod', [podToFocus.user.emailAddress]);
         if (hadFocus && this.keyboardActivated_) {
           // Delay wallpaper loading to let user tab through pods without lag.
           this.loadWallpaperTimeout_ = window.setTimeout(
@@ -1224,6 +1289,17 @@ cr.define('login', function() {
     loadWallpaper_: function() {
       if (this.focusedPod_)
         chrome.send('loadWallpaper', [this.focusedPod_.user.username]);
+    },
+
+    /**
+     * Focuses a given user pod by index or clear focus when given null.
+     * @param {int=} podToFocus index of User pod to focus.
+     * @param {boolean=} opt_force If true, forces focus update even when
+     *                             podToFocus is already focused.
+     */
+    focusPodByIndex: function(podToFocus, opt_force) {
+      if (podToFocus < this.pods.length)
+        this.focusPod(this.pods[podToFocus], opt_force);
     },
 
     /**
@@ -1364,6 +1440,10 @@ cr.define('login', function() {
         if (!pod)
           this.focusedPod_.isActionBoxMenuHovered = false;
       }
+
+      // Also stop event propagation.
+      if (pod && e.target == pod.imageElement)
+        e.stopPropagation();
     },
 
     /**
@@ -1500,6 +1580,8 @@ cr.define('login', function() {
             }
           }
         });
+        // Guard timer for 1 second -- it would conver all possible animations.
+        ensureTransitionEndEvent(focusedPod, 1000);
       }
     },
 

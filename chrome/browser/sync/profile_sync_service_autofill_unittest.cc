@@ -219,7 +219,9 @@ class TokenWebDataServiceFake : public TokenWebData {
 class WebDataServiceFake : public AutofillWebDataService {
  public:
   WebDataServiceFake()
-      : AutofillWebDataService(),
+      : AutofillWebDataService(
+            BrowserThread::GetMessageLoopProxyForThread(BrowserThread::UI),
+            BrowserThread::GetMessageLoopProxyForThread(BrowserThread::DB)),
         web_database_(NULL),
         autocomplete_syncable_service_(NULL),
         autofill_profile_syncable_service_(NULL),
@@ -377,7 +379,7 @@ class AbstractAutofillFactory {
  public:
   virtual DataTypeController* CreateDataTypeController(
       ProfileSyncComponentsFactory* factory,
-      ProfileMock* profile,
+      TestingProfile* profile,
       ProfileSyncService* service) = 0;
   virtual void SetExpectation(ProfileSyncComponentsFactoryMock* factory,
                               ProfileSyncService* service,
@@ -390,7 +392,7 @@ class AutofillEntryFactory : public AbstractAutofillFactory {
  public:
   virtual browser_sync::DataTypeController* CreateDataTypeController(
       ProfileSyncComponentsFactory* factory,
-      ProfileMock* profile,
+      TestingProfile* profile,
       ProfileSyncService* service) OVERRIDE {
     return new AutofillDataTypeController(factory, profile, service);
   }
@@ -412,7 +414,7 @@ class AutofillProfileFactory : public AbstractAutofillFactory {
  public:
   virtual browser_sync::DataTypeController* CreateDataTypeController(
       ProfileSyncComponentsFactory* factory,
-      ProfileMock* profile,
+      TestingProfile* profile,
       ProfileSyncService* service) OVERRIDE {
     return new AutofillProfileDataTypeController(factory, profile, service);
   }
@@ -472,12 +474,11 @@ class ProfileSyncServiceAutofillTest
      public syncer::DataTypeDebugInfoListener {
  public:
   // DataTypeDebugInfoListener implementation.
-  virtual void OnSingleDataTypeConfigureComplete(
-      const syncer::DataTypeConfigurationStats& configuration_stats) OVERRIDE {
-    association_stats_ = configuration_stats.association_stats;
-  }
-  virtual void OnConfigureComplete() OVERRIDE {
-    // Do nothing.
+  virtual void OnDataTypeConfigureComplete(
+      const std::vector<syncer::DataTypeConfigurationStats>&
+          configuration_stats) OVERRIDE {
+    ASSERT_EQ(1u, configuration_stats.size());
+    association_stats_ = configuration_stats[0].association_stats;
   }
 
  protected:
@@ -503,7 +504,10 @@ class ProfileSyncServiceAutofillTest
 
   virtual void SetUp() OVERRIDE {
     AbstractProfileSyncServiceTest::SetUp();
-    profile_.reset(new ProfileMock());
+    TestingProfile::Builder builder;
+    builder.AddTestingFactory(ProfileOAuth2TokenServiceFactory::GetInstance(),
+                              FakeOAuth2TokenService::BuildTokenService);
+    profile_ = builder.Build().Pass();
     web_database_.reset(new WebDatabaseFake(&autofill_table_));
     MockWebDataServiceWrapper* wrapper =
         static_cast<MockWebDataServiceWrapper*>(
@@ -524,12 +528,10 @@ class ProfileSyncServiceAutofillTest
     token_service_ = static_cast<TokenService*>(
         TokenServiceFactory::GetInstance()->SetTestingFactoryAndUse(
             profile_.get(), BuildTokenService));
-    ProfileOAuth2TokenServiceFactory::GetInstance()->SetTestingFactory(
-        profile_.get(), FakeOAuth2TokenService::BuildTokenService);
     EXPECT_CALL(*personal_data_manager_, LoadProfiles()).Times(1);
     EXPECT_CALL(*personal_data_manager_, LoadCreditCards()).Times(1);
 
-    personal_data_manager_->Init(profile_.get());
+    personal_data_manager_->Init(profile_.get(), profile_->GetPrefs());
 
     web_data_service_->StartSyncableService();
   }
@@ -587,11 +589,9 @@ class ProfileSyncServiceAutofillTest
     EXPECT_CALL(*personal_data_manager_, IsDataLoaded()).
         WillRepeatedly(Return(true));
 
-     // We need tokens to get the tests going
-    token_service_->IssueAuthTokenForTest(
-        GaiaConstants::kGaiaOAuth2LoginRefreshToken, "oauth2_login_token");
-    token_service_->IssueAuthTokenForTest(
-        GaiaConstants::kSyncService, "token");
+    // We need tokens to get the tests going
+    ProfileOAuth2TokenServiceFactory::GetForProfile(profile_.get())
+        ->UpdateCredentials("test_user@gmail.com", "oauth2_login_token");
 
     sync_service_->RegisterDataTypeController(data_type_controller);
     sync_service_->Initialize();
@@ -757,7 +757,7 @@ class ProfileSyncServiceAutofillTest
   friend class AddAutofillHelper<AutofillProfile>;
   friend class FakeServerUpdater;
 
-  scoped_ptr<ProfileMock> profile_;
+  scoped_ptr<TestingProfile> profile_;
   AutofillTableMock autofill_table_;
   scoped_ptr<WebDatabaseFake> web_database_;
   scoped_refptr<WebDataServiceFake> web_data_service_;
@@ -866,15 +866,14 @@ class FakeServerUpdater : public base::RefCountedThreadSafe<FakeServerUpdater> {
       // Simulates effects of UpdateLocalDataFromServerData
       MutableEntry parent(&trans, GET_BY_SERVER_TAG,
                           syncer::ModelTypeToRootTag(syncer::AUTOFILL));
-      MutableEntry item(&trans, CREATE, syncer::AUTOFILL,
-                        parent.Get(syncer::syncable::ID), tag);
+      MutableEntry item(&trans, CREATE, syncer::AUTOFILL, parent.GetId(), tag);
       ASSERT_TRUE(item.good());
-      item.Put(SPECIFICS, entity_specifics);
-      item.Put(SERVER_SPECIFICS, entity_specifics);
-      item.Put(BASE_VERSION, 1);
+      item.PutSpecifics(entity_specifics);
+      item.PutServerSpecifics(entity_specifics);
+      item.PutBaseVersion(1);
       syncer::syncable::Id server_item_id =
           service_->id_factory()->NewServerId();
-      item.Put(syncer::syncable::ID, server_item_id);
+      item.PutId(server_item_id);
       syncer::syncable::Id new_predecessor;
       ASSERT_TRUE(item.PutPredecessor(new_predecessor));
     }

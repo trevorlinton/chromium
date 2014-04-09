@@ -22,6 +22,8 @@
 #include "chrome/browser/autocomplete/search_provider.h"
 #include "chrome/browser/autocomplete/url_prefix.h"
 #include "chrome/browser/google/google_util.h"
+#include "chrome/browser/history/history_types.h"
+#include "chrome/browser/history/top_sites.h"
 #include "chrome/browser/metrics/variations/variations_http_header_provider.h"
 #include "chrome/browser/omnibox/omnibox_field_trial.h"
 #include "chrome/browser/profiles/profile.h"
@@ -133,23 +135,18 @@ void ZeroSuggestProvider::OnURLFetchComplete(const net::URLFetcher* source) {
   const bool request_succeeded =
       source->GetStatus().is_success() && source->GetResponseCode() == 200;
 
-  bool have_results = false;
   if (request_succeeded) {
     JSONStringValueSerializer deserializer(json_data);
     deserializer.set_allow_trailing_comma(true);
     scoped_ptr<Value> data(deserializer.Deserialize(NULL, NULL));
-    if (data.get()) {
+    if (data.get())
       ParseSuggestResults(*data.get());
-      have_results = !query_matches_map_.empty() ||
-          !navigation_results_.empty();
-    }
   }
   done_ = true;
 
-  if (have_results) {
-    ConvertResultsToAutocompleteMatches();
+  ConvertResultsToAutocompleteMatches();
+  if (!matches_.empty())
     listener_->OnProviderUpdate(true);
-  }
 }
 
 void ZeroSuggestProvider::StartZeroSuggest(
@@ -159,7 +156,7 @@ void ZeroSuggestProvider::StartZeroSuggest(
   Stop(true);
   field_trial_triggered_ = false;
   field_trial_triggered_in_session_ = false;
-  if (!ShouldRunZeroSuggest(url))
+  if (!ShouldRunZeroSuggest(url, page_classification))
     return;
   verbatim_relevance_ = kDefaultVerbatimZeroSuggestRelevance;
   done_ = false;
@@ -182,14 +179,17 @@ ZeroSuggestProvider::ZeroSuggestProvider(
       have_pending_request_(false),
       verbatim_relevance_(kDefaultVerbatimZeroSuggestRelevance),
       field_trial_triggered_(false),
-      field_trial_triggered_in_session_(false) {
+      field_trial_triggered_in_session_(false),
+      weak_ptr_factory_(this) {
 }
 
 ZeroSuggestProvider::~ZeroSuggestProvider() {
 }
 
-bool ZeroSuggestProvider::ShouldRunZeroSuggest(const GURL& url) const {
-  if (!ShouldSendURL(url))
+bool ZeroSuggestProvider::ShouldRunZeroSuggest(
+    const GURL& url,
+    AutocompleteInput::PageClassification page_classification) const {
+  if (!ShouldSendURL(url, page_classification))
     return false;
 
   // Don't run if there's no profile or in incognito mode.
@@ -204,25 +204,43 @@ bool ZeroSuggestProvider::ShouldRunZeroSuggest(const GURL& url) const {
   ProfileSyncService* service =
       ProfileSyncServiceFactory::GetInstance()->GetForProfile(profile_);
   browser_sync::SyncPrefs sync_prefs(prefs);
-  // The user has needs to have Chrome Sync enabled (for permissions to
-  // transmit their current URL) and be in the field trial.
+
+  // ZeroSuggest requires sending the current URL to the suggest provider, so we
+  // only want to enable it if the user is willing to have this data sent.
+  // Because tab sync involves sending the same data, we currently use
+  // "tab sync is enabled and tab sync data is unencrypted" as a proxy for
+  // "the user is OK with sending this data".  We might someday want to change
+  // this to a standalone setting or part of some other explicit general opt-in.
   if (!OmniboxFieldTrial::InZeroSuggestFieldTrial() ||
       service == NULL ||
       !service->IsSyncEnabledAndLoggedIn() ||
-      !sync_prefs.HasKeepEverythingSynced()) {
+      !sync_prefs.GetPreferredDataTypes(syncer::UserTypes()).Has(
+          syncer::PROXY_TABS) ||
+      service->GetEncryptedDataTypes().Has(syncer::SESSIONS)) {
     return false;
   }
   return true;
 }
 
-bool ZeroSuggestProvider::ShouldSendURL(const GURL& url) const {
+bool ZeroSuggestProvider::ShouldSendURL(
+    const GURL& url,
+    AutocompleteInput::PageClassification page_classification) const {
   if (!url.is_valid())
+    return false;
+
+  // TODO(hfung): Show Most Visited on NTP with appropriate verbatim
+  // description when the user actively focuses on the omnibox as discussed in
+  // crbug/305366 if Most Visited (or something similar) will launch.
+  if (page_classification ==
+      AutocompleteInput::INSTANT_NEW_TAB_PAGE_WITH_FAKEBOX_AS_STARTING_FOCUS ||
+      page_classification ==
+      AutocompleteInput::INSTANT_NEW_TAB_PAGE_WITH_OMNIBOX_AS_STARTING_FOCUS)
     return false;
 
   // Only allow HTTP URLs or Google HTTPS URLs (including Google search
   // result pages).  For the latter case, Google was already sent the HTTPS
   // URLs when requesting the page, so the information is just re-sent.
-  return (url.scheme() == chrome::kHttpScheme) ||
+  return (url.scheme() == content::kHttpScheme) ||
       google_util::IsGoogleDomainUrl(url, google_util::ALLOW_SUBDOMAIN,
                                      google_util::ALLOW_NON_STANDARD_PORTS);
 }
@@ -298,7 +316,8 @@ void ZeroSuggestProvider::FillResults(
       }
     } else {
       suggest_results->push_back(SearchProvider::SuggestResult(
-          result, false, relevance, relevances != NULL));
+          result, result, string16(), std::string(), false, relevance,
+          relevances != NULL, false));
     }
   }
 }
@@ -323,16 +342,19 @@ void ZeroSuggestProvider::AddMatchToMap(int relevance,
   // TODO(samarth|melevin): use the actual omnibox margin here as well instead
   // of passing in -1.
   AutocompleteMatch match = SearchProvider::CreateSearchSuggestion(
-      this, relevance, type, template_url, query_string, query_string,
-      AutocompleteInput(), false, accepted_suggestion, -1, true);
+      this, AutocompleteInput(), query_string, relevance, type, false,
+      query_string, string16(), template_url, query_string, std::string(),
+      accepted_suggestion, -1, true);
   if (!match.destination_url.is_valid())
     return;
 
   // Try to add |match| to |map|.  If a match for |query_string| is already in
   // |map|, replace it if |match| is more relevant.
   // NOTE: Keep this ToLower() call in sync with url_database.cc.
+  SearchProvider::MatchKey match_key(
+      std::make_pair(base::i18n::ToLower(query_string), std::string()));
   const std::pair<SearchProvider::MatchMap::iterator, bool> i(map->insert(
-      std::make_pair(base::i18n::ToLower(query_string), match)));
+      std::make_pair(match_key, match)));
   // NOTE: We purposefully do a direct relevance comparison here instead of
   // using AutocompleteMatch::MoreRelevant(), so that we'll prefer "items added
   // first" rather than "items alphabetically first" when the scores are equal.
@@ -392,7 +414,7 @@ void ZeroSuggestProvider::Run() {
       ReplaceSearchTerms(search_term_args);
   GURL suggest_url(req_url);
   // Make sure we are sending the suggest request through HTTPS.
-  if (!suggest_url.SchemeIs(chrome::kHttpsScheme)) {
+  if (!suggest_url.SchemeIs(content::kHttpsScheme)) {
     Stop(true);
     return;
   }
@@ -410,6 +432,16 @@ void ZeroSuggestProvider::Run() {
   fetcher_->SetExtraRequestHeaders(headers.ToString());
 
   fetcher_->Start();
+
+  if (OmniboxFieldTrial::InZeroSuggestMostVisitedFieldTrial()) {
+    most_visited_urls_.clear();
+    history::TopSites* ts = profile_->GetTopSites();
+    if (ts) {
+      ts->GetMostVisitedURLs(
+          base::Bind(&ZeroSuggestProvider::OnMostVisitedUrlsAvailable,
+                     weak_ptr_factory_.GetWeakPtr()));
+    }
+  }
   have_pending_request_ = true;
   LogOmniboxZeroSuggestRequest(ZERO_SUGGEST_REQUEST_SENT);
 }
@@ -423,6 +455,11 @@ void ZeroSuggestProvider::ParseSuggestResults(const Value& root_val) {
   AddSuggestResultsToMap(suggest_results,
                          template_url_service_->GetDefaultSearchProvider(),
                          &query_matches_map_);
+}
+
+void ZeroSuggestProvider::OnMostVisitedUrlsAvailable(
+    const history::MostVisitedURLList& urls) {
+  most_visited_urls_ = urls;
 }
 
 void ZeroSuggestProvider::ConvertResultsToAutocompleteMatches() {
@@ -440,6 +477,27 @@ void ZeroSuggestProvider::ConvertResultsToAutocompleteMatches() {
   UMA_HISTOGRAM_COUNTS("ZeroSuggest.QueryResults", num_query_results);
   UMA_HISTOGRAM_COUNTS("ZeroSuggest.URLResults",  num_nav_results);
   UMA_HISTOGRAM_COUNTS("ZeroSuggest.AllResults", num_results);
+
+  // Show Most Visited results after ZeroSuggest response is received.
+  if (OmniboxFieldTrial::InZeroSuggestMostVisitedFieldTrial()) {
+    if (!current_url_match_.destination_url.is_valid())
+      return;
+    matches_.push_back(current_url_match_);
+    int relevance = 600;
+    if (num_results > 0) {
+      UMA_HISTOGRAM_COUNTS(
+          "Omnibox.ZeroSuggest.MostVisitedResultsCounterfactual",
+          most_visited_urls_.size());
+    }
+    for (size_t i = 0; i < most_visited_urls_.size(); i++) {
+      const history::MostVisitedURL& url = most_visited_urls_[i];
+      SearchProvider::NavigationResult nav(*this, url.url, url.title, false,
+                                           relevance, true);
+      matches_.push_back(NavigationToMatch(nav));
+      --relevance;
+    }
+    return;
+  }
 
   if (num_results == 0)
     return;

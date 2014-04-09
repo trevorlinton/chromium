@@ -40,6 +40,12 @@ class FakeDriveService : public DriveServiceInterface {
   // when offline. By default the offline state is false.
   void set_offline(bool offline) { offline_ = offline; }
 
+  // GetAllResourceList never returns result when this is set to true.
+  // Used to emulate the real server's slowness.
+  void set_never_return_all_resource_list(bool value) {
+    never_return_all_resource_list_ = value;
+  }
+
   // Changes the default max results returned from GetResourceList().
   // By default, it's set to 0, which is unlimited.
   void set_default_max_results(int default_max_results) {
@@ -81,6 +87,12 @@ class FakeDriveService : public DriveServiceInterface {
   // GetAppList().
   int app_list_load_count() const { return app_list_load_count_; }
 
+  // Returns the number of times GetAllResourceList are blocked due to
+  // set_never_return_all_resource_list().
+  int blocked_resource_list_load_count() const {
+    return blocked_resource_list_load_count_;
+  }
+
   // Returns the file path whose request is cancelled just before this method
   // invocation.
   const base::FilePath& last_cancelled_file() const {
@@ -91,12 +103,11 @@ class FakeDriveService : public DriveServiceInterface {
   static GURL GetFakeLinkUrl(const std::string& resource_id);
 
   // DriveServiceInterface Overrides
-  virtual void Initialize() OVERRIDE;
+  virtual void Initialize(const std::string& account_id) OVERRIDE;
   virtual void AddObserver(DriveServiceObserver* observer) OVERRIDE;
   virtual void RemoveObserver(DriveServiceObserver* observer) OVERRIDE;
   virtual bool CanSendRequest() const OVERRIDE;
-  virtual std::string CanonicalizeResourceId(
-      const std::string& resource_id) const OVERRIDE;
+  virtual ResourceIdCanonicalizer GetResourceIdCanonicalizer() const OVERRIDE;
   virtual std::string GetRootResourceId() const OVERRIDE;
   virtual bool HasAccessToken() const OVERRIDE;
   virtual void RequestAccessToken(
@@ -121,8 +132,11 @@ class FakeDriveService : public DriveServiceInterface {
   virtual google_apis::CancelCallback GetChangeList(
       int64 start_changestamp,
       const google_apis::GetResourceListCallback& callback) OVERRIDE;
-  virtual google_apis::CancelCallback ContinueGetResourceList(
-      const GURL& override_url,
+  virtual google_apis::CancelCallback GetRemainingChangeList(
+      const GURL& next_link,
+      const google_apis::GetResourceListCallback& callback) OVERRIDE;
+  virtual google_apis::CancelCallback GetRemainingFileList(
+      const GURL& next_link,
       const google_apis::GetResourceListCallback& callback) OVERRIDE;
   virtual google_apis::CancelCallback GetResourceEntry(
       const std::string& resource_id,
@@ -132,9 +146,9 @@ class FakeDriveService : public DriveServiceInterface {
       const GURL& embed_origin,
       const google_apis::GetShareUrlCallback& callback) OVERRIDE;
   virtual google_apis::CancelCallback GetAboutResource(
-      const google_apis::GetAboutResourceCallback& callback) OVERRIDE;
+      const google_apis::AboutResourceCallback& callback) OVERRIDE;
   virtual google_apis::CancelCallback GetAppList(
-      const google_apis::GetAppListCallback& callback) OVERRIDE;
+      const google_apis::AppListCallback& callback) OVERRIDE;
   virtual google_apis::CancelCallback DeleteResource(
       const std::string& resource_id,
       const std::string& etag,
@@ -149,12 +163,19 @@ class FakeDriveService : public DriveServiceInterface {
       const std::string& resource_id,
       const std::string& parent_resource_id,
       const std::string& new_title,
+      const base::Time& last_modified,
       const google_apis::GetResourceEntryCallback& callback) OVERRIDE;
   // The new resource ID for the copied document will look like
   // |resource_id| + "_copied".
   virtual google_apis::CancelCallback CopyHostedDocument(
       const std::string& resource_id,
       const std::string& new_title,
+      const google_apis::GetResourceEntryCallback& callback) OVERRIDE;
+  virtual google_apis::CancelCallback MoveResource(
+      const std::string& resource_id,
+      const std::string& parent_resource_id,
+      const std::string& new_title,
+      const base::Time& last_modified,
       const google_apis::GetResourceEntryCallback& callback) OVERRIDE;
   virtual google_apis::CancelCallback RenameResource(
       const std::string& resource_id,
@@ -206,6 +227,12 @@ class FakeDriveService : public DriveServiceInterface {
       const std::string& resource_id,
       const std::string& app_id,
       const google_apis::AuthorizeAppCallback& callback) OVERRIDE;
+  virtual google_apis::CancelCallback GetResourceListInDirectoryByWapi(
+      const std::string& directory_resource_id,
+      const google_apis::GetResourceListCallback& callback) OVERRIDE;
+  virtual google_apis::CancelCallback GetRemainingResourceList(
+      const GURL& next_link,
+      const google_apis::GetResourceListCallback& callback) OVERRIDE;
 
   // Adds a new file with the given parameters. On success, returns
   // HTTP_CREATED with the parsed entry.
@@ -286,7 +313,9 @@ class FakeDriveService : public DriveServiceInterface {
   int directory_load_count_;
   int about_resource_load_count_;
   int app_list_load_count_;
+  int blocked_resource_list_load_count_;
   bool offline_;
+  bool never_return_all_resource_list_;
   base::FilePath last_cancelled_file_;
   GURL share_url_base_;
 

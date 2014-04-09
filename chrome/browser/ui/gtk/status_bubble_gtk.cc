@@ -17,10 +17,11 @@
 #include "chrome/browser/ui/gtk/gtk_util.h"
 #include "chrome/browser/ui/gtk/rounded_window.h"
 #include "content/public/browser/notification_source.h"
-#include "ui/base/animation/slide_animation.h"
-#include "ui/base/gtk/gtk_compat.h"
 #include "ui/base/gtk/gtk_hig_constants.h"
-#include "ui/base/text/text_elider.h"
+#include "ui/gfx/animation/slide_animation.h"
+#include "ui/gfx/font.h"
+#include "ui/gfx/gtk_compat.h"
+#include "ui/gfx/text_elider.h"
 
 namespace {
 
@@ -112,9 +113,9 @@ void StatusBubbleGtk::SetStatusTextToURL() {
   }
 
   // TODO(tc): We don't actually use gfx::Font as the font in the status
-  // bubble.  We should extend ui::ElideUrl to take some sort of pango font.
+  // bubble.  We should extend gfx::ElideUrl to take some sort of pango font.
   url_text_ = UTF16ToUTF8(
-      ui::ElideUrl(url_, gfx::Font(), desired_width, languages_));
+      gfx::ElideUrl(url_, gfx::Font(), desired_width, languages_));
   SetStatusTextTo(url_text_);
 }
 
@@ -339,8 +340,8 @@ void StatusBubbleGtk::ExpandURL() {
   GtkAllocation allocation;
   gtk_widget_get_allocation(label_.get(), &allocation);
   start_width_ = allocation.width;
-  expand_animation_.reset(new ui::SlideAnimation(this));
-  expand_animation_->SetTweenType(ui::Tween::LINEAR);
+  expand_animation_.reset(new gfx::SlideAnimation(this));
+  expand_animation_->SetTweenType(gfx::Tween::LINEAR);
   expand_animation_->Show();
 
   SetStatusTextToURL();
@@ -371,10 +372,10 @@ gboolean StatusBubbleGtk::HandleMotionNotify(GtkWidget* sender,
   return FALSE;
 }
 
-void StatusBubbleGtk::AnimationEnded(const ui::Animation* animation) {
+void StatusBubbleGtk::AnimationEnded(const gfx::Animation* animation) {
   UpdateLabelSizeRequest();
 }
 
-void StatusBubbleGtk::AnimationProgressed(const ui::Animation* animation) {
+void StatusBubbleGtk::AnimationProgressed(const gfx::Animation* animation) {
   UpdateLabelSizeRequest();
 }

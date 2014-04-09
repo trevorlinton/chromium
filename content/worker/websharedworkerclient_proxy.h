@@ -8,16 +8,13 @@
 #include "base/basictypes.h"
 #include "base/memory/weak_ptr.h"
 #include "ipc/ipc_channel.h"
-#include "third_party/WebKit/public/platform/WebFileSystem.h"
-#include "third_party/WebKit/public/platform/WebFileSystemType.h"
 #include "third_party/WebKit/public/web/WebSharedWorkerClient.h"
-#include "third_party/WebKit/public/web/WebStorageQuotaCallbacks.h"
-#include "third_party/WebKit/public/web/WebStorageQuotaType.h"
 
 namespace WebKit {
 class WebApplicationCacheHost;
 class WebApplicationCacheHostClient;
 class WebFrame;
+class WebSecurityOrigin;
 }
 
 namespace content {
@@ -36,34 +33,6 @@ class WebSharedWorkerClientProxy : public WebKit::WebSharedWorkerClient {
   virtual ~WebSharedWorkerClientProxy();
 
   // WebSharedWorkerClient implementation.
-  virtual void postMessageToWorkerObject(
-      const WebKit::WebString& message,
-      const WebKit::WebMessagePortChannelArray& channel);
-  virtual void postExceptionToWorkerObject(
-      const WebKit::WebString& error_message,
-      int line_number,
-      const WebKit::WebString& source_url);
-  // TODO(caseq): The overload before is obsolete and is preserved for
-  // WebKit/chromium compatibility only (pure virtual is base class).
-  // Should be removed once WebKit part is updated.
-  virtual void postConsoleMessageToWorkerObject(
-      int destination,
-      int source,
-      int type,
-      int level,
-      const WebKit::WebString& message,
-      int line_number,
-      const WebKit::WebString& source_url) {
-  }
-  virtual void postConsoleMessageToWorkerObject(
-      int source,
-      int type,
-      int level,
-      const WebKit::WebString& message,
-      int line_number,
-      const WebKit::WebString& source_url);
-  virtual void confirmMessageFromWorkerObject(bool has_pending_activity);
-  virtual void reportPendingActivity(bool has_pending_activity);
   virtual void workerContextClosed();
   virtual void workerContextDestroyed();
 
@@ -71,20 +40,18 @@ class WebSharedWorkerClientProxy : public WebKit::WebSharedWorkerClient {
 
   virtual WebKit::WebApplicationCacheHost* createApplicationCacheHost(
       WebKit::WebApplicationCacheHostClient* client);
+  virtual WebKit::WebWorkerPermissionClientProxy*
+      createWorkerPermissionClientProxy(
+          const WebKit::WebSecurityOrigin& origin);
 
+  // TODO(kinuko): Deprecate these methods.
   virtual bool allowDatabase(WebKit::WebFrame* frame,
                              const WebKit::WebString& name,
                              const WebKit::WebString& display_name,
                              unsigned long estimated_size);
   virtual bool allowFileSystem();
-  virtual void openFileSystem(
-                              WebKit::WebFileSystemType type,
-                              long long size,
-                              bool create,
-                              WebKit::WebFileSystemCallbacks* callbacks);
   virtual bool allowIndexedDB(const WebKit::WebString&);
-  virtual void queryUsageAndQuota(WebKit::WebStorageQuotaType,
-                                  WebKit::WebStorageQuotaCallbacks*);
+
   virtual void dispatchDevToolsMessage(const WebKit::WebString&);
   virtual void saveDevToolsAgentState(const WebKit::WebString&);
 

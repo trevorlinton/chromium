@@ -15,15 +15,12 @@
 #include "base/strings/string16.h"
 #include "base/win/scoped_comptr.h"
 #include "chrome/browser/media_galleries/fileapi/mtp_device_async_delegate.h"
-#include "chrome/browser/media_galleries/mtp_device_delegate_impl.h"
 #include "webkit/browser/fileapi/async_file_util.h"
 
 namespace base {
 class FilePath;
 class SequencedTaskRunner;
 }
-
-namespace chrome {
 
 class SnapshotFileDetails;
 struct SnapshotRequestInfo;
@@ -215,7 +212,5 @@ class MTPDeviceDelegateImplWin : public MTPDeviceAsyncDelegate {
 
   DISALLOW_COPY_AND_ASSIGN(MTPDeviceDelegateImplWin);
 };
-
-}  // namespace chrome
 
 #endif  // CHROME_BROWSER_MEDIA_GALLERIES_WIN_MTP_DEVICE_DELEGATE_IMPL_WIN_H_

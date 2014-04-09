@@ -78,6 +78,7 @@ struct WEBKIT_COMMON_EXPORT WebPreferences {
   bool allow_scripts_to_close_windows;
   bool remote_fonts_enabled;
   bool javascript_can_access_clipboard;
+  bool xslt_enabled;
   bool xss_auditor_enabled;
   // We don't use dns_prefetching_enabled to disable DNS prefetching.  Instead,
   // we disable the feature at a lower layer so that we catch non-WebKit uses
@@ -104,6 +105,7 @@ struct WEBKIT_COMMON_EXPORT WebPreferences {
   bool privileged_webgl_extensions_enabled;
   bool webgl_errors_to_console_enabled;
   bool accelerated_compositing_for_overflow_scroll_enabled;
+  bool universal_accelerated_compositing_for_overflow_scroll_enabled;
   bool accelerated_compositing_for_scrollable_frames_enabled;
   bool composited_scrolling_for_frames_enabled;
   bool mock_scrollbars_enabled;
@@ -119,6 +121,7 @@ struct WEBKIT_COMMON_EXPORT WebPreferences {
   bool accelerated_2d_canvas_enabled;
   int minimum_accelerated_2d_canvas_size;
   bool antialiased_2d_canvas_disabled;
+  int accelerated_2d_canvas_msaa_sample_count;
   bool accelerated_filters_enabled;
   bool gesture_tap_highlight_enabled;
   bool accelerated_compositing_for_plugins_enabled;
@@ -130,8 +133,6 @@ struct WEBKIT_COMMON_EXPORT WebPreferences {
   bool should_print_backgrounds;
   bool enable_scroll_animator;
   bool visual_word_movement_enabled;
-  bool css_sticky_position_enabled;
-  bool css_shaders_enabled;
   bool css_variables_enabled;
   bool lazy_layout_enabled;
   bool region_based_columns_enabled;
@@ -139,6 +140,7 @@ struct WEBKIT_COMMON_EXPORT WebPreferences {
   bool device_supports_touch;
   bool device_supports_mouse;
   bool touch_adjustment_enabled;
+  int pointer_events_max_touch_points;
   bool fixed_position_creates_stacking_context;
   bool sync_xhr_in_documents_enabled;
   bool deferred_image_decoding_enabled;
@@ -153,6 +155,8 @@ struct WEBKIT_COMMON_EXPORT WebPreferences {
   bool experimental_websocket_enabled;
   bool pinch_virtual_viewport_enabled;
   int pinch_overlay_scrollbar_thickness;
+  bool use_solid_color_scrollbars;
+  bool compositor_touch_hit_testing;
 
   // This flags corresponds to a Page's Settings' setCookieEnabled state. It
   // only controls whether or not the "document.cookie" field is properly
@@ -164,16 +168,21 @@ struct WEBKIT_COMMON_EXPORT WebPreferences {
 #if defined(OS_ANDROID)
   bool text_autosizing_enabled;
   float font_scale_factor;
+  float device_scale_adjustment;
   bool force_enable_zoom;
   bool double_tap_to_zoom_enabled;
   bool user_gesture_required_for_media_playback;
+  bool user_gesture_required_for_media_fullscreen;
   GURL default_video_poster_url;
   bool support_deprecated_target_density_dpi;
   bool use_legacy_background_size_shorthand_behavior;
   bool wide_viewport_quirk;
   bool use_wide_viewport;
   bool viewport_meta_layout_size_quirk;
+  bool viewport_meta_merge_content_quirk;
   bool viewport_meta_zero_values_quirk;
+  bool ignore_main_frame_overflow_hidden_quirk;
+  bool report_screen_size_in_physical_pixels_quirk;
 #endif
 
   // We try to keep the default values the same as the default values in

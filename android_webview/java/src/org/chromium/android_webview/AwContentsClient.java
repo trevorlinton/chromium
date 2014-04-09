@@ -43,20 +43,26 @@ import org.chromium.net.NetError;
 public abstract class AwContentsClient {
 
     private static final String TAG = "AwContentsClient";
-    private final AwContentsClientCallbackHelper mCallbackHelper =
-        new AwContentsClientCallbackHelper(this);
+    private final AwContentsClientCallbackHelper mCallbackHelper;
 
     private AwWebContentsObserver mWebContentsObserver;
 
     private AwContentViewClient mContentViewClient = new AwContentViewClient();
-
-    private double mDIPScale;
 
     // Last background color reported from the renderer. Holds the sentinal value INVALID_COLOR
     // if not valid.
     private int mCachedRendererBackgroundColor = INVALID_COLOR;
 
     private static final int INVALID_COLOR = 0;
+
+    public AwContentsClient() {
+        this(Looper.myLooper());
+    }
+
+    // Alllow injection of the callback thread, for testing.
+    public AwContentsClient(Looper looper) {
+        mCallbackHelper = new AwContentsClientCallbackHelper(looper, this);
+    }
 
     class AwWebContentsObserver extends WebContentsObserverAndroid {
         public AwWebContentsObserver(ContentViewCore contentViewCore) {
@@ -101,12 +107,6 @@ public abstract class AwContentsClient {
             // Avoid storing the sentinal INVALID_COLOR (note that both 0 and 1 are both
             // fully transparent so this transpose makes no visible difference).
             mCachedRendererBackgroundColor = color == INVALID_COLOR ? 1 : color;
-        }
-
-        @Override
-        public void onScaleChanged(float oldScale, float newScale) {
-            AwContentsClient.this.onScaleChangedScaled((float)(oldScale * mDIPScale),
-                    (float)(newScale * mDIPScale));
         }
 
         @Override
@@ -172,10 +172,6 @@ public abstract class AwContentsClient {
         public ContentVideoViewControls createControls() {
             return null;
         }
-    }
-
-    final void setDIPScale(double dipScale) {
-        mDIPScale = dipScale;
     }
 
     final AwContentsClientCallbackHelper getCallbackHelper() {

@@ -85,6 +85,7 @@ PP_ExternalPluginResult LaunchSelLdr(PP_Instance instance,
                            PP_Bool enable_ppapi_dev,
                            PP_Bool enable_dyncode_syscalls,
                            PP_Bool enable_exception_handling,
+                           PP_Bool enable_crash_throttling,
                            void* imc_handle,
                            struct PP_Var* error_message) {
   nacl::FileDescriptor result_socket;
@@ -122,7 +123,8 @@ PP_ExternalPluginResult LaunchSelLdr(PP_Instance instance,
                                  perm_bits,
                                  PP_ToBool(uses_irt),
                                  PP_ToBool(enable_dyncode_syscalls),
-                                 PP_ToBool(enable_exception_handling)),
+                                 PP_ToBool(enable_exception_handling),
+                                 PP_ToBool(enable_crash_throttling)),
           &launch_result,
           &error_message_string))) {
     return PP_EXTERNAL_PLUGIN_FAILED;
@@ -202,19 +204,6 @@ int32_t BrokerDuplicateHandle(PP_FileHandle source_handle,
 #endif
 }
 
-int32_t EnsurePnaclInstalled(PP_Instance instance,
-                             PP_CompletionCallback callback) {
-  ppapi::thunk::EnterInstance enter(instance, callback);
-  if (enter.failed())
-    return enter.retval();
-  if (!InitializePnaclResourceHost())
-    return enter.SetResult(PP_ERROR_FAILED);
-  g_pnacl_resource_host.Get()->EnsurePnaclInstalled(
-      instance,
-      enter.callback());
-  return enter.SetResult(PP_OK_COMPLETIONPENDING);
-}
-
 PP_FileHandle GetReadonlyPnaclFD(const char* filename) {
   IPC::PlatformFileForTransit out_fd = IPC::InvalidPlatformFileForTransit();
   IPC::Sender* sender = content::RenderThread::Get();
@@ -256,6 +245,7 @@ int32_t GetNexeFd(PP_Instance instance,
                   uint32_t opt_level,
                   const char* last_modified,
                   const char* etag,
+                  PP_Bool has_no_store_header,
                   PP_Bool* is_hit,
                   PP_FileHandle* handle,
                   struct PP_CompletionCallback callback) {
@@ -278,6 +268,7 @@ int32_t GetNexeFd(PP_Instance instance,
   cache_info.opt_level = opt_level;
   cache_info.last_modified = last_modified_time;
   cache_info.etag = std::string(etag);
+  cache_info.has_no_store_header = PP_ToBool(has_no_store_header);
 
   g_pnacl_resource_host.Get()->RequestNexeFd(
       GetRoutingID(instance),
@@ -300,11 +291,6 @@ void ReportTranslationFinished(PP_Instance instance, PP_Bool success) {
 
 PP_Bool IsOffTheRecord() {
   return PP_FromBool(ChromeRenderProcessObserver::is_incognito_process());
-}
-
-PP_Bool IsPnaclEnabled() {
-  return PP_FromBool(
-      CommandLine::ForCurrentProcess()->HasSwitch(switches::kEnablePnacl));
 }
 
 PP_ExternalPluginResult ReportNaClError(PP_Instance instance,
@@ -356,13 +342,11 @@ const PPB_NaCl_Private nacl_interface = {
   &UrandomFD,
   &Are3DInterfacesDisabled,
   &BrokerDuplicateHandle,
-  &EnsurePnaclInstalled,
   &GetReadonlyPnaclFD,
   &CreateTemporaryFile,
   &GetNexeFd,
   &ReportTranslationFinished,
   &IsOffTheRecord,
-  &IsPnaclEnabled,
   &ReportNaClError,
   &OpenNaClExecutable
 };

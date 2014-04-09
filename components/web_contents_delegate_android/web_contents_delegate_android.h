@@ -10,7 +10,6 @@
 #include "base/compiler_specific.h"
 #include "base/memory/scoped_ptr.h"
 #include "content/public/browser/web_contents_delegate.h"
-#include "ui/gfx/vector2d.h"
 
 class GURL;
 
@@ -57,12 +56,6 @@ class WebContentsDelegateAndroid : public content::WebContentsDelegate {
                                                   SkColor color) OVERRIDE;
   virtual void NavigationStateChanged(const content::WebContents* source,
                                       unsigned changed_flags) OVERRIDE;
-  virtual void AddNewContents(content::WebContents* source,
-                              content::WebContents* new_contents,
-                              WindowOpenDisposition disposition,
-                              const gfx::Rect& initial_pos,
-                              bool user_gesture,
-                              bool* was_blocked) OVERRIDE;
   virtual void ActivateContents(content::WebContents* contents) OVERRIDE;
   virtual void DeactivateContents(content::WebContents* contents) OVERRIDE;
   virtual void LoadingStateChanged(content::WebContents* source) OVERRIDE;
@@ -91,9 +84,6 @@ class WebContentsDelegateAndroid : public content::WebContentsDelegate {
                                           bool enter_fullscreen) OVERRIDE;
   virtual bool IsFullscreenForTabOrPending(
       const content::WebContents* web_contents) const OVERRIDE;
-  virtual void DidProgrammaticallyScroll(
-      content::WebContents* web_contents,
-      const gfx::Vector2d& scroll_point) OVERRIDE;
 
  protected:
   base::android::ScopedJavaLocalRef<jobject> GetJavaDelegate(JNIEnv* env) const;

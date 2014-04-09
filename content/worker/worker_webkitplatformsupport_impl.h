@@ -82,9 +82,6 @@ class WorkerWebKitPlatformSupportImpl : public WebKitPlatformSupportImpl,
       const WebKit::WebString&);
   virtual WebKit::WebMimeRegistry::SupportsType supportsJavaScriptMIMEType(
       const WebKit::WebString&);
-  // TODO(ddorwin): Remove after http://webk.it/82983 lands.
-  virtual WebKit::WebMimeRegistry::SupportsType supportsMediaMIMEType(
-      const WebKit::WebString&, const WebKit::WebString&);
   virtual WebKit::WebMimeRegistry::SupportsType supportsMediaMIMEType(
       const WebKit::WebString&,
       const WebKit::WebString&,
@@ -98,8 +95,6 @@ class WorkerWebKitPlatformSupportImpl : public WebKitPlatformSupportImpl,
   virtual WebKit::WebString wellKnownMimeTypeForExtension(
       const WebKit::WebString&);
   virtual WebKit::WebString mimeTypeFromFile(const WebKit::WebString&);
-  virtual WebKit::WebString preferredExtensionForMIMEType(
-      const WebKit::WebString&);
   virtual void queryStorageUsageAndQuota(
       const WebKit::WebURL& storage_partition,
       WebKit::WebStorageQuotaType,

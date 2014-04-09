@@ -14,6 +14,8 @@
 #include "base/observer_list.h"
 #include "chrome/browser/content_settings/content_settings_usages_state.h"
 #include "chrome/browser/content_settings/local_shared_objects_container.h"
+#include "chrome/browser/media/media_stream_devices_controller.h"
+#include "chrome/browser/password_manager/password_form_manager.h"
 #include "chrome/common/content_settings.h"
 #include "chrome/common/content_settings_types.h"
 #include "chrome/common/custom_handlers/protocol_handler.h"
@@ -21,6 +23,7 @@
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
+#include "content/public/common/media_stream_request.h"
 #include "net/cookies/canonical_cookie.h"
 
 class CookiesTreeModel;
@@ -51,6 +54,11 @@ class TabSpecificContentSettings
     MICROPHONE_BLOCKED,
     CAMERA_BLOCKED,
     MICROPHONE_CAMERA_BLOCKED,
+  };
+
+  enum PasswordSavingState {
+    NO_PASSWORD_TO_BE_SAVED = 0,
+    PASSWORD_TO_BE_SAVED,
   };
 
   // Classes that want to be notified about site data events must implement
@@ -188,8 +196,24 @@ class TabSpecificContentSettings
   // only tracks cookies.
   bool IsContentAllowed(ContentSettingsType content_type) const;
 
+  const GURL& media_stream_access_origin() const {
+    return media_stream_access_origin_;
+  }
+
+  const std::string& media_stream_requested_audio_device() const {
+    return media_stream_requested_audio_device_;
+  }
+
+  const std::string& media_stream_requested_video_device() const {
+    return media_stream_requested_video_device_;
+  }
+
   // Returns the state of the camera and microphone usage.
   MicrophoneCameraState GetMicrophoneCameraState() const;
+
+  // TODO(npentrel): Change to bool if not needed once feature is implemented.
+  // Returns the state of whether there is a password to be saved or not.
+  PasswordSavingState GetPasswordSavingState() const;
 
   const std::set<std::string>& BlockedResourcesForType(
       ContentSettingsType content_type) const;
@@ -279,6 +303,18 @@ class TabSpecificContentSettings
   virtual void AppCacheAccessed(const GURL& manifest_url,
                                 bool blocked_by_policy) OVERRIDE;
 
+  // Called when the user chooses to save or blacklist a password. Instructs
+  // |form_manager_| to perfom the chosen action when the next navigation
+  // occurs or when the tab is closed. The change isn't applied immediately
+  // because the user can still recall the UI and change the desired action,
+  // until the next navigation, and undoing a blacklist operation is
+  // nontrivial.
+  void set_password_action(
+      PasswordFormManager::PasswordAction password_action) {
+    DCHECK(form_manager_.get());
+    form_manager_->set_password_action(password_action);
+  }
+
   // Message handlers. Public for testing.
   void OnContentBlocked(ContentSettingsType type,
                         const std::string& resource_identifier);
@@ -309,13 +345,24 @@ class TabSpecificContentSettings
                              bool blocked_by_policy);
   void OnGeolocationPermissionSet(const GURL& requesting_frame,
                                   bool allowed);
+#if defined(OS_ANDROID)
+  void OnProtectedMediaIdentifierPermissionSet(const GURL& requesting_frame,
+                                               bool allowed);
+#endif
 
-  // These methods are called to update the status about the microphone and
-  // camera stream access.
-  void OnMicrophoneAccessed();
-  void OnMicrophoneAccessBlocked();
-  void OnCameraAccessed();
-  void OnCameraAccessBlocked();
+  // This method is called to update the status about the microphone and
+  // camera stream access. |request_permissions| contains a list of requested
+  // media stream types and the permission for each type.
+  void OnMediaStreamPermissionSet(
+      const GURL& request_origin,
+      const MediaStreamDevicesController::MediaStreamTypeSettingsMap&
+          request_permissions);
+
+  // Called when the user submits a form containing login information, so we
+  // can handle later requests to save or blacklist that login information.
+  // This stores the provided object in form_manager_ and triggers the UI to
+  // prompt the user about whether they would like to save the password.
+  void OnPasswordSubmitted(PasswordFormManager* form_manager);
 
   // There methods are called to update the status about MIDI access.
   void OnMIDISysExAccessed(const GURL& reqesting_origin);
@@ -392,6 +439,22 @@ class TabSpecificContentSettings
   bool load_plugins_link_enabled_;
 
   content::NotificationRegistrar registrar_;
+
+  // The origin of the media stream request. Note that we only support handling
+  // settings for one request per tab. The latest request's origin will be
+  // stored here. http://crbug.com/259794
+  GURL media_stream_access_origin_;
+
+  // The devices to be displayed in the media bubble when the media stream
+  // request is requesting certain specific devices.
+  std::string media_stream_requested_audio_device_;
+  std::string media_stream_requested_video_device_;
+
+  // Set by OnPasswordSubmitted() when the user submits a form containing login
+  // information.  If the user responds to a subsequent "Do you want to save
+  // this password?" prompt, we ask this object to save or blacklist the
+  // associated login information in Chrome's password store.
+  scoped_ptr<PasswordFormManager> form_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(TabSpecificContentSettings);
 };

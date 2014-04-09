@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <algorithm>
 #include <ostream>
 #include <string>
 
@@ -276,6 +277,7 @@ std::string CreditCard::GetCreditCardType(const base::string16& number) {
 }
 
 base::string16 CreditCard::GetRawInfo(ServerFieldType type) const {
+  DCHECK_EQ(CREDIT_CARD, AutofillType(type).group());
   switch (type) {
     case CREDIT_CARD_NAME:
       return name_on_card_;
@@ -323,6 +325,7 @@ base::string16 CreditCard::GetRawInfo(ServerFieldType type) const {
 
 void CreditCard::SetRawInfo(ServerFieldType type,
                             const base::string16& value) {
+  DCHECK_EQ(CREDIT_CARD, AutofillType(type).group());
   switch (type) {
     case CREDIT_CARD_NAME:
       name_on_card_ = value;
@@ -529,31 +532,6 @@ bool CreditCard::UpdateFromImportedCard(const CreditCard& imported_card,
   expiration_year_ = imported_card.expiration_year_;
 
   return true;
-}
-
-void CreditCard::FillFormField(const AutofillField& field,
-                               size_t /*variant*/,
-                               const std::string& app_locale,
-                               FormFieldData* field_data) const {
-  DCHECK_EQ(CREDIT_CARD, field.Type().group());
-  DCHECK(field_data);
-
-  if (field_data->form_control_type == "select-one") {
-    FillSelectControl(field.Type(), app_locale, field_data);
-  } else if (field_data->form_control_type == "month") {
-    // HTML5 input="month" consists of year-month.
-    base::string16 year =
-        GetInfo(AutofillType(CREDIT_CARD_EXP_4_DIGIT_YEAR), app_locale);
-    base::string16 month =
-        GetInfo(AutofillType(CREDIT_CARD_EXP_MONTH), app_locale);
-    if (!year.empty() && !month.empty()) {
-      // Fill the value only if |this| includes both year and month
-      // information.
-      field_data->value = year + ASCIIToUTF16("-") + month;
-    }
-  } else {
-    field_data->value = GetInfo(field.Type(), app_locale);
-  }
 }
 
 int CreditCard::Compare(const CreditCard& credit_card) const {

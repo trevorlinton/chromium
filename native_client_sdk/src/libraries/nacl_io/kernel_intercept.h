@@ -5,9 +5,13 @@
 #ifndef LIBRARIES_NACL_IO_KERNEL_INTERCEPT_H_
 #define LIBRARIES_NACL_IO_KERNEL_INTERCEPT_H_
 
+#include <stdarg.h>
+#include <sys/time.h>
+
 #include <ppapi/c/ppb.h>
 #include <ppapi/c/pp_instance.h>
 
+#include "nacl_io/ossignal.h"
 #include "nacl_io/ossocket.h"
 #include "nacl_io/osstat.h"
 #include "nacl_io/ostermios.h"
@@ -36,6 +40,8 @@ char* ki_getwd(char* buf);
 int ki_dup(int oldfd);
 int ki_dup2(int oldfd, int newfd);
 int ki_chmod(const char* path, mode_t mode);
+int ki_fchdir(int fd);
+int ki_fchmod(int fd, mode_t mode);
 int ki_stat(const char* path, struct stat* buf);
 int ki_mkdir(const char* path, mode_t mode);
 int ki_rmdir(const char* path);
@@ -43,25 +49,33 @@ int ki_mount(const char* source, const char* target, const char* filesystemtype,
              unsigned long mountflags, const void *data);
 int ki_umount(const char* path);
 int ki_open(const char* path, int oflag);
+int ki_pipe(int pipefds[2]);
 ssize_t ki_read(int fd, void* buf, size_t nbyte);
 ssize_t ki_write(int fd, const void* buf, size_t nbyte);
 int ki_fstat(int fd, struct stat *buf);
 int ki_getdents(int fd, void* buf, unsigned int count);
-int ki_ftruncate(int fd, off_t length);
 int ki_fsync(int fd);
+int ki_fdatasync(int fd);
+int ki_ftruncate(int fd, off_t length);
 int ki_isatty(int fd);
 int ki_close(int fd);
 off_t ki_lseek(int fd, off_t offset, int whence);
 int ki_remove(const char* path);
 int ki_unlink(const char* path);
-int ki_access(const char* path, int amode);
+int ki_truncate(const char* path, off_t length);
+int ki_lstat(const char* path, struct stat* buf);
 int ki_link(const char* oldpath, const char* newpath);
+int ki_rename(const char* oldpath, const char* newpath);
 int ki_symlink(const char* oldpath, const char* newpath);
+int ki_access(const char* path, int amode);
+int ki_readlink(const char *path, char *buf, size_t count);
+int ki_utimes(const char *path, const struct timeval times[2]);
 void* ki_mmap(void* addr, size_t length, int prot, int flags, int fd,
               off_t offset);
 int ki_munmap(void* addr, size_t length);
 int ki_open_resource(const char* file);
-int ki_ioctl(int d, int request, char* argp);
+int ki_fcntl(int d, int request, va_list args);
+int ki_ioctl(int d, int request, va_list args);
 int ki_chown(const char* path, uid_t owner, gid_t group);
 int ki_fchown(int fd, uid_t owner, gid_t group);
 int ki_lchown(const char* path, uid_t owner, gid_t group);
@@ -75,6 +89,14 @@ int ki_tcflush(int fd, int queue_selector);
 int ki_tcgetattr(int fd, struct termios* termios_p);
 int ki_tcsetattr(int fd, int optional_actions,
                  const struct termios *termios_p);
+int ki_kill(pid_t pid, int sig);
+int ki_killpg(pid_t pid, int sig);
+int ki_sigaction(int, const struct sigaction*, struct sigaction*);
+int ki_sigpause(int sigmask);
+int ki_sigpending(sigset_t* set);
+int ki_sigsuspend(const sigset_t* set);
+sighandler_t ki_signal(int signum, sighandler_t handler);
+sighandler_t ki_sigset(int signum, sighandler_t handler);
 
 #ifdef PROVIDES_SOCKET_API
 // Socket Functions

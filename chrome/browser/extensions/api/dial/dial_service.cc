@@ -27,6 +27,7 @@
 #if defined(OS_CHROMEOS)
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
+#include "chromeos/network/shill_property_util.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 #endif
 
@@ -115,6 +116,39 @@ void GetNetworkListOnFileThread(
   loop->PostTask(FROM_HERE, base::Bind(cb, list));
 }
 
+#if defined(OS_CHROMEOS)
+IPAddressNumber GetBestBindAddressByType(
+    const chromeos::NetworkTypePattern& type) {
+  const chromeos::NetworkState* state = chromeos::NetworkHandler::Get()
+      ->network_state_handler()->ConnectedNetworkByType(type);
+  IPAddressNumber bind_ip_address;
+  if (!state ||
+      !net::ParseIPLiteralToNumber(state->ip_address(), &bind_ip_address)) {
+    return IPAddressNumber();
+  }
+  if (bind_ip_address.size() != net::kIPv4AddressSize) {
+    LOG(ERROR) << "Default network is not using IPv4.";
+    return IPAddressNumber();
+  }
+
+  DVLOG(1) << "Found " << state->type() << ", " << state->name() << ":"
+           << state->ip_address();
+  return bind_ip_address;
+}
+
+// Returns the IP address of the preferred interface to bind the socket. This
+// ChromeOS version can prioritize wifi and ethernet interfaces.
+IPAddressNumber GetBestBindAddressChromeOS() {
+  IPAddressNumber bind_ip_address =
+      GetBestBindAddressByType(chromeos::NetworkTypePattern::Ethernet());
+  if (bind_ip_address.empty()) {
+    bind_ip_address =
+        GetBestBindAddressByType(chromeos::NetworkTypePattern::WiFi());
+  }
+  return bind_ip_address;
+}
+#endif
+
 }  // namespace
 
 DialServiceImpl::DialServiceImpl(net::NetLog* net_log)
@@ -126,8 +160,7 @@ DialServiceImpl::DialServiceImpl(net::NetLog* net_log)
     finish_delay_(TimeDelta::FromMilliseconds((kDialMaxRequests - 1) *
                                               kDialRequestIntervalMillis) +
                   TimeDelta::FromSeconds(kDialResponseTimeoutSecs)),
-    request_interval_(TimeDelta::FromMilliseconds(kDialRequestIntervalMillis))
- {
+    request_interval_(TimeDelta::FromMilliseconds(kDialRequestIntervalMillis)) {
   IPAddressNumber address;
   bool result = net::ParseIPLiteralToNumber(kDialRequestAddress, &address);
   DCHECK(result);
@@ -163,7 +196,7 @@ bool DialServiceImpl::Discover() {
     return false;
   discovery_active_ = true;
 
-  DVLOG(1) << "Discovery started.";
+  VLOG(2) << "Discovery started.";
 
   StartDiscovery();
   return true;
@@ -187,27 +220,6 @@ void DialServiceImpl::StartDiscovery() {
           &DialServiceImpl::SendNetworkList, AsWeakPtr())));
 #endif
 }
-
-#if defined(OS_CHROMEOS)
-IPAddressNumber DialServiceImpl::GetBestBindAddressChromeOS() {
-  std::string connection_types[] =
-      {flimflam::kTypeWifi, flimflam::kTypeEthernet};
-  for (uint i = 0; i < arraysize(connection_types); ++i) {
-    IPAddressNumber bind_ip_address;
-    const chromeos::NetworkState* state =
-        chromeos::NetworkHandler::Get()->network_state_handler()->
-            ConnectedNetworkByType(connection_types[i]);
-    if (state &&
-        net::ParseIPLiteralToNumber(state->ip_address(), &bind_ip_address)) {
-      DCHECK(bind_ip_address.size() == net::kIPv4AddressSize);
-      DVLOG(1) << "Found " << state->type() << ", " << state->name() << ":"
-               << state->ip_address();
-      return bind_ip_address;
-    }
-  }
-  return IPAddressNumber();
-}
-#endif
 
 bool DialServiceImpl::BindSocketAndSendRequest(
       const IPAddressNumber& bind_ip_address) {
@@ -262,11 +274,11 @@ void DialServiceImpl::SendOneRequest() {
   }
 
   if (is_writing_) {
-    DVLOG(1) << "Already writing.";
+    VLOG(2) << "Already writing.";
     return;
   }
-  DVLOG(1) << "Sending request " << num_requests_sent_ << "/"
-           << max_requests_;
+  VLOG(2) << "Sending request " << num_requests_sent_ << "/"
+          << max_requests_;
   is_writing_ = true;
   int result = socket_->SendTo(
       send_buffer_.get(), send_buffer_->size(), send_address_,
@@ -290,7 +302,7 @@ void DialServiceImpl::OnSocketWrite(int result) {
   }
   // If discovery is inactive, no reason to notify observers.
   if (!discovery_active_) {
-    DVLOG(1) << "Request sent after discovery finished.  Ignoring.";
+    VLOG(2) << "Request sent after discovery finished.  Ignoring.";
     return;
   }
   FOR_EACH_OBSERVER(Observer, observer_list_, OnDiscoveryRequest(this));
@@ -311,7 +323,7 @@ bool DialServiceImpl::ReadSocket() {
   }
 
   if (is_reading_) {
-    DVLOG(1) << "Already reading.";
+    VLOG(2) << "Already reading.";
     return false;
   }
 
@@ -353,12 +365,12 @@ void DialServiceImpl::HandleResponse(int bytes_read) {
     DLOG(ERROR) << bytes_read << " > " << kDialRecvBufferSize << "!?";
     return;
   }
-  DVLOG(1) << "Read " << bytes_read << " bytes from "
-           << recv_address_.ToString();
+  VLOG(2) << "Read " << bytes_read << " bytes from "
+          << recv_address_.ToString();
 
   // If discovery is inactive, no reason to handle response.
   if (!discovery_active_) {
-    DVLOG(1) << "Got response after discovery finished.  Ignoring.";
+    VLOG(2) << "Got response after discovery finished.  Ignoring.";
     return;
   }
 
@@ -379,32 +391,32 @@ bool DialServiceImpl::ParseResponse(const std::string& response,
   int headers_end = HttpUtil::LocateEndOfHeaders(response.c_str(),
                                                  response.size());
   if (headers_end < 1) {
-    DVLOG(1) << "Headers invalid or empty, ignoring: " << response;
+    VLOG(2) << "Headers invalid or empty, ignoring: " << response;
     return false;
   }
   std::string raw_headers =
       HttpUtil::AssembleRawHeaders(response.c_str(), headers_end);
-  DVLOG(1) << "raw_headers: " << raw_headers << "\n";
+  VLOG(2) << "raw_headers: " << raw_headers << "\n";
   scoped_refptr<HttpResponseHeaders> headers =
       new HttpResponseHeaders(raw_headers);
 
   std::string device_url_str;
   if (!GetHeader(headers.get(), kSsdpLocationHeader, &device_url_str) ||
       device_url_str.empty()) {
-    DVLOG(1) << "No LOCATION header found.";
+    VLOG(2) << "No LOCATION header found.";
     return false;
   }
 
   GURL device_url(device_url_str);
   if (!DialDeviceData::IsDeviceDescriptionUrl(device_url)) {
-    DVLOG(1) << "URL " << device_url_str << " not valid.";
+    VLOG(2) << "URL " << device_url_str << " not valid.";
     return false;
   }
 
   std::string device_id;
   if (!GetHeader(headers.get(), kSsdpUsnHeader, &device_id) ||
       device_id.empty()) {
-    DVLOG(1) << "No USN header found.";
+    VLOG(2) << "No USN header found.";
     return false;
   }
 
@@ -423,8 +435,8 @@ bool DialServiceImpl::ParseResponse(const std::string& response,
       base::StringToInt(config_id, &config_id_int)) {
     device->set_config_id(config_id_int);
   } else {
-    DVLOG(1) << "Malformed or missing " << kSsdpConfigIdHeader << ": "
-             << config_id;
+    VLOG(2) << "Malformed or missing " << kSsdpConfigIdHeader << ": "
+            << config_id;
   }
 
   return true;
@@ -453,7 +465,7 @@ void DialServiceImpl::SendNetworkList(const NetworkInterfaceList& networks) {
 void DialServiceImpl::FinishDiscovery() {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(discovery_active_);
-  DVLOG(1) << "Discovery finished.";
+  VLOG(2) << "Discovery finished.";
   CloseSocket();
   finish_timer_.Stop();
   request_timer_.Stop();
@@ -471,7 +483,7 @@ void DialServiceImpl::CloseSocket() {
 
 bool DialServiceImpl::CheckResult(const char* operation, int result) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  DVLOG(1) << "Operation " << operation << " result " << result;
+  VLOG(2) << "Operation " << operation << " result " << result;
   if (result < net::OK && result != net::ERR_IO_PENDING) {
     CloseSocket();
     std::string error_str(net::ErrorToString(result));

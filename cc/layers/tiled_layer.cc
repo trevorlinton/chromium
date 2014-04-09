@@ -86,7 +86,7 @@ class UpdatableTile : public LayerTilingData::Tile {
 
 TiledLayer::TiledLayer()
     : ContentsScalingLayer(),
-      texture_format_(GL_INVALID_ENUM),
+      texture_format_(RGBA_8888),
       skips_draw_(false),
       failed_update_(false),
       tiling_option_(AUTO_TILE) {
@@ -235,9 +235,7 @@ void TiledLayer::PushPropertiesTo(LayerImpl* layer) {
   needs_push_properties_ = true;
 }
 
-bool TiledLayer::BlocksPendingCommit() const { return true; }
-
-PrioritizedResourceManager* TiledLayer::ResourceManager() const {
+PrioritizedResourceManager* TiledLayer::ResourceManager() {
   if (!layer_tree_host())
     return NULL;
   return layer_tree_host()->contents_texture_manager();
@@ -380,10 +378,7 @@ void TiledLayer::MarkOcclusionsAndRequestTextures(
       if (occlusion && occlusion->Occluded(render_target(),
                                            visible_tile_rect,
                                            draw_transform(),
-                                           draw_transform_is_animating(),
-                                           is_clipped(),
-                                           clip_rect(),
-                                           NULL)) {
+                                           draw_transform_is_animating())) {
         tile->occluded = true;
         occluded_tile_count++;
       } else {
@@ -444,8 +439,8 @@ gfx::Rect TiledLayer::MarkTilesForUpdate(int left,
         continue;
       // TODO(reveman): Decide if partial update should be allowed based on cost
       // of update. https://bugs.webkit.org/show_bug.cgi?id=77376
-      if (tile->is_dirty() && layer_tree_host() &&
-          layer_tree_host()->buffered_updates()) {
+      if (tile->is_dirty() &&
+          !layer_tree_host()->AlwaysUsePartialTextureUpdates()) {
         // If we get a partial update, we use the same texture, otherwise return
         // the current texture backing, so we don't update visible textures
         // non-atomically.  If the current backing is in-use, it won't be
@@ -731,6 +726,10 @@ bool TiledLayer::Update(ResourceUpdateQueue* queue,
                         const OcclusionTracker* occlusion) {
   DCHECK(!skips_draw_ && !failed_update_);  // Did ResetUpdateState get skipped?
 
+  // Tiled layer always causes commits to wait for activation, as it does
+  // not support pending trees.
+  SetNextCommitWaitsForActivation();
+
   bool updated = false;
 
   {
@@ -849,6 +848,19 @@ bool TiledLayer::Update(ResourceUpdateQueue* queue,
     }
   }
   return updated;
+}
+
+void TiledLayer::OnOutputSurfaceCreated() {
+  // Ensure that all textures are of the right format.
+  for (LayerTilingData::TileMap::const_iterator iter = tiler_->tiles().begin();
+       iter != tiler_->tiles().end();
+       ++iter) {
+    UpdatableTile* tile = static_cast<UpdatableTile*>(iter->second);
+    if (!tile)
+      continue;
+    PrioritizedResource* resource = tile->managed_resource();
+    resource->SetDimensions(resource->size(), texture_format_);
+  }
 }
 
 bool TiledLayer::NeedsIdlePaint() {

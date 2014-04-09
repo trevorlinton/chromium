@@ -33,8 +33,7 @@ const int ContentSettingImageView::kAnimationDurationMS =
 ContentSettingImageView::ContentSettingImageView(
     ContentSettingsType content_type,
     LocationBarView* parent,
-    const gfx::Font& font,
-    int font_y_offset,
+    const gfx::FontList& font_list,
     SkColor text_color,
     SkColor parent_background_color)
     : parent_(parent),
@@ -44,7 +43,7 @@ ContentSettingImageView::ContentSettingImageView(
       background_painter_(
           views::Painter::CreateImageGridPainter(kBackgroundImages)),
       icon_(new views::ImageView),
-      text_label_(new views::Label),
+      text_label_(new views::Label(string16(), font_list)),
       slide_animator_(this),
       pause_animation_(false),
       pause_animation_state_(0.0),
@@ -53,9 +52,6 @@ ContentSettingImageView::ContentSettingImageView(
   AddChildView(icon_);
 
   text_label_->SetVisible(false);
-  text_label_->set_border(
-      views::Border::CreateEmptyBorder(font_y_offset, 0, 0, 0));
-  text_label_->SetFont(font);
   text_label_->SetEnabledColor(text_color);
   // Calculate the actual background color for the label.  The background images
   // are painted atop |parent_background_color|.  We grab the color of the
@@ -66,8 +62,7 @@ ContentSettingImageView::ContentSettingImageView(
   // sit atop.
   const SkBitmap& bitmap(
       ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
-          kBackgroundImages[4])->GetRepresentation(
-          ui::SCALE_FACTOR_100P).sk_bitmap());
+          kBackgroundImages[4])->GetRepresentation(1.0f).sk_bitmap());
   SkAutoLockPixels pixel_lock(bitmap);
   SkColor background_image_color =
       bitmap.getColor(bitmap.width() / 2, bitmap.height() / 2);
@@ -86,7 +81,7 @@ ContentSettingImageView::ContentSettingImageView(
   LocationBarView::InitTouchableLocationBarChildView(this);
 
   slide_animator_.SetSlideDuration(kAnimationDurationMS);
-  slide_animator_.SetTweenType(ui::Tween::LINEAR);
+  slide_animator_.SetTweenType(gfx::Tween::LINEAR);
 }
 
 ContentSettingImageView::~ContentSettingImageView() {
@@ -94,7 +89,8 @@ ContentSettingImageView::~ContentSettingImageView() {
     bubble_widget_->RemoveObserver(this);
 }
 
-void ContentSettingImageView::Update(content::WebContents* web_contents) {
+void ContentSettingImageView::UpdatePreLayout(
+    content::WebContents* web_contents) {
   // Note: We explicitly want to call this even if |web_contents| is NULL, so we
   // get hidden properly while the user is editing the omnibox.
   content_setting_image_model_->UpdateFromWebContents(web_contents);
@@ -127,9 +123,29 @@ void ContentSettingImageView::Update(content::WebContents* web_contents) {
     text_label_->SetVisible(true);
     slide_animator_.Show();
   }
+  // Since indicating blockage may include showing a bubble, which must be done
+  // in UpdatePostLayout() in order for the bubble to have the right anchor
+  // coordinates, we delay calling SetBlockageHasBeeenIndicated() until that
+  // function completes.
+}
 
-  content_settings->SetBlockageHasBeenIndicated(
-      content_setting_image_model_->get_content_settings_type());
+void ContentSettingImageView::UpdatePostLayout(
+    content::WebContents* web_contents) {
+  if (!content_setting_image_model_->is_visible())
+    return;
+
+  TabSpecificContentSettings* content_settings = web_contents ?
+     TabSpecificContentSettings::FromWebContents(web_contents) : NULL;
+  if (!content_settings)
+    return;
+
+  if (!content_settings->IsBlockageIndicated(
+      content_setting_image_model_->get_content_settings_type())) {
+    if (content_setting_image_model_->ShouldShowBubbleOnBlockage())
+      CreateBubble(web_contents);
+    content_settings->SetBlockageHasBeenIndicated(
+        content_setting_image_model_->get_content_settings_type());
+  }
 }
 
 // static
@@ -138,7 +154,7 @@ int ContentSettingImageView::GetBubbleOuterPadding(bool by_icon) {
       (by_icon ? 0 : LocationBarView::kIconInternalPadding);
 }
 
-void ContentSettingImageView::AnimationEnded(const ui::Animation* animation) {
+void ContentSettingImageView::AnimationEnded(const gfx::Animation* animation) {
   slide_animator_.Reset();
   if (!pause_animation_) {
     text_label_->SetVisible(false);
@@ -148,7 +164,7 @@ void ContentSettingImageView::AnimationEnded(const ui::Animation* animation) {
 }
 
 void ContentSettingImageView::AnimationProgressed(
-    const ui::Animation* animation) {
+    const gfx::Animation* animation) {
   if (!pause_animation_) {
     parent_->Layout();
     parent_->SchedulePaint();
@@ -156,7 +172,7 @@ void ContentSettingImageView::AnimationProgressed(
 }
 
 void ContentSettingImageView::AnimationCanceled(
-    const ui::Animation* animation) {
+    const gfx::Animation* animation) {
   AnimationEnded(animation);
 }
 
@@ -191,7 +207,7 @@ void ContentSettingImageView::Layout() {
   text_label_->SetBounds(
       icon_->bounds().right() + LocationBarView::GetItemPadding(), 0,
       std::max(width() - GetTotalSpacingWhileAnimating() - icon_width, 0),
-      text_label_->GetPreferredSize().height());
+      height());
 }
 
 bool ContentSettingImageView::OnMousePressed(const ui::MouseEvent& event) {
@@ -246,14 +262,18 @@ void ContentSettingImageView::OnClick() {
 
   content::WebContents* web_contents = parent_->GetWebContents();
   if (web_contents && !bubble_widget_) {
-    bubble_widget_ =
-        parent_->delegate()->CreateViewsBubble(new ContentSettingBubbleContents(
-            ContentSettingBubbleModel::CreateContentSettingBubbleModel(
-                parent_->delegate()->GetContentSettingBubbleModelDelegate(),
-                web_contents, parent_->profile(),
-                content_setting_image_model_->get_content_settings_type()),
-            web_contents, this, views::BubbleBorder::TOP_RIGHT));
-    bubble_widget_->AddObserver(this);
-    bubble_widget_->Show();
+    CreateBubble(web_contents);
   }
+}
+
+void ContentSettingImageView::CreateBubble(content::WebContents* web_contents) {
+  bubble_widget_ =
+      parent_->delegate()->CreateViewsBubble(new ContentSettingBubbleContents(
+          ContentSettingBubbleModel::CreateContentSettingBubbleModel(
+              parent_->delegate()->GetContentSettingBubbleModelDelegate(),
+              web_contents, parent_->profile(),
+              content_setting_image_model_->get_content_settings_type()),
+          this, views::BubbleBorder::TOP_RIGHT));
+  bubble_widget_->AddObserver(this);
+  bubble_widget_->Show();
 }

@@ -23,7 +23,6 @@
 #include "chrome/common/extensions/api/identity.h"
 #include "chrome/common/extensions/api/identity/oauth2_manifest_handler.h"
 #include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/extension_manifest_constants.h"
 #include "chrome/common/extensions/manifest_handler.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/common/page_transition_types.h"
@@ -54,7 +53,7 @@ ExperimentalIdentityGetAuthTokenFunction::
     ~ExperimentalIdentityGetAuthTokenFunction() {}
 
 bool ExperimentalIdentityGetAuthTokenFunction::RunImpl() {
-  if (profile()->IsOffTheRecord()) {
+  if (GetProfile()->IsOffTheRecord()) {
     error_ = identity_constants::kOffTheRecord;
     return false;
   }
@@ -102,7 +101,7 @@ bool ExperimentalIdentityGetAuthTokenFunction::RunImpl() {
 
 void ExperimentalIdentityGetAuthTokenFunction::CompleteFunctionWithResult(
     const std::string& access_token) {
-  SetResult(Value::CreateStringValue(access_token));
+  SetResult(new base::StringValue(access_token));
   SendResponse(true);
   Release();  // Balanced in RunImpl.
 }
@@ -145,7 +144,7 @@ void ExperimentalIdentityGetAuthTokenFunction::StartMintTokenFlow(
     install_ui_.reset(
         GetAssociatedWebContents()
             ? new ExtensionInstallPrompt(GetAssociatedWebContents())
-            : new ExtensionInstallPrompt(profile(), NULL, NULL));
+            : new ExtensionInstallPrompt(GetProfile(), NULL, NULL));
     ShowOAuthApprovalDialog(issue_advice_);
   }
 }
@@ -161,8 +160,9 @@ void ExperimentalIdentityGetAuthTokenFunction::OnMintTokenFailure(
     case GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS:
     case GoogleServiceAuthError::ACCOUNT_DELETED:
     case GoogleServiceAuthError::ACCOUNT_DISABLED:
-      extensions::IdentityAPI::GetFactoryInstance()->GetForProfile(
-          profile())->ReportAuthError(error);
+      extensions::IdentityAPI::GetFactoryInstance()
+          ->GetForProfile(GetProfile())
+          ->ReportAuthError(error);
       if (should_prompt_for_signin_) {
         // Display a login prompt and try again (once).
         StartSigninFlow();
@@ -228,7 +228,7 @@ void ExperimentalIdentityGetAuthTokenFunction::OnGetTokenFailure(
 
 void ExperimentalIdentityGetAuthTokenFunction::StartLoginAccessTokenRequest() {
   ProfileOAuth2TokenService* service =
-      ProfileOAuth2TokenServiceFactory::GetForProfile(profile());
+      ProfileOAuth2TokenServiceFactory::GetForProfile(GetProfile());
 #if defined(OS_CHROMEOS)
   if (chrome::IsRunningInForcedAppMode()) {
     std::string app_client_id;
@@ -236,7 +236,8 @@ void ExperimentalIdentityGetAuthTokenFunction::StartLoginAccessTokenRequest() {
     if (chromeos::UserManager::Get()->GetAppModeChromeClientOAuthInfo(
            &app_client_id, &app_client_secret)) {
       login_token_request_ =
-          service->StartRequestForClient(app_client_id,
+          service->StartRequestForClient(service->GetPrimaryAccountId(),
+                                         app_client_id,
                                          app_client_secret,
                                          OAuth2TokenService::ScopeSet(),
                                          this);
@@ -244,8 +245,8 @@ void ExperimentalIdentityGetAuthTokenFunction::StartLoginAccessTokenRequest() {
     }
   }
 #endif
-  login_token_request_ = service->StartRequest(OAuth2TokenService::ScopeSet(),
-                                               this);
+  login_token_request_ = service->StartRequest(
+      service->GetPrimaryAccountId(), OAuth2TokenService::ScopeSet(), this);
 }
 
 void ExperimentalIdentityGetAuthTokenFunction::StartGaiaRequest(
@@ -256,7 +257,7 @@ void ExperimentalIdentityGetAuthTokenFunction::StartGaiaRequest(
 }
 
 void ExperimentalIdentityGetAuthTokenFunction::ShowLoginPopup() {
-  signin_flow_.reset(new IdentitySigninFlow(this, profile()));
+  signin_flow_.reset(new IdentitySigninFlow(this, GetProfile()));
   signin_flow_->Start();
 }
 
@@ -275,22 +276,22 @@ ExperimentalIdentityGetAuthTokenFunction::CreateMintTokenFlow(
 #endif
 
   const OAuth2Info& oauth2_info = OAuth2Info::GetOAuth2Info(GetExtension());
-  OAuth2MintTokenFlow* mint_token_flow =
-      new OAuth2MintTokenFlow(
-          profile()->GetRequestContext(),
-          this,
-          OAuth2MintTokenFlow::Parameters(
-              login_access_token,
-              GetExtension()->id(),
-              oauth2_info.client_id,
-              oauth2_info.scopes,
-              gaia_mint_token_mode_));
+  OAuth2MintTokenFlow* mint_token_flow = new OAuth2MintTokenFlow(
+      GetProfile()->GetRequestContext(),
+      this,
+      OAuth2MintTokenFlow::Parameters(login_access_token,
+                                      GetExtension()->id(),
+                                      oauth2_info.client_id,
+                                      oauth2_info.scopes,
+                                      gaia_mint_token_mode_));
   return mint_token_flow;
 }
 
 bool ExperimentalIdentityGetAuthTokenFunction::HasLoginToken() const {
-  return ProfileOAuth2TokenServiceFactory::GetForProfile(profile())->
-      RefreshTokenIsAvailable();
+  ProfileOAuth2TokenService* token_service =
+      ProfileOAuth2TokenServiceFactory::GetForProfile(GetProfile());
+  return token_service->RefreshTokenIsAvailable(
+      token_service->GetPrimaryAccountId());
 }
 
 ExperimentalIdentityLaunchWebAuthFlowFunction::
@@ -303,7 +304,7 @@ ExperimentalIdentityLaunchWebAuthFlowFunction::
 }
 
 bool ExperimentalIdentityLaunchWebAuthFlowFunction::RunImpl() {
-  if (profile()->IsOffTheRecord()) {
+  if (GetProfile()->IsOffTheRecord()) {
     error_ = identity_constants::kOffTheRecord;
     return false;
   }
@@ -340,8 +341,7 @@ bool ExperimentalIdentityLaunchWebAuthFlowFunction::RunImpl() {
   chrome::HostDesktopType host_desktop_type = current_browser ?
       current_browser->host_desktop_type() : chrome::GetActiveDesktop();
   auth_flow_.reset(new ExperimentalWebAuthFlow(
-      this, profile(), auth_url, mode, initial_bounds,
-      host_desktop_type));
+      this, GetProfile(), auth_url, mode, initial_bounds, host_desktop_type));
   auth_flow_->Start();
   return true;
 }
@@ -385,7 +385,7 @@ void ExperimentalIdentityLaunchWebAuthFlowFunction::OnAuthFlowFailure(
 void ExperimentalIdentityLaunchWebAuthFlowFunction::OnAuthFlowURLChange(
     const GURL& redirect_url) {
   if (IsFinalRedirectURL(redirect_url)) {
-    SetResult(Value::CreateStringValue(redirect_url.spec()));
+    SetResult(new base::StringValue(redirect_url.spec()));
     SendResponse(true);
     Release();  // Balanced in RunImpl.
   }

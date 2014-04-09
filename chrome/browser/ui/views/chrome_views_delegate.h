@@ -22,6 +22,7 @@ class ChromeViewsDelegate : public views::ViewsDelegate {
                                    const gfx::Rect& bounds,
                                    ui::WindowShowState show_state) OVERRIDE;
   virtual bool GetSavedWindowPlacement(
+      const views::Widget* widget,
       const std::string& window_name,
       gfx::Rect* bounds,
       ui::WindowShowState* show_state) const OVERRIDE;
@@ -35,6 +36,7 @@ class ChromeViewsDelegate : public views::ViewsDelegate {
 
 #if defined(OS_WIN)
   virtual HICON GetDefaultWindowIcon() const OVERRIDE;
+  virtual bool IsWindowInMetro(gfx::NativeWindow window) const OVERRIDE;
 #endif
   virtual views::NonClientFrameView* CreateDefaultNonClientFrameView(
       views::Widget* widget) OVERRIDE;

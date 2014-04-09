@@ -12,6 +12,7 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/prefs/pref_registry_simple.h"
 #include "base/prefs/pref_service.h"
+#include "base/prefs/scoped_user_pref_update.h"
 #include "base/rand_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -21,7 +22,6 @@
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/common/pref_names.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
@@ -40,6 +40,7 @@ namespace {
 const char kNameKey[] = "name";
 const char kShortcutNameKey[] = "shortcut_name";
 const char kGAIANameKey[] = "gaia_name";
+const char kGAIAGivenNameKey[] = "gaia_given_name";
 const char kUseGAIANameKey[] = "use_gaia_name";
 const char kUserNameKey[] = "user_name";
 const char kAvatarIconKey[] = "avatar_icon";
@@ -50,6 +51,7 @@ const char kGAIAPictureFileNameKey[] = "gaia_picture_file_name";
 const char kIsManagedKey[] = "is_managed";
 const char kSigninRequiredKey[] = "signin_required";
 const char kManagedUserId[] = "managed_user_id";
+const char kProfileIsEphemeral[] = "is_ephemeral";
 
 const char kDefaultUrlPrefix[] = "chrome://theme/IDR_PROFILE_AVATAR_";
 const char kGAIAPictureFileName[] = "Google Profile Picture.png";
@@ -147,7 +149,7 @@ void ReadBitmap(const base::FilePath& image_path,
   *out_image = NULL;
 
   std::string image_data;
-  if (!file_util::ReadFileToString(image_path, &image_data)) {
+  if (!base::ReadFileToString(image_path, &image_data)) {
     LOG(ERROR) << "Failed to read PNG file from disk.";
     return;
   }
@@ -184,13 +186,12 @@ ProfileInfoCache::ProfileInfoCache(PrefService* prefs,
     string16 name;
     info->GetString(kNameKey, &name);
     sorted_keys_.insert(FindPositionForProfile(it.key(), name), it.key());
-    // TODO(ibraaaa): delete this when we fully migrate to
-    // |prefs::kManagedUserId|.
+    // TODO(ibraaaa): delete this when 97% of our users are using M31.
+    // http://crbug.com/276163
     bool is_managed = false;
-    info->GetBoolean(kIsManagedKey, &is_managed);
-    if (is_managed) {
-      info->SetString(kManagedUserId, "DUMMY_ID");
+    if (info->GetBoolean(kIsManagedKey, &is_managed)) {
       info->Remove(kIsManagedKey, NULL);
+      info->SetString(kManagedUserId, is_managed ? "DUMMY_ID" : std::string());
     }
   }
 }
@@ -216,7 +217,8 @@ void ProfileInfoCache::AddProfileToCache(const base::FilePath& profile_path,
   // Default value for whether background apps are running is false.
   info->SetBoolean(kBackgroundAppsKey, false);
   info->SetString(kManagedUserId, managed_user_id);
-  cache->Set(key, info.release());
+  info->SetBoolean(kProfileIsEphemeral, false);
+  cache->SetWithoutPathExpansion(key, info.release());
 
   sorted_keys_.insert(FindPositionForProfile(key, name), key);
 
@@ -285,8 +287,11 @@ size_t ProfileInfoCache::GetIndexOfProfileWithPath(
 
 string16 ProfileInfoCache::GetNameOfProfileAtIndex(size_t index) const {
   string16 name;
-  if (IsUsingGAIANameOfProfileAtIndex(index))
-    name = GetGAIANameOfProfileAtIndex(index);
+  if (IsUsingGAIANameOfProfileAtIndex(index)) {
+    string16 given_name = GetGAIAGivenNameOfProfileAtIndex(index);
+    name = given_name.empty() ? GetGAIANameOfProfileAtIndex(index) : given_name;
+  }
+
   if (name.empty())
     GetInfoForProfileAtIndex(index)->GetString(kNameKey, &name);
   return name;
@@ -336,6 +341,13 @@ bool ProfileInfoCache::GetBackgroundStatusOfProfileAtIndex(
 string16 ProfileInfoCache::GetGAIANameOfProfileAtIndex(size_t index) const {
   string16 name;
   GetInfoForProfileAtIndex(index)->GetString(kGAIANameKey, &name);
+  return name;
+}
+
+string16 ProfileInfoCache::GetGAIAGivenNameOfProfileAtIndex(
+    size_t index) const {
+  string16 name;
+  GetInfoForProfileAtIndex(index)->GetString(kGAIAGivenNameKey, &name);
   return name;
 }
 
@@ -394,6 +406,12 @@ std::string ProfileInfoCache::GetManagedUserIdOfProfileAtIndex(
   return managed_user_id;
 }
 
+bool ProfileInfoCache::ProfileIsEphemeralAtIndex(size_t index) const {
+  bool value = false;
+  GetInfoForProfileAtIndex(index)->GetBoolean(kProfileIsEphemeral, &value);
+  return value;
+}
+
 void ProfileInfoCache::OnGAIAPictureLoaded(const base::FilePath& path,
                                            gfx::Image** image) const {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
@@ -441,11 +459,10 @@ size_t ProfileInfoCache::GetAvatarIconIndexOfProfileAtIndex(size_t index)
   std::string icon_url;
   GetInfoForProfileAtIndex(index)->GetString(kAvatarIconKey, &icon_url);
   size_t icon_index = 0;
-  if (IsDefaultAvatarIconUrl(icon_url, &icon_index))
-    return icon_index;
+  if (!IsDefaultAvatarIconUrl(icon_url, &icon_index))
+    DLOG(WARNING) << "Unknown avatar icon: " << icon_url;
 
-  DLOG(WARNING) << "Unknown avatar icon: " << icon_url;
-  return GetDefaultAvatarIconResourceIDAtIndex(0);
+  return icon_index;
 }
 
 void ProfileInfoCache::SetNameOfProfileAtIndex(size_t index,
@@ -546,6 +563,18 @@ void ProfileInfoCache::SetGAIANameOfProfileAtIndex(size_t index,
   }
 }
 
+void ProfileInfoCache::SetGAIAGivenNameOfProfileAtIndex(
+    size_t index,
+    const string16& name) {
+  if (name == GetGAIAGivenNameOfProfileAtIndex(index))
+    return;
+
+  scoped_ptr<DictionaryValue> info(GetInfoForProfileAtIndex(index)->DeepCopy());
+  info->SetString(kGAIAGivenNameKey, name);
+  // This takes ownership of |info|.
+  SetInfoForProfileAtIndex(index, info.release());
+}
+
 void ProfileInfoCache::SetIsUsingGAIANameOfProfileAtIndex(size_t index,
                                                           bool value) {
   if (value == IsUsingGAIANameOfProfileAtIndex(index))
@@ -642,6 +671,16 @@ void ProfileInfoCache::SetProfileSigninRequiredAtIndex(size_t index,
 
   scoped_ptr<DictionaryValue> info(GetInfoForProfileAtIndex(index)->DeepCopy());
   info->SetBoolean(kSigninRequiredKey, value);
+  // This takes ownership of |info|.
+  SetInfoForProfileAtIndex(index, info.release());
+}
+
+void ProfileInfoCache::SetProfileIsEphemeralAtIndex(size_t index, bool value) {
+  if (value == ProfileIsEphemeralAtIndex(index))
+    return;
+
+  scoped_ptr<DictionaryValue> info(GetInfoForProfileAtIndex(index)->DeepCopy());
+  info->SetBoolean(kProfileIsEphemeral, value);
   // This takes ownership of |info|.
   SetInfoForProfileAtIndex(index, info.release());
 }
@@ -786,7 +825,7 @@ const DictionaryValue* ProfileInfoCache::GetInfoForProfileAtIndex(
   const DictionaryValue* cache =
       prefs_->GetDictionary(prefs::kProfileInfoCache);
   const DictionaryValue* info = NULL;
-  cache->GetDictionary(sorted_keys_[index], &info);
+  cache->GetDictionaryWithoutPathExpansion(sorted_keys_[index], &info);
   return info;
 }
 
@@ -794,7 +833,7 @@ void ProfileInfoCache::SetInfoForProfileAtIndex(size_t index,
                                                 DictionaryValue* info) {
   DictionaryPrefUpdate update(prefs_, prefs::kProfileInfoCache);
   DictionaryValue* cache = update.Get();
-  cache->Set(sorted_keys_[index], info);
+  cache->SetWithoutPathExpansion(sorted_keys_[index], info);
 
   content::NotificationService::current()->Notify(
       chrome::NOTIFICATION_PROFILE_CACHED_INFO_CHANGED,

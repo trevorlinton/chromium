@@ -4,6 +4,8 @@
 
 #include "media/filters/opus_audio_decoder.h"
 
+#include <cmath>
+
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/location.h"
@@ -37,6 +39,11 @@ static inline bool IsEndOfStream(int decoded_size,
   // 1. Opus didn't output anything.
   // 2. An end of stream buffer is received.
   return decoded_size == 0 && input->end_of_stream();
+}
+
+static int TimeDeltaToAudioFrames(base::TimeDelta time_delta,
+                                  int frame_rate) {
+  return std::ceil(time_delta.InSecondsF() * frame_rate);
 }
 
 // The Opus specification is part of IETF RFC 6716:
@@ -126,7 +133,7 @@ static void RemapOpusChannelLayout(const uint8* opus_mapping,
     channel_layout[channel] = opus_mapping[vorbis_layout_offset[channel]];
 }
 
-// Opus Header contents:
+// Opus Extra Data contents:
 // - "OpusHead" (64 bits)
 // - version number (8 bits)
 // - Channels C (8 bits)
@@ -150,37 +157,41 @@ static void RemapOpusChannelLayout(const uint8* opus_mapping,
 //            - stream = byte-M
 
 // Default audio output channel layout. Used to initialize |stream_map| in
-// OpusHeader, and passed to opus_multistream_decoder_create() when the header
-// does not contain mapping information. The values are valid only for mono and
-// stereo output: Opus streams with more than 2 channels require a stream map.
+// OpusExtraData, and passed to opus_multistream_decoder_create() when the
+// extra data does not contain mapping information. The values are valid only
+// for mono and stereo output: Opus streams with more than 2 channels require a
+// stream map.
 static const int kMaxChannelsWithDefaultLayout = 2;
 static const uint8 kDefaultOpusChannelLayout[kMaxChannelsWithDefaultLayout] = {
     0, 1 };
 
-// Size of the Opus header excluding optional mapping information.
-static const int kOpusHeaderSize = 19;
+// Size of the Opus extra data excluding optional mapping information.
+static const int kOpusExtraDataSize = 19;
 
-// Offset to the channel count byte in the Opus header.
-static const int kOpusHeaderChannelsOffset = 9;
+// Offset to the channel count byte in the Opus extra data.
+static const int kOpusExtraDataChannelsOffset = 9;
 
-// Offset to the pre-skip value in the Opus header.
-static const int kOpusHeaderSkipSamplesOffset = 10;
+// Offset to the pre-skip value in the Opus extra data.
+static const int kOpusExtraDataSkipSamplesOffset = 10;
 
-// Offset to the channel mapping byte in the Opus header.
-static const int kOpusHeaderChannelMappingOffset = 18;
+// Offset to the channel mapping byte in the Opus extra data.
+static const int kOpusExtraDataChannelMappingOffset = 18;
 
-// Header contains a stream map. The mapping values are in extra data beyond
-// the always present |kOpusHeaderSize| bytes of data. The mapping data
+// Extra Data contains a stream map. The mapping values are in extra data beyond
+// the always present |kOpusExtraDataSize| bytes of data. The mapping data
 // contains stream count, coupling information, and per channel mapping values:
 //   - Byte 0: Number of streams.
 //   - Byte 1: Number coupled.
-//   - Byte 2: Starting at byte 2 are |header->channels| uint8 mapping values.
-static const int kOpusHeaderNumStreamsOffset = kOpusHeaderSize;
-static const int kOpusHeaderNumCoupledOffset = kOpusHeaderNumStreamsOffset + 1;
-static const int kOpusHeaderStreamMapOffset = kOpusHeaderNumStreamsOffset + 2;
+//   - Byte 2: Starting at byte 2 are |extra_data->channels| uint8 mapping
+//             values.
+static const int kOpusExtraDataNumStreamsOffset = kOpusExtraDataSize;
+static const int kOpusExtraDataNumCoupledOffset =
+    kOpusExtraDataNumStreamsOffset + 1;
+static const int kOpusExtraDataStreamMapOffset =
+    kOpusExtraDataNumStreamsOffset + 2;
 
-struct OpusHeader {
-  OpusHeader()
+struct OpusExtraData {
+  OpusExtraData()
       : channels(0),
         skip_samples(0),
         channel_mapping(0),
@@ -198,46 +209,54 @@ struct OpusHeader {
   uint8 stream_map[kMaxVorbisChannels];
 };
 
-// Returns true when able to successfully parse and store Opus header data in
-// data parsed in |header|. Based on opus header parsing code in libopusdec
-// from FFmpeg, and opus_header from Xiph's opus-tools project.
-static void ParseOpusHeader(const uint8* data, int data_size,
-                            const AudioDecoderConfig& config,
-                            OpusHeader* header) {
-  CHECK_GE(data_size, kOpusHeaderSize);
+// Returns true when able to successfully parse and store Opus extra data in
+// |extra_data|. Based on opus header parsing code in libopusdec from FFmpeg,
+// and opus_header from Xiph's opus-tools project.
+static bool ParseOpusExtraData(const uint8* data, int data_size,
+                               const AudioDecoderConfig& config,
+                               OpusExtraData* extra_data) {
+  if (data_size < kOpusExtraDataSize)
+    return false;
 
-  header->channels = *(data + kOpusHeaderChannelsOffset);
+  extra_data->channels = *(data + kOpusExtraDataChannelsOffset);
 
-  CHECK(header->channels > 0 && header->channels <= kMaxVorbisChannels)
-      << "invalid channel count in header: " << header->channels;
-
-  header->skip_samples =
-      ReadLE16(data, data_size, kOpusHeaderSkipSamplesOffset);
-
-  header->channel_mapping = *(data + kOpusHeaderChannelMappingOffset);
-
-  if (!header->channel_mapping) {
-    CHECK_LE(header->channels, kMaxChannelsWithDefaultLayout)
-        << "Invalid header, missing stream map.";
-
-    header->num_streams = 1;
-    header->num_coupled =
-        (ChannelLayoutToChannelCount(config.channel_layout()) > 1) ? 1 : 0;
-    return;
+  if (extra_data->channels <= 0 || extra_data->channels > kMaxVorbisChannels) {
+    DVLOG(0) << "invalid channel count in extra data: " << extra_data->channels;
+    return false;
   }
 
-  CHECK_GE(data_size, kOpusHeaderStreamMapOffset + header->channels)
-      << "Invalid stream map; insufficient data for current channel count: "
-      << header->channels;
+  extra_data->skip_samples =
+      ReadLE16(data, data_size, kOpusExtraDataSkipSamplesOffset);
 
-  header->num_streams = *(data + kOpusHeaderNumStreamsOffset);
-  header->num_coupled = *(data + kOpusHeaderNumCoupledOffset);
+  extra_data->channel_mapping = *(data + kOpusExtraDataChannelMappingOffset);
 
-  if (header->num_streams + header->num_coupled != header->channels)
-    LOG(WARNING) << "Inconsistent channel mapping.";
+  if (!extra_data->channel_mapping) {
+    if (extra_data->channels > kMaxChannelsWithDefaultLayout) {
+      DVLOG(0) << "Invalid extra data, missing stream map.";
+      return false;
+    }
 
-  for (int i = 0; i < header->channels; ++i)
-    header->stream_map[i] = *(data + kOpusHeaderStreamMapOffset + i);
+    extra_data->num_streams = 1;
+    extra_data->num_coupled =
+        (ChannelLayoutToChannelCount(config.channel_layout()) > 1) ? 1 : 0;
+    return true;
+  }
+
+  if (data_size < kOpusExtraDataStreamMapOffset + extra_data->channels) {
+    DVLOG(0) << "Invalid stream map; insufficient data for current channel "
+             << "count: " << extra_data->channels;
+    return false;
+  }
+
+  extra_data->num_streams = *(data + kOpusExtraDataNumStreamsOffset);
+  extra_data->num_coupled = *(data + kOpusExtraDataNumCoupledOffset);
+
+  if (extra_data->num_streams + extra_data->num_coupled != extra_data->channels)
+    DVLOG(1) << "Inconsistent channel mapping.";
+
+  for (int i = 0; i < extra_data->channels; ++i)
+    extra_data->stream_map[i] = *(data + kOpusExtraDataStreamMapOffset + i);
+  return true;
 }
 
 OpusAudioDecoder::OpusAudioDecoder(
@@ -250,8 +269,8 @@ OpusAudioDecoder::OpusAudioDecoder(
       channel_layout_(CHANNEL_LAYOUT_NONE),
       samples_per_second_(0),
       last_input_timestamp_(kNoTimestamp()),
-      output_bytes_to_drop_(0),
-      skip_samples_(0) {
+      frames_to_discard_(0),
+      frame_delay_at_start_(0) {
 }
 
 void OpusAudioDecoder::Initialize(
@@ -264,7 +283,7 @@ void OpusAudioDecoder::Initialize(
   if (demuxer_stream_) {
     // TODO(scherkus): initialization currently happens more than once in
     // PipelineIntegrationTest.BasicPlayback.
-    LOG(ERROR) << "Initialize has already been called.";
+    DVLOG(0) << "Initialize has already been called.";
     CHECK(false);
   }
 
@@ -375,8 +394,8 @@ void OpusAudioDecoder::BufferReady(
       input->timestamp() < last_input_timestamp_) {
     base::TimeDelta diff = input->timestamp() - last_input_timestamp_;
     DVLOG(1) << "Input timestamps are not monotonically increasing! "
-              << " ts " << input->timestamp().InMicroseconds() << " us"
-              << " diff " << diff.InMicroseconds() << " us";
+             << " ts " << input->timestamp().InMicroseconds() << " us"
+             << " diff " << diff.InMicroseconds() << " us";
     base::ResetAndReturn(&read_cb_).Run(kDecodeError, NULL);
     return;
   }
@@ -404,29 +423,29 @@ bool OpusAudioDecoder::ConfigureDecoder() {
   const AudioDecoderConfig& config = demuxer_stream_->audio_decoder_config();
 
   if (config.codec() != kCodecOpus) {
-    DLOG(ERROR) << "codec must be kCodecOpus.";
+    DVLOG(0) << "codec must be kCodecOpus.";
     return false;
   }
 
   const int channel_count =
       ChannelLayoutToChannelCount(config.channel_layout());
   if (!config.IsValidConfig() || channel_count > kMaxVorbisChannels) {
-    DLOG(ERROR) << "Invalid or unsupported audio stream -"
-                << " codec: " << config.codec()
-                << " channel count: " << channel_count
-                << " channel layout: " << config.channel_layout()
-                << " bits per channel: " << config.bits_per_channel()
-                << " samples per second: " << config.samples_per_second();
+    DVLOG(0) << "Invalid or unsupported audio stream -"
+             << " codec: " << config.codec()
+             << " channel count: " << channel_count
+             << " channel layout: " << config.channel_layout()
+             << " bits per channel: " << config.bits_per_channel()
+             << " samples per second: " << config.samples_per_second();
     return false;
   }
 
   if (config.bits_per_channel() != kBitsPerChannel) {
-    DLOG(ERROR) << "16 bit samples required.";
+    DVLOG(0) << "16 bit samples required.";
     return false;
   }
 
   if (config.is_encrypted()) {
-    DLOG(ERROR) << "Encrypted audio stream not supported.";
+    DVLOG(0) << "Encrypted audio stream not supported.";
     return false;
   }
 
@@ -451,16 +470,29 @@ bool OpusAudioDecoder::ConfigureDecoder() {
   if (!output_buffer_)
     output_buffer_.reset(new int16[kMaxOpusOutputPacketSizeSamples]);
 
-  // Parse the Opus header.
-  OpusHeader opus_header;
-  ParseOpusHeader(config.extra_data(), config.extra_data_size(),
-                  config,
-                  &opus_header);
+  // Parse the Opus Extra Data.
+  OpusExtraData opus_extra_data;
+  if (!ParseOpusExtraData(config.extra_data(), config.extra_data_size(),
+                          config,
+                          &opus_extra_data))
+    return false;
 
-  skip_samples_ = opus_header.skip_samples;
+  if (!config.codec_delay().InMicroseconds())
+    return false;
 
-  if (skip_samples_ > 0)
-    output_bytes_to_drop_ = skip_samples_ * config.bytes_per_frame();
+  // Convert from seconds to samples.
+  timestamp_offset_ = config.codec_delay();
+  frame_delay_at_start_ = TimeDeltaToAudioFrames(config.codec_delay(),
+                                                 config.samples_per_second());
+  if (frame_delay_at_start_ < 0) {
+    DVLOG(1) << "Invalid file. Incorrect value for codec delay.";
+    return false;
+  }
+  if (frame_delay_at_start_ != opus_extra_data.skip_samples) {
+    DVLOG(1) << "Invalid file. Codec Delay in container does not match the "
+             << "value in Opus Extra Data.";
+    return false;
+  }
 
   uint8 channel_mapping[kMaxVorbisChannels];
   memcpy(&channel_mapping,
@@ -468,7 +500,7 @@ bool OpusAudioDecoder::ConfigureDecoder() {
          kMaxChannelsWithDefaultLayout);
 
   if (channel_count > kMaxChannelsWithDefaultLayout) {
-    RemapOpusChannelLayout(opus_header.stream_map,
+    RemapOpusChannelLayout(opus_extra_data.stream_map,
                            channel_count,
                            channel_mapping);
   }
@@ -477,18 +509,15 @@ bool OpusAudioDecoder::ConfigureDecoder() {
   int status = OPUS_INVALID_STATE;
   opus_decoder_ = opus_multistream_decoder_create(config.samples_per_second(),
                                                   channel_count,
-                                                  opus_header.num_streams,
-                                                  opus_header.num_coupled,
+                                                  opus_extra_data.num_streams,
+                                                  opus_extra_data.num_coupled,
                                                   channel_mapping,
                                                   &status);
   if (!opus_decoder_ || status != OPUS_OK) {
-    LOG(ERROR) << "opus_multistream_decoder_create failed status="
-               << opus_strerror(status);
+    DVLOG(0) << "opus_multistream_decoder_create failed status="
+             << opus_strerror(status);
     return false;
   }
-
-  // TODO(tomfinegan): Handle audio delay once the matroska spec is updated
-  // to represent the value.
 
   bits_per_channel_ = config.bits_per_channel();
   channel_layout_ = config.channel_layout();
@@ -508,30 +537,32 @@ void OpusAudioDecoder::CloseDecoder() {
 void OpusAudioDecoder::ResetTimestampState() {
   output_timestamp_helper_->SetBaseTimestamp(kNoTimestamp());
   last_input_timestamp_ = kNoTimestamp();
-  output_bytes_to_drop_ = 0;
+  frames_to_discard_ = TimeDeltaToAudioFrames(
+      demuxer_stream_->audio_decoder_config().seek_preroll(),
+      samples_per_second_);
 }
 
 bool OpusAudioDecoder::Decode(const scoped_refptr<DecoderBuffer>& input,
                               scoped_refptr<AudioBuffer>* output_buffer) {
-  int samples_decoded = opus_multistream_decode(opus_decoder_,
-                                                input->data(),
-                                                input->data_size(),
-                                                &output_buffer_[0],
-                                                kMaxOpusOutputPacketSizeSamples,
-                                                0);
-  if (samples_decoded < 0) {
-    LOG(ERROR) << "opus_multistream_decode failed for"
-               << " timestamp: " << input->timestamp().InMicroseconds()
-               << " us, duration: " << input->duration().InMicroseconds()
-               << " us, packet size: " << input->data_size() << " bytes with"
-               << " status: " << opus_strerror(samples_decoded);
+  int frames_decoded = opus_multistream_decode(opus_decoder_,
+                                               input->data(),
+                                               input->data_size(),
+                                               &output_buffer_[0],
+                                               kMaxOpusOutputPacketSizeSamples,
+                                               0);
+  if (frames_decoded < 0) {
+    DVLOG(0) << "opus_multistream_decode failed for"
+             << " timestamp: " << input->timestamp().InMicroseconds()
+             << " us, duration: " << input->duration().InMicroseconds()
+             << " us, packet size: " << input->data_size() << " bytes with"
+             << " status: " << opus_strerror(frames_decoded);
     return false;
   }
 
   uint8* decoded_audio_data = reinterpret_cast<uint8*>(&output_buffer_[0]);
-  int decoded_audio_size = samples_decoded *
+  int bytes_decoded = frames_decoded *
       demuxer_stream_->audio_decoder_config().bytes_per_frame();
-  DCHECK_LE(decoded_audio_size, kMaxOpusOutputPacketSizeBytes);
+  DCHECK_LE(bytes_decoded, kMaxOpusOutputPacketSizeBytes);
 
   if (output_timestamp_helper_->base_timestamp() == kNoTimestamp() &&
       !input->end_of_stream()) {
@@ -539,32 +570,49 @@ bool OpusAudioDecoder::Decode(const scoped_refptr<DecoderBuffer>& input,
     output_timestamp_helper_->SetBaseTimestamp(input->timestamp());
   }
 
-  if (decoded_audio_size > 0 && output_bytes_to_drop_ > 0) {
-    int dropped_size = std::min(decoded_audio_size, output_bytes_to_drop_);
-    DCHECK_EQ(dropped_size % kBytesPerChannel, 0);
-    decoded_audio_data += dropped_size;
-    decoded_audio_size -= dropped_size;
-    output_bytes_to_drop_ -= dropped_size;
-    samples_decoded = decoded_audio_size /
-                      demuxer_stream_->audio_decoder_config().bytes_per_frame();
-  }
+  // Skip samples should be equal to codec delay when the file starts and when
+  // there is a seek to zero.
+  // TODO(vigneshv): This should be checked for start of stream rather than
+  // input timestamp of zero to accomodate streams that don't start at zero.
+  if (input->timestamp() == base::TimeDelta())
+    frames_to_discard_ = frame_delay_at_start_;
 
-  if (decoded_audio_size > 0) {
+  if (bytes_decoded > 0 && frames_decoded > frames_to_discard_) {
     // Copy the audio samples into an output buffer.
     uint8* data[] = { decoded_audio_data };
     *output_buffer = AudioBuffer::CopyFrom(
         kSampleFormatS16,
         ChannelLayoutToChannelCount(channel_layout_),
-        samples_decoded,
+        frames_decoded,
         data,
-        output_timestamp_helper_->GetTimestamp(),
-        output_timestamp_helper_->GetFrameDuration(samples_decoded));
-    output_timestamp_helper_->AddFrames(samples_decoded);
+        output_timestamp_helper_->GetTimestamp() - timestamp_offset_,
+        output_timestamp_helper_->GetFrameDuration(frames_decoded));
+    output_timestamp_helper_->AddFrames(frames_decoded);
+    if (frames_to_discard_ > 0) {
+      output_buffer->get()->TrimStart(frames_to_discard_);
+      frames_decoded -= frames_to_discard_;
+      frames_to_discard_ = 0;
+    }
+    if (input->discard_padding().InMicroseconds() > 0) {
+      int discard_padding = TimeDeltaToAudioFrames(input->discard_padding(),
+                                                   samples_per_second_);
+      if (discard_padding < 0 || discard_padding > frames_decoded) {
+        DVLOG(1) << "Invalid file. Incorrect discard padding value.";
+        return false;
+      }
+      output_buffer->get()->TrimEnd(discard_padding);
+      frames_decoded -= discard_padding;
+    }
+  } else if (bytes_decoded > 0) {
+    frames_to_discard_ -= frames_decoded;
+    frames_decoded = 0;
   }
 
   // Decoding finished successfully, update statistics.
   PipelineStatistics statistics;
-  statistics.audio_bytes_decoded = decoded_audio_size;
+  statistics.audio_bytes_decoded =
+      frames_decoded *
+      demuxer_stream_->audio_decoder_config().bytes_per_frame();
   statistics_cb_.Run(statistics);
 
   return true;

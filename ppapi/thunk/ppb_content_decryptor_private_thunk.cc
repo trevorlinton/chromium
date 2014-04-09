@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 // From private/ppb_content_decryptor_private.idl,
-//   modified Tue Apr 16 11:25:44 2013.
+//   modified Thu Oct 10 14:49:51 2013.
 
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/c/private/ppb_content_decryptor_private.h"
@@ -17,17 +17,6 @@ namespace ppapi {
 namespace thunk {
 
 namespace {
-
-void NeedKey(PP_Instance instance,
-             struct PP_Var key_system,
-             struct PP_Var session_id,
-             struct PP_Var init_data) {
-  VLOG(4) << "PPB_ContentDecryptor_Private::NeedKey()";
-  EnterInstance enter(instance);
-  if (enter.failed())
-    return;
-  enter.functions()->NeedKey(instance, key_system, session_id, init_data);
-}
 
 void KeyAdded(PP_Instance instance,
               struct PP_Var key_system,
@@ -134,19 +123,18 @@ void DeliverFrame(PP_Instance instance,
 void DeliverSamples(
     PP_Instance instance,
     PP_Resource audio_frames,
-    const struct PP_DecryptedBlockInfo* decrypted_block_info) {
+    const struct PP_DecryptedSampleInfo* decrypted_sample_info) {
   VLOG(4) << "PPB_ContentDecryptor_Private::DeliverSamples()";
   EnterInstance enter(instance);
   if (enter.failed())
     return;
   enter.functions()->DeliverSamples(instance,
                                     audio_frames,
-                                    decrypted_block_info);
+                                    decrypted_sample_info);
 }
 
-const PPB_ContentDecryptor_Private_0_6
-    g_ppb_contentdecryptor_private_thunk_0_6 = {
-  &NeedKey,
+const PPB_ContentDecryptor_Private_0_7
+    g_ppb_contentdecryptor_private_thunk_0_7 = {
   &KeyAdded,
   &KeyMessage,
   &KeyError,
@@ -160,9 +148,9 @@ const PPB_ContentDecryptor_Private_0_6
 
 }  // namespace
 
-const PPB_ContentDecryptor_Private_0_6*
-    GetPPB_ContentDecryptor_Private_0_6_Thunk() {
-  return &g_ppb_contentdecryptor_private_thunk_0_6;
+const PPB_ContentDecryptor_Private_0_7*
+    GetPPB_ContentDecryptor_Private_0_7_Thunk() {
+  return &g_ppb_contentdecryptor_private_thunk_0_7;
 }
 
 }  // namespace thunk

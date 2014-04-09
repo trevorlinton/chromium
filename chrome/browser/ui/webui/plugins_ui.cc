@@ -18,6 +18,7 @@
 #include "base/path_service.h"
 #include "base/prefs/pref_member.h"
 #include "base/prefs/pref_service.h"
+#include "base/prefs/scoped_user_pref_update.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -25,7 +26,6 @@
 #include "chrome/browser/plugins/plugin_finder.h"
 #include "chrome/browser/plugins/plugin_metadata.h"
 #include "chrome/browser/plugins/plugin_prefs.h"
-#include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -171,8 +171,6 @@ class PluginsDOMHandler : public WebUIMessageHandler,
 
   content::NotificationRegistrar registrar_;
 
-  base::WeakPtrFactory<PluginsDOMHandler> weak_ptr_factory_;
-
   // Holds grouped plug-ins. The key is the group identifier and
   // the value is the list of plug-ins belonging to the group.
   typedef base::hash_map<std::string, std::vector<const WebPluginInfo*> >
@@ -181,6 +179,8 @@ class PluginsDOMHandler : public WebUIMessageHandler,
   // This pref guards the value whether about:plugins is in the details mode or
   // not.
   BooleanPrefMember show_details_;
+
+  base::WeakPtrFactory<PluginsDOMHandler> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(PluginsDOMHandler);
 };

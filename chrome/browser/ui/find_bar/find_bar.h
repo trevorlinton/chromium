@@ -16,6 +16,10 @@ class FindBarController;
 class FindBarTesting;
 class FindNotificationDetails;
 
+namespace gfx {
+class Range;
+}
+
 class FindBar {
  public:
   virtual ~FindBar() { }
@@ -53,7 +57,15 @@ class FindBar {
                                      bool no_redraw) = 0;
 
   // Set the text in the find box.
-  virtual void SetFindText(const string16& find_text) = 0;
+  virtual void SetFindTextAndSelectedRange(
+      const string16& find_text,
+      const gfx::Range& selected_range) = 0;
+
+  // Gets the search string currently visible in the find box.
+  virtual string16 GetFindText() = 0;
+
+  // Gets the selection.
+  virtual gfx::Range GetSelectedRange() = 0;
 
   // Updates the FindBar with the find result details contained within the
   // specified |result|.
@@ -92,9 +104,6 @@ class FindBarTesting {
   // shown (return value of false), the out params will be {(0, 0), false}.
   virtual bool GetFindBarWindowInfo(gfx::Point* position,
                                     bool* fully_visible) = 0;
-
-  // Gets the search string currently visible in the Find box.
-  virtual string16 GetFindText() = 0;
 
   // Gets the search string currently selected in the Find box.
   virtual string16 GetFindSelectedText() = 0;

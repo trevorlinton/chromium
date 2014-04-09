@@ -20,6 +20,7 @@
 #include "base/threading/platform_thread.h"
 #include "base/values.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
+#include "chrome/browser/bookmarks/bookmark_test_helpers.h"
 #include "chrome/browser/google/google_url_tracker.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/invalidation/invalidation_service_factory.h"
@@ -47,6 +48,7 @@
 #include "net/base/escape.h"
 #include "net/base/load_flags.h"
 #include "net/base/network_change_notifier.h"
+#include "net/http/http_status_code.h"
 #include "net/proxy/proxy_config.h"
 #include "net/proxy/proxy_config_service_fixed.h"
 #include "net/proxy/proxy_service.h"
@@ -285,7 +287,7 @@ bool SyncTest::SetupClients() {
 
   // Create the verifier profile.
   verifier_ = MakeProfile(FILE_PATH_LITERAL("Verifier"));
-  ui_test_utils::WaitForBookmarkModelToLoad(
+  test::WaitForBookmarkModelToLoad(
       BookmarkModelFactory::GetForProfile(verifier()));
   ui_test_utils::WaitForHistoryToLoad(HistoryServiceFactory::GetForProfile(
       verifier(), Profile::EXPLICIT_ACCESS));
@@ -324,7 +326,7 @@ void SyncTest::InitializeInstance(int index) {
   EXPECT_FALSE(GetClient(index) == NULL) << "Could not create Client "
                                          << index << ".";
 
-  ui_test_utils::WaitForBookmarkModelToLoad(
+  test::WaitForBookmarkModelToLoad(
       BookmarkModelFactory::GetForProfile(GetProfile(index)));
   ui_test_utils::WaitForHistoryToLoad(HistoryServiceFactory::GetForProfile(
       GetProfile(index), Profile::EXPLICIT_ACCESS));
@@ -407,7 +409,7 @@ void SyncTest::ReadPasswordFile() {
     LOG(FATAL) << "Can't run live server test without specifying --"
                << switches::kPasswordFileForTest << "=<filename>";
   std::string file_contents;
-  file_util::ReadFileToString(password_file_, &file_contents);
+  base::ReadFileToString(password_file_, &file_contents);
   ASSERT_NE(file_contents, "") << "Password file \""
       << password_file_.value() << "\" does not exist.";
   std::vector<std::string> tokens;
@@ -428,23 +430,23 @@ void SyncTest::SetupMockGaiaResponses() {
   fake_factory_->SetFakeResponse(
       GaiaUrls::GetInstance()->client_login_url(),
       "SID=sid\nLSID=lsid",
-      true);
+      net::HTTP_OK);
   fake_factory_->SetFakeResponse(
       GaiaUrls::GetInstance()->get_user_info_url(),
       "email=user@gmail.com\ndisplayEmail=user@gmail.com",
-      true);
+      net::HTTP_OK);
   fake_factory_->SetFakeResponse(
       GaiaUrls::GetInstance()->issue_auth_token_url(),
       "auth",
-      true);
+      net::HTTP_OK);
   fake_factory_->SetFakeResponse(
-      GoogleURLTracker::kSearchDomainCheckURL,
+      GURL(GoogleURLTracker::kSearchDomainCheckURL),
       ".google.com",
-      true);
+      net::HTTP_OK);
   fake_factory_->SetFakeResponse(
       GaiaUrls::GetInstance()->client_login_to_oauth2_url(),
       "some_response",
-      true);
+      net::HTTP_OK);
   fake_factory_->SetFakeResponse(
       GaiaUrls::GetInstance()->oauth2_token_url(),
       "{"
@@ -453,11 +455,11 @@ void SyncTest::SetupMockGaiaResponses() {
       "  \"expires_in\": 3600,"
       "  \"token_type\": \"Bearer\""
       "}",
-      true);
+      net::HTTP_OK);
   fake_factory_->SetFakeResponse(
       GaiaUrls::GetInstance()->oauth1_login_url(),
       "SID=sid\nLSID=lsid\nAuth=auth_token",
-      true);
+      net::HTTP_OK);
 }
 
 void SyncTest::ClearMockGaiaResponses() {
@@ -675,11 +677,8 @@ void SyncTest::TriggerNotification(syncer::ModelTypeSet changed_types) {
       syncer::P2PNotificationData(
           "from_server",
           syncer::NOTIFY_ALL,
-          syncer::ObjectIdSetToInvalidationMap(
-              syncer::ModelTypeSetToObjectIdSet(changed_types),
-              syncer::Invalidation::kUnknownVersion,
-              std::string())
-          ).ToString();
+          syncer::ObjectIdInvalidationMap::InvalidateAll(
+              syncer::ModelTypeSetToObjectIdSet(changed_types))).ToString();
   const std::string& path =
       std::string("chromiumsync/sendnotification?channel=") +
       syncer::kSyncP2PNotificationChannel + "&data=" + data;

@@ -171,9 +171,9 @@ BitmapPlatformDevice* BitmapPlatformDevice::Create(
     return NULL;
 
   SkBitmap bitmap;
-  bitmap.setConfig(SkBitmap::kARGB_8888_Config, width, height);
+  bitmap.setConfig(SkBitmap::kARGB_8888_Config, width, height, 0,
+                   is_opaque ? kOpaque_SkAlphaType : kPremul_SkAlphaType);
   bitmap.setPixels(data);
-  bitmap.setIsOpaque(is_opaque);
 
 #ifndef NDEBUG
   // If we were given data, then don't clobber it!
@@ -207,11 +207,11 @@ BitmapPlatformDevice* BitmapPlatformDevice::CreateAndClear(int width,
 }
 
 // The device will own the HBITMAP, which corresponds to also owning the pixel
-// data. Therefore, we do not transfer ownership to the SkDevice's bitmap.
+// data. Therefore, we do not transfer ownership to the SkBitmapDevice's bitmap.
 BitmapPlatformDevice::BitmapPlatformDevice(
     const skia::RefPtr<BitmapPlatformDeviceData>& data,
     const SkBitmap& bitmap)
-    : SkDevice(bitmap),
+    : SkBitmapDevice(bitmap),
       data_(data) {
   // The data object is already ref'ed for us by create().
   SkDEBUGCODE(begin_paint_count_ = 0);
@@ -293,15 +293,15 @@ void BitmapPlatformDevice::DrawToNativeContext(HDC dc, int x, int y,
     data_->ReleaseBitmapDC();
 }
 
-const SkBitmap& BitmapPlatformDevice::onAccessBitmap(SkBitmap* bitmap) {
+const SkBitmap& BitmapPlatformDevice::onAccessBitmap() {
   // FIXME(brettw) OPTIMIZATION: We should only flush if we know a GDI
   // operation has occurred on our DC.
   if (data_->IsBitmapDCCreated())
     GdiFlush();
-  return *bitmap;
+  return SkBitmapDevice::onAccessBitmap();
 }
 
-SkDevice* BitmapPlatformDevice::onCreateCompatibleDevice(
+SkBaseDevice* BitmapPlatformDevice::onCreateCompatibleDevice(
     SkBitmap::Config config, int width, int height, bool isOpaque, Usage) {
   SkASSERT(config == SkBitmap::kARGB_8888_Config);
   return BitmapPlatformDevice::CreateAndClear(width, height, isOpaque);
@@ -314,7 +314,7 @@ SkCanvas* CreatePlatformCanvas(int width,
                                bool is_opaque,
                                HANDLE shared_section,
                                OnFailureType failureType) {
-  skia::RefPtr<SkDevice> dev = skia::AdoptRef(
+  skia::RefPtr<SkBaseDevice> dev = skia::AdoptRef(
       BitmapPlatformDevice::Create(width, height, is_opaque, shared_section));
   return CreateCanvas(dev, failureType);
 }
@@ -343,11 +343,11 @@ bool PlatformBitmap::Allocate(int width, int height, bool is_opaque) {
   HGDIOBJ stock_bitmap = SelectObject(surface_, hbitmap);
   platform_extra_ = reinterpret_cast<intptr_t>(stock_bitmap);
 
-  bitmap_.setConfig(SkBitmap::kARGB_8888_Config, width, height);
+  bitmap_.setConfig(SkBitmap::kARGB_8888_Config, width, height, 0,
+                    is_opaque ? kOpaque_SkAlphaType : kPremul_SkAlphaType);
   // PlatformBitmapPixelRef takes ownership of |hbitmap|.
   bitmap_.setPixelRef(
       skia::AdoptRef(new PlatformBitmapPixelRef(hbitmap, data)).get());
-  bitmap_.setIsOpaque(is_opaque);
   bitmap_.lockPixels();
 
   return true;

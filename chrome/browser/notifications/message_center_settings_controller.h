@@ -21,6 +21,7 @@
 #include "ui/message_center/notifier_settings.h"
 
 class CancelableTaskTracker;
+class Profile;
 class ProfileInfoCache;
 
 namespace chrome {
@@ -59,6 +60,11 @@ class MessageCenterSettingsController
   virtual void SetNotifierEnabled(const message_center::Notifier& notifier,
                                   bool enabled) OVERRIDE;
   virtual void OnNotifierSettingsClosing() OVERRIDE;
+  virtual bool NotifierHasAdvancedSettings(
+      const message_center::NotifierId& notifier_id) const OVERRIDE;
+  virtual void OnNotifierAdvancedSettingsRequested(
+      const message_center::NotifierId& notifier_id,
+      const std::string* notification_id) OVERRIDE;
 
   // Overridden from extensions::AppIconLoader::Delegate.
   virtual void SetAppImage(const std::string& id,
@@ -72,6 +78,8 @@ class MessageCenterSettingsController
 
   void OnFaviconLoaded(const GURL& url,
                        const chrome::FaviconImageResult& favicon_result);
+
+  Profile* GetCurrentProfile() const;
 
   void RebuildNotifierGroups();
 

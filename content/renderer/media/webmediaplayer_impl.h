@@ -29,6 +29,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread.h"
 #include "cc/layers/video_frame_provider.h"
+#include "content/public/renderer/render_view_observer.h"
 #include "content/renderer/media/crypto/proxy_decryptor.h"
 #include "media/base/audio_renderer_sink.h"
 #include "media/base/decryptor.h"
@@ -37,8 +38,8 @@
 #include "media/base/text_track.h"
 #include "media/filters/skcanvas_video_renderer.h"
 #include "skia/ext/platform_canvas.h"
+#include "third_party/WebKit/public/platform/WebAudioSourceProvider.h"
 #include "third_party/WebKit/public/platform/WebGraphicsContext3D.h"
-#include "third_party/WebKit/public/web/WebAudioSourceProvider.h"
 #include "third_party/WebKit/public/web/WebMediaPlayer.h"
 #include "third_party/WebKit/public/web/WebMediaPlayerClient.h"
 #include "url/gurl.h"
@@ -56,7 +57,7 @@ class MessageLoopProxy;
 namespace media {
 class ChunkDemuxer;
 class FFmpegDemuxer;
-class GpuVideoDecoderFactories;
+class GpuVideoAcceleratorFactories;
 class MediaLog;
 }
 
@@ -74,23 +75,24 @@ class WebTextTrackImpl;
 class WebMediaPlayerImpl
     : public WebKit::WebMediaPlayer,
       public cc::VideoFrameProvider,
-      public base::MessageLoop::DestructionObserver,
+      public content::RenderViewObserver,
       public base::SupportsWeakPtr<WebMediaPlayerImpl> {
  public:
   // Constructs a WebMediaPlayer implementation using Chromium's media stack.
-  //
+  // |render_view| is passed only for the purpose of registering |this| as an
+  // observer of it.
   // |delegate| may be null.
   WebMediaPlayerImpl(
+      content::RenderView* render_view,
       WebKit::WebFrame* frame,
       WebKit::WebMediaPlayerClient* client,
       base::WeakPtr<WebMediaPlayerDelegate> delegate,
       const WebMediaPlayerParams& params);
   virtual ~WebMediaPlayerImpl();
 
-  virtual void load(const WebKit::WebURL& url, CORSMode cors_mode);
-  virtual void load(const WebKit::WebURL& url,
-                    WebKit::WebMediaSource* media_source,
-                    CORSMode cors_mode);
+  virtual void load(LoadType load_type,
+                    const WebKit::WebURL& url,
+                    CORSMode cors_mode) OVERRIDE;
 
   // Playback controls.
   virtual void play();
@@ -174,11 +176,8 @@ class WebMediaPlayerImpl
       const WebKit::WebString& key_system,
       const WebKit::WebString& session_id);
 
-  // As we are closing the tab or even the browser, |main_loop_| is destroyed
-  // even before this object gets destructed, so we need to know when
-  // |main_loop_| is being destroyed and we can stop posting repaint task
-  // to it.
-  virtual void WillDestroyCurrentMessageLoop() OVERRIDE;
+  // content::RenderViewObserver implementation.
+  virtual void OnDestruct() OVERRIDE;
 
   void Repaint();
 
@@ -187,7 +186,7 @@ class WebMediaPlayerImpl
   void OnPipelineError(media::PipelineStatus error);
   void OnPipelineBufferingState(
       media::Pipeline::BufferingState buffering_state);
-  void OnDemuxerOpened(scoped_ptr<WebKit::WebMediaSource> media_source);
+  void OnDemuxerOpened();
   void OnKeyAdded(const std::string& session_id);
   void OnKeyError(const std::string& session_id,
                   media::MediaKeys::KeyError error_code,
@@ -196,9 +195,7 @@ class WebMediaPlayerImpl
                     const std::vector<uint8>& message,
                     const std::string& default_url);
   void OnNeedKey(const std::string& type,
-                 const std::string& session_id,
-                 scoped_ptr<uint8[]> init_data,
-                 int init_data_size);
+                 const std::vector<uint8>& init_data);
   scoped_ptr<media::TextTrack> OnTextTrack(media::TextKind kind,
                                            const std::string& label,
                                            const std::string& language);
@@ -207,8 +204,8 @@ class WebMediaPlayerImpl
  private:
   // Called after |defer_load_cb_| has decided to allow the load. If
   // |defer_load_cb_| is null this is called immediately.
-  void DoLoad(const WebKit::WebURL& url,
-              WebKit::WebMediaSource* media_source,
+  void DoLoad(LoadType load_type,
+              const WebKit::WebURL& url,
               CORSMode cors_mode);
 
   // Called after asynchronous initialization of a data source completed.
@@ -218,9 +215,7 @@ class WebMediaPlayerImpl
   void NotifyDownloading(bool is_downloading);
 
   // Finishes starting the pipeline due to a call to load().
-  //
-  // A non-null |media_source| will construct a Media Source pipeline.
-  void StartPipeline(WebKit::WebMediaSource* media_source);
+  void StartPipeline();
 
   // Helpers that set the network/ready state and notifies the client if
   // they've changed.
@@ -262,6 +257,12 @@ class WebMediaPlayerImpl
   // painted.
   void FrameReady(const scoped_refptr<media::VideoFrame>& frame);
 
+  // Called when a paint or a new frame arrives to indicate that we are
+  // no longer waiting for |current_frame_| to be painted.
+  // |painting_frame| is set to true if |current_frame_| is being painted.
+  // False indicates |current_frame_| is being replaced with a new frame.
+  void DoneWaitingForPaint(bool painting_frame);
+
   WebKit::WebFrame* frame_;
 
   // TODO(hclam): get rid of these members and read from the pipeline directly.
@@ -281,6 +282,9 @@ class WebMediaPlayerImpl
   // The currently selected key system. Empty string means that no key system
   // has been selected.
   WebKit::WebString current_key_system_;
+
+  // The LoadType passed in the |load_type| parameter of the load() call.
+  LoadType load_type_;
 
   // Playback state.
   //
@@ -318,8 +322,8 @@ class WebMediaPlayerImpl
 
   bool incremented_externally_allocated_memory_;
 
-  // Factories for supporting GpuVideoDecoder. May be null.
-  scoped_refptr<media::GpuVideoDecoderFactories> gpu_factories_;
+  // Factories for supporting video accelerators. May be null.
+  scoped_refptr<media::GpuVideoAcceleratorFactories> gpu_factories_;
 
   // Routes audio playback to either AudioRendererSink or WebAudio.
   scoped_refptr<WebAudioSourceProviderImpl> audio_source_provider_;
@@ -348,12 +352,15 @@ class WebMediaPlayerImpl
 
   // Video frame rendering members.
   //
-  // |lock_| protects |current_frame_| since new frames arrive on the video
+  // |lock_| protects |current_frame_|, |current_frame_painted_|, and
+  // |frames_dropped_before_paint_| since new frames arrive on the video
   // rendering thread, yet are accessed for rendering on either the main thread
   // or compositing thread depending on whether accelerated compositing is used.
-  base::Lock lock_;
+  mutable base::Lock lock_;
   media::SkCanvasVideoRenderer skcanvas_video_renderer_;
   scoped_refptr<media::VideoFrame> current_frame_;
+  bool current_frame_painted_;
+  uint32 frames_dropped_before_paint_;
   bool pending_repaint_;
   bool pending_size_change_;
 

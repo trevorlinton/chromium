@@ -4,130 +4,54 @@
 
 #include "tools/gn/target_generator.h"
 
-#include "base/files/file_path.h"
-#include "base/logging.h"
+#include "tools/gn/binary_target_generator.h"
 #include "tools/gn/build_settings.h"
 #include "tools/gn/config.h"
-#include "tools/gn/config_values_generator.h"
+#include "tools/gn/copy_target_generator.h"
 #include "tools/gn/err.h"
 #include "tools/gn/filesystem_utils.h"
 #include "tools/gn/functions.h"
-#include "tools/gn/input_file.h"
+#include "tools/gn/group_target_generator.h"
 #include "tools/gn/item_node.h"
-#include "tools/gn/ninja_target_writer.h"
 #include "tools/gn/parse_tree.h"
 #include "tools/gn/scheduler.h"
 #include "tools/gn/scope.h"
+#include "tools/gn/script_target_generator.h"
 #include "tools/gn/target_manager.h"
 #include "tools/gn/token.h"
 #include "tools/gn/value.h"
 #include "tools/gn/value_extractors.h"
 #include "tools/gn/variables.h"
 
-namespace {
-
-bool TypeHasConfigs(Target::OutputType type) {
-  return type == Target::EXECUTABLE ||
-         type == Target::SHARED_LIBRARY ||
-         type == Target::STATIC_LIBRARY ||
-         type == Target::LOADABLE_MODULE;
-}
-
-bool TypeHasConfigValues(Target::OutputType type) {
-  return type == Target::EXECUTABLE ||
-         type == Target::SHARED_LIBRARY ||
-         type == Target::STATIC_LIBRARY ||
-         type == Target::LOADABLE_MODULE;
-}
-
-bool TypeHasSources(Target::OutputType type) {
-  return type != Target::NONE;
-}
-
-bool TypeHasData(Target::OutputType type) {
-  return type != Target::NONE;
-}
-
-bool TypeHasDestDir(Target::OutputType type) {
-  return type == Target::COPY_FILES;
-}
-
-bool TypeHasOutputs(Target::OutputType type) {
-  return type == Target::CUSTOM;
-}
-
-}  // namespace
-
 TargetGenerator::TargetGenerator(Target* target,
                                  Scope* scope,
                                  const Token& function_token,
-                                 const std::vector<Value>& args,
-                                 const std::string& output_type,
                                  Err* err)
     : target_(target),
       scope_(scope),
       function_token_(function_token),
-      args_(args),
-      output_type_(output_type),
-      err_(err),
-      input_directory_(function_token.location().file()->dir()) {
+      err_(err) {
 }
 
 TargetGenerator::~TargetGenerator() {
 }
 
 void TargetGenerator::Run() {
-  // Output type.
-  Target::OutputType output_type = GetOutputType();
-  target_->set_output_type(output_type);
-  if (err_->has_error())
-    return;
+  // All target types use these.
+  FillDependentConfigs();
+  FillData();
+  FillDependencies();
+  FillGypFile();
 
-  if (TypeHasConfigs(output_type)) {
-    FillConfigs();
-    FillAllDependentConfigs();
-    FillDirectDependentConfigs();
+  // To type-specific generation.
+  DoRun();
+
+  // Mark the target as complete.
+  if (!err_->has_error()) {
+    target_->SetGenerated(&function_token_);
+    GetBuildSettings()->target_manager().TargetGenerationComplete(
+        target_->label(), err_);
   }
-  if (TypeHasSources(output_type))
-    FillSources();
-  if (TypeHasData(output_type))
-    FillData();
-  if (output_type == Target::CUSTOM) {
-    FillScript();
-    FillScriptArgs();
-  }
-  if (TypeHasOutputs(output_type))
-    FillOutputs();
-  FillDependencies();  // All types have dependencies.
-  FillDataDependencies();  // All types have dependencies.
-
-  if (TypeHasConfigValues(output_type)) {
-    ConfigValuesGenerator gen(&target_->config_values(), scope_,
-                              function_token_, input_directory_, err_);
-    gen.Run();
-    if (err_->has_error())
-      return;
-  }
-
-  if (TypeHasDestDir(output_type))
-    FillDestDir();
-
-  // Set the toolchain as a dependency of the target.
-  // TODO(brettw) currently we lock separately for each config, dep, and
-  // toolchain we add which is bad! Do this in one lock.
-  {
-    ItemTree* tree = &GetBuildSettings()->item_tree();
-    base::AutoLock lock(tree->lock());
-    ItemNode* tc_node =
-        tree->GetExistingNodeLocked(ToolchainLabelForScope(scope_));
-    if (!tree->GetExistingNodeLocked(target_->label())->AddDependency(
-            GetBuildSettings(), function_token_.range(), tc_node, err_))
-      return;
-  }
-
-  target_->SetGenerated(&function_token_);
-  GetBuildSettings()->target_manager().TargetGenerationComplete(
-      target_->label(), err_);
 }
 
 // static
@@ -147,105 +71,52 @@ void TargetGenerator::GenerateTarget(Scope* scope,
   // The location of the target is the directory name with no slash at the end.
   // FIXME(brettw) validate name.
   const Label& toolchain_label = ToolchainLabelForScope(scope);
-  Label label(function_token.location().file()->dir(),
-              args[0].string_value(),
+  Label label(scope->GetSourceDir(), args[0].string_value(),
               toolchain_label.dir(), toolchain_label.name());
 
   if (g_scheduler->verbose_logging())
     g_scheduler->Log("Generating target", label.GetUserVisibleName(true));
 
-  Target* t = scope->settings()->build_settings()->target_manager().GetTarget(
-      label, function_token.range(), NULL, err);
+  Target* target =
+      scope->settings()->build_settings()->target_manager().GetTarget(
+          label, function_token.range(), NULL, err);
   if (err->has_error())
     return;
 
-  TargetGenerator gen(t, scope, function_token, args, output_type, err);
-  gen.Run();
-}
-
-Target::OutputType TargetGenerator::GetOutputType() const {
-  if (output_type_ == functions::kGroup)
-    return Target::NONE;
-  if (output_type_ == functions::kExecutable)
-    return Target::EXECUTABLE;
-  if (output_type_ == functions::kSharedLibrary)
-    return Target::SHARED_LIBRARY;
-  if (output_type_ == functions::kStaticLibrary)
-    return Target::STATIC_LIBRARY;
-  // TODO(brettw) what does loadable module mean?
-  //if (output_type_ == ???)
-  //  return Target::LOADABLE_MODULE;
-  if (output_type_ == functions::kCopy)
-    return Target::COPY_FILES;
-  if (output_type_ == functions::kCustom)
-    return Target::CUSTOM;
-
-  *err_ = Err(function_token_, "Not a known output type",
-              "I am very confused.");
-  return Target::NONE;
-}
-
-void TargetGenerator::FillGenericConfigs(
-    const char* var_name,
-    void (Target::*setter)(std::vector<const Config*>*)) {
-  const Value* value = scope_->GetValue(var_name, true);
-  if (!value)
-    return;
-
-  std::vector<Label> labels;
-  if (!ExtractListOfLabels(*value, input_directory_,
-                           ToolchainLabelForScope(scope_), &labels, err_))
-    return;
-
-  std::vector<const Config*> dest_configs;
-  dest_configs.resize(labels.size());
-  for (size_t i = 0; i < labels.size(); i++) {
-    dest_configs[i] = Config::GetConfig(
-        scope_->settings(),
-        value->list_value()[i].origin()->GetRange(),
-        labels[i], target_, err_);
-    if (err_->has_error())
-      return;
+  // Create and call out to the proper generator.
+  if (output_type == functions::kCopy) {
+    CopyTargetGenerator generator(target, scope, function_token, err);
+    generator.Run();
+  } else if (output_type == functions::kCustom) {
+    ScriptTargetGenerator generator(target, scope, function_token, err);
+    generator.Run();
+  } else if (output_type == functions::kExecutable) {
+    BinaryTargetGenerator generator(target, scope, function_token,
+                                    Target::EXECUTABLE, err);
+    generator.Run();
+  } else if (output_type == functions::kGroup) {
+    GroupTargetGenerator generator(target, scope, function_token, err);
+    generator.Run();
+  } else if (output_type == functions::kSharedLibrary) {
+    BinaryTargetGenerator generator(target, scope, function_token,
+                                    Target::SHARED_LIBRARY, err);
+    generator.Run();
+  } else if (output_type == functions::kSourceSet) {
+    BinaryTargetGenerator generator(target, scope, function_token,
+                                    Target::SOURCE_SET, err);
+    generator.Run();
+  } else if (output_type == functions::kStaticLibrary) {
+    BinaryTargetGenerator generator(target, scope, function_token,
+                                    Target::STATIC_LIBRARY, err);
+    generator.Run();
+  } else {
+    *err = Err(function_token, "Not a known output type",
+               "I am very confused.");
   }
-  (target_->*setter)(&dest_configs);
 }
 
-void TargetGenerator::FillGenericDeps(
-    const char* var_name,
-    void (Target::*setter)(std::vector<const Target*>*)) {
-  const Value* value = scope_->GetValue(var_name, true);
-  if (!value)
-    return;
-
-  std::vector<Label> labels;
-  if (!ExtractListOfLabels(*value, input_directory_,
-                           ToolchainLabelForScope(scope_), &labels, err_))
-    return;
-
-  std::vector<const Target*> dest_deps;
-  dest_deps.resize(labels.size());
-  for (size_t i = 0; i < labels.size(); i++) {
-    dest_deps[i] = GetBuildSettings()->target_manager().GetTarget(
-        labels[i], value->list_value()[i].origin()->GetRange(), target_, err_);
-    if (err_->has_error())
-      return;
-  }
-
-  (target_->*setter)(&dest_deps);
-}
-
-void TargetGenerator::FillConfigs() {
-  FillGenericConfigs(variables::kConfigs, &Target::swap_in_configs);
-}
-
-void TargetGenerator::FillAllDependentConfigs() {
-  FillGenericConfigs(variables::kAllDependentConfigs,
-                     &Target::swap_in_all_dependent_configs);
-}
-
-void TargetGenerator::FillDirectDependentConfigs() {
-  FillGenericConfigs(variables::kDirectDependentConfigs,
-                     &Target::swap_in_direct_dependent_configs);
+const BuildSettings* TargetGenerator::GetBuildSettings() const {
+  return scope_->settings()->build_settings();
 }
 
 void TargetGenerator::FillSources() {
@@ -254,84 +125,97 @@ void TargetGenerator::FillSources() {
     return;
 
   Target::FileList dest_sources;
-  if (!ExtractListOfRelativeFiles(*value, input_directory_, &dest_sources,
-                                  err_))
+  if (!ExtractListOfRelativeFiles(scope_->settings()->build_settings(), *value,
+                                  scope_->GetSourceDir(), &dest_sources, err_))
     return;
-  target_->swap_in_sources(&dest_sources);
+  target_->sources().swap(dest_sources);
+}
+
+void TargetGenerator::FillSourcePrereqs() {
+  const Value* value = scope_->GetValue(variables::kSourcePrereqs, true);
+  if (!value)
+    return;
+
+  Target::FileList dest_reqs;
+  if (!ExtractListOfRelativeFiles(scope_->settings()->build_settings(), *value,
+                                  scope_->GetSourceDir(), &dest_reqs, err_))
+    return;
+  target_->source_prereqs().swap(dest_reqs);
+}
+
+void TargetGenerator::FillConfigs() {
+  FillGenericConfigs(variables::kConfigs, &target_->configs());
+}
+
+void TargetGenerator::FillDependentConfigs() {
+  FillGenericConfigs(variables::kAllDependentConfigs,
+                     &target_->all_dependent_configs());
+  FillGenericConfigs(variables::kDirectDependentConfigs,
+                     &target_->direct_dependent_configs());
 }
 
 void TargetGenerator::FillData() {
   // TODO(brettW) hook this up to the constant when we have cleaned up
   // how data files are used.
-  const Value* value = scope_->GetValue("data", true);
+  const Value* value = scope_->GetValue(variables::kData, true);
   if (!value)
     return;
 
   Target::FileList dest_data;
-  if (!ExtractListOfRelativeFiles(*value, input_directory_, &dest_data,
-                                  err_))
+  if (!ExtractListOfRelativeFiles(scope_->settings()->build_settings(), *value,
+                                  scope_->GetSourceDir(), &dest_data, err_))
     return;
-  target_->swap_in_data(&dest_data);
+  target_->data().swap(dest_data);
 }
 
 void TargetGenerator::FillDependencies() {
-  FillGenericDeps(variables::kDeps, &Target::swap_in_deps);
+  FillGenericDeps(variables::kDeps, &target_->deps());
+  FillGenericDeps(variables::kDatadeps, &target_->datadeps());
+
+  // This is a list of dependent targets to have their configs fowarded, so
+  // it goes here rather than in FillConfigs.
+  FillForwardDependentConfigs();
+
+  FillHardDep();
 }
 
-void TargetGenerator::FillDataDependencies() {
-  FillGenericDeps(variables::kDatadeps, &Target::swap_in_datadeps);
+void TargetGenerator::FillGypFile() {
+  const Value* gyp_file_value = scope_->GetValue(variables::kGypFile, true);
+  if (!gyp_file_value)
+    return;
+  if (!gyp_file_value->VerifyTypeIs(Value::STRING, err_))
+    return;
+
+  target_->set_gyp_file(scope_->GetSourceDir().ResolveRelativeFile(
+      gyp_file_value->string_value()));
 }
 
-void TargetGenerator::FillDestDir() {
-  // Destdir is required for all targets that use it.
-  const Value* value = scope_->GetValue("destdir", true);
-  if (!value) {
-    *err_ = Err(function_token_, "This target type requires a \"destdir\".");
+void TargetGenerator::FillHardDep() {
+  const Value* hard_dep_value = scope_->GetValue(variables::kHardDep, true);
+  if (!hard_dep_value)
     return;
-  }
-  if (!value->VerifyTypeIs(Value::STRING, err_))
+  if (!hard_dep_value->VerifyTypeIs(Value::BOOLEAN, err_))
     return;
-
-  if (!EnsureStringIsInOutputDir(
-          GetBuildSettings()->build_dir(),
-          value->string_value(), *value, err_))
-    return;
-  target_->set_destdir(SourceDir(value->string_value()));
+  target_->set_hard_dep(hard_dep_value->boolean_value());
 }
 
-void TargetGenerator::FillScript() {
-  // If this gets called, the target type requires a script, so error out
-  // if it doesn't have one.
-  const Value* value = scope_->GetValue("script", true);
-  if (!value) {
-    *err_ = Err(function_token_, "This target type requires a \"script\".");
-    return;
-  }
-  if (!value->VerifyTypeIs(Value::STRING, err_))
-    return;
-
-  target_->set_script(
-      input_directory_.ResolveRelativeFile(value->string_value()));
-}
-
-void TargetGenerator::FillScriptArgs() {
-  const Value* value = scope_->GetValue("args", true);
+void TargetGenerator::FillExternal() {
+  const Value* value = scope_->GetValue(variables::kExternal, true);
   if (!value)
     return;
-
-  std::vector<std::string> args;
-  if (!ExtractListOfStringValues(*value, &args, err_))
+  if (!value->VerifyTypeIs(Value::BOOLEAN, err_))
     return;
-  target_->swap_in_script_args(&args);
+  target_->set_external(value->boolean_value());
 }
 
 void TargetGenerator::FillOutputs() {
-  const Value* value = scope_->GetValue("outputs", true);
+  const Value* value = scope_->GetValue(variables::kOutputs, true);
   if (!value)
     return;
 
   Target::FileList outputs;
-  if (!ExtractListOfRelativeFiles(*value, input_directory_, &outputs, err_))
+  if (!ExtractListOfRelativeFiles(scope_->settings()->build_settings(), *value,
+                                  scope_->GetSourceDir(), &outputs, err_))
     return;
 
   // Validate that outputs are in the output dir.
@@ -342,9 +226,91 @@ void TargetGenerator::FillOutputs() {
             outputs[i].value(), value->list_value()[i], err_))
       return;
   }
-  target_->swap_in_outputs(&outputs);
+  target_->script_values().outputs().swap(outputs);
 }
 
-const BuildSettings* TargetGenerator::GetBuildSettings() const {
-  return scope_->settings()->build_settings();
+void TargetGenerator::SetToolchainDependency() {
+  // TODO(brettw) currently we lock separately for each config, dep, and
+  // toolchain we add which is bad! Do this in one lock.
+  ItemTree* tree = &GetBuildSettings()->item_tree();
+  base::AutoLock lock(tree->lock());
+  ItemNode* tc_node =
+      tree->GetExistingNodeLocked(ToolchainLabelForScope(scope_));
+  target_->item_node()->AddDependency(
+      GetBuildSettings(), function_token_.range(), tc_node, err_);
 }
+
+void TargetGenerator::FillGenericConfigs(const char* var_name,
+                                         LabelConfigVector* dest) {
+  const Value* value = scope_->GetValue(var_name, true);
+  if (!value)
+    return;
+  if (!ExtractListOfLabels(*value, scope_->GetSourceDir(),
+                           ToolchainLabelForScope(scope_), dest, err_))
+    return;
+
+  for (size_t i = 0; i < dest->size(); i++) {
+    LabelConfigPair& cur = (*dest)[i];
+    cur.ptr = Config::GetConfig(scope_->settings(),
+                                value->list_value()[i].origin()->GetRange(),
+                                cur.label, target_, err_);
+    if (err_->has_error())
+      return;
+  }
+}
+
+void TargetGenerator::FillGenericDeps(const char* var_name,
+                                      LabelTargetVector* dest) {
+  const Value* value = scope_->GetValue(var_name, true);
+  if (!value)
+    return;
+  if (!ExtractListOfLabels(*value, scope_->GetSourceDir(),
+                           ToolchainLabelForScope(scope_), dest, err_))
+    return;
+
+  for (size_t i = 0; i < dest->size(); i++) {
+    LabelTargetPair& cur = (*dest)[i];
+    cur.ptr = GetBuildSettings()->target_manager().GetTarget(
+        cur.label, value->list_value()[i].origin()->GetRange(), target_, err_);
+    if (err_->has_error())
+      return;
+  }
+}
+
+void TargetGenerator::FillForwardDependentConfigs() {
+  const Value* value = scope_->GetValue(
+      variables::kForwardDependentConfigsFrom, true);
+  if (!value)
+    return;
+
+  LabelTargetVector& dest = target_->forward_dependent_configs();
+  if (!ExtractListOfLabels(*value, scope_->GetSourceDir(),
+                           ToolchainLabelForScope(scope_), &dest, err_))
+    return;
+
+  // We currently assume that the list is very small and do a brute-force
+  // search in the deps for the labeled target. This could be optimized.
+  const LabelTargetVector& deps = target_->deps();
+  std::vector<const Target*> forward_from_list;
+  for (size_t dest_index = 0; dest_index < dest.size(); dest_index++) {
+    LabelTargetPair& cur_dest = dest[dest_index];
+    for (size_t dep_index = 0; dep_index < deps.size(); dep_index++) {
+      if (deps[dep_index].label == cur_dest.label) {
+        cur_dest.ptr = deps[dep_index].ptr;
+        break;
+      }
+    }
+    if (!cur_dest.ptr) {
+      *err_ = Err(cur_dest.origin,
+          "Can't forward from this target.",
+          "forward_dependent_configs_from must contain a list of labels that\n"
+          "must all appear in the deps of the same target.");
+      return;
+    }
+  }
+}
+
+
+
+
+

@@ -46,8 +46,6 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
   virtual void GrantReadFile(int child_id, const base::FilePath& file) OVERRIDE;
   virtual void GrantCreateReadWriteFile(int child_id,
                                         const base::FilePath& file) OVERRIDE;
-  virtual void GrantCreateWriteFile(int child_id,
-                                    const base::FilePath& file) OVERRIDE;
   virtual void GrantReadFileSystem(
       int child_id,
       const std::string& filesystem_id) OVERRIDE;
@@ -60,12 +58,13 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
   virtual void GrantCopyIntoFileSystem(
       int child_id,
       const std::string& filesystem_id) OVERRIDE;
+  virtual void GrantDeleteFromFileSystem(
+      int child_id,
+      const std::string& filesystem_id) OVERRIDE;
   virtual void GrantScheme(int child_id, const std::string& scheme) OVERRIDE;
   virtual bool CanReadFile(int child_id, const base::FilePath& file) OVERRIDE;
-  virtual bool CanWriteFile(int child_id, const base::FilePath& file) OVERRIDE;
-  virtual bool CanCreateFile(int child_id, const base::FilePath& file) OVERRIDE;
-  virtual bool CanCreateWriteFile(int child_id,
-                                  const base::FilePath& file) OVERRIDE;
+  virtual bool CanCreateReadWriteFile(int child_id,
+                                      const base::FilePath& file) OVERRIDE;
   virtual bool CanReadFileSystem(int child_id,
                                  const std::string& filesystem_id) OVERRIDE;
   virtual bool CanReadWriteFileSystem(
@@ -73,6 +72,13 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
       const std::string& filesystem_id) OVERRIDE;
   virtual bool CanCopyIntoFileSystem(int child_id,
                                      const std::string& filesystem_id) OVERRIDE;
+  virtual bool CanDeleteFromFileSystem(
+      int child_id,
+      const std::string& filesystem_id) OVERRIDE;
+
+  void GrantCreateReadWriteFileSystem(
+      int child_id,
+      const std::string& filesystem_id);
 
   // Pseudo schemes are treated differently than other schemes because they
   // cannot be requested like normal URLs.  There is no mechanism for revoking
@@ -107,10 +113,6 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
   // file:// URL, but not all urls of the file:// scheme.
   void GrantRequestSpecificFileURL(int child_id, const GURL& url);
 
-  // Grants the child process permission to enumerate all the files in
-  // this directory and read those files.
-  void GrantReadDirectory(int child_id, const base::FilePath& directory);
-
   // Revokes all permissions granted to the given file.
   void RevokeAllPermissionsForFile(int child_id, const base::FilePath& file);
 
@@ -122,6 +124,9 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
 
   // Revoke read raw cookies permission.
   void RevokeReadRawCookies(int child_id);
+
+  // Grants permission to send system exclusive message to any MIDI devices.
+  void GrantSendMIDISysExMessage(int child_id);
 
   // Before servicing a child process's request for a URL, the browser should
   // call this method to determine whether the process has the capability to
@@ -135,30 +140,16 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
                    const GURL& url,
                    ResourceType::Type resource_type);
 
-  // Before servicing a child process's request to enumerate a directory
-  // the browser should call this method to check for the capability.
-  bool CanReadDirectory(int child_id, const base::FilePath& directory);
-
-  // Deprecated: Use CanReadFile, etc. methods instead.
-  // Determines if certain permissions were granted for a file. |permissions|
-  // must be a bitwise-or'd value of base::PlatformFileFlags.
-  bool HasPermissionsForFile(int child_id,
-                             const base::FilePath& file,
-                             int permissions);
-
-  // Deprecated: Use CanReadFileSystemFile, etc. methods instead.
-  // Determines if certain permissions were granted for a file in FileSystem
-  // API. |permissions| must be a bitwise-or'd value of base::PlatformFileFlags.
-  bool HasPermissionsForFileSystemFile(int child_id,
-                                       const fileapi::FileSystemURL& url,
-                                       int permissions);
-
   // Explicit permissions checks for FileSystemURL specified files.
   bool CanReadFileSystemFile(int child_id, const fileapi::FileSystemURL& url);
   bool CanWriteFileSystemFile(int child_id, const fileapi::FileSystemURL& url);
   bool CanCreateFileSystemFile(int child_id, const fileapi::FileSystemURL& url);
-  bool CanCreateWriteFileSystemFile(int child_id,
-                                    const fileapi::FileSystemURL& url);
+  bool CanCreateReadWriteFileSystemFile(int child_id,
+                                        const fileapi::FileSystemURL& url);
+  bool CanCopyIntoFileSystemFile(int child_id,
+                                 const fileapi::FileSystemURL& url);
+  bool CanDeleteFileSystemFile(int child_id,
+                               const fileapi::FileSystemURL& url);
 
   // Returns true if the specified child_id has been granted WebUIBindings.
   // The browser should check this property before assuming the child process is
@@ -201,11 +192,15 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
       fileapi::FileSystemType type,
       int policy);
 
+  // Returns true if sending system exclusive messages is allowed.
+  bool CanSendMIDISysExMessage(int child_id);
+
  private:
   friend class ChildProcessSecurityPolicyInProcessBrowserTest;
   friend class ChildProcessSecurityPolicyTest;
   FRIEND_TEST_ALL_PREFIXES(ChildProcessSecurityPolicyInProcessBrowserTest,
                            NoLeak);
+  FRIEND_TEST_ALL_PREFIXES(ChildProcessSecurityPolicyTest, FilePermissions);
 
   class SecurityState;
 
@@ -241,6 +236,20 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
       int child_id,
       const std::string& filesystem_id,
       int permission);
+
+  // Deprecated: Use CanReadFile, etc. methods instead.
+  // Determines if certain permissions were granted for a file. |permissions|
+  // must be a bitwise-or'd value of base::PlatformFileFlags.
+  bool HasPermissionsForFile(int child_id,
+                             const base::FilePath& file,
+                             int permissions);
+
+  // Deprecated: Use CanReadFileSystemFile, etc. methods instead.
+  // Determines if certain permissions were granted for a file in FileSystem
+  // API. |permissions| must be a bitwise-or'd value of base::PlatformFileFlags.
+  bool HasPermissionsForFileSystemFile(int child_id,
+                                       const fileapi::FileSystemURL& url,
+                                       int permissions);
 
   // You must acquire this lock before reading or writing any members of this
   // class.  You must not block while holding this lock.

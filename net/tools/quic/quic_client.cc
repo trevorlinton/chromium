@@ -16,7 +16,7 @@
 #include "net/quic/quic_connection.h"
 #include "net/quic/quic_data_reader.h"
 #include "net/quic/quic_protocol.h"
-#include "net/tools/flip_server/balsa_headers.h"
+#include "net/tools/balsa/balsa_headers.h"
 #include "net/tools/quic/quic_epoll_connection_helper.h"
 #include "net/tools/quic/quic_reliable_client_stream.h"
 #include "net/tools/quic/quic_socket_utils.h"
@@ -32,31 +32,42 @@ const int kEpollFlags = EPOLLIN | EPOLLOUT | EPOLLET;
 
 QuicClient::QuicClient(IPEndPoint server_address,
                        const string& server_hostname,
-                       const QuicVersion version)
+                       const QuicVersionVector& supported_versions,
+                       bool print_response)
     : server_address_(server_address),
       server_hostname_(server_hostname),
       local_port_(0),
       fd_(-1),
+      helper_(CreateQuicConnectionHelper()),
       initialized_(false),
       packets_dropped_(0),
       overflow_supported_(false),
-      version_(version) {
+      supported_versions_(supported_versions),
+      print_response_(print_response) {
   config_.SetDefaults();
+  // TODO(ianswett): Allow the client to change the server's max packet size and
+  // initial congestion window.
+  config_.set_server_max_packet_size(kDefaultMaxPacketSize,
+                                     kDefaultMaxPacketSize);
+  config_.set_server_initial_congestion_window(kDefaultInitialWindow,
+                                               kDefaultInitialWindow);
 }
 
 QuicClient::QuicClient(IPEndPoint server_address,
                        const string& server_hostname,
                        const QuicConfig& config,
-                       const QuicVersion version)
+                       const QuicVersionVector& supported_versions)
     : server_address_(server_address),
       server_hostname_(server_hostname),
       config_(config),
       local_port_(0),
       fd_(-1),
+      helper_(CreateQuicConnectionHelper()),
       initialized_(false),
       packets_dropped_(0),
       overflow_supported_(false),
-      version_(version) {
+      supported_versions_(supported_versions),
+      print_response_(false) {
 }
 
 QuicClient::~QuicClient() {
@@ -150,13 +161,16 @@ bool QuicClient::Connect() {
 bool QuicClient::StartConnect() {
   DCHECK(!connected() && initialized_);
 
-  QuicGuid guid = QuicRandom::GetInstance()->RandUint64();
+  QuicPacketWriter* writer = CreateQuicPacketWriter();
+  if (writer_.get() != writer) {
+    writer_.reset(writer);
+  }
+
   session_.reset(new QuicClientSession(
       server_hostname_,
       config_,
-      new QuicConnection(guid, server_address_,
-                         CreateQuicConnectionHelper(), false,
-                         version_),
+      new QuicConnection(GenerateGuid(), server_address_, helper_.get(),
+                         writer_.get(), false, supported_versions_),
       &crypto_config_));
   return session_->CryptoConnect();
 }
@@ -178,10 +192,12 @@ void QuicClient::Disconnect() {
 
 void QuicClient::SendRequestsAndWaitForResponse(
     const CommandLine::StringVector& args) {
-  for (uint32_t i = 0; i < args.size(); i++) {
+  for (size_t i = 0; i < args.size(); i++) {
     BalsaHeaders headers;
     headers.SetRequestFirstlineFromStringPieces("GET", args[i], "HTTP/1.1");
-    CreateReliableClientStream()->SendRequest(headers, "", true);
+    QuicReliableClientStream* stream = CreateReliableClientStream();
+    stream->SendRequest(headers, "", true);
+    stream->set_visitor(this);
   }
 
   while (WaitForEvents()) { }
@@ -233,6 +249,24 @@ void QuicClient::OnEvent(int fd, EpollEvent* event) {
   }
 }
 
+void QuicClient::OnClose(ReliableQuicStream* stream) {
+  if (!print_response_) {
+    return;
+  }
+
+  QuicReliableClientStream* client_stream =
+      static_cast<QuicReliableClientStream*>(stream);
+  const BalsaHeaders& headers = client_stream->headers();
+  printf("%s\n", headers.first_line().as_string().c_str());
+  for (BalsaHeaders::const_header_lines_iterator i =
+           headers.header_lines_begin();
+       i != headers.header_lines_end(); ++i) {
+    printf("%s: %s\n", i->first.as_string().c_str(),
+           i->second.as_string().c_str());
+  }
+  printf("%s\n", client_stream->data().c_str());
+}
+
 QuicPacketCreator::Options* QuicClient::options() {
   if (session() == NULL) {
     return NULL;
@@ -245,8 +279,16 @@ bool QuicClient::connected() const {
       session_->connection()->connected();
 }
 
+QuicGuid QuicClient::GenerateGuid() {
+  return QuicRandom::GetInstance()->RandUint64();
+}
+
 QuicEpollConnectionHelper* QuicClient::CreateQuicConnectionHelper() {
-  return new QuicEpollConnectionHelper(fd_, &epoll_server_);
+  return new QuicEpollConnectionHelper(&epoll_server_);
+}
+
+QuicPacketWriter* QuicClient::CreateQuicPacketWriter() {
+  return new QuicDefaultPacketWriter(fd_);
 }
 
 bool QuicClient::ReadAndProcessPacket() {

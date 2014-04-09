@@ -139,13 +139,7 @@ namespace chromeos {
 // The DebugDaemonClient implementation used in production.
 class DebugDaemonClientImpl : public DebugDaemonClient {
  public:
-  explicit DebugDaemonClientImpl(dbus::Bus* bus)
-      : debugdaemon_proxy_(NULL),
-        weak_ptr_factory_(this) {
-    debugdaemon_proxy_ = bus->GetObjectProxy(
-        debugd::kDebugdServiceName,
-        dbus::ObjectPath(debugd::kDebugdServicePath));
-  }
+  DebugDaemonClientImpl() : debugdaemon_proxy_(NULL), weak_ptr_factory_(this) {}
 
   virtual ~DebugDaemonClientImpl() {}
 
@@ -257,7 +251,7 @@ class DebugDaemonClientImpl : public DebugDaemonClient {
   virtual void GetPerfData(uint32_t duration,
                            const GetPerfDataCallback& callback) OVERRIDE {
     dbus::MethodCall method_call(debugd::kDebugdInterface,
-                                 debugd::kGetPerfData);
+                                 debugd::kGetRichPerfData);
     dbus::MessageWriter writer(&method_call);
     writer.AppendUint32(duration);
 
@@ -400,6 +394,13 @@ class DebugDaemonClientImpl : public DebugDaemonClient {
         base::Bind(&DebugDaemonClientImpl::OnTestICMP,
                    weak_ptr_factory_.GetWeakPtr(),
                    callback));
+  }
+
+ protected:
+  virtual void Init(dbus::Bus* bus) OVERRIDE {
+    debugdaemon_proxy_ =
+        bus->GetObjectProxy(debugd::kDebugdServiceName,
+                            dbus::ObjectPath(debugd::kDebugdServicePath));
   }
 
  private:
@@ -619,6 +620,7 @@ class DebugDaemonClientImpl : public DebugDaemonClient {
 // which does nothing.
 class DebugDaemonClientStubImpl : public DebugDaemonClient {
   // DebugDaemonClient overrides.
+  virtual void Init(dbus::Bus* bus) OVERRIDE {}
   virtual void GetDebugLogs(base::PlatformFile file,
                             const GetDebugLogsCallback& callback) OVERRIDE {
     callback.Run(false);
@@ -715,10 +717,10 @@ DebugDaemonClient::EmptyStopSystemTracingCallback() {
 }
 
 // static
-DebugDaemonClient* DebugDaemonClient::Create(DBusClientImplementationType type,
-                                   dbus::Bus* bus) {
+DebugDaemonClient* DebugDaemonClient::Create(
+    DBusClientImplementationType type) {
   if (type == REAL_DBUS_CLIENT_IMPLEMENTATION)
-    return new DebugDaemonClientImpl(bus);
+    return new DebugDaemonClientImpl();
   DCHECK_EQ(STUB_DBUS_CLIENT_IMPLEMENTATION, type);
   return new DebugDaemonClientStubImpl();
 }

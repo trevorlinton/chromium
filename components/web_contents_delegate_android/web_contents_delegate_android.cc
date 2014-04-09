@@ -27,7 +27,6 @@
 using base::android::AttachCurrentThread;
 using base::android::ConvertUTF8ToJavaString;
 using base::android::ConvertUTF16ToJavaString;
-using base::android::HasClass;
 using base::android::ScopedJavaLocalRef;
 using content::ColorChooser;
 using content::WebContents;
@@ -122,30 +121,6 @@ void WebContentsDelegateAndroid::NavigationStateChanged(
       env,
       obj.obj(),
       changed_flags);
-}
-
-void WebContentsDelegateAndroid::AddNewContents(
-    WebContents* source,
-    WebContents* new_contents,
-    WindowOpenDisposition disposition,
-    const gfx::Rect& initial_pos,
-    bool user_gesture,
-    bool* was_blocked) {
-  JNIEnv* env = AttachCurrentThread();
-  ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
-  bool handled = false;
-  if (!obj.is_null()) {
-    handled = Java_WebContentsDelegateAndroid_addNewContents(
-        env,
-        obj.obj(),
-        reinterpret_cast<jint>(source),
-        reinterpret_cast<jint>(new_contents),
-        static_cast<jint>(disposition),
-        NULL,
-        user_gesture);
-  }
-  if (!handled)
-    delete new_contents;
 }
 
 void WebContentsDelegateAndroid::ActivateContents(WebContents* contents) {
@@ -334,16 +309,6 @@ bool WebContentsDelegateAndroid::IsFullscreenForTabOrPending(
       env, obj.obj());
 }
 
-void WebContentsDelegateAndroid::DidProgrammaticallyScroll(
-    WebContents* web_contents, const gfx::Vector2d& scroll_point) {
-  JNIEnv* env = AttachCurrentThread();
-  ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
-  if (obj.is_null())
-    return;
-  Java_WebContentsDelegateAndroid_didProgrammaticallyScroll(
-      env, obj.obj(), scroll_point.x(), scroll_point.y());
-}
-
 // ----------------------------------------------------------------------------
 // Native JNI methods
 // ----------------------------------------------------------------------------
@@ -351,10 +316,6 @@ void WebContentsDelegateAndroid::DidProgrammaticallyScroll(
 // Register native methods
 
 bool RegisterWebContentsDelegateAndroid(JNIEnv* env) {
-  if (!HasClass(env, kWebContentsDelegateAndroidClassPath)) {
-    DLOG(ERROR) << "Unable to find class WebContentsDelegateAndroid!";
-    return false;
-  }
   return RegisterNativesImpl(env);
 }
 

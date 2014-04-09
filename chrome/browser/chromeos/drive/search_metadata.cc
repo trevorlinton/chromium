@@ -9,7 +9,9 @@
 
 #include "base/bind.h"
 #include "base/i18n/string_search.h"
+#include "base/metrics/histogram.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/time/time.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/escape.h"
@@ -20,6 +22,20 @@ namespace drive {
 namespace internal {
 
 namespace {
+
+struct ResultCandidate {
+  ResultCandidate(const std::string& local_id,
+                  const ResourceEntry& entry,
+                  const std::string& highlighted_base_name)
+      : local_id(local_id),
+        entry(entry),
+        highlighted_base_name(highlighted_base_name) {
+  }
+
+  std::string local_id;
+  ResourceEntry entry;
+  std::string highlighted_base_name;
+};
 
 // Used to sort the result candidates per the last accessed/modified time. The
 // recently accessed/modified files come first.
@@ -36,9 +52,8 @@ bool CompareByTimestamp(const ResourceEntry& a, const ResourceEntry& b) {
   return a_file_info.last_modified() > b_file_info.last_modified();
 }
 
-struct MetadataSearchResultComparator {
-  bool operator()(const MetadataSearchResult* a,
-                  const MetadataSearchResult* b) const {
+struct ResultCandidateComparator {
+  bool operator()(const ResultCandidate* a, const ResultCandidate* b) const {
     return CompareByTimestamp(a->entry, b->entry);
   }
 };
@@ -104,8 +119,8 @@ bool IsEligibleEntry(const ResourceEntry& entry,
   }
 
   // Exclude "drive", "drive/root", and "drive/other".
-  if (entry.resource_id() == util::kDriveGrandRootSpecialResourceId ||
-      entry.parent_resource_id() == util::kDriveGrandRootSpecialResourceId) {
+  if (it->GetID() == util::kDriveGrandRootSpecialResourceId ||
+      entry.parent_local_id() == util::kDriveGrandRootSpecialResourceId) {
     return false;
   }
 
@@ -122,11 +137,11 @@ void MaybeAddEntryToResult(
     base::i18n::FixedPatternStringSearchIgnoringCaseAndAccents* query,
     int options,
     size_t at_most_num_matches,
-    ScopedPriorityQueue<MetadataSearchResult,
-                        MetadataSearchResultComparator>* result_candidates) {
+    ScopedPriorityQueue<ResultCandidate,
+                        ResultCandidateComparator>* result_candidates) {
   DCHECK_GE(at_most_num_matches, result_candidates->size());
 
-  const ResourceEntry& entry = it->Get();
+  const ResourceEntry& entry = it->GetValue();
 
   // If the candidate set is already full, and this |entry| is old, do nothing.
   // We perform this check first in order to avoid the costly find-and-highlight
@@ -146,7 +161,7 @@ void MaybeAddEntryToResult(
   // Make space for |entry| when appropriate.
   if (result_candidates->size() == at_most_num_matches)
     result_candidates->pop();
-  result_candidates->push(new MetadataSearchResult(entry, highlighted));
+  result_candidates->push(new ResultCandidate(it->GetID(), entry, highlighted));
 }
 
 // Implements SearchMetadata().
@@ -155,8 +170,8 @@ FileError SearchMetadataOnBlockingPool(ResourceMetadata* resource_metadata,
                                        int options,
                                        int at_most_num_matches,
                                        MetadataSearchResultVector* results) {
-  ScopedPriorityQueue<MetadataSearchResult,
-                      MetadataSearchResultComparator> result_candidates;
+  ScopedPriorityQueue<ResultCandidate,
+                      ResultCandidateComparator> result_candidates;
 
   // Prepare data structure for searching.
   base::i18n::FixedPatternStringSearchIgnoringCaseAndAccents query(
@@ -173,15 +188,15 @@ FileError SearchMetadataOnBlockingPool(ResourceMetadata* resource_metadata,
 
   // Prepare the result.
   for (; !result_candidates.empty(); result_candidates.pop()) {
+    const ResultCandidate& candidate = *result_candidates.top();
     // The path field of entries in result_candidates are empty at this point,
     // because we don't want to run the expensive metadata DB look up except for
     // the final results. Hence, here we fill the part.
-    base::FilePath path = resource_metadata->GetFilePath(
-        result_candidates.top()->entry.resource_id());
+    base::FilePath path = resource_metadata->GetFilePath(candidate.local_id);
     if (path.empty())
       return FILE_ERROR_FAILED;
-    results->push_back(*result_candidates.top());
-    results->back().path = path;
+    results->push_back(MetadataSearchResult(
+        path, candidate.entry, candidate.highlighted_base_name));
   }
 
   // Reverse the order here because |result_candidates| puts the most
@@ -191,12 +206,17 @@ FileError SearchMetadataOnBlockingPool(ResourceMetadata* resource_metadata,
   return FILE_ERROR_OK;
 }
 
+// Runs the SearchMetadataCallback and updates the histogram.
 void RunSearchMetadataCallback(const SearchMetadataCallback& callback,
+                               const base::TimeTicks& start_time,
                                scoped_ptr<MetadataSearchResultVector> results,
                                FileError error) {
   if (error != FILE_ERROR_OK)
     results.reset();
   callback.Run(error, results.Pass());
+
+  UMA_HISTOGRAM_TIMES("Drive.SearchMetadataTime",
+                      base::TimeTicks::Now() - start_time);
 }
 
 }  // namespace
@@ -212,6 +232,8 @@ void SearchMetadata(
   DCHECK_LE(0, at_most_num_matches);
   DCHECK(!callback.is_null());
 
+  const base::TimeTicks start_time = base::TimeTicks::Now();
+
   scoped_ptr<MetadataSearchResultVector> results(
       new MetadataSearchResultVector);
   MetadataSearchResultVector* results_ptr = results.get();
@@ -225,6 +247,7 @@ void SearchMetadata(
                                               results_ptr),
                                    base::Bind(&RunSearchMetadataCallback,
                                               callback,
+                                              start_time,
                                               base::Passed(&results)));
 }
 

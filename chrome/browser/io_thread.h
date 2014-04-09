@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_IO_THREAD_H_
 
 #include <string>
+#include <vector>
 
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
@@ -158,7 +159,6 @@ class IOThread : public content::BrowserThreadDelegate {
     Optional<size_t> max_spdy_concurrent_streams_limit;
     Optional<bool> force_spdy_single_domain;
     Optional<bool> enable_spdy_ip_pooling;
-    Optional<bool> enable_spdy_credential_frames;
     Optional<bool> enable_spdy_compression;
     Optional<bool> enable_spdy_ping_based_connection_checking;
     Optional<net::NextProto> spdy_default_protocol;
@@ -221,8 +221,8 @@ class IOThread : public content::BrowserThreadDelegate {
 
   void InitializeNetworkOptions(const CommandLine& parsed_command_line);
 
-  // Enable the SPDY protocol.  If this function is not called, SPDY/3
-  // will be enabled.
+  // Enable SPDY with the given mode, which may contain the following:
+  //
   //   "off"                      : Disables SPDY support entirely.
   //   "ssl"                      : Forces SPDY for all HTTPS requests.
   //   "no-ssl"                   : Forces SPDY for all HTTP requests.
@@ -230,7 +230,7 @@ class IOThread : public content::BrowserThreadDelegate {
   //   "exclude=<host>"           : Disables SPDY support for the host <host>.
   //   "no-compress"              : Disables SPDY header compression.
   //   "no-alt-protocols          : Disables alternate protocol support.
-  //   "force-alt-protocols       : Forces an alternate protocol of SPDY/2
+  //   "force-alt-protocols       : Forces an alternate protocol of SPDY/3
   //                                on port 443.
   //   "single-domain"            : Forces all spdy traffic to a single domain.
   //   "init-max-streams=<limit>" : Specifies the maximum number of concurrent
@@ -299,7 +299,7 @@ class IOThread : public content::BrowserThreadDelegate {
   std::string auth_server_whitelist_;
   std::string auth_delegate_whitelist_;
   std::string gssapi_library_name_;
-  std::string spdyproxy_auth_origin_;
+  std::vector<GURL> spdyproxy_auth_origins_;
 
   // This is an instance of the default SSLConfigServiceManager for the current
   // platform and it gets SSL preferences from local_state object.

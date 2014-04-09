@@ -11,12 +11,11 @@
 #include "base/message_loop/message_loop.h"
 #include "ipc/ipc_message.h"
 #include "ipc/ipc_sender.h"
-#include "ui/aura/client/capture_client.h"
 #include "ui/aura/client/cursor_client.h"
 #include "ui/aura/root_window.h"
 #include "ui/base/cursor/cursor_loader_win.h"
-#include "ui/base/events/event_utils.h"
-#include "ui/base/keycodes/keyboard_code_conversion_win.h"
+#include "ui/events/event_utils.h"
+#include "ui/events/keycodes/keyboard_code_conversion_win.h"
 #include "ui/base/view_prop.h"
 #include "ui/gfx/insets.h"
 #include "ui/metro_viewer/metro_viewer_messages.h"
@@ -46,6 +45,11 @@ void SetVirtualKeyStates(uint32 flags) {
   SetKeyState(keyboard_state, !!(flags & ui::EF_CONTROL_DOWN), VK_CONTROL);
   SetKeyState(keyboard_state, !!(flags & ui::EF_ALT_DOWN), VK_MENU);
   SetKeyState(keyboard_state, !!(flags & ui::EF_CAPS_LOCK_DOWN), VK_CAPITAL);
+  SetKeyState(keyboard_state, !!(flags & ui::EF_LEFT_MOUSE_BUTTON), VK_LBUTTON);
+  SetKeyState(keyboard_state, !!(flags & ui::EF_RIGHT_MOUSE_BUTTON),
+              VK_RBUTTON);
+  SetKeyState(keyboard_state, !!(flags & ui::EF_MIDDLE_MOUSE_BUTTON),
+              VK_MBUTTON);
 
   ::SetKeyboardState(keyboard_state);
 }
@@ -105,36 +109,53 @@ void HandleSelectFolder(const base::string16& title,
                                                                 on_failure);
 }
 
+void HandleActivateDesktop(const base::FilePath& shortcut,
+                           bool ash_exit,
+                           const ActivateDesktopCompleted& on_success) {
+  DCHECK(aura::RemoteRootWindowHostWin::Instance());
+  aura::RemoteRootWindowHostWin::Instance()->HandleActivateDesktop(shortcut,
+                                                                   ash_exit,
+                                                                   on_success);
+}
+
 RemoteRootWindowHostWin* g_instance = NULL;
 
 RemoteRootWindowHostWin* RemoteRootWindowHostWin::Instance() {
-  return g_instance;
+  if (g_instance)
+    return g_instance;
+  return Create(gfx::Rect());
 }
 
 RemoteRootWindowHostWin* RemoteRootWindowHostWin::Create(
     const gfx::Rect& bounds) {
-  g_instance = new RemoteRootWindowHostWin(bounds);
+  g_instance = g_instance ? g_instance : new RemoteRootWindowHostWin(bounds);
   return g_instance;
 }
 
 RemoteRootWindowHostWin::RemoteRootWindowHostWin(const gfx::Rect& bounds)
-    : delegate_(NULL),
+    : remote_window_(NULL),
+      delegate_(NULL),
       host_(NULL),
-      ignore_mouse_moves_until_set_cursor_ack_(false) {
+      ignore_mouse_moves_until_set_cursor_ack_(false),
+      event_flags_(0) {
   prop_.reset(new ui::ViewProp(NULL, kRootWindowHostWinKey, this));
 }
 
 RemoteRootWindowHostWin::~RemoteRootWindowHostWin() {
+  g_instance = NULL;
 }
 
-void RemoteRootWindowHostWin::Connected(IPC::Sender* host) {
+void RemoteRootWindowHostWin::Connected(IPC::Sender* host, HWND remote_window) {
   CHECK(host_ == NULL);
   host_ = host;
+  remote_window_ = remote_window;
 }
 
 void RemoteRootWindowHostWin::Disconnected() {
-  CHECK(host_ != NULL);
+  // Don't CHECK here, Disconnected is called on a channel error which can
+  // happen before we're successfully Connected.
   host_ = NULL;
+  remote_window_ = NULL;
 }
 
 bool RemoteRootWindowHostWin::OnMessageReceived(const IPC::Message& message) {
@@ -145,8 +166,8 @@ bool RemoteRootWindowHostWin::OnMessageReceived(const IPC::Message& message) {
     IPC_MESSAGE_HANDLER(MetroViewerHostMsg_KeyDown, OnKeyDown)
     IPC_MESSAGE_HANDLER(MetroViewerHostMsg_KeyUp, OnKeyUp)
     IPC_MESSAGE_HANDLER(MetroViewerHostMsg_Character, OnChar)
-    IPC_MESSAGE_HANDLER(MetroViewerHostMsg_VisibilityChanged,
-                        OnVisibilityChanged)
+    IPC_MESSAGE_HANDLER(MetroViewerHostMsg_WindowActivated,
+                        OnWindowActivated)
     IPC_MESSAGE_HANDLER(MetroViewerHostMsg_TouchDown,
                         OnTouchDown)
     IPC_MESSAGE_HANDLER(MetroViewerHostMsg_TouchUp,
@@ -161,15 +182,34 @@ bool RemoteRootWindowHostWin::OnMessageReceived(const IPC::Message& message) {
                         OnMultiFileOpenDone)
     IPC_MESSAGE_HANDLER(MetroViewerHostMsg_SelectFolderDone,
                         OnSelectFolderDone)
-    IPC_MESSAGE_HANDLER(MetroViewerHostMsg_WindowActivated,
-                        OnWindowActivated)
     IPC_MESSAGE_HANDLER(MetroViewerHostMsg_SetCursorPosAck,
                         OnSetCursorPosAck)
     IPC_MESSAGE_HANDLER(MetroViewerHostMsg_WindowSizeChanged,
                         OnWindowSizeChanged)
+    IPC_MESSAGE_HANDLER(MetroViewerHostMsg_ActivateDesktopDone,
+                        OnDesktopActivated)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
+}
+
+void RemoteRootWindowHostWin::HandleOpenURLOnDesktop(
+    const base::FilePath& shortcut,
+    const base::string16& url) {
+  if (!host_)
+    return;
+  host_->Send(new MetroViewerHostMsg_OpenURLOnDesktop(shortcut, url));
+}
+
+void RemoteRootWindowHostWin::HandleActivateDesktop(
+    const base::FilePath& shortcut,
+    bool ash_exit,
+    const ActivateDesktopCompleted& on_success) {
+  if (!host_)
+    return;
+  DCHECK(activate_completed_callback_.is_null());
+  activate_completed_callback_ = on_success;
+  host_->Send(new MetroViewerHostMsg_ActivateDesktop(shortcut, ash_exit));
 }
 
 void RemoteRootWindowHostWin::HandleOpenFile(
@@ -271,10 +311,9 @@ RootWindow* RemoteRootWindowHostWin::GetRootWindow() {
 }
 
 gfx::AcceleratedWidget RemoteRootWindowHostWin::GetAcceleratedWidget() {
-  // TODO(cpu): This is bad. Chrome's compositor needs a valid window
-  // initially and then later on we swap it. Since the compositor never
-  // uses this initial window we tell ourselves this hack is ok to get
-  // thing off the ground.
+  if (remote_window_)
+    return remote_window_;
+  // Getting here should only happen for ash_unittests.exe and related code.
   return ::GetDesktopWindow();
 }
 
@@ -339,13 +378,6 @@ bool RemoteRootWindowHostWin::ConfineCursorToRootWindow() {
   return true;
 }
 
-bool RemoteRootWindowHostWin::CopyAreaToSkCanvas(const gfx::Rect& source_bounds,
-                                                 const gfx::Point& dest_offset,
-                                                 SkCanvas* canvas) {
-  NOTIMPLEMENTED();
-  return false;
-}
-
 void RemoteRootWindowHostWin::UnConfineCursor() {
 }
 
@@ -404,10 +436,15 @@ void RemoteRootWindowHostWin::OnMouseMoved(int32 x, int32 y, int32 flags) {
 }
 
 void RemoteRootWindowHostWin::OnMouseButton(
-    int32 x, int32 y, int32 extra, ui::EventType type, ui::EventFlags flags) {
+    int32 x,
+    int32 y,
+    int32 extra,
+    ui::EventType type,
+    ui::EventFlags flags) {
   gfx::Point location(x, y);
   ui::MouseEvent mouse_event(type, location, location, flags);
 
+  SetEventFlags(flags | key_event_flags());
   if (type == ui::ET_MOUSEWHEEL) {
     ui::MouseWheelEvent wheel_event(mouse_event, 0, extra);
     delegate_->OnHostMouseEvent(&wheel_event);
@@ -456,9 +493,8 @@ void RemoteRootWindowHostWin::OnChar(uint32 key_code,
                           scan_code, flags, true);
 }
 
-void RemoteRootWindowHostWin::OnVisibilityChanged(bool visible) {
-  if (visible)
-    delegate_->OnHostActivated();
+void RemoteRootWindowHostWin::OnWindowActivated() {
+  delegate_->OnHostActivated();
 }
 
 void RemoteRootWindowHostWin::OnTouchDown(int32 x,
@@ -538,10 +574,6 @@ void RemoteRootWindowHostWin::OnSelectFolderDone(
   failure_callback_.Reset();
 }
 
-void RemoteRootWindowHostWin::OnWindowActivated(bool active) {
-  active ? GetRootWindow()->Focus() : GetRootWindow()->Blur();
-}
-
 void RemoteRootWindowHostWin::OnSetCursorPosAck() {
   DCHECK(ignore_mouse_moves_until_set_cursor_ack_);
   ignore_mouse_moves_until_set_cursor_ack_ = false;
@@ -551,17 +583,28 @@ void RemoteRootWindowHostWin::OnWindowSizeChanged(uint32 width, uint32 height) {
   SetBounds(gfx::Rect(0, 0, width, height));
 }
 
+void RemoteRootWindowHostWin::OnDesktopActivated() {
+  ActivateDesktopCompleted temp = activate_completed_callback_;
+  activate_completed_callback_.Reset();
+  temp.Run();
+}
+
 void RemoteRootWindowHostWin::DispatchKeyboardMessage(ui::EventType type,
                                                       uint32 vkey,
                                                       uint32 repeat_count,
                                                       uint32 scan_code,
                                                       uint32 flags,
                                                       bool is_character) {
+  SetEventFlags(flags | mouse_event_flags());
   if (base::MessageLoop::current()->IsNested()) {
-    SetVirtualKeyStates(flags);
-
-    uint32 message = is_character ? WM_CHAR :
-        (type == ui::ET_KEY_PRESSED ? WM_KEYDOWN : WM_KEYUP);
+    int index = (flags & ui::EF_ALT_DOWN) ? 1 : 0;
+    const int char_message[] = {WM_CHAR, WM_SYSCHAR};
+    const int keydown_message[] = {WM_KEYDOWN, WM_SYSKEYDOWN};
+    const int keyup_message[] = {WM_KEYUP, WM_SYSKEYUP};
+    uint32 message = is_character
+                         ? char_message[index]
+                         : (type == ui::ET_KEY_PRESSED ? keydown_message[index]
+                                                       : keyup_message[index]);
     ::PostThreadMessage(::GetCurrentThreadId(),
                         message,
                         vkey,
@@ -573,6 +616,13 @@ void RemoteRootWindowHostWin::DispatchKeyboardMessage(ui::EventType type,
                        is_character);
     delegate_->OnHostKeyEvent(&event);
   }
+}
+
+void RemoteRootWindowHostWin::SetEventFlags(uint32 flags) {
+  if (flags == event_flags_)
+    return;
+  event_flags_ = flags;
+  SetVirtualKeyStates(event_flags_);
 }
 
 }  // namespace aura

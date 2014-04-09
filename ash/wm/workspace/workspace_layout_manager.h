@@ -56,33 +56,43 @@ class ASH_EXPORT WorkspaceLayoutManager : public BaseLayoutManager {
                                        const void* key,
                                        intptr_t old) OVERRIDE;
 
+  // ash::WindowSettings::Observer overrides:
+  virtual void OnTrackedByWorkspaceChanged(wm::WindowState* window_state,
+                                           bool old) OVERRIDE;
+
+  // WindowStateObserver overrides:
+  virtual void OnWindowShowTypeChanged(wm::WindowState* window_state,
+                                       wm::WindowShowType old_type) OVERRIDE;
+
  private:
   // Overridden from BaseLayoutManager:
-  virtual void ShowStateChanged(aura::Window* window,
+  virtual void ShowStateChanged(wm::WindowState* window_state,
                                 ui::WindowShowState last_show_state) OVERRIDE;
   virtual void AdjustAllWindowsBoundsForWorkAreaChange(
       AdjustWindowReason reason) OVERRIDE;
   virtual void AdjustWindowBoundsForWorkAreaChange(
-      aura::Window* window,
+      wm::WindowState* window_state,
       AdjustWindowReason reason) OVERRIDE;
 
-  void AdjustWindowBoundsWhenAdded(aura::Window* window);
+  void AdjustWindowBoundsWhenAdded(wm::WindowState* window_state);
 
   void UpdateDesktopVisibility();
 
-  // Updates the bounds of the window from a show state change.
-  void UpdateBoundsFromShowState(aura::Window* window);
+  // Updates the bounds of the window for a show state change from
+  // |last_show_state|.
+  void UpdateBoundsFromShowState(wm::WindowState* window_state,
+                                 ui::WindowShowState last_show_state);
 
-  // If |window| is maximized or fullscreen the bounds of the window are set and
-  // true is returned. Does nothing otherwise.
-  bool SetMaximizedOrFullscreenBounds(aura::Window* window);
+  // If |window_state| is maximized or fullscreen the bounds of the
+  // window are set and true is returned. Does nothing otherwise.
+  bool SetMaximizedOrFullscreenBounds(wm::WindowState* window_state);
 
   internal::ShelfLayoutManager* shelf_;
   aura::Window* window_;
 
   // The work area. Cached to avoid unnecessarily moving windows during a
   // workspace switch.
-  gfx::Rect work_area_;
+  gfx::Rect work_area_in_parent_;
 
   DISALLOW_COPY_AND_ASSIGN(WorkspaceLayoutManager);
 };

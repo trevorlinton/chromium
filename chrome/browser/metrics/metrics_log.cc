@@ -13,7 +13,6 @@
 #include "base/cpu.h"
 #include "base/lazy_instance.h"
 #include "base/memory/scoped_ptr.h"
-#include "base/perftimer.h"
 #include "base/prefs/pref_registry_simple.h"
 #include "base/prefs/pref_service.h"
 #include "base/profiler/alternate_timer.h"
@@ -58,10 +57,13 @@
 
 #if defined(OS_WIN)
 #include "base/win/metro.h"
-#include "ui/base/win/dpi.h"
 
 // http://blogs.msdn.com/oldnewthing/archive/2004/10/25/247180.aspx
 extern "C" IMAGE_DOS_HEADER __ImageBase;
+#endif
+
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/login/user_manager.h"
 #endif
 
 using content::GpuDataManager;
@@ -150,8 +152,8 @@ OmniboxEventProto::PageClassification AsOmniboxEventPageClassification(
       return OmniboxEventProto::NEW_TAB_PAGE;
     case AutocompleteInput::BLANK:
       return OmniboxEventProto::BLANK;
-    case AutocompleteInput::HOMEPAGE:
-      return OmniboxEventProto::HOMEPAGE;
+    case AutocompleteInput::HOME_PAGE:
+      return OmniboxEventProto::HOME_PAGE;
     case AutocompleteInput::OTHER:
       return OmniboxEventProto::OTHER;
     case AutocompleteInput::SEARCH_RESULT_PAGE_DOING_SEARCH_TERM_REPLACEMENT:
@@ -228,6 +230,7 @@ void SetPluginInfo(const content::WebPluginInfo& plugin_info,
   plugin->set_name(UTF16ToUTF8(plugin_info.name));
   plugin->set_filename(plugin_info.path.BaseName().AsUTF8Unsafe());
   plugin->set_version(UTF16ToUTF8(plugin_info.version));
+  plugin->set_is_pepper(plugin_info.is_pepper_plugin());
   if (plugin_prefs)
     plugin->set_is_disabled(!plugin_prefs->IsPluginEnabled(plugin_info));
 }
@@ -304,8 +307,6 @@ BOOL CALLBACK GetMonitorDPICallback(HMONITOR, HDC hdc, LPRECT, LPARAM dwData) {
       GetDeviceCaps(hdc, HORZRES) / (size_x / kMillimetersPerInch) : 0;
   double dpi_y = (size_y > 0) ?
       GetDeviceCaps(hdc, VERTRES) / (size_y / kMillimetersPerInch) : 0;
-  dpi_x *= ui::win::GetUndocumentedDPIScale();
-  dpi_y *= ui::win::GetUndocumentedDPIScale();
   screen_info->max_dpi_x = std::max(dpi_x, screen_info->max_dpi_x);
   screen_info->max_dpi_y = std::max(dpi_y, screen_info->max_dpi_y);
   return TRUE;
@@ -382,29 +383,17 @@ static base::LazyInstance<std::string>::Leaky
   g_version_extension = LAZY_INSTANCE_INITIALIZER;
 
 MetricsLog::MetricsLog(const std::string& client_id, int session_id)
-    : MetricsLogBase(client_id, session_id, MetricsLog::GetVersionString()) {}
+    : MetricsLogBase(client_id, session_id, MetricsLog::GetVersionString()) {
+#if defined(OS_CHROMEOS)
+  UpdateMultiProfileUserCount();
+#endif
+}
 
 MetricsLog::~MetricsLog() {}
 
 // static
 void MetricsLog::RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterListPref(prefs::kStabilityPluginStats);
-}
-
-// static
-int64 MetricsLog::GetIncrementalUptime(PrefService* pref) {
-  base::TimeTicks now = base::TimeTicks::Now();
-  static base::TimeTicks last_updated_time(now);
-  int64 incremental_time = (now - last_updated_time).InSeconds();
-  last_updated_time = now;
-
-  if (incremental_time > 0) {
-    int64 metrics_uptime = pref->GetInt64(prefs::kUninstallMetricsUptimeSec);
-    metrics_uptime += incremental_time;
-    pref->SetInt64(prefs::kUninstallMetricsUptimeSec, metrics_uptime);
-  }
-
-  return incremental_time;
 }
 
 // static
@@ -434,14 +423,15 @@ const std::string& MetricsLog::version_extension() {
 }
 
 void MetricsLog::RecordIncrementalStabilityElements(
-    const std::vector<content::WebPluginInfo>& plugin_list) {
+    const std::vector<content::WebPluginInfo>& plugin_list,
+    base::TimeDelta incremental_uptime) {
   DCHECK(!locked());
 
   PrefService* pref = GetPrefService();
   DCHECK(pref);
 
   WriteRequiredStabilityAttributes(pref);
-  WriteRealtimeStabilityAttributes(pref);
+  WriteRealtimeStabilityAttributes(pref, incremental_uptime);
   WritePluginStabilityElements(plugin_list, pref);
 }
 
@@ -470,6 +460,7 @@ void MetricsLog::GetFieldTrialIds(
 
 void MetricsLog::WriteStabilityElement(
     const std::vector<content::WebPluginInfo>& plugin_list,
+    base::TimeDelta incremental_uptime,
     PrefService* pref) {
   DCHECK(!locked());
 
@@ -478,7 +469,7 @@ void MetricsLog::WriteStabilityElement(
   //       sent, but that's true for all the metrics.
 
   WriteRequiredStabilityAttributes(pref);
-  WriteRealtimeStabilityAttributes(pref);
+  WriteRealtimeStabilityAttributes(pref, incremental_uptime);
 
   int incomplete_shutdown_count =
       pref->GetInteger(prefs::kStabilityIncompleteSessionEndCount);
@@ -603,7 +594,9 @@ void MetricsLog::WriteRequiredStabilityAttributes(PrefService* pref) {
   stability->set_crash_count(crash_count);
 }
 
-void MetricsLog::WriteRealtimeStabilityAttributes(PrefService* pref) {
+void MetricsLog::WriteRealtimeStabilityAttributes(
+    PrefService* pref,
+    base::TimeDelta incremental_uptime) {
   // Update the stats which are critical for real-time stability monitoring.
   // Since these are "optional," only list ones that are non-zero, as the counts
   // are aggergated (summed) server side.
@@ -660,9 +653,9 @@ void MetricsLog::WriteRealtimeStabilityAttributes(PrefService* pref) {
   }
 #endif  // OS_CHROMEOS
 
-  int64 recent_duration = GetIncrementalUptime(pref);
-  if (recent_duration)
-    stability->set_uptime_sec(recent_duration);
+  const uint64 uptime_sec = incremental_uptime.InSeconds();
+  if (uptime_sec)
+    stability->set_uptime_sec(uptime_sec);
 }
 
 void MetricsLog::WritePluginList(
@@ -682,12 +675,13 @@ void MetricsLog::WritePluginList(
 }
 
 void MetricsLog::RecordEnvironment(
-         const std::vector<content::WebPluginInfo>& plugin_list,
-         const GoogleUpdateMetrics& google_update_metrics) {
+    const std::vector<content::WebPluginInfo>& plugin_list,
+    const GoogleUpdateMetrics& google_update_metrics,
+    base::TimeDelta incremental_uptime) {
   DCHECK(!locked());
 
   PrefService* pref = GetPrefService();
-  WriteStabilityElement(plugin_list, pref);
+  WriteStabilityElement(plugin_list, incremental_uptime, pref);
 
   RecordEnvironmentProto(plugin_list, google_update_metrics);
 }
@@ -802,6 +796,7 @@ void MetricsLog::RecordEnvironmentProto(
                  base::Unretained(this)));
   DCHECK(adapter_.get());
   WriteBluetoothProto(hardware);
+  UpdateMultiProfileUserCount();
 #endif
 }
 
@@ -860,13 +855,8 @@ void MetricsLog::RecordOmniboxOpenedURL(const OmniboxLog& log) {
   omnibox_event->set_current_page_classification(
       AsOmniboxEventPageClassification(log.current_page_classification));
   omnibox_event->set_input_type(AsOmniboxEventInputType(log.input_type));
-
-  // The view code to hide the top result is currently only implemented on the
-  // Mac and for views.
-#if defined(OS_MACOSX) || defined(TOOLKIT_VIEWS)
   omnibox_event->set_is_top_result_hidden_in_dropdown(
       log.result.ShouldHideTopMatch());
-#endif  // defined(OS_MACOSX) || defined(TOOLKIT_VIEWS)
 
   for (AutocompleteResult::const_iterator i(log.result.begin());
        i != log.result.end(); ++i) {
@@ -962,3 +952,21 @@ void MetricsLog::WriteBluetoothProto(
   }
 #endif  // defined(OS_CHROMEOS)
 }
+
+#if defined(OS_CHROMEOS)
+void MetricsLog::UpdateMultiProfileUserCount() {
+  if (chromeos::UserManager::IsInitialized() &&
+      chromeos::UserManager::Get()->IsMultipleProfilesAllowed()) {
+    uint32 user_count = chromeos::UserManager::Get()
+        ->GetLoggedInUsers().size();
+    SystemProfileProto* system_profile = uma_proto()->mutable_system_profile();
+
+    // We invalidate the user count if it changed while the log was open.
+    if (system_profile->has_multi_profile_user_count() &&
+        user_count != system_profile->multi_profile_user_count())
+      user_count = 0;
+
+    system_profile->set_multi_profile_user_count(user_count);
+  }
+}
+#endif

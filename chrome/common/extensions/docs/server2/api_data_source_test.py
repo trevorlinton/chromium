@@ -11,92 +11,103 @@ import unittest
 
 from api_data_source import (_JSCModel,
                              _FormatValue,
-                             _RemoveNoDocs,
-                             _DetectInlineableTypes,
-                             _InlineDocs)
+                             _GetEventByNameFromEvents)
+from branch_utility import ChannelInfo
 from collections import namedtuple
 from compiled_file_system import CompiledFileSystem
 from file_system import FileNotFoundError
+from future import Future
 from object_store_creator import ObjectStoreCreator
 from reference_resolver import ReferenceResolver
+from test_branch_utility import TestBranchUtility
 from test_data.canned_data import CANNED_TEST_FILE_SYSTEM_DATA
 from test_file_system import TestFileSystem
 import third_party.json_schema_compiler.json_parse as json_parse
 
+
 def _MakeLink(href, text):
   return '<a href="%s">%s</a>' % (href, text)
+
 
 def _GetType(dict_, name):
   for type_ in dict_['types']:
     if type_['name'] == name:
       return type_
 
-class FakeAvailabilityFinder(object):
-  AvailabilityInfo = namedtuple('AvailabilityInfo', 'channel version')
+
+class _FakeAvailabilityFinder(object):
 
   def GetApiAvailability(self, version):
-    return FakeAvailabilityFinder.AvailabilityInfo('trunk', 'trunk')
+    return ChannelInfo('stable', '396', 5)
 
-  def StringifyAvailability(self, availability):
-    return availability.channel
 
-class FakeSamplesDataSource(object):
+class _FakeSamplesDataSource(object):
+
   def Create(self, request):
     return {}
 
-class FakeAPIAndListDataSource(object):
+
+# Sad irony :(
+class _FakeAPIDataSource(object):
+
   def __init__(self, json_data):
     self._json = json_data
 
   def Create(self, *args, **kwargs):
     return self
 
-  def get(self, key):
+  def get(self, key, disable_refs=False):
     if key not in self._json:
       raise FileNotFoundError(key)
     return self._json[key]
 
-  def GetAllNames(self):
-    return self._json.keys()
 
-class FakeTemplateDataSource(object):
-  def get(self, key):
-    return 'handlebar %s' % key
+class _FakeAPIModels(object):
+
+  def __init__(self, names):
+    self._names = names
+
+  def GetNames(self):
+    return self._names
+
+
+class _FakeTemplateCache(object):
+
+  def GetFromFile(self, key):
+    return Future(value='handlebar %s' % key)
+
 
 class APIDataSourceTest(unittest.TestCase):
+
   def setUp(self):
     self._base_path = os.path.join(sys.path[0], 'test_data', 'test_json')
     self._compiled_fs_factory = CompiledFileSystem.Factory(
-        TestFileSystem(CANNED_TEST_FILE_SYSTEM_DATA),
         ObjectStoreCreator.ForTest())
-    self._json_cache = self._compiled_fs_factory.Create(
-        lambda _, json: json_parse.Parse(json),
-        APIDataSourceTest,
-        'test')
+    self._json_cache = self._compiled_fs_factory.ForJson(
+        TestFileSystem(CANNED_TEST_FILE_SYSTEM_DATA))
 
   def _ReadLocalFile(self, filename):
     with open(os.path.join(self._base_path, filename), 'r') as f:
       return f.read()
 
   def _CreateRefResolver(self, filename):
-    data_source = FakeAPIAndListDataSource(
-        self._LoadJSON(filename))
-    return ReferenceResolver.Factory(data_source,
-                                     data_source,
+    test_data = self._LoadJSON(filename)
+    return ReferenceResolver.Factory(_FakeAPIDataSource(test_data),
+                                     _FakeAPIModels(test_data),
                                      ObjectStoreCreator.ForTest()).Create()
 
   def _LoadJSON(self, filename):
     return json.loads(self._ReadLocalFile(filename))
 
   def testCreateId(self):
-    data_source = FakeAPIAndListDataSource(
-        self._LoadJSON('test_file_data_source.json'))
     dict_ = _JSCModel(self._LoadJSON('test_file.json')[0],
                       self._CreateRefResolver('test_file_data_source.json'),
                       False,
-                      FakeAvailabilityFinder(),
+                      _FakeAvailabilityFinder(),
+                      TestBranchUtility.CreateWithCannedData(),
                       self._json_cache,
-                      FakeTemplateDataSource()).ToDict()
+                      _FakeTemplateCache(),
+                      None).ToDict()
     self.assertEquals('type-TypeA', dict_['types'][0]['id'])
     self.assertEquals('property-TypeA-b',
                       dict_['types'][0]['properties'][0]['id'])
@@ -107,14 +118,14 @@ class APIDataSourceTest(unittest.TestCase):
   def DISABLED_testToDict(self):
     filename = 'test_file.json'
     expected_json = self._LoadJSON('expected_' + filename)
-    data_source = FakeAPIAndListDataSource(
-        self._LoadJSON('test_file_data_source.json'))
     dict_ = _JSCModel(self._LoadJSON(filename)[0],
                       self._CreateRefResolver('test_file_data_source.json'),
                       False,
-                      FakeAvailabilityFinder(),
+                      _FakeAvailabilityFinder(),
+                      TestBranchUtility.CreateWithCannedData(),
                       self._json_cache,
-                      FakeTemplateDataSource()).ToDict()
+                      _FakeTemplateCache(),
+                      None).ToDict()
     self.assertEquals(expected_json, dict_)
 
   def testFormatValue(self):
@@ -126,9 +137,11 @@ class APIDataSourceTest(unittest.TestCase):
     dict_ = _JSCModel(self._LoadJSON('ref_test.json')[0],
                       self._CreateRefResolver('ref_test_data_source.json'),
                       False,
-                      FakeAvailabilityFinder(),
+                      _FakeAvailabilityFinder(),
+                      TestBranchUtility.CreateWithCannedData(),
                       self._json_cache,
-                      FakeTemplateDataSource()).ToDict()
+                      _FakeTemplateCache(),
+                      None).ToDict()
     self.assertEquals(_MakeLink('ref_test.html#type-type2', 'type2'),
                       _GetType(dict_, 'type1')['description'])
     self.assertEquals(
@@ -140,18 +153,48 @@ class APIDataSourceTest(unittest.TestCase):
                       _MakeLink('ref_test.html#type-type2', 'type2')),
         _GetType(dict_, 'type3')['description'])
 
-  def testRemoveNoDocs(self):
-    d = self._LoadJSON('nodoc_test.json')
-    _RemoveNoDocs(d)
-    self.assertEquals(self._LoadJSON('expected_nodoc.json'), d)
+
+  def testGetApiAvailability(self):
+    model = _JSCModel(self._LoadJSON('test_file.json')[0],
+                      self._CreateRefResolver('test_file_data_source.json'),
+                      False,
+                      _FakeAvailabilityFinder(),
+                      TestBranchUtility.CreateWithCannedData(),
+                      self._json_cache,
+                      _FakeTemplateCache(),
+                      None)
+    # The model namespace is "tester". No predetermined availability is found,
+    # so the _FakeAvailabilityFinder instance is used to find availability.
+    self.assertEqual(ChannelInfo('stable', '396', 5),
+                     model._GetApiAvailability())
+
+    # These APIs have predetermined availabilities in the
+    # api_availabilities.json file within CANNED_DATA.
+    model._namespace.name = 'trunk_api'
+    self.assertEqual(ChannelInfo('trunk', 'trunk', 'trunk'),
+                     model._GetApiAvailability())
+
+    model._namespace.name = 'dev_api'
+    self.assertEqual(ChannelInfo('dev', '1500', 28),
+                     model._GetApiAvailability())
+
+    model._namespace.name = 'beta_api'
+    self.assertEqual(ChannelInfo('beta', '1453', 27),
+                     model._GetApiAvailability())
+
+    model._namespace.name = 'stable_api'
+    self.assertEqual(ChannelInfo('stable', '1132', 20),
+                     model._GetApiAvailability())
 
   def testGetIntroList(self):
     model = _JSCModel(self._LoadJSON('test_file.json')[0],
                       self._CreateRefResolver('test_file_data_source.json'),
                       False,
-                      FakeAvailabilityFinder(),
+                      _FakeAvailabilityFinder(),
+                      TestBranchUtility.CreateWithCannedData(),
                       self._json_cache,
-                      FakeTemplateDataSource())
+                      _FakeTemplateCache(),
+                      None)
     expected_list = [
       { 'title': 'Description',
         'content': [
@@ -160,8 +203,9 @@ class APIDataSourceTest(unittest.TestCase):
       },
       { 'title': 'Availability',
         'content': [
-          { 'partial': 'handlebar intro_tables/trunk_message.html',
-            'version': 'trunk'
+          { 'partial': 'handlebar docs/templates/private/' +
+                       'intro_tables/stable_message.html',
+            'version': 5
           }
         ]
       },
@@ -188,103 +232,55 @@ class APIDataSourceTest(unittest.TestCase):
         ]
       }
     ]
-    self.assertEquals(json.dumps(model._GetIntroTableList()),
-                      json.dumps(expected_list))
+    self.assertEquals(model._GetIntroTableList(), expected_list)
 
-  def testInlineDocs(self):
-    schema = {
-      "namespace": "storage",
-      "properties": {
-        "key2": {
-          "description": "second key",
-          "$ref": "Key"
-        },
-        "key1": {
-          "description": "first key",
-          "$ref": "Key"
-        }
-      },
-      "types": [
-        {
-          "inline_doc": True,
-          "type": "string",
-          "id": "Key",  # Should be inlined into both properties and be removed
-                        # from types.
-          "description": "This is a key.",  # This description should disappear.
-          "marker": True  # This should appear three times in the output.
-        },
-        {
-          "items": {
-            "$ref": "Key"
-          },
-          "type": "array",
-          "id": "KeyList",
-          "description": "A list of keys"
-        }
-      ]
-    }
+  def testGetEventByNameFromEvents(self):
+    events = {}
+    # Missing 'types' completely.
+    self.assertRaises(AssertionError, _GetEventByNameFromEvents, events)
 
-    expected_schema = {
-      "namespace": "storage",
-      "properties": {
-        "key2": {
-          "marker": True,
-          "type": "string",
-          "description": "second key"
-        },
-        "key1": {
-          "marker": True,
-          "type": "string",
-          "description": "first key"
-        }
-      },
-      "types": [
-        {
-          "items": {
-            "marker": True,
-            "type": "string"
-          },
-          "type": "array",
-          "id": "KeyList",
-          "description": "A list of keys"
-        }
-      ]
-    }
+    events['types'] = []
+    # No type 'Event' defined.
+    self.assertRaises(AssertionError, _GetEventByNameFromEvents, events)
 
-    inlined_schema = deepcopy(schema)
-    _InlineDocs(inlined_schema)
-    self.assertEqual(expected_schema, inlined_schema)
+    events['types'].append({ 'name': 'Event',
+                             'functions': []})
+    add_rules = { "name": "addRules" }
+    events['types'][0]['functions'].append(add_rules)
+    self.assertEqual(add_rules,
+                     _GetEventByNameFromEvents(events)['addRules'])
 
-  def testDetectInline(self):
-    schema = {
-      "types": [
-        {
-          "id": "Key",
-          "items": {
-            "$ref": "Value"
-          }
-        },
-        {
-          "id": "Value",
-          "marker": True
-        }
-      ]
-    }
+    events['types'][0]['functions'].append(add_rules)
+    # Duplicates are an error.
+    self.assertRaises(AssertionError, _GetEventByNameFromEvents, events)
 
-    expected_schema = {
-      "types": [
-        {
-          "id": "Key",
-          "items": {
-            "marker": True,
-          }
-        }
-      ]
-    }
+  def _FakeLoadAddRulesSchema(self):
+    events = self._LoadJSON('add_rules_def_test.json')
+    return _GetEventByNameFromEvents(events)
 
-    _DetectInlineableTypes(schema)
-    _InlineDocs(schema)
-    self.assertEqual(expected_schema, schema)
+  def testAddRules(self):
+    dict_ = _JSCModel(self._LoadJSON('add_rules_test.json')[0],
+                      self._CreateRefResolver('test_file_data_source.json'),
+                      False,
+                      _FakeAvailabilityFinder(),
+                      TestBranchUtility.CreateWithCannedData(),
+                      self._json_cache,
+                      _FakeTemplateCache(),
+                      self._FakeLoadAddRulesSchema).ToDict()
+    # Check that the first event has the addRulesFunction defined.
+    self.assertEquals('tester', dict_['name'])
+    self.assertEquals('rules', dict_['events'][0]['name'])
+    self.assertEquals('notable_name_to_check_for',
+                      dict_['events'][0]['byName']['addRules'][
+                          'parameters'][0]['name'])
+
+    # Check that the second event has addListener defined.
+    self.assertEquals('noRules', dict_['events'][1]['name'])
+    self.assertEquals('tester', dict_['name'])
+    self.assertEquals('noRules', dict_['events'][1]['name'])
+    self.assertEquals('callback',
+                      dict_['events'][0]['byName']['addListener'][
+                          'parameters'][0]['name'])
 
 if __name__ == '__main__':
   unittest.main()

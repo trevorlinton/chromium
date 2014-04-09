@@ -54,22 +54,27 @@ namespace app.window {
     // Y coordinate of the window. (Deprecated; use 'bounds'.)
     [nodoc] long? top;
 
-    // Minimum width for the lifetime of the window.
+    // Minimum width of the window.
     long? minWidth;
 
-    // Minimum height for the lifetime of the window.
+    // Minimum height of the window.
     long? minHeight;
 
-    // Maximum width for the lifetime of the window.
+    // Maximum width of the window.
     long? maxWidth;
 
-    // Maximum height for the lifetime of the window.
+    // Maximum height of the window.
     long? maxHeight;
 
     // Type of window to create.
     [nodoc] WindowType? type;
 
-    // Frame type: 'none' or 'chrome' (defaults to 'chrome').
+    // Frame type: <code>none</code> or <code>chrome</code> (defaults to
+    // <code>chrome</code>). For <code>none</code>, the
+    // <code>-webkit-app-region</code> CSS property can be used to apply
+    // draggability to the app's window. <code>-webkit-app-region: drag</code>
+    // can be used to mark regions draggable. <code>no-drag</code> can be used
+    // to disable this style on nested elements.
     DOMString? frame;
 
     // Size and position of the content in the window (excluding the titlebar).
@@ -98,17 +103,24 @@ namespace app.window {
     // If you do want to create multiple windows with the same id, you can
     // set this property to false.
     boolean? singleton;
+
+    // If true, the window will stay above most other windows. If there are
+    // multiple windows of this kind, the currently focused window will be in
+    // the foreground. Defaults to false. Call <code>setAlwaysOnTop()</code> on
+    // the window to change this property after creation.
+    // Currently only available on Dev channel.
+    boolean? alwaysOnTop;
   };
 
   // Called in the creating window (parent) before the load event is called in
   // the created window (child). The parent can set fields or functions on the
   // child usable from onload. E.g. background.js:<br>
-  // <code>function(created_window) { created_window.contentWindow.foo =
+  // <code>function(createdWindow) { createdWindow.contentWindow.foo =
   // function () { }; };</code>
   // <br>window.js:<br>
   // <code>window.onload = function () { foo(); }</code>
   callback CreateWindowCallback =
-      void ([instanceOf=AppWindow] object created_window);
+      void ([instanceOf=AppWindow] object createdWindow);
 
   [noinline_doc] dictionary AppWindow {
     // Focus the window.
@@ -162,10 +174,49 @@ namespace app.window {
     // Set the window's bounds.
     static void setBounds(Bounds bounds);
 
+    // Get the current minimum width of the window. Returns |undefined| if there
+    // is no minimum.
+    [nocompile] static long getMinWidth();
+
+    // Get the current minimum height of the window. Returns |undefined| if
+    // there is no minimum.
+    [nocompile] static long getMinHeight();
+
+    // Get the current maximum width of the window. Returns |undefined| if there
+    // is no maximum.
+    [nocompile] static long getMaxWidth();
+
+    // Get the current maximum height of the window. Returns |undefined| if
+    // there is no maximum.
+    [nocompile] static long getMaxHeight();
+
+    // Set the current minimum width of the window. Set to |null| to remove the
+    // constraint.
+    static void setMinWidth(optional long minWidth);
+
+    // Set the current minimum height of the window. Set to |null| to remove the
+    // constraint.
+    static void setMinHeight(optional long minHeight);
+
+    // Set the current maximum width of the window. Set to |null| to remove the
+    // constraint.
+    static void setMaxWidth(optional long maxWidth);
+
+    // Set the current maximum height of the window. Set to |null| to remove the
+    // constraint.
+    static void setMaxHeight(optional long maxHeight);
+
     // Set the app icon for the window (experimental).
     // Currently this is only being implemented on Ash.
     // TODO(stevenjb): Investigate implementing this on Windows and OSX.
-    [nodoc] static void setIcon(DOMString icon_url);
+    [nodoc] static void setIcon(DOMString iconUrl);
+
+    // Is the window always on top?
+    static boolean isAlwaysOnTop();
+
+    // Set whether the window should stay above most other windows.
+    // Currently only available on Dev channel.
+    static void setAlwaysOnTop(boolean alwaysOnTop);
 
     // The JavaScript 'window' object for the created child.
     [instanceOf=Window] object contentWindow;

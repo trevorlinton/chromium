@@ -6,7 +6,7 @@
 
 // This file requires these functions to be defined globally by someone else:
 // function handleMessage(peerConnection, message)
-// function createPeerConnection(stun_server, enableLogging)
+// function createPeerConnection(stun_server, useRtpDataChannel)
 // function setupCall(peerConnection)
 // function answerCall(peerConnection, message)
 
@@ -73,7 +73,13 @@ var gDtmfSender = null;
  */
 var STUN_SERVER = 'stun.l.google.com:19302';
 
-// Public interface to PyAuto test.
+/**
+ * If true, any created peer connection will use RTP data
+ * channels. Otherwise it will use SCTP data channels.
+ */
+var gUseRtpDataChannels = true;
+
+// Public interface to tests.
 
 
 /**
@@ -112,14 +118,22 @@ function remotePeerIsConnected() {
 }
 
 /**
+ * Set if RTP data channels should be used for peerconnections.
+ * @param{boolean} useRtpDataChannel
+ */
+function useRtpDataChannelsForNewPeerConnections(useRtpDataChannels) {
+  gUseRtpDataChannels = useRtpDataChannels;
+}
+
+/**
  * Creates a peer connection. Must be called before most other public functions
  * in this file.
  */
-function preparePeerConnection(enableLogging) {
+function preparePeerConnection() {
   if (gPeerConnection != null)
     throw failTest('creating peer connection, but we already have one.');
 
-  gPeerConnection = createPeerConnection(STUN_SERVER, enableLogging);
+  gPeerConnection = createPeerConnection(STUN_SERVER, gUseRtpDataChannels);
   returnToTest('ok-peerconnection-created');
 }
 
@@ -162,7 +176,7 @@ function addLocalStream() {
 }
 
 /**
- * Loads a file with WebAudio and plays it through the peer connection.
+ * Loads a file with WebAudio and connects it to the peer connection.
  *
  * The loadAudioAndAddToPeerConnection will return ok-added to the test when
  * the sound is loaded and added to the peer connection. The sound will start
@@ -178,6 +192,26 @@ function addAudioFile(url) {
     throw failTest('adding audio file, but we have no peer connection.');
 
   loadAudioAndAddToPeerConnection(url, gPeerConnection);
+}
+
+/**
+ * Mixes the local audio stream with an audio file through WebAudio.
+ *
+ * You must have successfully requested access to the user's microphone through
+ * getUserMedia before calling this function (see getUserMedia.js).
+ * Additionally, you must have loaded an audio file to mix with.
+ *
+ * When playAudioFile is called, WebAudio will effectively mix the user's
+ * microphone input with the previously loaded file and feed that into the
+ * peer connection.
+ */
+function mixLocalStreamWithPreviouslyLoadedAudioFile() {
+  if (gPeerConnection == null)
+    throw failTest('trying to mix in stream, but we have no peer connection.');
+  if (getLocalStream() == null)
+    throw failTest('trying to mix in stream, but we have no stream to mix in.');
+
+  mixLocalStreamIntoPeerConnection(gPeerConnection, getLocalStream());
 }
 
 /**
@@ -533,7 +567,7 @@ function handlePeerMessage_(peerId, message) {
     // The other side is calling us.
     debug('We are being called: answer...');
 
-    gPeerConnection = createPeerConnection(STUN_SERVER, false);
+    gPeerConnection = createPeerConnection(STUN_SERVER, gUseRtpDataChannels);
     if (gAutoAddLocalToPeerConnectionStreamWhenCalled &&
         obtainGetUserMediaResult() == 'ok-got-stream') {
       debug('We have a local stream, so hook it up automatically.');

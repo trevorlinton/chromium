@@ -5,17 +5,14 @@
 #include "content/browser/renderer_host/image_transport_factory_android.h"
 
 #include "base/lazy_instance.h"
-#include "base/memory/singleton.h"
 #include "base/strings/stringprintf.h"
 #include "content/browser/gpu/browser_gpu_channel_host_factory.h"
-#include "content/browser/renderer_host/compositor_impl_android.h"
 #include "content/common/gpu/client/gl_helper.h"
 #include "content/common/gpu/client/webgraphicscontext3d_command_buffer_impl.h"
 #include "content/common/gpu/gpu_process_launch_causes.h"
 #include "third_party/WebKit/public/platform/WebGraphicsContext3D.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "ui/gfx/android/device_display_info.h"
-#include "webkit/common/gpu/webgraphicscontext3d_in_process_command_buffer_impl.h"
 
 namespace content {
 
@@ -33,52 +30,7 @@ class GLContextLostListener
 
 namespace {
 
-using webkit::gpu::WebGraphicsContext3DInProcessCommandBufferImpl;
-
 static ImageTransportFactoryAndroid* g_factory = NULL;
-
-class DirectGLImageTransportFactory : public ImageTransportFactoryAndroid {
- public:
-  DirectGLImageTransportFactory();
-  virtual ~DirectGLImageTransportFactory();
-
-  virtual uint32_t InsertSyncPoint() OVERRIDE { return 0; }
-  virtual void WaitSyncPoint(uint32_t sync_point) OVERRIDE {}
-  virtual uint32_t CreateTexture() OVERRIDE {
-    return context_->createTexture();
-  }
-  virtual void DeleteTexture(uint32_t id) OVERRIDE {
-    context_->deleteTexture(id);
-  }
-  virtual void AcquireTexture(
-      uint32 texture_id, const signed char* mailbox_name) OVERRIDE {}
-  virtual WebKit::WebGraphicsContext3D* GetContext3D() OVERRIDE {
-    return context_.get();
-  }
-  virtual GLHelper* GetGLHelper() OVERRIDE { return NULL; }
-
- private:
-  scoped_ptr<WebKit::WebGraphicsContext3D> context_;
-
-  DISALLOW_COPY_AND_ASSIGN(DirectGLImageTransportFactory);
-};
-
-DirectGLImageTransportFactory::DirectGLImageTransportFactory() {
-  WebKit::WebGraphicsContext3D::Attributes attrs;
-  attrs.shareResources = true;
-  attrs.noAutomaticFlushes = true;
-  context_ = webkit::gpu::WebGraphicsContext3DInProcessCommandBufferImpl::
-      CreateViewContext(attrs, NULL);
-  context_->setContextLostCallback(context_lost_listener_.get());
-  if (context_->makeContextCurrent())
-    context_->pushGroupMarkerEXT(
-        base::StringPrintf("DirectGLImageTransportFactory-%p",
-                           context_.get()).c_str());
-}
-
-DirectGLImageTransportFactory::~DirectGLImageTransportFactory() {
-  context_->setContextLostCallback(NULL);
-}
 
 class CmdBufferImageTransportFactory : public ImageTransportFactoryAndroid {
  public:
@@ -104,32 +56,38 @@ class CmdBufferImageTransportFactory : public ImageTransportFactoryAndroid {
 };
 
 CmdBufferImageTransportFactory::CmdBufferImageTransportFactory() {
+  BrowserGpuChannelHostFactory* factory =
+      BrowserGpuChannelHostFactory::instance();
+  scoped_refptr<GpuChannelHost> gpu_channel_host(factory->EstablishGpuChannelSync(
+      CAUSE_FOR_GPU_LAUNCH_WEBGRAPHICSCONTEXT3DCOMMANDBUFFERIMPL_INITIALIZE));
+  DCHECK(gpu_channel_host);
+
   WebKit::WebGraphicsContext3D::Attributes attrs;
   attrs.shareResources = true;
-  GpuChannelHostFactory* factory = BrowserGpuChannelHostFactory::instance();
   GURL url("chrome://gpu/ImageTransportFactoryAndroid");
   base::WeakPtr<WebGraphicsContext3DSwapBuffersClient> swap_client;
-  context_.reset(new WebGraphicsContext3DCommandBufferImpl(0, // offscreen
-                                                           url,
-                                                           factory,
-                                                           swap_client));
   static const size_t kBytesPerPixel = 4;
   gfx::DeviceDisplayInfo display_info;
-  size_t full_screen_texture_size_in_bytes =
-      display_info.GetDisplayHeight() *
-      display_info.GetDisplayWidth() *
-      kBytesPerPixel;
+  size_t full_screen_texture_size_in_bytes = display_info.GetDisplayHeight() *
+                                             display_info.GetDisplayWidth() *
+                                             kBytesPerPixel;
+  WebGraphicsContext3DCommandBufferImpl::SharedMemoryLimits limits;
+  limits.command_buffer_size = 64 * 1024;
+  limits.start_transfer_buffer_size = 64 * 1024;
+  limits.min_transfer_buffer_size = 64 * 1024;
+  limits.max_transfer_buffer_size = std::min(
+      3 * full_screen_texture_size_in_bytes, kDefaultMaxTransferBufferSize);
+  limits.mapped_memory_reclaim_limit =
+      WebGraphicsContext3DCommandBufferImpl::kNoLimit;
+  context_.reset(
+      new WebGraphicsContext3DCommandBufferImpl(0,  // offscreen
+                                                url,
+                                                gpu_channel_host.get(),
+                                                swap_client,
+                                                attrs,
+                                                false,
+                                                limits));
   context_->setContextLostCallback(context_lost_listener_.get());
-  context_->Initialize(
-      attrs,
-      false,
-      CAUSE_FOR_GPU_LAUNCH_WEBGRAPHICSCONTEXT3DCOMMANDBUFFERIMPL_INITIALIZE,
-      64 * 1024,  // command buffer size
-      64 * 1024,  // starting buffer size
-      64 * 1024,  // min buffer size
-      std::min(3 * full_screen_texture_size_in_bytes,
-               kDefaultMaxTransferBufferSize));
-
   if (context_->makeContextCurrent())
     context_->pushGroupMarkerEXT(
         base::StringPrintf("CmdBufferImageTransportFactory-%p",
@@ -185,7 +143,8 @@ void CmdBufferImageTransportFactory::AcquireTexture(
 
 GLHelper* CmdBufferImageTransportFactory::GetGLHelper() {
   if (!gl_helper_)
-    gl_helper_.reset(new GLHelper(context_.get()));
+    gl_helper_.reset(new GLHelper(context_.get(),
+                                  context_->GetContextSupport()));
 
   return gl_helper_.get();
 }
@@ -194,12 +153,8 @@ GLHelper* CmdBufferImageTransportFactory::GetGLHelper() {
 
 // static
 ImageTransportFactoryAndroid* ImageTransportFactoryAndroid::GetInstance() {
-  if (!g_factory) {
-    if (CompositorImpl::UsesDirectGL())
-      g_factory = new DirectGLImageTransportFactory();
-    else
-      g_factory = new CmdBufferImageTransportFactory();
-  }
+  if (!g_factory)
+    g_factory = new CmdBufferImageTransportFactory();
 
   return g_factory;
 }

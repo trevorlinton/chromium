@@ -16,6 +16,7 @@
 namespace base {
 class FilePath;
 class SequencedTaskRunner;
+class Time;
 }  // namespace base
 
 namespace google_apis {
@@ -54,20 +55,15 @@ class CopyOperation {
   ~CopyOperation();
 
   // Performs the copy operation on the file at drive path |src_file_path|
-  // with a target of |dest_file_path|. Invokes |callback| when finished with
-  // the result of the operation. |callback| must not be null.
+  // with a target of |dest_file_path|.
+  // If |preserve_last_modified| is set to true, this tries to preserve
+  // last modified time stamp. This is supported only on Drive API v2.
+  // Invokes |callback| when finished with the result of the operation.
+  // |callback| must not be null.
   void Copy(const base::FilePath& src_file_path,
             const base::FilePath& dest_file_path,
+            bool preserve_last_modified,
             const FileOperationCallback& callback);
-
-  // Initiates transfer of |remote_src_file_path| to |local_dest_file_path|.
-  // |remote_src_file_path| is the virtual source path on the Drive file system.
-  // |local_dest_file_path| is the destination path on the local file system.
-  //
-  // |callback| must not be null.
-  void TransferFileFromRemoteToLocal(const base::FilePath& remote_src_file_path,
-                                     const base::FilePath& local_dest_file_path,
-                                     const FileOperationCallback& callback);
 
   // Initiates transfer of |local_src_file_path| to |remote_dest_file_path|.
   // |local_src_file_path| must be a file from the local file system.
@@ -81,110 +77,115 @@ class CopyOperation {
       const FileOperationCallback& callback);
 
  private:
-  // Stores |local_file_path| in cache and mark as dirty so that SyncClient will
-  // upload the content to |remote_dest_file_path|.
-  void ScheduleTransferRegularFile(const base::FilePath& local_file_path,
-                                   const base::FilePath& remote_dest_file_path,
-                                   const FileOperationCallback& callback);
-  void ScheduleTransferRegularFileAfterCreate(
-      const base::FilePath& local_file_path,
-      const base::FilePath& remote_dest_file_path,
-      const FileOperationCallback& callback,
-      FileError error);
-  void ScheduleTransferRegularFileAfterGetResourceEntry(
-      const base::FilePath& local_file_path,
-      const FileOperationCallback& callback,
-      FileError error,
-      scoped_ptr<ResourceEntry> entry);
-  void ScheduleTransferRegularFileAfterStore(
-      scoped_ptr<ResourceEntry> entry,
-      const FileOperationCallback& callback,
-      FileError error);
+  // Params for Copy().
+  struct CopyParams;
 
-  // Invoked upon completion of GetFileByPath initiated by
-  // TransferFileFromRemoteToLocal. If GetFileByPath reports no error, calls
-  // CopyLocalFileOnBlockingPool to copy |local_file_path| to
-  // |local_dest_file_path|.
-  void OnGetFileCompleteForTransferFile(
-      const base::FilePath& local_dest_file_path,
-      const FileOperationCallback& callback,
-      FileError error,
-      const base::FilePath& local_file_path,
-      scoped_ptr<ResourceEntry> entry);
+  // Part of Copy(). Called after prepartion is done.
+  void CopyAfterPrepare(const CopyParams& params,
+                        ResourceEntry* src_entry,
+                        std::string* parent_resource_id,
+                        FileError error);
 
-  // Copies a hosted document with |resource_id| to the directory at |dir_path|
-  // and names the copied document as |new_name|.
-  void CopyHostedDocumentToDirectory(const base::FilePath& dir_path,
-                                     const std::string& resource_id,
-                                     const base::FilePath::StringType& new_name,
-                                     const FileOperationCallback& callback);
+  // Part of Copy(). Called after the file content is downloaded.
+  void CopyAfterDownload(const base::FilePath& dest_file_path,
+                         const FileOperationCallback& callback,
+                         FileError error,
+                         const base::FilePath& local_file_path,
+                         scoped_ptr<ResourceEntry> entry);
 
-  // Callback for handling document copy attempt.
-  void OnCopyHostedDocumentCompleted(
-      const base::FilePath& dir_path,
-      const FileOperationCallback& callback,
-      google_apis::GDataErrorCode status,
-      scoped_ptr<google_apis::ResourceEntry> resource_entry);
-
-  // Moves a file or directory at |file_path| in the root directory to
-  // another directory at |dir_path|. This function does nothing if
-  // |dir_path| points to the root directory.
-  void MoveEntryFromRootDirectory(const base::FilePath& directory_path,
-                                  const FileOperationCallback& callback,
-                                  FileError error,
-                                  const base::FilePath& file_path);
-
-  // Part of Copy(). Called after GetResourceEntryPairByPaths() is complete.
-  void CopyAfterGetResourceEntryPair(const base::FilePath& dest_file_path,
-                                     const FileOperationCallback& callback,
-                                     scoped_ptr<EntryInfoPairResult> result);
-
-  // Callback for handling resource copy on the server.
-  // |callback| must not be null.
-  void OnCopyResourceCompleted(
-      const FileOperationCallback& callback,
-      google_apis::GDataErrorCode status,
-      scoped_ptr<google_apis::ResourceEntry> resource_entry);
-
-  // Invoked upon completion of GetFileByPath initiated by Copy. If
-  // GetFileByPath reports no error, calls TransferRegularFile to transfer
-  // |local_file_path| to |remote_dest_file_path|.
-  void OnGetFileCompleteForCopy(const base::FilePath& remote_dest_file_path,
-                                const FileOperationCallback& callback,
-                                FileError error,
-                                const base::FilePath& local_file_path,
-                                scoped_ptr<ResourceEntry> entry);
-
-  // Part of TransferFileFromLocalToRemote(). Called after |parent_entry| and
-  // |local_file_size| are retrieved in the blocking pool.
+  // Part of TransferFileFromLocalToRemote(). Called after preparation is done.
+  // |gdoc_resource_id| and |parent_resource_id| is available only if the file
+  // is JSON GDoc file.
   void TransferFileFromLocalToRemoteAfterPrepare(
-      const base::FilePath& local_src_file_path,
-      const base::FilePath& remote_dest_file_path,
+      const base::FilePath& local_src_path,
+      const base::FilePath& remote_dest_path,
       const FileOperationCallback& callback,
-      int64* local_file_size,
-      ResourceEntry* parent_entry,
+      std::string* gdoc_resource_id,
+      std::string* parent_resource_id,
       FileError error);
 
-  // Part of TransferFileFromLocalToRemote(). Called after the result of
-  // GetAboutResource() is avaiable.
-  void TransferFileFromLocalToRemoteAfterGetQuota(
-      const base::FilePath& local_src_file_path,
-      const base::FilePath& remote_dest_file_path,
+  // Copies resource with |resource_id| into the directory |parent_resource_id|
+  // with renaming it to |new_title|.
+  void CopyResourceOnServer(const std::string& resource_id,
+                            const std::string& parent_resource_id,
+                            const std::string& new_title,
+                            const base::Time& last_modified,
+                            const FileOperationCallback& callback);
+
+  // Part of CopyResourceOnServer. Called after server side copy is done.
+  void CopyResourceOnServerAfterServerSideCopy(
+      const FileOperationCallback& callback,
+      google_apis::GDataErrorCode status,
+      scoped_ptr<google_apis::ResourceEntry> resource_entry);
+
+  // Part of CopyResourceOnServer. Called after local state update is done.
+  void CopyResourceOnServerAfterUpdateLocalState(
+      const FileOperationCallback& callback,
+      base::FilePath* file_path,
+      FileError error);
+
+  // Creates an empty file on the server at |remote_dest_path| to ensure
+  // the location, stores a file at |local_file_path| in cache and marks it
+  // dirty, so that SyncClient will upload the data later.
+  void ScheduleTransferRegularFile(const base::FilePath& local_src_path,
+                                   const base::FilePath& remote_dest_path,
+                                   const FileOperationCallback& callback);
+
+  // Part of ScheduleTransferRegularFile(). Called after GetFileSize() is
+  // completed.
+  void ScheduleTransferRegularFileAfterGetFileSize(
+      const base::FilePath& local_src_path,
+      const base::FilePath& remote_dest_path,
+      const FileOperationCallback& callback,
+      int64 local_file_size);
+
+  // Part of ScheduleTransferRegularFile(). Called after GetAboutResource()
+  // is completed.
+  void ScheduleTransferRegularFileAfterGetAboutResource(
+      const base::FilePath& local_src_path,
+      const base::FilePath& remote_dest_path,
       const FileOperationCallback& callback,
       int64 local_file_size,
       google_apis::GDataErrorCode status,
       scoped_ptr<google_apis::AboutResource> about_resource);
 
-  // Initiates transfer of |local_file_path| with |resource_id| to
-  // |remote_dest_file_path|. |local_file_path| must be a file from the local
-  // file system, |remote_dest_file_path| is the virtual destination path within
-  // Drive file system. If |resource_id| is a non-empty string, the transfer is
-  // handled by CopyDocumentToDirectory. Otherwise, the transfer is handled by
-  // TransferRegularFile.
-  void TransferFileForResourceId(const base::FilePath& local_file_path,
-                                 const base::FilePath& remote_dest_file_path,
-                                 const FileOperationCallback& callback,
-                                 const std::string& resource_id);
+  // Part of ScheduleTransferRegularFile(). Called after file creation.
+  void ScheduleTransferRegularFileAfterCreate(
+      const base::FilePath& local_src_path,
+      const base::FilePath& remote_dest_path,
+      const FileOperationCallback& callback,
+      FileError error);
+
+  // Part of ScheduleTransferRegularFile(). Called after updating local state
+  // is completed.
+  void ScheduleTransferRegularFileAfterUpdateLocalState(
+      const FileOperationCallback& callback,
+      std::string* local_id,
+      FileError error);
+
+  // Copies the hosted document with |resource_id| to the |dest_path|.
+  // This method is designed based on GData WAPI. It cannot create a copy in
+  // any directory but my drive root. So, this method creates the copy at
+  // my drive root first, then move it into the destination directory.
+  // For Drive API v2, this should work, but CopyResourceOnServer should work
+  // more efficiently.
+  void CopyHostedDocument(const std::string& resource_id,
+                          const base::FilePath& dest_path,
+                          const FileOperationCallback& callback);
+
+  // Part of CopyHostedDocument(). Called after server side copy is done.
+  void CopyHostedDocumentAfterServerSideCopy(
+      const base::FilePath& dest_path,
+      const FileOperationCallback& callback,
+      google_apis::GDataErrorCode status,
+      scoped_ptr<google_apis::ResourceEntry> resource_entry);
+
+  // Part of CopyHostedDocument(). Called after the local metadata is updated.
+  void CopyHostedDocumentAfterUpdateLocalState(
+      const base::FilePath& dest_path,
+      const FileOperationCallback& callback,
+      base::FilePath* file_path,
+      FileError error);
 
   scoped_refptr<base::SequencedTaskRunner> blocking_task_runner_;
   OperationObserver* observer_;

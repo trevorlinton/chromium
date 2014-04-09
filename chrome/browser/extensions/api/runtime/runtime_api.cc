@@ -16,13 +16,13 @@
 #include "chrome/browser/extensions/extension_process_manager.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_system.h"
-#include "chrome/browser/extensions/lazy_background_task_queue.h"
 #include "chrome/browser/extensions/updater/extension_updater.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/common/extensions/api/runtime.h"
 #include "chrome/common/extensions/background_info.h"
 #include "chrome/common/extensions/extension.h"
 #include "chrome/common/omaha_query_params/omaha_query_params.h"
@@ -30,22 +30,25 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
+#include "extensions/browser/lazy_background_task_queue.h"
 #include "extensions/common/error_utils.h"
 #include "url/gurl.h"
 #include "webkit/browser/fileapi/isolated_context.h"
+
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/login/user_manager.h"
+#include "chromeos/dbus/dbus_thread_manager.h"
+#include "chromeos/dbus/power_manager_client.h"
+#endif
 
 namespace GetPlatformInfo = extensions::api::runtime::GetPlatformInfo;
 
 namespace extensions {
 
+namespace runtime = api::runtime;
+
 namespace {
 
-const char kOnStartupEvent[] = "runtime.onStartup";
-const char kOnInstalledEvent[] = "runtime.onInstalled";
-const char kOnUpdateAvailableEvent[] = "runtime.onUpdateAvailable";
-const char kOnBrowserUpdateAvailableEvent[] =
-    "runtime.onBrowserUpdateAvailable";
-const char kOnRestartRequiredEvent[] = "runtime.onRestartRequired";
 const char kNoBackgroundPageError[] = "You do not have a background page.";
 const char kPageLoadError[] = "Background page failed to load.";
 const char kInstallReason[] = "reason";
@@ -105,7 +108,8 @@ static void DispatchOnStartupEventImpl(
   }
 
   scoped_ptr<base::ListValue> event_args(new base::ListValue());
-  scoped_ptr<Event> event(new Event(kOnStartupEvent, event_args.Pass()));
+  scoped_ptr<Event> event(new Event(runtime::OnStartup::kEventName,
+                                    event_args.Pass()));
   system->event_router()->DispatchEventToExtension(extension_id, event.Pass());
 }
 
@@ -114,7 +118,7 @@ void SetUninstallUrl(ExtensionPrefs* prefs,
                      const std::string& url_string) {
   prefs->UpdateExtensionPref(extension_id,
                              kUninstallUrl,
-                             base::Value::CreateStringValue(url_string));
+                             new base::StringValue(url_string));
 }
 
 std::string GetUninstallUrl(ExtensionPrefs* prefs,
@@ -154,7 +158,8 @@ void RuntimeEventRouter::DispatchOnInstalledEvent(
     info->SetString(kInstallReason, kInstallReasonInstall);
   }
   DCHECK(system->event_router());
-  scoped_ptr<Event> event(new Event(kOnInstalledEvent, event_args.Pass()));
+  scoped_ptr<Event> event(new Event(runtime::OnInstalled::kEventName,
+                                    event_args.Pass()));
   system->event_router()->DispatchEventWithLazyListener(extension_id,
                                                         event.Pass());
 }
@@ -171,7 +176,8 @@ void RuntimeEventRouter::DispatchOnUpdateAvailableEvent(
   scoped_ptr<base::ListValue> args(new base::ListValue);
   args->Append(manifest->DeepCopy());
   DCHECK(system->event_router());
-  scoped_ptr<Event> event(new Event(kOnUpdateAvailableEvent, args.Pass()));
+  scoped_ptr<Event> event(new Event(runtime::OnUpdateAvailable::kEventName,
+                                    args.Pass()));
   system->event_router()->DispatchEventToExtension(extension_id, event.Pass());
 }
 
@@ -184,8 +190,8 @@ void RuntimeEventRouter::DispatchOnBrowserUpdateAvailableEvent(
 
   scoped_ptr<base::ListValue> args(new base::ListValue);
   DCHECK(system->event_router());
-  scoped_ptr<Event> event(new Event(kOnBrowserUpdateAvailableEvent,
-                                    args.Pass()));
+  scoped_ptr<Event> event(new Event(
+      runtime::OnBrowserUpdateAvailable::kEventName, args.Pass()));
   system->event_router()->BroadcastEvent(event.Pass());
 }
 
@@ -199,7 +205,7 @@ void RuntimeEventRouter::DispatchOnRestartRequiredEvent(
     return;
 
   scoped_ptr<Event> event(
-      new Event(kOnRestartRequiredEvent,
+      new Event(runtime::OnRestartRequired::kEventName,
                 api::runtime::OnRestartRequired::Create(reason)));
 
   DCHECK(system->event_router());
@@ -232,14 +238,15 @@ void RuntimeEventRouter::OnExtensionUninstalled(
 }
 
 bool RuntimeGetBackgroundPageFunction::RunImpl() {
-  ExtensionSystem* system = ExtensionSystem::Get(profile());
+  ExtensionSystem* system = ExtensionSystem::Get(GetProfile());
   ExtensionHost* host = system->process_manager()->
       GetBackgroundHostForExtension(extension_id());
-  if (system->lazy_background_task_queue()->ShouldEnqueueTask(
-          profile(), GetExtension())) {
+  if (system->lazy_background_task_queue()->ShouldEnqueueTask(GetProfile(),
+                                                              GetExtension())) {
     system->lazy_background_task_queue()->AddPendingTask(
-       profile(), extension_id(),
-       base::Bind(&RuntimeGetBackgroundPageFunction::OnPageLoaded, this));
+        GetProfile(),
+        extension_id(),
+        base::Bind(&RuntimeGetBackgroundPageFunction::OnPageLoaded, this));
   } else if (host) {
     OnPageLoaded(host);
   } else {
@@ -269,7 +276,8 @@ bool RuntimeSetUninstallUrlFunction::RunImpl() {
     return false;
   }
 
-  SetUninstallUrl(ExtensionPrefs::Get(profile()), extension_id(), url_string);
+  SetUninstallUrl(
+      ExtensionPrefs::Get(GetProfile()), extension_id(), url_string);
   return true;
 }
 
@@ -277,9 +285,10 @@ bool RuntimeReloadFunction::RunImpl() {
   // We can't call ReloadExtension directly, since when this method finishes
   // it tries to decrease the reference count for the extension, which fails
   // if the extension has already been reloaded; so instead we post a task.
-  base::MessageLoop::current()->PostTask(FROM_HERE,
+  base::MessageLoop::current()->PostTask(
+      FROM_HERE,
       base::Bind(&ExtensionService::ReloadExtension,
-                 profile()->GetExtensionService()->AsWeakPtr(),
+                 GetProfile()->GetExtensionService()->AsWeakPtr(),
                  extension_id()));
   return true;
 }
@@ -290,7 +299,7 @@ RuntimeRequestUpdateCheckFunction::RuntimeRequestUpdateCheckFunction() {
 }
 
 bool RuntimeRequestUpdateCheckFunction::RunImpl() {
-  ExtensionSystem* system = ExtensionSystem::Get(profile());
+  ExtensionSystem* system = ExtensionSystem::Get(GetProfile());
   ExtensionService* service = system->extension_service();
   ExtensionUpdater* updater = service->updater();
   if (!updater) {
@@ -318,7 +327,7 @@ void RuntimeRequestUpdateCheckFunction::CheckComplete() {
   // that no update is found, but a previous update check might have already
   // queued up an update, so check for that here to make sure we return the
   // right value.
-  ExtensionSystem* system = ExtensionSystem::Get(profile());
+  ExtensionSystem* system = ExtensionSystem::Get(GetProfile());
   ExtensionService* service = system->extension_service();
   const Extension* update = service->GetPendingExtensionUpdate(extension_id());
   if (update) {
@@ -354,6 +363,19 @@ void RuntimeRequestUpdateCheckFunction::ReplyUpdateFound(
   results_->Append(details);
   details->SetString("version", version);
   SendResponse(true);
+}
+
+bool RuntimeRestartFunction::RunImpl() {
+#if defined(OS_CHROMEOS)
+  if (chromeos::UserManager::Get()->IsLoggedInAsKioskApp()) {
+    chromeos::DBusThreadManager::Get()
+        ->GetPowerManagerClient()
+        ->RequestRestart();
+    return true;
+  }
+#endif
+  SetError("Function available only for ChromeOS kiosk mode.");
+  return false;
 }
 
 bool RuntimeGetPlatformInfoFunction::RunImpl() {

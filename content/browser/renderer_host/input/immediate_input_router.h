@@ -10,9 +10,15 @@
 #include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
+#include "content/browser/renderer_host/input/gesture_event_filter.h"
 #include "content/browser/renderer_host/input/input_router.h"
 #include "content/browser/renderer_host/input/touch_event_queue.h"
+#include "content/browser/renderer_host/input/touchpad_tap_suppression_controller.h"
 #include "content/public/browser/native_web_keyboard_event.h"
+
+namespace IPC {
+class Sender;
+}
 
 namespace ui {
 struct LatencyInfo;
@@ -20,78 +26,95 @@ struct LatencyInfo;
 
 namespace content {
 
-class GestureEventFilter;
+class InputAckHandler;
 class InputRouterClient;
-class RenderProcessHost;
+class OverscrollController;
 class RenderWidgetHostImpl;
 
 // A default implementation for browser input event routing. Input commands are
 // forwarded to the renderer immediately upon receipt.
 class CONTENT_EXPORT ImmediateInputRouter
     : public NON_EXPORTED_BASE(InputRouter),
-      public NON_EXPORTED_BASE(TouchEventQueueClient) {
+      public NON_EXPORTED_BASE(GestureEventFilterClient),
+      public NON_EXPORTED_BASE(TouchEventQueueClient),
+      public NON_EXPORTED_BASE(TouchpadTapSuppressionControllerClient) {
  public:
-  ImmediateInputRouter(RenderProcessHost* process,
+  ImmediateInputRouter(IPC::Sender* sender,
                        InputRouterClient* client,
+                       InputAckHandler* ack_handler,
                        int routing_id);
   virtual ~ImmediateInputRouter();
 
   // InputRouter
-  virtual bool SendInput(IPC::Message* message) OVERRIDE;
+  virtual void Flush() OVERRIDE;
+  virtual bool SendInput(scoped_ptr<IPC::Message> message) OVERRIDE;
   virtual void SendMouseEvent(
       const MouseEventWithLatencyInfo& mouse_event) OVERRIDE;
   virtual void SendWheelEvent(
       const MouseWheelEventWithLatencyInfo& wheel_event) OVERRIDE;
   virtual void SendKeyboardEvent(
       const NativeWebKeyboardEvent& key_event,
-      const ui::LatencyInfo& latency_info) OVERRIDE;
+      const ui::LatencyInfo& latency_info,
+      bool is_keyboard_shortcut) OVERRIDE;
   virtual void SendGestureEvent(
       const GestureEventWithLatencyInfo& gesture_event) OVERRIDE;
   virtual void SendTouchEvent(
       const TouchEventWithLatencyInfo& touch_event) OVERRIDE;
-  virtual void SendMouseEventImmediately(
-      const MouseEventWithLatencyInfo& mouse_event) OVERRIDE;
-  virtual void SendTouchEventImmediately(
-      const TouchEventWithLatencyInfo& touch_event) OVERRIDE;
-  virtual void SendGestureEventImmediately(
-      const GestureEventWithLatencyInfo& gesture_event) OVERRIDE;
   virtual const NativeWebKeyboardEvent* GetLastKeyboardEvent() const OVERRIDE;
   virtual bool ShouldForwardTouchEvent() const OVERRIDE;
-  virtual bool ShouldForwardGestureEvent(
-      const GestureEventWithLatencyInfo& gesture_event) const OVERRIDE;
-  virtual bool HasQueuedGestureEvents() const OVERRIDE;
 
   // IPC::Listener
   virtual bool OnMessageReceived(const IPC::Message& message) OVERRIDE;
 
-  GestureEventFilter* gesture_event_filter() {
-    return gesture_event_filter_.get();
-  }
-
-  TouchEventQueue* touch_event_queue() {
-    return touch_event_queue_.get();
-  }
-
 private:
+  friend class ImmediateInputRouterTest;
+  friend class MockRenderWidgetHost;
+
+  // TouchpadTapSuppressionControllerClient
+  virtual void SendMouseEventImmediately(
+      const MouseEventWithLatencyInfo& mouse_event) OVERRIDE;
+
   // TouchEventQueueClient
+  virtual void SendTouchEventImmediately(
+      const TouchEventWithLatencyInfo& touch_event) OVERRIDE;
   virtual void OnTouchEventAck(const TouchEventWithLatencyInfo& event,
                                InputEventAckState ack_result) OVERRIDE;
 
-  bool SendMoveCaret(IPC::Message* message);
-  bool SendSelectRange(IPC::Message* message);
+  // GetureEventFilterClient
+  virtual void SendGestureEventImmediately(
+      const GestureEventWithLatencyInfo& gesture_event) OVERRIDE;
+  virtual void OnGestureEventAck(const GestureEventWithLatencyInfo& event,
+                                 InputEventAckState ack_result) OVERRIDE;
+
+  bool SendMoveCaret(scoped_ptr<IPC::Message> message);
+  bool SendSelectRange(scoped_ptr<IPC::Message> message);
   bool Send(IPC::Message* message);
 
-  // Transmits the given input event an as an IPC::Message. This is an internal
-  // helper for |FilterAndSendInputEvent()| and should not be used otherwise.
-  void SendWebInputEvent(const WebKit::WebInputEvent& input_event,
-                         const ui::LatencyInfo& latency_info,
-                         bool is_keyboard_shortcut);
-
-  // Filters and forwards the given WebInputEvent to |SendWebInputEvent()|. This
-  // is an internal helper for |Send*Event()| and should not be used otherwise.
+  // Filters and forwards |input_event| to the appropriate handler.
   void FilterAndSendWebInputEvent(const WebKit::WebInputEvent& input_event,
                                   const ui::LatencyInfo& latency_info,
                                   bool is_keyboard_shortcut);
+
+  // Utility routine for filtering and forwarding |input_event| to the
+  // appropriate handler. |input_event| will be offered to the overscroll
+  // controller, client and renderer, in that order.
+  void OfferToHandlers(const WebKit::WebInputEvent& input_event,
+                       const ui::LatencyInfo& latency_info,
+                       bool is_keyboard_shortcut);
+
+  // Returns true if |input_event| was consumed by the overscroll controller.
+  bool OfferToOverscrollController(const WebKit::WebInputEvent& input_event,
+                                   const ui::LatencyInfo& latency_info);
+
+  // Returns true if |input_event| was consumed by the client.
+  bool OfferToClient(const WebKit::WebInputEvent& input_event,
+                     const ui::LatencyInfo& latency_info);
+
+  // Returns true if |input_event| was successfully sent to the renderer
+  // as an async IPC Message.
+  bool OfferToRenderer(const WebKit::WebInputEvent& input_event,
+                       const ui::LatencyInfo& latency_info,
+                       bool is_keyboard_shortcut);
 
   // IPC message handlers
   void OnInputEventAck(WebKit::WebInputEvent::Type event_type,
@@ -101,37 +124,62 @@ private:
   void OnSelectRangeAck();
   void OnHasTouchEventHandlers(bool has_handlers);
 
-  // Handle the event ack. Triggered via |OnInputEventAck()| if the event was
-  // processed in the renderer, or synchonously from |FilterAndSendInputevent()|
-  // if the event was filtered by the |client_| prior to sending.
+  // Indicates the source of an ack provided to |ProcessInputEventAck()|.
+  // The source is tracked by |current_ack_source_|, which aids in ack routing.
+  enum AckSource {
+    RENDERER,
+    CLIENT,
+    OVERSCROLL_CONTROLLER,
+    ACK_SOURCE_NONE
+  };
+  // Note: This function may result in |this| being deleted, and as such
+  // should be the last method called in any internal chain of event handling.
   void ProcessInputEventAck(WebKit::WebInputEvent::Type event_type,
                             InputEventAckState ack_result,
-                            const ui::LatencyInfo& latency_info);
+                            const ui::LatencyInfo& latency_info,
+                            AckSource ack_source);
 
-  // Called by ProcessInputEventAck() to process a keyboard event ack message.
-  void ProcessKeyboardAck(int type, InputEventAckState ack_result);
+  // Dispatches the ack'ed event to |ack_handler_|.
+  void ProcessKeyboardAck(WebKit::WebInputEvent::Type type,
+                          InputEventAckState ack_result);
 
-  // Called by ProcessInputEventAck() to process a wheel event ack message.
-  // This could result in a task being posted to allow additional wheel
-  // input messages to be coalesced.
-  void ProcessWheelAck(InputEventAckState ack_result);
+  // Forwards a valid |next_mouse_move_| if |type| is MouseMove.
+  void ProcessMouseAck(WebKit::WebInputEvent::Type type,
+                       InputEventAckState ack_result);
 
-  // Called by ProcessInputEventAck() to process a gesture event ack message.
-  // This validates the gesture for suppression of touchpad taps and sends one
-  // previously queued coalesced gesture if it exists.
-  void ProcessGestureAck(int type, InputEventAckState ack_result);
+  // Dispatches the ack'ed event to |ack_handler_|, forwarding queued events
+  // from |coalesced_mouse_wheel_events_|.
+  void ProcessWheelAck(InputEventAckState ack_result,
+                       const ui::LatencyInfo& latency);
 
-  // Called on ProcessInputEventAck() to process a touch event ack message.
-  // This can result in a gesture event being generated and sent back to the
-  // renderer.
+  // Forwards the event ack to |gesture_event_filter|, potentially triggering
+  // dispatch of queued gesture events.
+  void ProcessGestureAck(WebKit::WebInputEvent::Type type,
+                         InputEventAckState ack_result,
+                         const ui::LatencyInfo& latency);
+
+  // Forwards the event ack to |touch_event_queue_|, potentially triggering
+  // dispatch of queued touch events, or the creation of gesture events.
   void ProcessTouchAck(InputEventAckState ack_result,
-                       const ui::LatencyInfo& latency_info);
+                       const ui::LatencyInfo& latency);
+
+  // Forwards |ack_result| to the client's OverscrollController, if necessary.
+  void ProcessAckForOverscroll(const WebKit::WebInputEvent& event,
+                               InputEventAckState ack_result);
+
+  void HandleGestureScroll(const GestureEventWithLatencyInfo& gesture_event);
+
+  void SimulateTouchGestureWithMouse(
+      const MouseEventWithLatencyInfo& mouse_event);
+
+  bool IsInOverscrollGesture() const;
 
   int routing_id() const { return routing_id_; }
 
 
-  RenderProcessHost* process_;
+  IPC::Sender* sender_;
   InputRouterClient* client_;
+  InputAckHandler* ack_handler_;
   int routing_id_;
 
   // (Similar to |mouse_move_pending_|.) True while waiting for SelectRange_ACK.
@@ -185,6 +233,10 @@ private:
   // then touch events are sent to the renderer. Otherwise, the touch events are
   // not sent to the renderer.
   bool has_touch_handler_;
+
+  // The source of the ack within the scope of |ProcessInputEventAck()|.
+  // Defaults to ACK_SOURCE_NONE.
+  AckSource current_ack_source_;
 
   scoped_ptr<TouchEventQueue> touch_event_queue_;
   scoped_ptr<GestureEventFilter> gesture_event_filter_;

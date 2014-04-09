@@ -13,8 +13,8 @@
 #include "base/memory/ref_counted.h"
 #include "chrome/browser/bookmarks/base_bookmark_model_observer.h"
 #include "chrome/browser/extensions/api/profile_keyed_api_factory.h"
+#include "chrome/browser/extensions/chrome_extension_function.h"
 #include "chrome/browser/extensions/event_router.h"
-#include "chrome/browser/extensions/extension_function.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 
 class Profile;
@@ -60,7 +60,7 @@ class BookmarkEventRouter : public BookmarkModelObserver {
 
  private:
   // Helper to actually dispatch an event to extension listeners.
-  void DispatchEvent(const char* event_name,
+  void DispatchEvent(const std::string& event_name,
                      scoped_ptr<base::ListValue> event_args);
 
   Profile* profile_;
@@ -100,7 +100,7 @@ class BookmarksAPI : public ProfileKeyedAPI,
   scoped_ptr<BookmarkEventRouter> bookmark_event_router_;
 };
 
-class BookmarksFunction : public AsyncExtensionFunction,
+class BookmarksFunction : public ChromeAsyncExtensionFunction,
                           public BaseBookmarkModelObserver {
  public:
   // AsyncExtensionFunction:

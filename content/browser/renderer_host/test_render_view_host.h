@@ -15,6 +15,7 @@
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
 #include "content/public/common/page_transition_types.h"
 #include "content/public/test/test_renderer_host.h"
+#include "ui/base/layout.h"
 #include "ui/gfx/vector2d_f.h"
 
 // This file provides a testing framework for mocking out the RenderProcessHost
@@ -99,12 +100,12 @@ class TestRenderWidgetHostView : public RenderWidgetHostViewBase {
   virtual void SetIsLoading(bool is_loading) OVERRIDE {}
   virtual void UpdateCursor(const WebCursor& cursor) OVERRIDE {}
   virtual void TextInputTypeChanged(ui::TextInputType type,
-                                    bool can_compose_inline,
-                                    ui::TextInputMode input_mode) OVERRIDE {}
+                                    ui::TextInputMode input_mode,
+                                    bool can_compose_inline) OVERRIDE {}
   virtual void ImeCancelComposition() OVERRIDE {}
 #if defined(OS_MACOSX) || defined(OS_WIN) || defined(USE_AURA)
   virtual void ImeCompositionRangeChanged(
-      const ui::Range& range,
+      const gfx::Range& range,
       const std::vector<gfx::Rect>& character_bounds) OVERRIDE {}
 #endif
   virtual void DidUpdateBackingStore(
@@ -158,22 +159,18 @@ class TestRenderWidgetHostView : public RenderWidgetHostViewBase {
       bool has_horizontal_scrollbar) OVERRIDE { }
   virtual void SetScrollOffsetPinning(
       bool is_pinned_to_left, bool is_pinned_to_right) OVERRIDE { }
-  virtual void OnAccessibilityNotifications(
-      const std::vector<AccessibilityHostMsg_NotificationParams>&
-          params) OVERRIDE {}
+  virtual void OnAccessibilityEvents(
+      const std::vector<AccessibilityHostMsg_EventParams>& params) OVERRIDE {}
   virtual gfx::GLSurfaceHandle GetCompositingSurface() OVERRIDE;
 #if defined(OS_WIN) && !defined(USE_AURA)
   virtual void SetClickthroughRegion(SkRegion* region) OVERRIDE;
-#endif
-#if defined(OS_WIN) && defined(USE_AURA)
-  virtual gfx::NativeViewAccessible AccessibleObjectFromChildId(long child_id)
-      OVERRIDE;
 #endif
   virtual bool LockMouse() OVERRIDE;
   virtual void UnlockMouse() OVERRIDE;
 #if defined(OS_WIN) && defined(USE_AURA)
   virtual void SetParentNativeViewAccessible(
       gfx::NativeViewAccessible accessible_parent) OVERRIDE;
+  virtual gfx::NativeViewId GetParentForWindowlessPlugin() const OVERRIDE;
 #endif
 
   bool is_showing() const { return is_showing_; }
@@ -375,6 +372,9 @@ class RenderViewHostImplTestHarness : public RenderViewHostTestHarness {
   TestWebContents* contents();
 
  private:
+  typedef scoped_ptr<ui::test::ScopedSetSupportedScaleFactors>
+      ScopedSetSupportedScaleFactors;
+  ScopedSetSupportedScaleFactors scoped_set_supported_scale_factors_;
   DISALLOW_COPY_AND_ASSIGN(RenderViewHostImplTestHarness);
 };
 

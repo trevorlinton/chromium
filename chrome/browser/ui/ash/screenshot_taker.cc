@@ -8,10 +8,13 @@
 #include <string>
 
 #include "ash/shell.h"
+#include "ash/system/system_notifier.h"
 #include "base/bind.h"
 #include "base/file_util.h"
+#include "base/i18n/time_formatting.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted_memory.h"
+#include "base/prefs/pref_service.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/sequenced_worker_pool.h"
@@ -21,8 +24,8 @@
 #include "chrome/browser/notifications/notification_ui_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/ui/webui/screenshot_source.h"
 #include "chrome/browser/ui/window_snapshot/window_snapshot.h"
+#include "chrome/common/pref_names.h"
 #include "content/public/browser/browser_thread.h"
 #include "grit/ash_strings.h"
 #include "grit/theme_resources.h"
@@ -33,9 +36,14 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image.h"
 
+#if defined(USE_ASH)
+#include "ash/shell.h"
+#include "ash/shell_delegate.h"
+#endif
+
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/drive/file_system_util.h"
-#include "chrome/browser/chromeos/extensions/file_manager/file_manager_util.h"
+#include "chrome/browser/chromeos/file_manager/open_util.h"
 #include "chrome/browser/chromeos/login/user_manager.h"
 #include "chrome/browser/notifications/desktop_notification_service.h"
 #include "chrome/browser/notifications/desktop_notification_service_factory.h"
@@ -70,7 +78,7 @@ class ScreenshotTakerNotificationDelegate : public NotificationDelegate {
     if (!success_)
       return;
 #if defined(OS_CHROMEOS)
-    file_manager::util::ShowFileInFolder(screenshot_path_);
+    file_manager::util::ShowItemInFolder(screenshot_path_);
 #else
     // TODO(sschmitz): perhaps add similar action for Windows.
 #endif
@@ -222,6 +230,89 @@ bool GrabWindowSnapshot(aura::Window* window,
   return chrome::GrabWindowSnapshotForUser(window, png_data, snapshot_bounds);
 }
 
+bool ShouldUse24HourClock() {
+#if defined(OS_CHROMEOS)
+  Profile* profile = ProfileManager::GetDefaultProfileOrOffTheRecord();
+  if (profile) {
+    return profile->GetPrefs()->GetBoolean(prefs::kUse24HourClock);
+  }
+#endif
+  return base::GetHourClockType() == base::k24HourClock;
+}
+
+std::string GetScreenshotBaseFilename() {
+  base::Time::Exploded now;
+  base::Time::Now().LocalExplode(&now);
+
+  // We don't use base/i18n/time_formatting.h here because it doesn't
+  // support our format.  Don't use ICU either to avoid i18n file names
+  // for non-English locales.
+  // TODO(mukai): integrate this logic somewhere time_formatting.h
+  std::string file_name = base::StringPrintf(
+      "Screenshot %d-%02d-%02d at ", now.year, now.month, now.day_of_month);
+
+  if (ShouldUse24HourClock()) {
+    file_name.append(base::StringPrintf(
+        "%02d.%02d.%02d", now.hour, now.minute, now.second));
+  } else {
+    int hour = now.hour;
+    if (hour > 12) {
+      hour -= 12;
+    } else if (hour == 0) {
+      hour = 12;
+    }
+    file_name.append(base::StringPrintf(
+        "%d.%02d.%02d ", hour, now.minute, now.second));
+    file_name.append((now.hour >= 12) ? "PM" : "AM");
+  }
+
+  return file_name;
+}
+
+bool GetScreenshotDirectory(base::FilePath* directory) {
+  bool is_logged_in = true;
+
+#if defined(OS_CHROMEOS)
+  is_logged_in = chromeos::LoginState::Get()->IsUserLoggedIn();
+#endif
+
+  if (is_logged_in) {
+    DownloadPrefs* download_prefs = DownloadPrefs::FromBrowserContext(
+        ash::Shell::GetInstance()->delegate()->GetCurrentBrowserContext());
+    *directory = download_prefs->DownloadPath();
+  } else  {
+    if (!file_util::GetTempDir(directory)) {
+      LOG(ERROR) << "Failed to find temporary directory.";
+      return false;
+    }
+  }
+  return true;
+}
+
+const int GetScreenshotNotificationTitle(
+    ScreenshotTakerObserver::Result screenshot_result) {
+  switch (screenshot_result) {
+    case ScreenshotTakerObserver::SCREENSHOTS_DISABLED:
+      return IDS_ASH_SCREENSHOT_NOTIFICATION_TITLE_DISABLED;
+    case ScreenshotTakerObserver::SCREENSHOT_SUCCESS:
+      return IDS_ASH_SCREENSHOT_NOTIFICATION_TITLE_SUCCESS;
+    default:
+      return IDS_ASH_SCREENSHOT_NOTIFICATION_TITLE_FAIL;
+  }
+}
+
+const int GetScreenshotNotificationText(
+    ScreenshotTakerObserver::Result screenshot_result) {
+  switch (screenshot_result) {
+    case ScreenshotTakerObserver::SCREENSHOTS_DISABLED:
+      return IDS_ASH_SCREENSHOT_NOTIFICATION_TEXT_DISABLED;
+    case ScreenshotTakerObserver::SCREENSHOT_SUCCESS:
+      return IDS_ASH_SCREENSHOT_NOTIFICATION_TEXT_SUCCESS;
+    default:
+      return IDS_ASH_SCREENSHOT_NOTIFICATION_TEXT_FAIL;
+  }
+}
+
 }  // namespace
 
 ScreenshotTaker::ScreenshotTaker()
@@ -233,25 +324,30 @@ ScreenshotTaker::~ScreenshotTaker() {
 }
 
 void ScreenshotTaker::HandleTakeScreenshotForAllRootWindows() {
+  if (g_browser_process->local_state()->
+          GetBoolean(prefs::kDisableScreenshots)) {
+    ShowNotification(ScreenshotTakerObserver::SCREENSHOTS_DISABLED,
+                     base::FilePath());
+    return;
+  }
   base::FilePath screenshot_directory;
   if (!screenshot_directory_for_test_.empty()) {
     screenshot_directory = screenshot_directory_for_test_;
-  } else if (!ScreenshotSource::GetScreenshotDirectory(&screenshot_directory)) {
+  } else if (!GetScreenshotDirectory(&screenshot_directory)) {
     ShowNotification(ScreenshotTakerObserver::SCREENSHOT_GET_DIR_FAILED,
                      base::FilePath());
     return;
   }
   std::string screenshot_basename = !screenshot_basename_for_test_.empty() ?
-      screenshot_basename_for_test_ :
-      ScreenshotSource::GetScreenshotBaseFilename();
+      screenshot_basename_for_test_ : GetScreenshotBaseFilename();
 
   ash::Shell::RootWindowList root_windows = ash::Shell::GetAllRootWindows();
   // Reorder root_windows to take the primary root window's snapshot at first.
-  aura::RootWindow* primary_root = ash::Shell::GetPrimaryRootWindow();
+  aura::Window* primary_root = ash::Shell::GetPrimaryRootWindow();
   if (*(root_windows.begin()) != primary_root) {
     root_windows.erase(std::find(
         root_windows.begin(), root_windows.end(), primary_root));
-    root_windows.insert(root_windows.begin(), primary_root);
+    root_windows.insert(root_windows.begin(), primary_root->GetDispatcher());
   }
   for (size_t i = 0; i < root_windows.size(); ++i) {
     aura::RootWindow* root_window = root_windows[i];
@@ -280,12 +376,18 @@ void ScreenshotTaker::HandleTakeScreenshotForAllRootWindows() {
 
 void ScreenshotTaker::HandleTakePartialScreenshot(
     aura::Window* window, const gfx::Rect& rect) {
+  if (g_browser_process->local_state()->
+          GetBoolean(prefs::kDisableScreenshots)) {
+    ShowNotification(ScreenshotTakerObserver::SCREENSHOTS_DISABLED,
+                     base::FilePath());
+    return;
+  }
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
 
   base::FilePath screenshot_directory;
   if (!screenshot_directory_for_test_.empty()) {
     screenshot_directory = screenshot_directory_for_test_;
-  } else if (!ScreenshotSource::GetScreenshotDirectory(&screenshot_directory)) {
+  } else if (!GetScreenshotDirectory(&screenshot_directory)) {
     ShowNotification(ScreenshotTakerObserver::SCREENSHOT_GET_DIR_FAILED,
                      base::FilePath());
     return;
@@ -294,8 +396,7 @@ void ScreenshotTaker::HandleTakePartialScreenshot(
   scoped_refptr<base::RefCountedBytes> png_data(new base::RefCountedBytes);
 
   std::string screenshot_basename = !screenshot_basename_for_test_.empty() ?
-      screenshot_basename_for_test_ :
-      ScreenshotSource::GetScreenshotBaseFilename();
+      screenshot_basename_for_test_ : GetScreenshotBaseFilename();
   base::FilePath screenshot_path =
       screenshot_directory.AppendASCII(screenshot_basename + ".png");
   if (GrabWindowSnapshot(window, rect, &png_data->data())) {
@@ -331,20 +432,19 @@ Notification* ScreenshotTaker::CreateNotification(
   bool success =
       (screenshot_result == ScreenshotTakerObserver::SCREENSHOT_SUCCESS);
   return new Notification(
+      message_center::NOTIFICATION_TYPE_SIMPLE,
       GURL(kNotificationOriginUrl),
+      l10n_util::GetStringUTF16(
+          GetScreenshotNotificationTitle(screenshot_result)),
+      l10n_util::GetStringUTF16(
+          GetScreenshotNotificationText(screenshot_result)),
       ui::ResourceBundle::GetSharedInstance().GetImageNamed(
           IDR_SCREENSHOT_NOTIFICATION_ICON),
-      l10n_util::GetStringUTF16(
-          success ?
-          IDS_ASH_SCREENSHOT_NOTIFICATION_TITLE_SUCCESS :
-          IDS_ASH_SCREENSHOT_NOTIFICATION_TITLE_FAIL),
-      l10n_util::GetStringUTF16(
-          success ?
-          IDS_ASH_SCREENSHOT_NOTIFICATION_TEXT_SUCCESS :
-          IDS_ASH_SCREENSHOT_NOTIFICATION_TEXT_FAIL),
       WebKit::WebTextDirectionDefault,
+      message_center::NotifierId(ash::system_notifier::NOTIFIER_SCREENSHOT),
       l10n_util::GetStringUTF16(IDS_MESSAGE_CENTER_NOTIFIER_SCREENSHOT_NAME),
       replace_id,
+      message_center::RichNotificationData(),
       new ScreenshotTakerNotificationDelegate(success, screenshot_path));
 }
 
@@ -362,8 +462,8 @@ void ScreenshotTaker::ShowNotification(
   // TODO(sschmitz): make this work for Windows.
   DesktopNotificationService* const service =
       DesktopNotificationServiceFactory::GetForProfile(GetProfile());
-  if (service->IsNotifierEnabled(
-          message_center::NotifierId(message_center::NotifierId::SCREENSHOT))) {
+  if (service->IsNotifierEnabled(message_center::NotifierId(
+          ash::system_notifier::NOTIFIER_SCREENSHOT))) {
     scoped_ptr<Notification> notification(
         CreateNotification(screenshot_result, screenshot_path));
     g_browser_process->notification_ui_manager()->Add(*notification,

@@ -4,6 +4,7 @@
 
 #include "chrome/browser/chromeos/login/webui_login_display.h"
 
+#include "ash/shell.h"
 #include "ash/wm/user_activity_detector.h"
 #include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
 #include "chrome/browser/chromeos/login/login_display_host_impl.h"
@@ -362,6 +363,10 @@ void WebUILoginDisplay::SetDisplayEmail(const std::string& email) {
 
 void WebUILoginDisplay::Signout() {
   delegate_->Signout();
+}
+
+void WebUILoginDisplay::LoginAsKioskApp(const std::string& app_id) {
+  delegate_->LoginAsKioskApp(app_id);
 }
 
 void WebUILoginDisplay::OnUserActivity(const ui::Event* event) {

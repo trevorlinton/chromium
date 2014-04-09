@@ -150,6 +150,7 @@ bool NetworkStats::Start(net::HostResolver* host_resolver,
   net::HostResolver::RequestInfo request(server_host_port_pair);
   int rv =
       resolver->Resolve(request,
+                        net::DEFAULT_PRIORITY,
                         &addresses_,
                         base::Bind(base::IgnoreResult(&NetworkStats::DoConnect),
                                    base::Unretained(this)),
@@ -189,28 +190,25 @@ bool NetworkStats::DoConnect(int result) {
     return false;
   }
 
-  net::DatagramClientSocket* udp_socket =
+  scoped_ptr<net::DatagramClientSocket> udp_socket =
       socket_factory_->CreateDatagramClientSocket(
           net::DatagramSocket::DEFAULT_BIND,
           net::RandIntCallback(),
           NULL,
           net::NetLog::Source());
-  if (!udp_socket) {
-    TestPhaseComplete(SOCKET_CREATE_FAILED, net::ERR_INVALID_ARGUMENT);
-    return false;
-  }
-  DCHECK(!socket_.get());
-  socket_.reset(udp_socket);
+  DCHECK(udp_socket);
+  DCHECK(!socket_);
+  socket_ = udp_socket.Pass();
 
   const net::IPEndPoint& endpoint = addresses_.front();
-  int rv = udp_socket->Connect(endpoint);
+  int rv = socket_->Connect(endpoint);
   if (rv < 0) {
     TestPhaseComplete(CONNECT_FAILED, rv);
     return false;
   }
 
-  udp_socket->SetSendBufferSize(kMaxUdpSendBufferSize);
-  udp_socket->SetReceiveBufferSize(kMaxUdpReceiveBufferSize);
+  socket_->SetSendBufferSize(kMaxUdpSendBufferSize);
+  socket_->SetReceiveBufferSize(kMaxUdpReceiveBufferSize);
   return ConnectComplete(rv);
 }
 
@@ -221,8 +219,11 @@ bool NetworkStats::ConnectComplete(int result) {
   }
 
   if (start_test_after_connect_) {
-    ReadData();  // This ReadData() reads data for all HelloReply and all
-                 // subsequent probe tests.
+    // Reads data for all HelloReply and all subsequent probe tests.
+    if (ReadData() != net::ERR_IO_PENDING) {
+      TestPhaseComplete(READ_FAILED, result);
+      return false;
+    }
     SendHelloRequest();
   } else {
     // For unittesting. Only run the callback, do not destroy it.
@@ -239,7 +240,9 @@ void NetworkStats::SendHelloRequest() {
   probe_packet.set_group_id(current_test_index_);
   std::string output = probe_message_.MakeEncodedPacket(probe_packet);
 
-  SendData(output);
+  int result = SendData(output);
+  if (result < 0 && result != net::ERR_IO_PENDING)
+    TestPhaseComplete(WRITE_FAILED, result);
 }
 
 void NetworkStats::SendProbeRequest() {
@@ -286,12 +289,14 @@ void NetworkStats::SendProbeRequest() {
 
   StartReadDataTimer(timeout_seconds, current_test_index_);
   probe_request_time_ = base::TimeTicks::Now();
-  SendData(output);
+  int result = SendData(output);
+  if (result < 0 && result != net::ERR_IO_PENDING)
+    TestPhaseComplete(WRITE_FAILED, result);
 }
 
-void NetworkStats::ReadData() {
+int NetworkStats::ReadData() {
   if (!socket_.get())
-    return;
+    return 0;
 
   int rv = 0;
   do {
@@ -301,8 +306,9 @@ void NetworkStats::ReadData() {
     rv = socket_->Read(
         read_buffer_.get(),
         kMaxMessageSize,
-        base::Bind(&NetworkStats::OnReadComplete, base::Unretained(this)));
+        base::Bind(&NetworkStats::OnReadComplete, weak_factory_.GetWeakPtr()));
   } while (rv > 0 && !ReadComplete(rv));
+  return rv;
 }
 
 void NetworkStats::OnReadComplete(int result) {
@@ -313,7 +319,8 @@ void NetworkStats::OnReadComplete(int result) {
     // loop.
     base::MessageLoop::current()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(&NetworkStats::ReadData, weak_factory_.GetWeakPtr()),
+        base::Bind(base::IgnoreResult(&NetworkStats::ReadData),
+                   weak_factory_.GetWeakPtr()),
         base::TimeDelta::FromMilliseconds(1));
   }
 }
@@ -355,14 +362,16 @@ bool NetworkStats::ReadComplete(int result) {
                << probe_packet.header().type();
   }
 
-  if (current_test_complete) {
-    TestPhaseComplete(SUCCESS, net::OK);
-    // Read only completes if all tests are done.
-    // current_test_index_ is incremented in TestPhaseComplete().
-    return current_test_index_ >= test_sequence_.size();
+  if (!current_test_complete) {
+    // All packets have not been received for the current test.
+    return false;
   }
-  // All packets have not been received.
-  return false;
+  // All packets are received for the current test.
+  // Read completes if all tests are done.
+  bool all_tests_done = current_test_index_ >= maximum_tests_ ||
+      current_test_index_ + 1 >= test_sequence_.size();
+  TestPhaseComplete(SUCCESS, net::OK);
+  return all_tests_done;
 }
 
 bool NetworkStats::UpdateReception(const ProbePacket& probe_packet) {
@@ -409,22 +418,20 @@ bool NetworkStats::UpdateReception(const ProbePacket& probe_packet) {
   return true;
 }
 
-void NetworkStats::SendData(const std::string& output) {
-  DCHECK(!write_buffer_.get());
+int NetworkStats::SendData(const std::string& output) {
+  if (write_buffer_.get() || !socket_.get())
+    return net::ERR_UNEXPECTED;
   scoped_refptr<net::StringIOBuffer> buffer(new net::StringIOBuffer(output));
   write_buffer_ = new net::DrainableIOBuffer(buffer.get(), buffer->size());
 
   int bytes_written = socket_->Write(
       write_buffer_.get(),
       write_buffer_->BytesRemaining(),
-      base::Bind(&NetworkStats::OnWriteComplete, base::Unretained(this)));
-  if (bytes_written < 0) {
-    if (bytes_written != net::ERR_IO_PENDING)
-      // There is some unexpected error.
-      TestPhaseComplete(WRITE_FAILED, bytes_written);
-  } else {
-    UpdateSendBuffer(bytes_written);
-  }
+      base::Bind(&NetworkStats::OnWriteComplete, weak_factory_.GetWeakPtr()));
+  if (bytes_written < 0)
+    return bytes_written;
+  UpdateSendBuffer(bytes_written);
+  return net::OK;
 }
 
 void NetworkStats::OnWriteComplete(int result) {
@@ -485,7 +492,8 @@ void NetworkStats::OnReadDataTimeout(uint32 test_index) {
 void NetworkStats::TestPhaseComplete(Status status, int result) {
   // If there is no valid token, do nothing and delete self.
   // This includes all connection error, name resolve error, etc.
-  if (token_.timestamp_micros() != 0) {
+  if (token_.timestamp_micros() != 0 &&
+      (status == SUCCESS || status == READ_TIMED_OUT)) {
     TestType current_test = test_sequence_[current_test_index_];
     DCHECK_LT(current_test, TEST_TYPE_MAX);
     if (current_test != TOKEN_REQUEST)
@@ -517,7 +525,7 @@ void NetworkStats::TestPhaseComplete(Status status, int result) {
 
   DVLOG(1) << "NetworkStat: schedule delete self at test index "
            << current_test_index_;
-  base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+  delete this;
 }
 
 NetworkStats::TestType NetworkStats::GetNextTest() {
@@ -777,9 +785,9 @@ void CollectNetworkStats(const std::string& network_stats_server,
 
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::IO));
 
-  // Check that there is a network connection. We get called only if UMA upload
-  // to the server has succeeded.
-  DCHECK(!net::NetworkChangeNotifier::IsOffline());
+  if (net::NetworkChangeNotifier::IsOffline()) {
+    return;
+  }
 
   CR_DEFINE_STATIC_LOCAL(scoped_refptr<base::FieldTrial>, trial, ());
   static bool collect_stats = false;
@@ -789,17 +797,23 @@ void CollectNetworkStats(const std::string& network_stats_server,
     const base::FieldTrial::Probability kDivisor = 1000;
 
     // Enable the connectivity testing for 0.5% of the users in stable channel.
-    base::FieldTrial::Probability probability_per_group = 5;
+    base::FieldTrial::Probability probability_per_group = kDivisor / 200;
 
     chrome::VersionInfo::Channel channel = chrome::VersionInfo::GetChannel();
-    if (channel == chrome::VersionInfo::CHANNEL_CANARY)
-      probability_per_group = kDivisor;
-    else if (channel == chrome::VersionInfo::CHANNEL_DEV)
-      // Enable the connectivity testing for 50% of the users in dev channel.
-      probability_per_group = 500;
-    else if (channel == chrome::VersionInfo::CHANNEL_BETA)
-      // Enable the connectivity testing for 5% of the users in beta channel.
-      probability_per_group = 50;
+    if (channel == chrome::VersionInfo::CHANNEL_CANARY) {
+      // Enable the connectivity testing for 50% of the users in canary channel.
+      probability_per_group = kDivisor / 2;
+    } else if (channel == chrome::VersionInfo::CHANNEL_DEV) {
+      // Enable the connectivity testing for 10% of the users in dev channel.
+      probability_per_group = kDivisor / 10;
+    } else if (channel == chrome::VersionInfo::CHANNEL_BETA) {
+      // Enable the connectivity testing for 1% of the users in beta channel.
+      probability_per_group = kDivisor / 100;
+    }
+
+    // TODO(rtenneti): Enable the experiment after fixing
+    // issue http://crbug.com/273917.
+    probability_per_group = 0;
 
     // After July 31, 2014 builds, it will always be in default group
     // (disable_network_stats).

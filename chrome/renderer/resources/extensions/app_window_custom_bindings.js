@@ -103,6 +103,18 @@ appWindow.registerCustomHook(function(bindingsAPI) {
       return { left: bounds.left, top: bounds.top,
                width: bounds.width, height: bounds.height };
     };
+    AppWindow.prototype.getMinWidth = function() {
+      return appWindowData.minWidth;
+    };
+    AppWindow.prototype.getMinHeight = function() {
+      return appWindowData.minHeight;
+    };
+    AppWindow.prototype.getMaxWidth = function() {
+      return appWindowData.maxWidth;
+    };
+    AppWindow.prototype.getMaxHeight = function() {
+      return appWindowData.maxHeight;
+    };
     AppWindow.prototype.isFullscreen = function() {
       return appWindowData.fullscreen;
     };
@@ -111,6 +123,9 @@ appWindow.registerCustomHook(function(bindingsAPI) {
     };
     AppWindow.prototype.isMaximized = function() {
       return appWindowData.maximized;
+    };
+    AppWindow.prototype.isAlwaysOnTop = function() {
+      return appWindowData.alwaysOnTop;
     };
 
     Object.defineProperty(AppWindow.prototype, 'id', {get: function() {
@@ -121,9 +136,14 @@ appWindow.registerCustomHook(function(bindingsAPI) {
       id: params.id || '',
       bounds: { left: params.bounds.left, top: params.bounds.top,
                 width: params.bounds.width, height: params.bounds.height },
+      minWidth: params.minWidth,
+      minHeight: params.minHeight,
+      maxWidth: params.maxWidth,
+      maxHeight: params.maxHeight,
       fullscreen: params.fullscreen,
       minimized: params.minimized,
-      maximized: params.maximized
+      maximized: params.maximized,
+      alwaysOnTop: params.alwaysOnTop
     };
     currentAppWindow = new AppWindow;
   });

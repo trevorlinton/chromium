@@ -10,8 +10,7 @@ namespace net {
 
 SpdyMajorVersion NextProtoToSpdyMajorVersion(NextProto next_proto) {
   switch (next_proto) {
-    case kProtoSPDY2:
-    case kProtoSPDY21:
+    case kProtoDeprecatedSPDY2:
       return SPDY2;
     case kProtoSPDY3:
     case kProtoSPDY31:
@@ -22,7 +21,6 @@ SpdyMajorVersion NextProtoToSpdyMajorVersion(NextProto next_proto) {
       return SPDY4;
     case kProtoUnknown:
     case kProtoHTTP11:
-    case kProtoSPDY1:
     case kProtoQUIC1SPDY3:
       break;
   }
@@ -302,11 +300,6 @@ SpdyFrame* BufferedSpdyFramer::CreateWindowUpdate(
     SpdyStreamId stream_id,
     uint32 delta_window_size) const {
   return spdy_framer_.CreateWindowUpdate(stream_id, delta_window_size);
-}
-
-SpdyFrame* BufferedSpdyFramer::CreateCredentialFrame(
-    const SpdyCredential& credential) const {
-  return spdy_framer_.CreateCredentialFrame(credential);
 }
 
 SpdyFrame* BufferedSpdyFramer::CreateDataFrame(SpdyStreamId stream_id,

@@ -10,16 +10,16 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/common/chrome_version_info.h"
 #include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/extension_manifest_constants.h"
 #include "chrome/common/extensions/extension_test_util.h"
 #include "chrome/common/extensions/features/feature_channel.h"
-#include "chrome/common/extensions/permissions/api_permission.h"
-#include "chrome/common/extensions/permissions/permission_set.h"
 #include "chrome/common/extensions/permissions/permissions_data.h"
 #include "chrome/common/extensions/permissions/socket_permission.h"
 #include "content/public/common/socket_permission_request.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/id_util.h"
+#include "extensions/common/manifest_constants.h"
+#include "extensions/common/permissions/api_permission.h"
+#include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/switches.h"
 #include "extensions/common/url_pattern_set.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -131,7 +131,7 @@ TEST(ExtensionPermissionsTest, SocketPermissions) {
                                     &error);
   EXPECT_TRUE(extension.get() == NULL);
   ASSERT_EQ(ErrorUtils::FormatErrorMessage(
-                extension_manifest_errors::kInvalidPermission, "socket"),
+                manifest_errors::kInvalidPermission, "socket"),
             error);
 
   extension = LoadManifest("socket_permissions", "socket2.json");
@@ -175,16 +175,9 @@ TEST(ExtensionPermissionsTest, GetPermissionMessages_ManyHostsPermissions) {
       PermissionsData::GetPermissionMessageDetailsStrings(extension.get());
   ASSERT_EQ(1u, warnings.size());
   ASSERT_EQ(1u, warnings_details.size());
-#if defined(TOOLKIT_VIEWS)
-  EXPECT_EQ("Access your data on 5 website(s)", UTF16ToUTF8(warnings[0]));
+  EXPECT_EQ("Access your data on 5 websites", UTF16ToUTF8(warnings[0]));
   EXPECT_EQ("- www.a.com\n- www.b.com\n- www.c.com\n- www.d.com\n- www.e.com",
             UTF16ToUTF8(warnings_details[0]));
-#else
-  // TODO(finnur): Remove once other platforms support expandable sections.
-  EXPECT_EQ("Access your data on www.a.com, www.b.com, and 3 other websites",
-            UTF16ToUTF8(warnings[0]));
-  EXPECT_TRUE(warnings_details[0].empty());
-#endif
 }
 
 TEST(ExtensionPermissionsTest, GetPermissionMessages_LocationApiPermission) {
@@ -379,11 +372,15 @@ TEST_F(ExtensionScriptAndCaptureVisibleTest, Permissions) {
                                     "extension_wildcard_chrome.json",
                                     Manifest::INTERNAL, Extension::NO_FLAGS,
                                     &error);
-  EXPECT_TRUE(extension.get() == NULL);
-  EXPECT_EQ(
-      ErrorUtils::FormatErrorMessage(
-          extension_manifest_errors::kInvalidPermissionScheme, "chrome://*/"),
-      error);
+  std::vector<InstallWarning> warnings = extension->install_warnings();
+  EXPECT_FALSE(warnings.empty());
+  EXPECT_EQ(ErrorUtils::FormatErrorMessage(
+                manifest_errors::kInvalidPermissionScheme,
+                "chrome://*/"),
+            warnings[0].message);
+  EXPECT_TRUE(Blocked(extension.get(), settings_url));
+  EXPECT_TRUE(Blocked(extension.get(), favicon_url));
+  EXPECT_TRUE(Blocked(extension.get(), about_url));
 
   // Having chrome://favicon/* should not give you chrome://*
   extension = LoadManifestStrict("script_and_capture",

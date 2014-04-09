@@ -7,6 +7,7 @@
 
 #include "base/at_exit.h"
 #include "base/bind.h"
+#include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/file_util.h"
 #include "base/message_loop/message_loop.h"
@@ -371,7 +372,7 @@ void SetupDialog::Install(const string16& user, const string16& password,
   std::string proxy_id;
   std::string contents;
 
-  if (file_util::ReadFileToString(file, &contents)) {
+  if (base::ReadFileToString(file, &contents)) {
     ServiceState service_state;
     if (service_state.FromString(contents))
       proxy_id = service_state.proxy_id();

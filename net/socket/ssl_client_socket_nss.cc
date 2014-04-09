@@ -380,20 +380,16 @@ void PeerCertificateChain::Reset(PRFileDesc* nss_fd) {
   if (nss_fd == NULL)
     return;
 
-  unsigned int num_certs = 0;
-  SECStatus rv = SSL_PeerCertificateChain(nss_fd, NULL, &num_certs, 0);
-  DCHECK_EQ(SECSuccess, rv);
-
+  CERTCertList* list = SSL_PeerCertificateChain(nss_fd);
   // The handshake on |nss_fd| may not have completed.
-  if (num_certs == 0)
+  if (list == NULL)
     return;
 
-  certs_.resize(num_certs);
-  const unsigned int expected_num_certs = num_certs;
-  rv = SSL_PeerCertificateChain(nss_fd, vector_as_array(&certs_),
-                                &num_certs, expected_num_certs);
-  DCHECK_EQ(SECSuccess, rv);
-  DCHECK_EQ(expected_num_certs, num_certs);
+  for (CERTCertListNode* node = CERT_LIST_HEAD(list);
+       !CERT_LIST_END(node, list); node = CERT_LIST_NEXT(node)) {
+    certs_.push_back(CERT_DupCertificate(node->cert));
+  }
+  CERT_DestroyCertList(list);
 }
 
 std::vector<base::StringPiece>
@@ -761,7 +757,7 @@ class SSLClientSocketNSS::Core : public base::RefCountedThreadSafe<Core> {
   void UpdateConnectionStatus();
   // Record histograms for channel id support during full handshakes - resumed
   // handshakes are ignored.
-  void RecordChannelIDSupport();
+  void RecordChannelIDSupportOnNSSTaskRunner();
   // UpdateNextProto gets any application-layer protocol that may have been
   // negotiated by the TLS connection.
   void UpdateNextProto();
@@ -1013,19 +1009,12 @@ bool SSLClientSocketNSS::Core::Init(PRFileDesc* socket,
     return false;
   }
 
-  if (ssl_config_.channel_id_enabled) {
-    if (!server_bound_cert_service_) {
-      DVLOG(1) << "NULL server_bound_cert_service_, not enabling channel ID.";
-    } else if (!crypto::ECPrivateKey::IsSupported()) {
-      DVLOG(1) << "Elliptic Curve not supported, not enabling channel ID.";
-    } else if (!server_bound_cert_service_->IsSystemTimeValid()) {
-      DVLOG(1) << "System time is weird, not enabling channel ID.";
-    } else {
-      rv = SSL_SetClientChannelIDCallback(
-          nss_fd_, SSLClientSocketNSS::Core::ClientChannelIDHandler, this);
-      if (rv != SECSuccess)
-        LogFailedNSSFunction(*weak_net_log_, "SSL_SetClientChannelIDCallback",
-                             "");
+  if (IsChannelIDEnabled(ssl_config_, server_bound_cert_service_)) {
+    rv = SSL_SetClientChannelIDCallback(
+        nss_fd_, SSLClientSocketNSS::Core::ClientChannelIDHandler, this);
+    if (rv != SECSuccess) {
+      LogFailedNSSFunction(
+          *weak_net_log_, "SSL_SetClientChannelIDCallback", "");
     }
   }
 
@@ -1290,6 +1279,19 @@ SECStatus SSLClientSocketNSS::Core::OwnAuthCertHandler(
       // If the server doesn't support NPN or ALPN, then we don't do False
       // Start with it.
       SSL_OptionSet(socket, SSL_ENABLE_FALSE_START, PR_FALSE);
+    }
+  } else {
+    // Disallow the server certificate to change in a renegotiation.
+    CERTCertificate* old_cert = core->nss_handshake_state_.server_cert_chain[0];
+    ScopedCERTCertificate new_cert(SSL_PeerCertificate(socket));
+    if (new_cert->derCert.len != old_cert->derCert.len ||
+        memcmp(new_cert->derCert.data, old_cert->derCert.data,
+               new_cert->derCert.len) != 0) {
+      // NSS doesn't have an error code that indicates the server certificate
+      // changed. Borrow SSL_ERROR_WRONG_CERTIFICATE (which NSS isn't using)
+      // for this purpose.
+      PORT_SetError(SSL_ERROR_WRONG_CERTIFICATE);
+      return SECFailure;
     }
   }
 
@@ -1624,7 +1626,7 @@ void SSLClientSocketNSS::Core::HandshakeCallback(
     nss_state->resumed_handshake = false;
   }
 
-  core->RecordChannelIDSupport();
+  core->RecordChannelIDSupportOnNSSTaskRunner();
   core->UpdateServerCert();
   core->UpdateConnectionStatus();
   core->UpdateNextProto();
@@ -2497,7 +2499,7 @@ void SSLClientSocketNSS::Core::UpdateNextProto() {
   }
 }
 
-void SSLClientSocketNSS::Core::RecordChannelIDSupport() {
+void SSLClientSocketNSS::Core::RecordChannelIDSupportOnNSSTaskRunner() {
   DCHECK(OnNSSTaskRunner());
   if (nss_handshake_state_.resumed_handshake)
     return;
@@ -2520,30 +2522,10 @@ void SSLClientSocketNSS::Core::RecordChannelIDSupportOnNetworkTaskRunner(
     bool supports_ecc) const {
   DCHECK(OnNetworkTaskRunner());
 
-  // Since this enum is used for a histogram, do not change or re-use values.
-  enum {
-    DISABLED = 0,
-    CLIENT_ONLY = 1,
-    CLIENT_AND_SERVER = 2,
-    CLIENT_NO_ECC = 3,
-    CLIENT_BAD_SYSTEM_TIME = 4,
-    CLIENT_NO_SERVER_BOUND_CERT_SERVICE = 5,
-    DOMAIN_BOUND_CERT_USAGE_MAX
-  } supported = DISABLED;
-  if (negotiated_channel_id) {
-    supported = CLIENT_AND_SERVER;
-  } else if (channel_id_enabled) {
-    if (!server_bound_cert_service_)
-      supported = CLIENT_NO_SERVER_BOUND_CERT_SERVICE;
-    else if (!supports_ecc)
-      supported = CLIENT_NO_ECC;
-    else if (!server_bound_cert_service_->IsSystemTimeValid())
-      supported = CLIENT_BAD_SYSTEM_TIME;
-    else
-      supported = CLIENT_ONLY;
-  }
-  UMA_HISTOGRAM_ENUMERATION("DomainBoundCerts.Support", supported,
-                            DOMAIN_BOUND_CERT_USAGE_MAX);
+  RecordChannelIDSupport(server_bound_cert_service_,
+                         negotiated_channel_id,
+                         channel_id_enabled,
+                         supports_ecc);
 }
 
 int SSLClientSocketNSS::Core::DoBufferRecv(IOBuffer* read_buffer, int len) {
@@ -2598,7 +2580,7 @@ int SSLClientSocketNSS::Core::DoGetDomainBoundCert(const std::string& host) {
 
   weak_net_log_->BeginEvent(NetLog::TYPE_SSL_GET_DOMAIN_BOUND_CERT);
 
-  int rv = server_bound_cert_service_->GetDomainBoundCert(
+  int rv = server_bound_cert_service_->GetOrCreateDomainBoundCert(
       host,
       &domain_bound_private_key_,
       &domain_bound_cert_,
@@ -2751,12 +2733,12 @@ void SSLClientSocketNSS::Core::SetChannelIDProvided() {
 
 SSLClientSocketNSS::SSLClientSocketNSS(
     base::SequencedTaskRunner* nss_task_runner,
-    ClientSocketHandle* transport_socket,
+    scoped_ptr<ClientSocketHandle> transport_socket,
     const HostPortPair& host_and_port,
     const SSLConfig& ssl_config,
     const SSLClientSocketContext& context)
     : nss_task_runner_(nss_task_runner),
-      transport_(transport_socket),
+      transport_(transport_socket.Pass()),
       host_and_port_(host_and_port),
       ssl_config_(ssl_config),
       cert_verifier_(context.cert_verifier),
@@ -2765,7 +2747,7 @@ SSLClientSocketNSS::SSLClientSocketNSS(
       completed_handshake_(false),
       next_handshake_state_(STATE_NONE),
       nss_fd_(NULL),
-      net_log_(transport_socket->socket()->NetLog()),
+      net_log_(transport_->socket()->NetLog()),
       transport_security_state_(context.transport_security_state),
       valid_thread_id_(base::kInvalidThreadId) {
   EnterFunction("");
@@ -3141,7 +3123,8 @@ int SSLClientSocketNSS::InitializeSSLOptions() {
         net_log_, "SSL_OptionSet", "SSL_ENABLE_SESSION_TICKETS");
   }
 
-  rv = SSL_OptionSet(nss_fd_, SSL_ENABLE_FALSE_START, PR_FALSE);
+  rv = SSL_OptionSet(nss_fd_, SSL_ENABLE_FALSE_START,
+                     ssl_config_.false_start_enabled);
   if (rv != SECSuccess)
     LogFailedNSSFunction(net_log_, "SSL_OptionSet", "SSL_ENABLE_FALSE_START");
 

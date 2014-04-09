@@ -7,10 +7,13 @@
 #include "base/debug/trace_event.h"
 #include "cc/animation/keyframed_animation_curve.h"
 #include "cc/animation/scrollbar_animation_controller.h"
+#include "cc/base/math_util.h"
+#include "cc/base/util.h"
 #include "cc/debug/traced_value.h"
 #include "cc/layers/heads_up_display_layer_impl.h"
+#include "cc/layers/layer.h"
 #include "cc/layers/render_surface_impl.h"
-#include "cc/layers/scrollbar_layer_impl.h"
+#include "cc/layers/scrollbar_layer_impl_base.h"
 #include "cc/trees/layer_tree_host_common.h"
 #include "cc/trees/layer_tree_host_impl.h"
 #include "ui/gfx/size_conversions.h"
@@ -27,6 +30,9 @@ LayerTreeImpl::LayerTreeImpl(LayerTreeHostImpl* layer_tree_host_impl)
       root_layer_scroll_offset_delegate_(NULL),
       background_color_(0),
       has_transparent_background_(false),
+      page_scale_layer_(NULL),
+      inner_viewport_scroll_layer_(NULL),
+      outer_viewport_scroll_layer_(NULL),
       page_scale_factor_(1),
       page_scale_delta_(1),
       sent_page_scale_delta_(1),
@@ -36,7 +42,8 @@ LayerTreeImpl::LayerTreeImpl(LayerTreeHostImpl* layer_tree_host_impl)
       contents_textures_purged_(false),
       viewport_size_invalid_(false),
       needs_update_draw_properties_(true),
-      needs_full_tree_sync_(true) {
+      needs_full_tree_sync_(true),
+      next_activation_forces_redraw_(false) {
 }
 
 LayerTreeImpl::~LayerTreeImpl() {
@@ -107,6 +114,11 @@ void LayerTreeImpl::PushPropertiesTo(LayerTreeImpl* target_tree) {
   // The request queue should have been processed and does not require a push.
   DCHECK_EQ(ui_resource_request_queue_.size(), 0u);
 
+  if (next_activation_forces_redraw_) {
+    layer_tree_host_impl_->SetFullRootLayerDamage();
+    next_activation_forces_redraw_ = false;
+  }
+
   target_tree->SetLatencyInfo(latency_info_);
   latency_info_.Clear();
   target_tree->SetPageScaleFactorAndLimits(
@@ -115,6 +127,13 @@ void LayerTreeImpl::PushPropertiesTo(LayerTreeImpl* target_tree) {
       target_tree->page_scale_delta() / target_tree->sent_page_scale_delta());
   target_tree->set_sent_page_scale_delta(1);
 
+  if (settings().use_pinch_virtual_viewport) {
+    target_tree->SetViewportLayersFromIds(
+        page_scale_layer_->id(),
+        inner_viewport_scroll_layer_->id(),
+        outer_viewport_scroll_layer_ ? outer_viewport_scroll_layer_->id()
+                                     : Layer::INVALID_ID);
+  }
   // This should match the property synchronization in
   // LayerTreeHost::finishCommitOnImplThread().
   target_tree->set_source_frame_number(source_frame_number());
@@ -178,6 +197,11 @@ void LayerTreeImpl::SetPageScaleFactorAndLimits(float page_scale_factor,
   min_page_scale_factor_ = min_page_scale_factor;
   max_page_scale_factor_ = max_page_scale_factor;
   page_scale_factor_ = page_scale_factor;
+
+  if (root_layer_scroll_offset_delegate_) {
+    root_layer_scroll_offset_delegate_->SetTotalPageScaleFactor(
+        total_page_scale_factor());
+  }
 }
 
 void LayerTreeImpl::SetPageScaleDelta(float delta) {
@@ -204,11 +228,25 @@ void LayerTreeImpl::SetPageScaleDelta(float delta) {
 
   UpdateMaxScrollOffset();
   set_needs_update_draw_properties();
+
+  if (root_layer_scroll_offset_delegate_) {
+    root_layer_scroll_offset_delegate_->SetTotalPageScaleFactor(
+        total_page_scale_factor());
+  }
 }
 
 gfx::SizeF LayerTreeImpl::ScrollableViewportSize() const {
-  return gfx::ScaleSize(layer_tree_host_impl_->VisibleViewportSize(),
+  return gfx::ScaleSize(layer_tree_host_impl_->UnscaledScrollableViewportSize(),
                         1.0f / total_page_scale_factor());
+}
+
+gfx::Rect LayerTreeImpl::RootScrollLayerDeviceViewportBounds() const {
+  if (!root_scroll_layer_ || root_scroll_layer_->children().empty())
+    return gfx::Rect();
+  LayerImpl* layer = root_scroll_layer_->children()[0];
+  return MathUtil::MapClippedRect(
+      layer->screen_space_transform(),
+      gfx::Rect(layer->content_bounds()));
 }
 
 void LayerTreeImpl::UpdateMaxScrollOffset() {
@@ -226,11 +264,11 @@ void LayerTreeImpl::UpdateMaxScrollOffset() {
   root_scroll_layer_->SetMaxScrollOffset(gfx::ToFlooredVector2d(max_scroll));
 }
 
-static void ApplySentScrollDeltasOn(LayerImpl* layer) {
-  layer->ApplySentScrollDeltas();
+static void ApplySentScrollDeltasFromAbortedCommitTo(LayerImpl* layer) {
+  layer->ApplySentScrollDeltasFromAbortedCommit();
 }
 
-void LayerTreeImpl::ApplySentScrollAndScaleDeltas() {
+void LayerTreeImpl::ApplySentScrollAndScaleDeltasFromAbortedCommit() {
   DCHECK(IsActiveTree());
 
   page_scale_factor_ *= sent_page_scale_delta_;
@@ -241,12 +279,49 @@ void LayerTreeImpl::ApplySentScrollAndScaleDeltas() {
     return;
 
   LayerTreeHostCommon::CallFunctionForSubtree(
-      root_layer(), base::Bind(&ApplySentScrollDeltasOn));
+      root_layer(), base::Bind(&ApplySentScrollDeltasFromAbortedCommitTo));
 }
 
-void LayerTreeImpl::UpdateSolidColorScrollbars() {
-  DCHECK(settings().solid_color_scrollbars);
+static void ApplyScrollDeltasSinceBeginMainFrameTo(LayerImpl* layer) {
+  layer->ApplyScrollDeltasSinceBeginMainFrame();
+}
 
+void LayerTreeImpl::ApplyScrollDeltasSinceBeginMainFrame() {
+  DCHECK(IsPendingTree());
+  if (!root_layer())
+    return;
+
+  LayerTreeHostCommon::CallFunctionForSubtree(
+      root_layer(), base::Bind(&ApplyScrollDeltasSinceBeginMainFrameTo));
+}
+
+void LayerTreeImpl::SetViewportLayersFromIds(
+    int page_scale_layer_id,
+    int inner_viewport_scroll_layer_id,
+    int outer_viewport_scroll_layer_id) {
+  page_scale_layer_ = LayerById(page_scale_layer_id);
+  DCHECK(page_scale_layer_);
+
+  inner_viewport_scroll_layer_ =
+      LayerById(inner_viewport_scroll_layer_id);
+  DCHECK(inner_viewport_scroll_layer_);
+
+  outer_viewport_scroll_layer_ =
+      LayerById(outer_viewport_scroll_layer_id);
+  DCHECK(outer_viewport_scroll_layer_ ||
+         outer_viewport_scroll_layer_id == Layer::INVALID_ID);
+}
+
+void LayerTreeImpl::ClearViewportLayers() {
+  page_scale_layer_ = NULL;
+  inner_viewport_scroll_layer_ = NULL;
+  outer_viewport_scroll_layer_ = NULL;
+}
+
+// TODO(wjmaclean) This needs to go away, and be replaced with a single core
+// of login that works for both scrollbar layer types. This is already planned
+// as part of the larger pinch-zoom re-factoring viewport.
+void LayerTreeImpl::UpdateSolidColorScrollbars() {
   LayerImpl* root_scroll = RootScrollLayer();
   DCHECK(root_scroll);
   DCHECK(IsActiveTree());
@@ -256,14 +331,17 @@ void LayerTreeImpl::UpdateSolidColorScrollbars() {
       ScrollableViewportSize());
   float vertical_adjust = 0.0f;
   if (RootContainerLayer())
-    vertical_adjust = layer_tree_host_impl_->VisibleViewportSize().height() -
-                      RootContainerLayer()->bounds().height();
-  if (ScrollbarLayerImpl* horiz = root_scroll->horizontal_scrollbar_layer()) {
+    vertical_adjust =
+        layer_tree_host_impl_->UnscaledScrollableViewportSize().height() -
+        RootContainerLayer()->bounds().height();
+  if (ScrollbarLayerImplBase* horiz =
+          root_scroll->horizontal_scrollbar_layer()) {
     horiz->SetVerticalAdjust(vertical_adjust);
     horiz->SetVisibleToTotalLengthRatio(
         scrollable_viewport.width() / ScrollableSize().width());
   }
-  if (ScrollbarLayerImpl* vertical = root_scroll->vertical_scrollbar_layer()) {
+  if (ScrollbarLayerImplBase* vertical =
+          root_scroll->vertical_scrollbar_layer()) {
     vertical->SetVerticalAdjust(vertical_adjust);
     vertical->SetVisibleToTotalLengthRatio(
         scrollable_viewport.height() / ScrollableSize().height());
@@ -274,9 +352,9 @@ void LayerTreeImpl::UpdateDrawProperties() {
   if (IsActiveTree() && RootScrollLayer() && RootContainerLayer())
     UpdateRootScrollLayerSizeDelta();
 
-  if (settings().solid_color_scrollbars &&
-      IsActiveTree() &&
-      RootScrollLayer()) {
+  if (IsActiveTree() &&
+      RootContainerLayer()
+      && !RootContainerLayer()->masks_to_bounds()) {
     UpdateSolidColorScrollbars();
   }
 
@@ -297,18 +375,54 @@ void LayerTreeImpl::UpdateDrawProperties() {
                  IsActiveTree(),
                  "SourceFrameNumber",
                  source_frame_number_);
+    LayerImpl* page_scale_layer =
+        page_scale_layer_ ? page_scale_layer_ : RootContainerLayer();
+    bool can_render_to_separate_surface =
+        !output_surface()->ForcedDrawToSoftwareDevice();
     LayerTreeHostCommon::CalcDrawPropsImplInputs inputs(
         root_layer(),
-        layer_tree_host_impl_->DeviceViewport().size(),
-        layer_tree_host_impl_->DeviceTransform(),
+        DrawViewportSize(),
+        layer_tree_host_impl_->DrawTransform(),
         device_scale_factor(),
         total_page_scale_factor(),
-        root_scroll_layer_ ? root_scroll_layer_->parent() : NULL,
+        page_scale_layer,
         MaxTextureSize(),
         settings().can_use_lcd_text,
+        can_render_to_separate_surface,
         settings().layer_transforms_should_scale_layer_contents,
         &render_surface_layer_list_);
     LayerTreeHostCommon::CalculateDrawProperties(&inputs);
+  }
+
+  {
+    TRACE_EVENT2("cc",
+                 "LayerTreeImpl::UpdateTilePriorities",
+                 "IsActive",
+                 IsActiveTree(),
+                 "SourceFrameNumber",
+                 source_frame_number_);
+    // LayerIterator is used here instead of CallFunctionForSubtree to only
+    // UpdateTilePriorities on layers that will be visible (and thus have valid
+    // draw properties) and not because any ordering is required.
+    typedef LayerIterator<LayerImpl,
+                          LayerImplList,
+                          RenderSurfaceImpl,
+                          LayerIteratorActions::FrontToBack> LayerIteratorType;
+    LayerIteratorType end = LayerIteratorType::End(&render_surface_layer_list_);
+    for (LayerIteratorType it =
+             LayerIteratorType::Begin(&render_surface_layer_list_);
+         it != end;
+         ++it) {
+      if (!it.represents_itself())
+        continue;
+      LayerImpl* layer = *it;
+
+      layer->UpdateTilePriorities();
+      if (layer->mask_layer())
+        layer->mask_layer()->UpdateTilePriorities();
+      if (layer->replica_layer() && layer->replica_layer()->mask_layer())
+        layer->replica_layer()->mask_layer()->UpdateTilePriorities();
+    }
   }
 
   DCHECK(!needs_update_draw_properties_) <<
@@ -408,6 +522,10 @@ const RendererCapabilities& LayerTreeImpl::GetRendererCapabilities() const {
   return layer_tree_host_impl_->GetRendererCapabilities();
 }
 
+ContextProvider* LayerTreeImpl::context_provider() const {
+  return output_surface()->context_provider();
+}
+
 OutputSurface* LayerTreeImpl::output_surface() const {
   return layer_tree_host_impl_->output_surface();
 }
@@ -430,6 +548,10 @@ PaintTimeCounter* LayerTreeImpl::paint_time_counter() const {
 
 MemoryHistory* LayerTreeImpl::memory_history() const {
   return layer_tree_host_impl_->memory_history();
+}
+
+bool LayerTreeImpl::device_viewport_valid_for_tile_management() const {
+  return layer_tree_host_impl_->device_viewport_valid_for_tile_management();
 }
 
 bool LayerTreeImpl::IsActiveTree() const {
@@ -482,6 +604,14 @@ void LayerTreeImpl::SetNeedsCommit() {
   layer_tree_host_impl_->SetNeedsCommit();
 }
 
+gfx::Size LayerTreeImpl::DrawViewportSize() const {
+  return layer_tree_host_impl_->DrawViewportSize();
+}
+
+void LayerTreeImpl::StartScrollbarAnimation() {
+  layer_tree_host_impl_->StartScrollbarAnimation();
+}
+
 void LayerTreeImpl::SetNeedsRedraw() {
   layer_tree_host_impl_->SetNeedsRedraw();
 }
@@ -492,10 +622,6 @@ const LayerTreeDebugState& LayerTreeImpl::debug_state() const {
 
 float LayerTreeImpl::device_scale_factor() const {
   return layer_tree_host_impl_->device_scale_factor();
-}
-
-gfx::Size LayerTreeImpl::device_viewport_size() const {
-  return layer_tree_host_impl_->device_viewport_size();
 }
 
 DebugRectHistory* LayerTreeImpl::debug_rect_history() const {
@@ -517,7 +643,7 @@ scoped_ptr<base::Value> LayerTreeImpl::AsValue() const {
   typedef LayerIterator<LayerImpl,
                         LayerImplList,
                         RenderSurfaceImpl,
-                        LayerIteratorActions::BackToFront> LayerIteratorType;
+                        LayerIteratorActions::FrontToBack> LayerIteratorType;
   LayerIteratorType end = LayerIteratorType::End(&render_surface_layer_list_);
   for (LayerIteratorType it = LayerIteratorType::Begin(
            &render_surface_layer_list_); it != end; ++it) {
@@ -533,10 +659,20 @@ scoped_ptr<base::Value> LayerTreeImpl::AsValue() const {
 
 void LayerTreeImpl::SetRootLayerScrollOffsetDelegate(
     LayerScrollOffsetDelegate* root_layer_scroll_offset_delegate) {
+  if (root_layer_scroll_offset_delegate_ == root_layer_scroll_offset_delegate)
+    return;
+
   root_layer_scroll_offset_delegate_ = root_layer_scroll_offset_delegate;
+
   if (root_scroll_layer_) {
     root_scroll_layer_->SetScrollOffsetDelegate(
         root_layer_scroll_offset_delegate_);
+  }
+
+  if (root_layer_scroll_offset_delegate_) {
+    root_layer_scroll_offset_delegate_->SetScrollableSize(ScrollableSize());
+    root_layer_scroll_offset_delegate_->SetTotalPageScaleFactor(
+        total_page_scale_factor());
   }
 }
 
@@ -571,8 +707,8 @@ void LayerTreeImpl::ClearLatencyInfo() {
   latency_info_.Clear();
 }
 
-void LayerTreeImpl::WillModifyTilePriorities() {
-  layer_tree_host_impl_->SetNeedsManageTiles();
+void LayerTreeImpl::DidModifyTilePriorities() {
+  layer_tree_host_impl_->DidModifyTilePriorities();
 }
 
 void LayerTreeImpl::set_ui_resource_request_queue(
@@ -585,23 +721,32 @@ ResourceProvider::ResourceId LayerTreeImpl::ResourceIdForUIResource(
   return layer_tree_host_impl_->ResourceIdForUIResource(uid);
 }
 
+bool LayerTreeImpl::IsUIResourceOpaque(UIResourceId uid) const {
+  return layer_tree_host_impl_->IsUIResourceOpaque(uid);
+}
+
 void LayerTreeImpl::ProcessUIResourceRequestQueue() {
   while (ui_resource_request_queue_.size() > 0) {
     UIResourceRequest req = ui_resource_request_queue_.front();
     ui_resource_request_queue_.pop_front();
 
-    switch (req.type) {
+    switch (req.GetType()) {
       case UIResourceRequest::UIResourceCreate:
-        layer_tree_host_impl_->CreateUIResource(req.id, req.bitmap);
+        layer_tree_host_impl_->CreateUIResource(req.GetId(), req.GetBitmap());
         break;
       case UIResourceRequest::UIResourceDelete:
-        layer_tree_host_impl_->DeleteUIResource(req.id);
+        layer_tree_host_impl_->DeleteUIResource(req.GetId());
         break;
-      default:
+      case UIResourceRequest::UIResourceInvalidRequest:
         NOTREACHED();
         break;
     }
   }
+
+  // If all UI resource evictions were not recreated by processing this queue,
+  // then another commit is required.
+  if (layer_tree_host_impl_->EvictedUIResourcesExist())
+    layer_tree_host_impl_->SetNeedsCommit();
 }
 
 void LayerTreeImpl::AddLayerWithCopyOutputRequest(LayerImpl* layer) {

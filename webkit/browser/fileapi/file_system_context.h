@@ -17,7 +17,8 @@
 #include "base/sequenced_task_runner_helpers.h"
 #include "webkit/browser/fileapi/file_system_url.h"
 #include "webkit/browser/fileapi/open_file_system_mode.h"
-#include "webkit/browser/fileapi/sandbox_context.h"
+#include "webkit/browser/fileapi/plugin_private_file_system_backend.h"
+#include "webkit/browser/fileapi/sandbox_file_system_backend_delegate.h"
 #include "webkit/browser/fileapi/task_runner_bound_observer_list.h"
 #include "webkit/browser/webkit_storage_browser_export.h"
 #include "webkit/common/fileapi/file_system_types.h"
@@ -49,8 +50,8 @@ class CopyOrMoveFileValidatorFactory;
 class ExternalFileSystemBackend;
 class ExternalMountPoints;
 class FileStreamWriter;
-class FileSystemFileUtil;
 class FileSystemBackend;
+class FileSystemFileUtil;
 class FileSystemOperation;
 class FileSystemOperationRunner;
 class FileSystemOptions;
@@ -61,6 +62,7 @@ class MountPoints;
 class SandboxFileSystemBackend;
 
 struct DefaultContextDeleter;
+struct FileSystemInfo;
 
 // This class keeps and provides a file system context for FileSystem API.
 // An instance of this class is created and owned by profile.
@@ -119,11 +121,6 @@ class WEBKIT_STORAGE_BROWSER_EXPORT FileSystemContext
   // Returns the appropriate AsyncFileUtil instance for the given |type|.
   AsyncFileUtil* GetAsyncFileUtil(FileSystemType type) const;
 
-  // Returns the appropriate FileUtil instance for the given |type|.
-  // This may return NULL if it is given an invalid type or the filesystem
-  // does not support synchronous file operations.
-  FileSystemFileUtil* GetFileUtil(FileSystemType type) const;
-
   // Returns the appropriate CopyOrMoveFileValidatorFactory for the given
   // |type|.  If |error_code| is PLATFORM_FILE_OK and the result is NULL,
   // then no validator is required.
@@ -155,13 +152,26 @@ class WEBKIT_STORAGE_BROWSER_EXPORT FileSystemContext
   ExternalFileSystemBackend* external_backend() const;
 
   // Used for OpenFileSystem.
-  typedef base::Callback<void(base::PlatformFileError result,
+  typedef base::Callback<void(const GURL& root,
                               const std::string& name,
-                              const GURL& root)> OpenFileSystemCallback;
+                              base::PlatformFileError result)>
+      OpenFileSystemCallback;
+
+  // Used for ResolveURL.
+  typedef base::Callback<void(base::PlatformFileError result,
+                              const FileSystemInfo& info,
+                              const base::FilePath& file_path,
+                              bool is_directory)> ResolveURLCallback;
 
   // Used for DeleteFileSystem.
   typedef base::Callback<void(base::PlatformFileError result)>
       DeleteFileSystemCallback;
+
+  // Used for OpenPluginPrivateFileSystem.
+  typedef base::Callback<void(const GURL& root,
+                              const std::string& filesystem_id,
+                              base::PlatformFileError result)>
+      OpenPluginPrivateFileSystemCallback;
 
   // Opens the filesystem for the given |origin_url| and |type|, and dispatches
   // |callback| on completion.
@@ -174,8 +184,15 @@ class WEBKIT_STORAGE_BROWSER_EXPORT FileSystemContext
       OpenFileSystemMode mode,
       const OpenFileSystemCallback& callback);
 
+  // Opens the filesystem for the given |url| as read-only, and then checks the
+  // existence of the file entry referred by the URL. This should be called on
+  // the IO thread.
+  void ResolveURL(
+      const FileSystemURL& url,
+      const ResolveURLCallback& callback);
+
   // Deletes the filesystem for the given |origin_url| and |type|. This should
-  // be called on the IO Thread.
+  // be called on the IO thread.
   void DeleteFileSystem(
       const GURL& origin_url,
       FileSystemType type,
@@ -228,7 +245,22 @@ class WEBKIT_STORAGE_BROWSER_EXPORT FileSystemContext
   void EnableTemporaryFileSystemInIncognito();
 #endif
 
-  SandboxContext* sandbox_context() { return sandbox_context_.get(); }
+  SandboxFileSystemBackendDelegate* sandbox_delegate() {
+    return sandbox_delegate_.get();
+  }
+
+  // Returns true if the requested url is ok to be served.
+  // (E.g. this returns false if the context is created for incognito mode)
+  bool CanServeURLRequest(const FileSystemURL& url) const;
+
+  // This must be used to open 'plugin private' filesystem.
+  // See "plugin_private_file_system_backend.h" for more details.
+  void OpenPluginPrivateFileSystem(
+      const GURL& origin_url,
+      FileSystemType type,
+      const std::string& plugin_id,
+      OpenFileSystemMode mode,
+      const OpenPluginPrivateFileSystemCallback& callback);
 
  private:
   typedef std::map<FileSystemType, FileSystemBackend*>
@@ -239,6 +271,9 @@ class WEBKIT_STORAGE_BROWSER_EXPORT FileSystemContext
 
   // For sandbox_backend().
   friend class SandboxFileSystemTestHelper;
+
+  // For plugin_private_backend().
+  friend class PluginPrivateFileSystemBackendTest;
 
   // Deleters.
   friend struct DefaultContextDeleter;
@@ -273,9 +308,21 @@ class WEBKIT_STORAGE_BROWSER_EXPORT FileSystemContext
   // the constructor.
   void RegisterBackend(FileSystemBackend* backend);
 
+  void DidOpenFileSystemForResolveURL(
+      const FileSystemURL& url,
+      const ResolveURLCallback& callback,
+      const GURL& filesystem_root,
+      const std::string& filesystem_name,
+      base::PlatformFileError error);
+
   // Returns a FileSystemBackend, used only by test code.
   SandboxFileSystemBackend* sandbox_backend() const {
     return sandbox_backend_.get();
+  }
+
+  // Used only by test code.
+  PluginPrivateFileSystemBackend* plugin_private_backend() const {
+    return plugin_private_backend_.get();
   }
 
   scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;
@@ -283,13 +330,14 @@ class WEBKIT_STORAGE_BROWSER_EXPORT FileSystemContext
 
   scoped_refptr<quota::QuotaManagerProxy> quota_manager_proxy_;
 
-  scoped_ptr<SandboxContext> sandbox_context_;
+  scoped_ptr<SandboxFileSystemBackendDelegate> sandbox_delegate_;
 
   // Regular file system backends.
   scoped_ptr<SandboxFileSystemBackend> sandbox_backend_;
   scoped_ptr<IsolatedFileSystemBackend> isolated_backend_;
 
   // Additional file system backends.
+  scoped_ptr<PluginPrivateFileSystemBackend> plugin_private_backend_;
   ScopedVector<FileSystemBackend> additional_backends_;
 
   // Registered file system backends.
@@ -310,6 +358,8 @@ class WEBKIT_STORAGE_BROWSER_EXPORT FileSystemContext
 
   // The base path of the storage partition for this context.
   const base::FilePath partition_path_;
+
+  bool is_incognito_;
 
   scoped_ptr<FileSystemOperationRunner> operation_runner_;
 

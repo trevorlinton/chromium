@@ -12,22 +12,25 @@ namespace base {
 class MessageLoopForUI;
 }
 
+namespace gfx {
+class SurfaceFactoryOzone;
+}
+
 namespace ui {
 class InputMethod;
 class ScopedAnimationDurationScaleMode;
-class SurfaceFactoryOzone;
 }
 
 namespace aura {
 class RootWindow;
 class TestScreen;
 namespace client {
+class DefaultActivationClient;
 class DefaultCaptureClient;
 class FocusClient;
 }
 namespace test {
-class TestActivationClient;
-class TestStackingClient;
+class TestWindowTreeClient;
 
 // A helper class owned by tests that does common initialization required for
 // Aura use. This class creates a root window with clients and other objects
@@ -57,8 +60,8 @@ class AuraTestHelper {
   bool teardown_called_;
   bool owns_root_window_;
   scoped_ptr<RootWindow> root_window_;
-  scoped_ptr<TestStackingClient> stacking_client_;
-  scoped_ptr<TestActivationClient> test_activation_client_;
+  scoped_ptr<TestWindowTreeClient> stacking_client_;
+  scoped_ptr<client::DefaultActivationClient> activation_client_;
   scoped_ptr<client::DefaultCaptureClient> capture_client_;
   scoped_ptr<ui::InputMethod> test_input_method_;
   scoped_ptr<client::FocusClient> focus_client_;
@@ -66,7 +69,7 @@ class AuraTestHelper {
   scoped_ptr<ui::ScopedAnimationDurationScaleMode> zero_duration_mode_;
 
 #if defined(USE_OZONE)
-  scoped_ptr<ui::SurfaceFactoryOzone> surface_factory_;
+  scoped_ptr<gfx::SurfaceFactoryOzone> surface_factory_;
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(AuraTestHelper);

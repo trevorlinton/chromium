@@ -11,8 +11,6 @@
 #include "base/basictypes.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/values.h"
-#include "chrome/browser/prefs/incognito_mode_prefs.h"
-#include "chrome/common/content_settings.h"
 
 class PrefValueMap;
 
@@ -20,6 +18,13 @@ namespace policy {
 
 class PolicyErrorMap;
 class PolicyMap;
+
+// Maps a policy type to a preference path, and to the expected value type.
+struct PolicyToPreferenceMapEntry {
+  const char* const policy_name;
+  const char* const preference_path;
+  const base::Value::Type value_type;
+};
 
 // An abstract super class that subclasses should implement to map policies to
 // their corresponding preferences, and to check whether the policies are valid.
@@ -59,20 +64,19 @@ class TypeCheckingPolicyHandler : public ConfigurationPolicyHandler {
  public:
   TypeCheckingPolicyHandler(const char* policy_name,
                             base::Value::Type value_type);
+  virtual ~TypeCheckingPolicyHandler();
 
   // ConfigurationPolicyHandler methods:
   virtual bool CheckPolicySettings(const PolicyMap& policies,
                                    PolicyErrorMap* errors) OVERRIDE;
 
- protected:
-  virtual ~TypeCheckingPolicyHandler();
+  const char* policy_name() const;
 
+ protected:
   // Runs policy checks and returns the policy value if successful.
   bool CheckAndGetValue(const PolicyMap& policies,
                         PolicyErrorMap* errors,
                         const Value** value);
-
-  const char* policy_name() const;
 
  private:
   // The name of the policy.
@@ -220,326 +224,6 @@ class IntPercentageToDoublePolicyHandler : public IntRangePolicyHandlerBase {
   const char* pref_path_;
 
   DISALLOW_COPY_AND_ASSIGN(IntPercentageToDoublePolicyHandler);
-};
-
-// Implements additional checks for policies that are lists of extension IDs.
-class ExtensionListPolicyHandler : public TypeCheckingPolicyHandler {
- public:
-  ExtensionListPolicyHandler(const char* policy_name,
-                             const char* pref_path,
-                             bool allow_wildcards);
-  virtual ~ExtensionListPolicyHandler();
-
-  // ConfigurationPolicyHandler methods:
-  virtual bool CheckPolicySettings(const PolicyMap& policies,
-                                   PolicyErrorMap* errors) OVERRIDE;
-  virtual void ApplyPolicySettings(const PolicyMap& policies,
-                                   PrefValueMap* prefs) OVERRIDE;
-
- protected:
-  const char* pref_path() const;
-
-  // Runs sanity checks on the policy value and returns it in |extension_ids|.
-  bool CheckAndGetList(const PolicyMap& policies,
-                       PolicyErrorMap* errors,
-                       scoped_ptr<base::ListValue>* extension_ids);
-
- private:
-  const char* pref_path_;
-  bool allow_wildcards_;
-
-  DISALLOW_COPY_AND_ASSIGN(ExtensionListPolicyHandler);
-};
-
-class ExtensionInstallForcelistPolicyHandler
-    : public TypeCheckingPolicyHandler {
- public:
-  ExtensionInstallForcelistPolicyHandler();
-  virtual ~ExtensionInstallForcelistPolicyHandler();
-
-  // ConfigurationPolicyHandler methods:
-  virtual bool CheckPolicySettings(const PolicyMap& policies,
-                                   PolicyErrorMap* errors) OVERRIDE;
-  virtual void ApplyPolicySettings(const PolicyMap& policies,
-                                   PrefValueMap* prefs) OVERRIDE;
-
- private:
-  // Parses the data in |policy_value| and writes them to |extension_dict|.
-  bool ParseList(const base::Value* policy_value,
-                 base::DictionaryValue* extension_dict,
-                 PolicyErrorMap* errors);
-
-  DISALLOW_COPY_AND_ASSIGN(ExtensionInstallForcelistPolicyHandler);
-};
-
-// Implements additional checks for policies that are lists of extension
-// URLPatterns.
-class ExtensionURLPatternListPolicyHandler : public TypeCheckingPolicyHandler {
- public:
-  ExtensionURLPatternListPolicyHandler(const char* policy_name,
-                                       const char* pref_path);
-  virtual ~ExtensionURLPatternListPolicyHandler();
-
-  // ConfigurationPolicyHandler methods:
-  virtual bool CheckPolicySettings(const PolicyMap& policies,
-                                   PolicyErrorMap* errors) OVERRIDE;
-  virtual void ApplyPolicySettings(const PolicyMap& policies,
-                                   PrefValueMap* prefs) OVERRIDE;
-
- private:
-  const char* pref_path_;
-
-  DISALLOW_COPY_AND_ASSIGN(ExtensionURLPatternListPolicyHandler);
-};
-
-// ConfigurationPolicyHandler for the SyncDisabled policy.
-class SyncPolicyHandler : public TypeCheckingPolicyHandler {
- public:
-  SyncPolicyHandler();
-  virtual ~SyncPolicyHandler();
-
-  // ConfigurationPolicyHandler methods:
-  virtual void ApplyPolicySettings(const PolicyMap& policies,
-                                   PrefValueMap* prefs) OVERRIDE;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(SyncPolicyHandler);
-};
-
-// ConfigurationPolicyHandler for the AutofillEnabled policy.
-class AutofillPolicyHandler : public TypeCheckingPolicyHandler {
- public:
-  AutofillPolicyHandler();
-  virtual ~AutofillPolicyHandler();
-
-  // ConfigurationPolicyHandler methods:
-  virtual void ApplyPolicySettings(const PolicyMap& policies,
-                                   PrefValueMap* prefs) OVERRIDE;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(AutofillPolicyHandler);
-};
-
-#if !defined(OS_ANDROID)
-
-// ConfigurationPolicyHandler for the DownloadDirectory policy.
-class DownloadDirPolicyHandler : public TypeCheckingPolicyHandler {
- public:
-  DownloadDirPolicyHandler();
-  virtual ~DownloadDirPolicyHandler();
-
-  // ConfigurationPolicyHandler methods:
-  virtual void ApplyPolicySettings(const PolicyMap& policies,
-                                   PrefValueMap* prefs) OVERRIDE;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(DownloadDirPolicyHandler);
-};
-
-// ConfigurationPolicyHandler for the DiskCacheDir policy.
-class DiskCacheDirPolicyHandler : public TypeCheckingPolicyHandler {
- public:
-  explicit DiskCacheDirPolicyHandler();
-  virtual ~DiskCacheDirPolicyHandler();
-
-  // ConfigurationPolicyHandler methods:
-  virtual void ApplyPolicySettings(const PolicyMap& policies,
-                                   PrefValueMap* prefs) OVERRIDE;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(DiskCacheDirPolicyHandler);
-};
-
-#endif  // !defined(OS_ANDROID)
-
-// ConfigurationPolicyHandler for the FileSelectionDialogsHandler policy.
-class FileSelectionDialogsHandler : public TypeCheckingPolicyHandler {
- public:
-  FileSelectionDialogsHandler();
-  virtual ~FileSelectionDialogsHandler();
-
-  // ConfigurationPolicyHandler methods:
-  virtual void ApplyPolicySettings(const PolicyMap& policies,
-                                   PrefValueMap* prefs) OVERRIDE;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(FileSelectionDialogsHandler);
-};
-
-// ConfigurationPolicyHandler for the incognito mode policies.
-class IncognitoModePolicyHandler : public ConfigurationPolicyHandler {
- public:
-  IncognitoModePolicyHandler();
-  virtual ~IncognitoModePolicyHandler();
-
-  // ConfigurationPolicyHandler methods:
-  virtual bool CheckPolicySettings(const PolicyMap& policies,
-                                   PolicyErrorMap* errors) OVERRIDE;
-  virtual void ApplyPolicySettings(const PolicyMap& policies,
-                                   PrefValueMap* prefs) OVERRIDE;
-
- private:
-  IncognitoModePrefs::Availability GetAvailabilityValueAsEnum(
-      const Value* availability);
-
-  DISALLOW_COPY_AND_ASSIGN(IncognitoModePolicyHandler);
-};
-
-// ConfigurationPolicyHandler for the DefaultSearchEncodings policy.
-class DefaultSearchEncodingsPolicyHandler : public TypeCheckingPolicyHandler {
- public:
-  DefaultSearchEncodingsPolicyHandler();
-  virtual ~DefaultSearchEncodingsPolicyHandler();
-
-  // ConfigurationPolicyHandler methods:
-  virtual void ApplyPolicySettings(const PolicyMap& policies,
-                                   PrefValueMap* prefs) OVERRIDE;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(DefaultSearchEncodingsPolicyHandler);
-};
-
-// ConfigurationPolicyHandler for the default search policies.
-class DefaultSearchPolicyHandler : public ConfigurationPolicyHandler {
- public:
-  DefaultSearchPolicyHandler();
-  virtual ~DefaultSearchPolicyHandler();
-
-  // ConfigurationPolicyHandler methods:
-  virtual bool CheckPolicySettings(const PolicyMap& policies,
-                                   PolicyErrorMap* errors) OVERRIDE;
-  virtual void ApplyPolicySettings(const PolicyMap& policies,
-                                   PrefValueMap* prefs) OVERRIDE;
-
- private:
-  // Calls |CheckPolicySettings()| on each of the handlers in |handlers_|
-  // and returns whether all of the calls succeeded.
-  bool CheckIndividualPolicies(const PolicyMap& policies,
-                               PolicyErrorMap* errors);
-
-  // Returns whether there is a value for |policy_name| in |policies|.
-  bool HasDefaultSearchPolicy(const PolicyMap& policies,
-                              const char* policy_name);
-
-  // Returns whether any default search policies are specified in |policies|.
-  bool AnyDefaultSearchPoliciesSpecified(const PolicyMap& policies);
-
-  // Returns whether the default search provider is disabled.
-  bool DefaultSearchProviderIsDisabled(const PolicyMap& policies);
-
-  // Returns whether the default search URL is set and valid.  On success, both
-  // outparams (which must be non-NULL) are filled with the search URL.
-  bool DefaultSearchURLIsValid(const PolicyMap& policies,
-                               const Value** url_value,
-                               std::string* url_string);
-
-  // Make sure that the |path| is present in |prefs_|.  If not, set it to
-  // a blank string.
-  void EnsureStringPrefExists(PrefValueMap* prefs, const std::string& path);
-
-  // Make sure that the |path| is present in |prefs_| and is a ListValue.  If
-  // not, set it to an empty list.
-  void EnsureListPrefExists(PrefValueMap* prefs, const std::string& path);
-
-  // The ConfigurationPolicyHandler handlers for each default search policy.
-  std::vector<ConfigurationPolicyHandler*> handlers_;
-
-  DISALLOW_COPY_AND_ASSIGN(DefaultSearchPolicyHandler);
-};
-
-// ConfigurationPolicyHandler for the proxy policies.
-class ProxyPolicyHandler : public ConfigurationPolicyHandler {
- public:
-  // Constants for the "Proxy Server Mode" defined in the policies.
-  // Note that these diverge from internal presentation defined in
-  // ProxyPrefs::ProxyMode for legacy reasons. The following four
-  // PolicyProxyModeType types were not very precise and had overlapping use
-  // cases.
-  enum ProxyModeType {
-    // Disable Proxy, connect directly.
-    PROXY_SERVER_MODE = 0,
-    // Auto detect proxy or use specific PAC script if given.
-    PROXY_AUTO_DETECT_PROXY_SERVER_MODE = 1,
-    // Use manually configured proxy servers (fixed servers).
-    PROXY_MANUALLY_CONFIGURED_PROXY_SERVER_MODE = 2,
-    // Use system proxy server.
-    PROXY_USE_SYSTEM_PROXY_SERVER_MODE = 3,
-
-    MODE_COUNT
-  };
-
-  ProxyPolicyHandler();
-  virtual ~ProxyPolicyHandler();
-
-  // ConfigurationPolicyHandler methods:
-  virtual bool CheckPolicySettings(const PolicyMap& policies,
-                                   PolicyErrorMap* errors) OVERRIDE;
-  virtual void ApplyPolicySettings(const PolicyMap& policies,
-                                   PrefValueMap* prefs) OVERRIDE;
-
- private:
-  const Value* GetProxyPolicyValue(const PolicyMap& policies,
-                                   const char* policy_name);
-
-  // Converts the deprecated ProxyServerMode policy value to a ProxyMode value
-  // and places the result in |mode_value|. Returns whether the conversion
-  // succeeded.
-  bool CheckProxyModeAndServerMode(const PolicyMap& policies,
-                                   PolicyErrorMap* errors,
-                                   std::string* mode_value);
-
-  DISALLOW_COPY_AND_ASSIGN(ProxyPolicyHandler);
-};
-
-// Handles JavaScript policies.
-class JavascriptPolicyHandler : public ConfigurationPolicyHandler {
- public:
-  JavascriptPolicyHandler();
-  virtual ~JavascriptPolicyHandler();
-
-  // ConfigurationPolicyHandler methods:
-  virtual bool CheckPolicySettings(const PolicyMap& policies,
-                                   PolicyErrorMap* errors) OVERRIDE;
-  virtual void ApplyPolicySettings(const PolicyMap& policies,
-                                   PrefValueMap* prefs) OVERRIDE;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(JavascriptPolicyHandler);
-};
-
-// Handles URLBlacklist policies.
-class URLBlacklistPolicyHandler : public ConfigurationPolicyHandler {
- public:
-  URLBlacklistPolicyHandler();
-  virtual ~URLBlacklistPolicyHandler();
-
-  // ConfigurationPolicyHandler methods:
-  virtual bool CheckPolicySettings(const PolicyMap& policies,
-                                   PolicyErrorMap* errors) OVERRIDE;
-  virtual void ApplyPolicySettings(const PolicyMap& policies,
-                                   PrefValueMap* prefs) OVERRIDE;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(URLBlacklistPolicyHandler);
-};
-
-// Handles RestoreOnStartup policy.
-class RestoreOnStartupPolicyHandler : public TypeCheckingPolicyHandler {
- public:
-  RestoreOnStartupPolicyHandler();
-  virtual ~RestoreOnStartupPolicyHandler();
-
-  // ConfigurationPolicyHandler methods:
-  virtual bool CheckPolicySettings(const PolicyMap& policies,
-                                   PolicyErrorMap* errors) OVERRIDE;
-  virtual void ApplyPolicySettings(const PolicyMap& policies,
-                                   PrefValueMap* prefs) OVERRIDE;
-
- private:
-  void ApplyPolicySettingsFromHomePage(const PolicyMap& policies,
-                                       PrefValueMap* prefs);
-
-  DISALLOW_COPY_AND_ASSIGN(RestoreOnStartupPolicyHandler);
 };
 
 }  // namespace policy

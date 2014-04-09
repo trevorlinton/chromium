@@ -101,6 +101,9 @@ class WEBKIT_STORAGE_BROWSER_EXPORT ExternalMountPoints
       const std::string& mount_name,
       const base::FilePath& path) const;
 
+  // Revoke all registered filesystems. Used only by testing (for clean-ups).
+  void RevokeAllFileSystems();
+
  private:
   friend class base::RefCountedThreadSafe<ExternalMountPoints>;
 
@@ -138,20 +141,6 @@ class WEBKIT_STORAGE_BROWSER_EXPORT ExternalMountPoints
   PathToName path_to_name_map_;
 
   DISALLOW_COPY_AND_ASSIGN(ExternalMountPoints);
-};
-
-// Registers a scoped external filesystem which gets revoked when it scopes out.
-class WEBKIT_STORAGE_BROWSER_EXPORT ScopedExternalFileSystem {
- public:
-  ScopedExternalFileSystem(const std::string& mount_name,
-                           FileSystemType type,
-                           const base::FilePath& path);
-  ~ScopedExternalFileSystem();
-
-  base::FilePath GetVirtualRootPath() const;
-
- private:
-  const std::string mount_name_;
 };
 
 }  // namespace fileapi

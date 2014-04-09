@@ -41,28 +41,6 @@ std::string ChannelToString(chrome::VersionInfo::Channel channel) {
   };
 }
 
-std::string DeviceTypeToString(sync_pb::SyncEnums::DeviceType device_type) {
-  switch (device_type) {
-    case sync_pb::SyncEnums_DeviceType_TYPE_WIN:
-      return "WIN";
-    case sync_pb::SyncEnums_DeviceType_TYPE_MAC:
-      return "MAC";
-    case sync_pb::SyncEnums_DeviceType_TYPE_LINUX:
-      return "LINUX";
-    case sync_pb::SyncEnums_DeviceType_TYPE_CROS:
-      return "CHROME OS";
-    case sync_pb::SyncEnums_DeviceType_TYPE_OTHER:
-      return "OTHER";
-    case sync_pb::SyncEnums_DeviceType_TYPE_PHONE:
-      return "PHONE";
-    case sync_pb::SyncEnums_DeviceType_TYPE_TABLET:
-      return "TABLET";
-    default:
-      NOTREACHED();
-      return "UNKNOWN";
-  }
-}
-
 }  // namespace
 
 DeviceInfo::DeviceInfo(const std::string& guid,
@@ -101,6 +79,42 @@ const std::string& DeviceInfo::public_id() const {
 
 sync_pb::SyncEnums::DeviceType DeviceInfo::device_type() const {
   return device_type_;
+}
+
+std::string DeviceInfo::GetOSString() const {
+  switch (device_type_) {
+    case sync_pb::SyncEnums_DeviceType_TYPE_WIN:
+      return "win";
+    case sync_pb::SyncEnums_DeviceType_TYPE_MAC:
+      return "mac";
+    case sync_pb::SyncEnums_DeviceType_TYPE_LINUX:
+      return "linux";
+    case sync_pb::SyncEnums_DeviceType_TYPE_CROS:
+      return "chrome_os";
+    case sync_pb::SyncEnums_DeviceType_TYPE_PHONE:
+    case sync_pb::SyncEnums_DeviceType_TYPE_TABLET:
+      // TODO(lipalani): crbug.com/170375. Add support for ios
+      // phones and tablets.
+      return "android";
+    default:
+      return "unknown";
+  }
+}
+
+std::string DeviceInfo::GetDeviceTypeString() const {
+  switch (device_type_) {
+    case sync_pb::SyncEnums_DeviceType_TYPE_WIN:
+    case sync_pb::SyncEnums_DeviceType_TYPE_MAC:
+    case sync_pb::SyncEnums_DeviceType_TYPE_LINUX:
+    case sync_pb::SyncEnums_DeviceType_TYPE_CROS:
+      return "desktop_or_laptop";
+    case sync_pb::SyncEnums_DeviceType_TYPE_PHONE:
+      return "phone";
+    case sync_pb::SyncEnums_DeviceType_TYPE_TABLET:
+      return "tablet";
+    default:
+      return "unknown";
+  }
 }
 
 bool DeviceInfo::Equals(const DeviceInfo& other) const {
@@ -172,11 +186,11 @@ std::string DeviceInfo::MakeUserAgentForSyncApi(
 
 base::DictionaryValue* DeviceInfo::ToValue() {
   base::DictionaryValue* value = new base::DictionaryValue();
-  value->SetString("Id", public_id_);
-  value->SetString("Client Name", client_name_);
-  value->SetString("Chrome Version", chrome_version_);
-  value->SetString("Sync User Agent", sync_user_agent_);
-  value->SetString("Device Type", DeviceTypeToString(device_type_));
+  value->SetString("name", client_name_);
+  value->SetString("id", public_id_);
+  value->SetString("os", GetOSString());
+  value->SetString("type", GetDeviceTypeString());
+  value->SetString("chromeVersion", chrome_version_);
   return value;
 }
 

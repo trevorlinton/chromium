@@ -179,7 +179,7 @@ class AudioRendererHostTest : public testing::Test {
         media_stream_manager_.get());
 
     // Simulate IPC channel connected.
-    host_->OnChannelConnected(base::GetCurrentProcId());
+    host_->set_peer_pid_for_testing(base::GetCurrentProcId());
   }
 
   virtual void TearDown() {
@@ -207,8 +207,6 @@ class AudioRendererHostTest : public testing::Test {
   }
 
   void Create(bool unified_stream) {
-    EXPECT_CALL(*observer_,
-                OnSetAudioStreamStatus(_, kStreamId, "created"));
     EXPECT_CALL(*host_.get(), OnStreamCreated(kStreamId, _))
         .WillOnce(DoAll(Assign(&is_stream_active_, true),
                         QuitMessageLoop(message_loop_.get())));

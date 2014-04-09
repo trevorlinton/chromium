@@ -15,10 +15,6 @@
 #include "third_party/WebKit/public/web/WebAutofillClient.h"
 #include "ui/base/l10n/l10n_util.h"
 
-#if defined(OS_ANDROID)
-#include "content/public/browser/android/content_view_core.h"
-#endif
-
 using content::RenderViewHost;
 using WebKit::WebAutofillClient;
 
@@ -36,7 +32,6 @@ AutofillExternalDelegate::AutofillExternalDelegate(
       display_warning_if_disabled_(false),
       has_autofill_suggestion_(false),
       has_shown_autofill_popup_for_current_edit_(false),
-      registered_keyboard_listener_with_(NULL),
       weak_ptr_factory_(this) {
   DCHECK(autofill_manager);
 }
@@ -161,27 +156,18 @@ void AutofillExternalDelegate::SetCurrentDataListValues(
       data_list_labels);
 }
 
-void AutofillExternalDelegate::OnPopupShown(
-    content::KeyboardListener* listener) {
-  if (!registered_keyboard_listener_with_) {
-    registered_keyboard_listener_with_ = web_contents_->GetRenderViewHost();
-    registered_keyboard_listener_with_->AddKeyboardListener(listener);
-  }
-
+void AutofillExternalDelegate::OnPopupShown() {
   autofill_manager_->OnDidShowAutofillSuggestions(
       has_autofill_suggestion_ && !has_shown_autofill_popup_for_current_edit_);
   has_shown_autofill_popup_for_current_edit_ |= has_autofill_suggestion_;
 }
 
-void AutofillExternalDelegate::OnPopupHidden(
-    content::KeyboardListener* listener) {
-  if ((!web_contents_->IsBeingDestroyed()) &&
-      (registered_keyboard_listener_with_ ==
-          web_contents_->GetRenderViewHost())) {
-    web_contents_->GetRenderViewHost()->RemoveKeyboardListener(listener);
-  }
+void AutofillExternalDelegate::OnPopupHidden() {
+}
 
-  registered_keyboard_listener_with_ = NULL;
+bool AutofillExternalDelegate::ShouldRepostEvent(const ui::MouseEvent& event) {
+  NOTREACHED();
+  return true;
 }
 
 void AutofillExternalDelegate::DidSelectSuggestion(int identifier) {

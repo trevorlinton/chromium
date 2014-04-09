@@ -42,7 +42,8 @@ SSLConfig::SSLConfig()
       version_max(g_default_version_max),
       cached_info_enabled(false),
       channel_id_enabled(true),
-      false_start_enabled(false),
+      false_start_enabled(true),
+      require_forward_secrecy(false),
       unrestricted_ssl3_fallback_enabled(false),
       send_client_cert(false),
       verify_ev_cert(false),
@@ -163,6 +164,8 @@ void SSLConfigService::ProcessConfigUpdate(const SSLConfig& orig_config,
        new_config.disabled_cipher_suites) ||
       (orig_config.channel_id_enabled != new_config.channel_id_enabled) ||
       (orig_config.false_start_enabled != new_config.false_start_enabled) ||
+      (orig_config.require_forward_secrecy !=
+       new_config.require_forward_secrecy) ||
       (orig_config.unrestricted_ssl3_fallback_enabled !=
        new_config.unrestricted_ssl3_fallback_enabled);
 

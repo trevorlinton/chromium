@@ -9,9 +9,8 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/values.h"
 #include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/extension_manifest_constants.h"
 #include "chrome/common/extensions/features/feature_channel.h"
-#include "chrome/common/extensions/manifest.h"
+#include "extensions/common/manifest.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 class ExtensionManifestTest : public testing::Test {

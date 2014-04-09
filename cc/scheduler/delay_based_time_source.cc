@@ -20,7 +20,7 @@ namespace {
 // kDoubleTickDivisor prevents ticks from running within the specified
 // fraction of an interval.  This helps account for jitter in the timebase as
 // well as quick timer reactivation.
-static const int kDoubleTickDivisor = 4;
+static const int kDoubleTickDivisor = 2;
 
 // kIntervalChangeThreshold is the fraction of the interval that will trigger an
 // immediate interval change.  kPhaseChangeThreshold is the fraction of the
@@ -33,6 +33,27 @@ static const double kPhaseChangeThreshold = 0.25;
 
 }  // namespace
 
+// The following methods correspond to the DelayBasedTimeSource that uses
+// the base::TimeTicks::HighResNow as the timebase.
+scoped_refptr<DelayBasedTimeSourceHighRes> DelayBasedTimeSourceHighRes::Create(
+    base::TimeDelta interval,
+    base::SingleThreadTaskRunner* task_runner) {
+  return make_scoped_refptr(
+      new DelayBasedTimeSourceHighRes(interval, task_runner));
+}
+
+DelayBasedTimeSourceHighRes::DelayBasedTimeSourceHighRes(
+    base::TimeDelta interval, base::SingleThreadTaskRunner* task_runner)
+    : DelayBasedTimeSource(interval, task_runner) {}
+
+DelayBasedTimeSourceHighRes::~DelayBasedTimeSourceHighRes() {}
+
+base::TimeTicks DelayBasedTimeSourceHighRes::Now() const {
+  return base::TimeTicks::HighResNow();
+}
+
+// The following methods correspond to the DelayBasedTimeSource that uses
+// the base::TimeTicks::Now as the timebase.
 scoped_refptr<DelayBasedTimeSource> DelayBasedTimeSource::Create(
     base::TimeDelta interval,
     base::SingleThreadTaskRunner* task_runner) {
@@ -51,18 +72,30 @@ DelayBasedTimeSource::DelayBasedTimeSource(
 
 DelayBasedTimeSource::~DelayBasedTimeSource() {}
 
-void DelayBasedTimeSource::SetActive(bool active) {
+base::TimeTicks DelayBasedTimeSource::SetActive(bool active) {
   TRACE_EVENT1("cc", "DelayBasedTimeSource::SetActive", "active", active);
   if (active == active_)
-    return;
+    return base::TimeTicks();
   active_ = active;
 
   if (!active_) {
     weak_factory_.InvalidateWeakPtrs();
-    return;
+    return base::TimeTicks();
   }
 
   PostNextTickTask(Now());
+
+  // Determine if there was a tick that was missed while not active.
+  base::TimeTicks last_tick_time_if_always_active =
+    current_parameters_.tick_target - current_parameters_.interval;
+  base::TimeTicks new_tick_time_threshold =
+    last_tick_time_ + current_parameters_.interval / kDoubleTickDivisor;
+  if (last_tick_time_if_always_active >  new_tick_time_threshold) {
+    last_tick_time_ = last_tick_time_if_always_active;
+    return last_tick_time_;
+  }
+
+  return base::TimeTicks();
 }
 
 bool DelayBasedTimeSource::Active() const { return active_; }
@@ -191,19 +224,28 @@ base::TimeTicks DelayBasedTimeSource::Now() const {
 //      now=37   tick_target=16.667  new_target=50.000  -->
 //          tick(), PostDelayedTask(floor(50.000-37)) --> PostDelayedTask(13)
 base::TimeTicks DelayBasedTimeSource::NextTickTarget(base::TimeTicks now) {
-  const base::TimeDelta epsilon(base::TimeDelta::FromMicroseconds(1));
   base::TimeDelta new_interval = next_parameters_.interval;
-  int intervals_elapsed =
-      (now - next_parameters_.tick_target + new_interval - epsilon) /
-      new_interval;
-  base::TimeTicks new_tick_target =
-      next_parameters_.tick_target + new_interval * intervals_elapsed;
+
+  // |interval_offset| is the offset from |now| to the next multiple of
+  // |interval| after |tick_target|, possibly negative if in the past.
+  base::TimeDelta interval_offset = base::TimeDelta::FromInternalValue(
+      (next_parameters_.tick_target - now).ToInternalValue() %
+      new_interval.ToInternalValue());
+  // If |now| is exactly on the interval (i.e. offset==0), don't adjust.
+  // Otherwise, if |tick_target| was in the past, adjust forward to the next
+  // tick after |now|.
+  if (interval_offset.ToInternalValue() != 0 &&
+      next_parameters_.tick_target < now) {
+    interval_offset += new_interval;
+  }
+
+  base::TimeTicks new_tick_target = now + interval_offset;
   DCHECK(now <= new_tick_target)
       << "now = " << now.ToInternalValue()
       << "; new_tick_target = " << new_tick_target.ToInternalValue()
       << "; new_interval = " << new_interval.InMicroseconds()
       << "; tick_target = " << next_parameters_.tick_target.ToInternalValue()
-      << "; intervals_elapsed = " << intervals_elapsed;
+      << "; interval_offset = " << interval_offset.ToInternalValue();
 
   // Avoid double ticks when:
   // 1) Turning off the timer and turning it right back on.

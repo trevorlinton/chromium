@@ -24,8 +24,8 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
+#include "base/sys_info.h"
 #include "base/time/time.h"
-#include "content/public/common/webplugininfo.h"
 #include "grit/blink_resources.h"
 #include "grit/webkit_resources.h"
 #include "grit/webkit_strings.h"
@@ -50,6 +50,10 @@
 #include "webkit/child/weburlloader_impl.h"
 #include "webkit/common/user_agent/user_agent.h"
 #include "webkit/glue/webkit_glue.h"
+
+#if defined(OS_ANDROID)
+#include "base/android/sys_utils.h"
+#endif
 
 using WebKit::WebAudioBus;
 using WebKit::WebCookie;
@@ -307,16 +311,36 @@ static int ToMessageID(WebLocalizedString::Name name) {
       return IDS_FORM_VALIDATION_PATTERN_MISMATCH;
     case WebLocalizedString::ValidationRangeOverflow:
       return IDS_FORM_VALIDATION_RANGE_OVERFLOW;
+    case WebLocalizedString::ValidationRangeOverflowDateTime:
+      return IDS_FORM_VALIDATION_RANGE_OVERFLOW_DATETIME;
     case WebLocalizedString::ValidationRangeUnderflow:
       return IDS_FORM_VALIDATION_RANGE_UNDERFLOW;
+    case WebLocalizedString::ValidationRangeUnderflowDateTime:
+      return IDS_FORM_VALIDATION_RANGE_UNDERFLOW_DATETIME;
     case WebLocalizedString::ValidationStepMismatch:
       return IDS_FORM_VALIDATION_STEP_MISMATCH;
+    case WebLocalizedString::ValidationStepMismatchCloseToLimit:
+      return IDS_FORM_VALIDATION_STEP_MISMATCH_CLOSE_TO_LIMIT;
     case WebLocalizedString::ValidationTooLong:
       return IDS_FORM_VALIDATION_TOO_LONG;
     case WebLocalizedString::ValidationTypeMismatch:
       return IDS_FORM_VALIDATION_TYPE_MISMATCH;
     case WebLocalizedString::ValidationTypeMismatchForEmail:
       return IDS_FORM_VALIDATION_TYPE_MISMATCH_EMAIL;
+    case WebLocalizedString::ValidationTypeMismatchForEmailEmpty:
+      return IDS_FORM_VALIDATION_TYPE_MISMATCH_EMAIL_EMPTY;
+    case WebLocalizedString::ValidationTypeMismatchForEmailEmptyDomain:
+      return IDS_FORM_VALIDATION_TYPE_MISMATCH_EMAIL_EMPTY_DOMAIN;
+    case WebLocalizedString::ValidationTypeMismatchForEmailEmptyLocal:
+      return IDS_FORM_VALIDATION_TYPE_MISMATCH_EMAIL_EMPTY_LOCAL;
+    case WebLocalizedString::ValidationTypeMismatchForEmailInvalidDomain:
+      return IDS_FORM_VALIDATION_TYPE_MISMATCH_EMAIL_INVALID_DOMAIN;
+    case WebLocalizedString::ValidationTypeMismatchForEmailInvalidDots:
+      return IDS_FORM_VALIDATION_TYPE_MISMATCH_EMAIL_INVALID_DOTS;
+    case WebLocalizedString::ValidationTypeMismatchForEmailInvalidLocal:
+      return IDS_FORM_VALIDATION_TYPE_MISMATCH_EMAIL_INVALID_LOCAL;
+    case WebLocalizedString::ValidationTypeMismatchForEmailNoAtSign:
+      return IDS_FORM_VALIDATION_TYPE_MISMATCH_EMAIL_NO_AT_SIGN;
     case WebLocalizedString::ValidationTypeMismatchForMultipleEmail:
       return IDS_FORM_VALIDATION_TYPE_MISMATCH_MULTIPLE_EMAIL;
     case WebLocalizedString::ValidationTypeMismatchForURL:
@@ -444,7 +468,12 @@ long* WebKitPlatformSupportImpl::getTraceSamplingState(
   return NULL;
 }
 
-void WebKitPlatformSupportImpl::addTraceEvent(
+COMPILE_ASSERT(
+    sizeof(WebKit::Platform::TraceEventHandle) ==
+        sizeof(base::debug::TraceEventHandle),
+    TraceEventHandle_types_must_be_same_size);
+
+WebKit::Platform::TraceEventHandle WebKitPlatformSupportImpl::addTraceEvent(
     char phase,
     const unsigned char* category_group_enabled,
     const char* name,
@@ -454,11 +483,20 @@ void WebKitPlatformSupportImpl::addTraceEvent(
     const unsigned char* arg_types,
     const unsigned long long* arg_values,
     unsigned char flags) {
-  TRACE_EVENT_API_ADD_TRACE_EVENT(phase, category_group_enabled, name, id,
-                                  num_args, arg_names, arg_types,
-                                  arg_values, NULL, flags);
+  base::debug::TraceEventHandle handle = TRACE_EVENT_API_ADD_TRACE_EVENT(
+      phase, category_group_enabled, name, id,
+      num_args, arg_names, arg_types, arg_values, NULL, flags);
+  WebKit::Platform::TraceEventHandle result;
+  memcpy(&result, &handle, sizeof(result));
+  return result;
 }
 
+void WebKitPlatformSupportImpl::updateTraceEventDuration(
+    TraceEventHandle handle) {
+  base::debug::TraceEventHandle traceEventHandle;
+  memcpy(&traceEventHandle, &handle, sizeof(handle));
+  TRACE_EVENT_API_UPDATE_TRACE_EVENT_DURATION(traceEventHandle);
+}
 
 namespace {
 
@@ -605,6 +643,7 @@ const DataResource kDataResources[] = {
 #endif
 #if defined(OS_MACOSX)
   { "overhangPattern", IDR_OVERHANG_PATTERN, ui::SCALE_FACTOR_100P },
+  { "overhangShadow", IDR_OVERHANG_SHADOW, ui::SCALE_FACTOR_100P },
 #endif
   { "panIcon", IDR_PAN_SCROLL_ICON, ui::SCALE_FACTOR_100P },
   { "searchCancel", IDR_SEARCH_CANCEL, ui::SCALE_FACTOR_100P },
@@ -860,6 +899,21 @@ bool WebKitPlatformSupportImpl::processMemorySizesInBytes(
 
 bool WebKitPlatformSupportImpl::memoryAllocatorWasteInBytes(size_t* size) {
   return base::allocator::GetAllocatorWasteSize(size);
+}
+
+size_t WebKitPlatformSupportImpl::maxDecodedImageBytes() {
+#if defined(OS_ANDROID)
+  if (base::android::SysUtils::IsLowEndDevice()) {
+    // Limit image decoded size to 3M pixels on low end devices.
+    // 4 is maximum number of bytes per pixel.
+    return 3 * 1024 * 1024 * 4;
+  }
+  // For other devices, limit decoded image size based on the amount of physical
+  // memory. For a device with 2GB physical memory the limit is 16M pixels.
+  return base::SysInfo::AmountOfPhysicalMemory() / 32;
+#else
+  return noDecodedImageByteLimit;
+#endif
 }
 
 void WebKitPlatformSupportImpl::SuspendSharedTimer() {

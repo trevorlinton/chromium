@@ -10,38 +10,46 @@
 #include "base/files/file_path.h"
 #include "base/i18n/case_conversion.h"
 #include "base/i18n/string_search.h"
-#include "base/metrics/histogram.h"
 #include "base/prefs/pref_service.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "chrome/browser/bookmarks/bookmark_model.h"
-#include "chrome/browser/bookmarks/bookmark_node_data.h"
 #include "chrome/browser/history/query_parser.h"
 #include "chrome/common/pref_names.h"
 #include "components/user_prefs/pref_registry_syncable.h"
 #include "content/public/browser/user_metrics.h"
 #include "net/base/net_util.h"
-#include "ui/base/events/event.h"
 #include "ui/base/models/tree_node_iterator.h"
 
 using base::Time;
-using content::UserMetricsAction;
 
 namespace {
 
 void CloneBookmarkNodeImpl(BookmarkModel* model,
                            const BookmarkNodeData::Element& element,
                            const BookmarkNode* parent,
-                           int index_to_add_at) {
+                           int index_to_add_at,
+                           bool reset_node_times) {
   if (element.is_url) {
-    model->AddURL(parent, index_to_add_at, element.title, element.url);
+    if (reset_node_times) {
+      model->AddURL(parent, index_to_add_at, element.title, element.url);
+    } else {
+      DCHECK(!element.date_added.is_null());
+      model->AddURLWithCreationTime(parent, index_to_add_at, element.title,
+                                    element.url, element.date_added);
+    }
   } else {
     const BookmarkNode* new_folder = model->AddFolder(parent,
                                                       index_to_add_at,
                                                       element.title);
+    if (!reset_node_times) {
+      DCHECK(!element.date_folder_modified.is_null());
+      model->SetDateFolderModified(new_folder, element.date_folder_modified);
+    }
     for (int i = 0; i < static_cast<int>(element.children.size()); ++i)
-      CloneBookmarkNodeImpl(model, element.children[i], new_folder, i);
+      CloneBookmarkNodeImpl(model, element.children[i], new_folder, i,
+                            reset_node_times);
   }
 }
 
@@ -83,15 +91,17 @@ namespace bookmark_utils {
 void CloneBookmarkNode(BookmarkModel* model,
                        const std::vector<BookmarkNodeData::Element>& elements,
                        const BookmarkNode* parent,
-                       int index_to_add_at) {
+                       int index_to_add_at,
+                       bool reset_node_times) {
   if (!parent->is_folder() || !model) {
     NOTREACHED();
     return;
   }
-  for (size_t i = 0; i < elements.size(); ++i)
-    CloneBookmarkNodeImpl(model, elements[i], parent, index_to_add_at + i);
+  for (size_t i = 0; i < elements.size(); ++i) {
+    CloneBookmarkNodeImpl(model, elements[i], parent, index_to_add_at + i,
+                          reset_node_times);
+  }
 }
-
 
 void CopyToClipboard(BookmarkModel* model,
                      const std::vector<const BookmarkNode*>& nodes,
@@ -99,7 +109,7 @@ void CopyToClipboard(BookmarkModel* model,
   if (nodes.empty())
     return;
 
-  BookmarkNodeData(nodes).WriteToClipboard();
+  BookmarkNodeData(nodes).WriteToClipboard(ui::CLIPBOARD_TYPE_COPY_PASTE);
 
   if (remove_nodes) {
     for (size_t i = 0; i < nodes.size(); ++i) {
@@ -117,12 +127,12 @@ void PasteFromClipboard(BookmarkModel* model,
     return;
 
   BookmarkNodeData bookmark_data;
-  if (!bookmark_data.ReadFromClipboard())
+  if (!bookmark_data.ReadFromClipboard(ui::CLIPBOARD_TYPE_COPY_PASTE))
     return;
 
   if (index == -1)
     index = parent->child_count();
-  CloneBookmarkNode(model, bookmark_data.elements, parent, index);
+  CloneBookmarkNode(model, bookmark_data.elements, parent, index, true);
 }
 
 bool CanPasteFromClipboard(const BookmarkNode* node) {
@@ -226,18 +236,6 @@ void GetBookmarksContainingText(BookmarkModel* model,
   }
 }
 
-bool DoesBookmarkContainText(const BookmarkNode* node,
-                             const string16& text,
-                             const std::string& languages) {
-  std::vector<string16> words;
-  QueryParser parser;
-  parser.ParseQueryWords(base::i18n::ToLower(text), &words);
-  if (words.empty())
-    return false;
-
-  return (node->is_url() && DoesBookmarkContainWords(node, words, languages));
-}
-
 void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterBooleanPref(
       prefs::kShowBookmarkBar,
@@ -316,25 +314,6 @@ void RemoveAllBookmarks(BookmarkModel* model, const GURL& url) {
     int index = node->parent()->GetIndexOf(node);
     if (index > -1)
       model->Remove(node->parent(), index);
-  }
-}
-
-void RecordBookmarkFolderOpen(BookmarkLaunchLocation location) {
-  if (location == LAUNCH_DETACHED_BAR || location == LAUNCH_ATTACHED_BAR)
-    content::RecordAction(UserMetricsAction("ClickedBookmarkBarFolder"));
-}
-
-void RecordBookmarkLaunch(BookmarkLaunchLocation location) {
-  if (location == LAUNCH_DETACHED_BAR || location == LAUNCH_ATTACHED_BAR)
-    content::RecordAction(UserMetricsAction("ClickedBookmarkBarURLButton"));
-
-  UMA_HISTOGRAM_ENUMERATION("Bookmarks.LaunchLocation", location, LAUNCH_LIMIT);
-}
-
-void RecordAppsPageOpen(BookmarkLaunchLocation location) {
-  if (location == LAUNCH_DETACHED_BAR || location == LAUNCH_ATTACHED_BAR) {
-    content::RecordAction(
-        UserMetricsAction("ClickedBookmarkBarAppsShortcutButton"));
   }
 }
 

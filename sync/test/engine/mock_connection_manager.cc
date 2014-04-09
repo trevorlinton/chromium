@@ -33,8 +33,9 @@ using syncable::WriteTransaction;
 static char kValidAuthToken[] = "AuthToken";
 static char kCacheGuid[] = "kqyg7097kro6GSUod+GSg==";
 
-MockConnectionManager::MockConnectionManager(syncable::Directory* directory)
-    : ServerConnectionManager("unused", 0, false, false),
+MockConnectionManager::MockConnectionManager(syncable::Directory* directory,
+                                             CancelationSignal* signal)
+    : ServerConnectionManager("unused", 0, false, signal),
       server_reachable_(true),
       conflict_all_commits_(false),
       conflict_n_commits_(0),
@@ -430,6 +431,9 @@ void MockConnectionManager::AddUpdateTombstone(const syncable::Id& id) {
   ent->set_version(0);
   ent->set_name("");
   ent->set_deleted(true);
+
+  // Make sure we can still extract the ModelType from this tombstone.
+  ent->mutable_specifics()->mutable_bookmark();
 }
 
 void MockConnectionManager::SetLastUpdateDeleted() {
@@ -502,12 +506,6 @@ void MockConnectionManager::ProcessGetUpdates(
         GetProgressMarkerForType(gu.from_progress_marker(), model_type);
     EXPECT_EQ(expected_filter_.Has(model_type), (progress_marker != NULL))
         << "Syncer requested_types differs from test expectation.";
-    if (progress_marker) {
-      EXPECT_EQ((expected_states_.count(model_type) > 0 ?
-                 expected_states_[model_type].payload :
-                 std::string()),
-                progress_marker->notification_hint());
-    }
   }
 
   // Verify that the items we're about to send back to the client are of
@@ -535,12 +533,10 @@ void MockConnectionManager::ProcessGetUpdates(
   std::string token = response->get_updates().new_progress_marker(0).token();
   response->mutable_get_updates()->clear_new_progress_marker();
   for (int i = 0; i < gu.from_progress_marker_size(); ++i) {
-    if (gu.from_progress_marker(i).token() != token) {
-      sync_pb::DataTypeProgressMarker* new_marker =
-          response->mutable_get_updates()->add_new_progress_marker();
-      new_marker->set_data_type_id(gu.from_progress_marker(i).data_type_id());
-      new_marker->set_token(token);
-    }
+    sync_pb::DataTypeProgressMarker* new_marker =
+        response->mutable_get_updates()->add_new_progress_marker();
+    new_marker->set_data_type_id(gu.from_progress_marker(i).data_type_id());
+    new_marker->set_token(token);
   }
 
   // Fill the keystore key if requested.

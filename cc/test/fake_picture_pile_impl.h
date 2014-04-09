@@ -29,21 +29,22 @@ class FakePicturePileImpl : public PicturePileImpl {
   void RemoveRecordingAt(int x, int y);
   void RerecordPile();
 
-  void AddPictureToRecording(
-      int x,
-      int y,
-      scoped_refptr<Picture> picture);
-
   void add_draw_rect(const gfx::RectF& rect) {
     client_.add_draw_rect(rect, default_paint_);
   }
 
   void add_draw_bitmap(const SkBitmap& bitmap, gfx::Point point) {
-    client_.add_draw_bitmap(bitmap, point);
+    client_.add_draw_bitmap(bitmap, point, default_paint_);
   }
 
   void add_draw_rect_with_paint(const gfx::RectF& rect, const SkPaint& paint) {
     client_.add_draw_rect(rect, paint);
+  }
+
+  void add_draw_bitmap_with_paint(const SkBitmap& bitmap,
+                                  gfx::Point point,
+                                  const SkPaint& paint) {
+    client_.add_draw_bitmap(bitmap, point, paint);
   }
 
   void set_default_paint(const SkPaint& paint) {
@@ -56,6 +57,10 @@ class FakePicturePileImpl : public PicturePileImpl {
 
   void set_contents_opaque(bool contents_opaque) {
     contents_opaque_ = contents_opaque;
+  }
+
+  void set_clear_canvas_with_debug_color(bool clear) {
+    clear_canvas_with_debug_color_ = clear;
   }
 
  protected:

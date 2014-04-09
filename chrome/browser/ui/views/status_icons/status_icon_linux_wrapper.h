@@ -8,12 +8,13 @@
 #include "base/memory/scoped_ptr.h"
 #include "chrome/browser/status_icons/desktop_notification_balloon.h"
 #include "chrome/browser/status_icons/status_icon.h"
-#include "ui/linux_ui/linux_ui.h"
+#include "ui/views/linux_ui/status_icon_linux.h"
 
 // Wrapper class for StatusIconLinux that implements the standard StatusIcon
 // interface. Also handles callbacks from StatusIconLinux.
 class StatusIconLinuxWrapper : public StatusIcon,
-                               public StatusIconLinux::Delegate {
+                               public views::StatusIconLinux::Delegate,
+                               public StatusIconMenuModel::Observer {
  public:
   virtual ~StatusIconLinuxWrapper();
 
@@ -29,6 +30,9 @@ class StatusIconLinuxWrapper : public StatusIcon,
   virtual void OnClick() OVERRIDE;
   virtual bool HasClickAction() OVERRIDE;
 
+  // StatusIconMenuModel::Observer overrides:
+  virtual void OnMenuStateChanged() OVERRIDE;
+
   static StatusIconLinuxWrapper* CreateWrappedStatusIcon(
       const gfx::ImageSkia& image,
       const string16& tool_tip);
@@ -38,16 +42,20 @@ class StatusIconLinuxWrapper : public StatusIcon,
   // Invoked after a call to SetContextMenu() to let the platform-specific
   // subclass update the native context menu based on the new model. If NULL is
   // passed, subclass should destroy the native context menu.
-  virtual void UpdatePlatformContextMenu(ui::MenuModel* model) OVERRIDE;
+  virtual void UpdatePlatformContextMenu(
+      StatusIconMenuModel* model) OVERRIDE;
 
  private:
   // A status icon wrapper should only be created by calling
   // CreateWrappedStatusIcon().
-  explicit StatusIconLinuxWrapper(StatusIconLinux* status_icon);
+  explicit StatusIconLinuxWrapper(views::StatusIconLinux* status_icon);
 
   // Notification balloon.
   DesktopNotificationBalloon notification_;
-  scoped_ptr<StatusIconLinux> status_icon_;
+
+  scoped_ptr<views::StatusIconLinux> status_icon_;
+
+  StatusIconMenuModel* menu_model_;
 
   DISALLOW_COPY_AND_ASSIGN(StatusIconLinuxWrapper);
 };

@@ -29,6 +29,13 @@
   return self;
 }
 
+- (BOOL)becomeFirstResponder {
+  BOOL result = [super becomeFirstResponder];
+  if (result && delegate_)
+    [delegate_ fieldBecameFirstResponder:self];
+  return result;
+}
+
 - (NSString*)fieldValue {
   return [[self cell] fieldValue];
 }
@@ -51,6 +58,18 @@
   return [validityMessage_ length] != 0;
 }
 
+- (NSString*)defaultValue {
+  return [[self cell] defaultValue];
+}
+
+- (void)setDefaultValue:(NSString*)defaultValue {
+  [[self cell] setDefaultValue:defaultValue];
+}
+
+- (BOOL)isDefault {
+  return [[[self cell] fieldValue] isEqualToString:[[self cell] defaultValue]];
+}
+
 - (void)didSelectItem:(id)sender {
   if (delegate_)
     [delegate_ didEndEditing:self];
@@ -62,6 +81,7 @@
 @implementation AutofillPopUpCell
 
 @synthesize invalid = invalid_;
+@synthesize defaultValue = defaultValue_;
 
 // Draw a bezel that's highlighted.
 - (void)drawBezelWithFrame:(NSRect)frame inView:(NSView*)controlView {
@@ -87,12 +107,34 @@
   }
 }
 
+- (NSRect)drawTitle:(NSAttributedString*)title
+          withFrame:(NSRect)frame
+             inView:(NSView*)controlView {
+  if (invalid_) {
+    // Draw with a color that has high contrast against the custom background.
+    base::scoped_nsobject<NSMutableAttributedString> coloredTitle(
+        [[NSMutableAttributedString alloc] initWithAttributedString:title]);
+    [coloredTitle addAttribute:NSForegroundColorAttributeName
+                         value:[NSColor whiteColor]
+                         range:NSMakeRange(0, [title length])];
+    return [super drawTitle:coloredTitle withFrame:frame inView:controlView];
+  } else {
+    return [super drawTitle:title withFrame:frame inView:controlView];
+  }
+}
+
 - (NSString*)fieldValue {
+  if (![self selectedItem])
+    return defaultValue_;
   return [self titleOfSelectedItem];
 }
 
 - (void)setFieldValue:(NSString*)fieldValue {
   [self selectItemWithTitle:fieldValue];
+  if (![self selectedItem])
+    [self selectItemWithTitle:defaultValue_];
+  if (![self selectedItem])
+    [self selectItemAtIndex:0];
 }
 
 @end

@@ -40,11 +40,6 @@ class CONTENT_EXPORT RenderFrameImpl
   virtual WebKit::WebPlugin* createPlugin(
       WebKit::WebFrame* frame,
       const WebKit::WebPluginParams& params);
-  virtual WebKit::WebSharedWorker* createSharedWorker(
-      WebKit::WebFrame* frame,
-      const WebKit::WebURL& url,
-      const WebKit::WebString& name,
-      unsigned long long document_id);
   virtual WebKit::WebMediaPlayer* createMediaPlayer(
       WebKit::WebFrame* frame,
       const WebKit::WebURL& url,
@@ -52,15 +47,24 @@ class CONTENT_EXPORT RenderFrameImpl
   virtual WebKit::WebApplicationCacheHost* createApplicationCacheHost(
       WebKit::WebFrame* frame,
       WebKit::WebApplicationCacheHostClient* client);
+  virtual WebKit::WebWorkerPermissionClientProxy*
+      createWorkerPermissionClientProxy(WebKit::WebFrame* frame);
   virtual WebKit::WebCookieJar* cookieJar(WebKit::WebFrame* frame);
+  virtual WebKit::WebServiceWorkerProvider* createServiceWorkerProvider(
+      WebKit::WebFrame* frame,
+      WebKit::WebServiceWorkerProviderClient*);
   virtual void didAccessInitialDocument(WebKit::WebFrame* frame);
-  virtual void didCreateFrame(WebKit::WebFrame* parent,
-                              WebKit::WebFrame* child);
+  virtual WebKit::WebFrame* createChildFrame(WebKit::WebFrame* parent,
+                                             const WebKit::WebString& name);
   virtual void didDisownOpener(WebKit::WebFrame* frame);
   virtual void frameDetached(WebKit::WebFrame* frame);
   virtual void willClose(WebKit::WebFrame* frame);
   virtual void didChangeName(WebKit::WebFrame* frame,
                              const WebKit::WebString& name);
+  virtual void didMatchCSS(
+      WebKit::WebFrame* frame,
+      const WebKit::WebVector<WebKit::WebString>& newly_matching_selectors,
+      const WebKit::WebVector<WebKit::WebString>& stopped_matching_selectors);
   virtual void loadURLExternally(WebKit::WebFrame* frame,
                                  const WebKit::WebURLRequest& request,
                                  WebKit::WebNavigationPolicy policy);
@@ -133,6 +137,7 @@ class CONTENT_EXPORT RenderFrameImpl
   virtual void didRunInsecureContent(WebKit::WebFrame* frame,
                                      const WebKit::WebSecurityOrigin& origin,
                                      const WebKit::WebURL& target);
+  virtual void didAbortLoading(WebKit::WebFrame* frame);
   virtual void didExhaustMemoryAvailableForScript(
       WebKit::WebFrame* frame);
   virtual bool willSetSecurityToken(WebKit::WebFrame* frame,
@@ -155,16 +160,6 @@ class CONTENT_EXPORT RenderFrameImpl
   virtual void reportFindInPageSelection(int request_id,
                                          int active_match_ordinal,
                                          const WebKit::WebRect& sel);
-  virtual void openFileSystem(
-      WebKit::WebFrame* frame,
-      WebKit::WebFileSystemType type,
-      long long size,
-      bool create,
-      WebKit::WebFileSystemCallbacks* callbacks);
-  virtual void deleteFileSystem(
-      WebKit::WebFrame* frame,
-      WebKit::WebFileSystemType type,
-      WebKit::WebFileSystemCallbacks* callbacks);
   virtual void requestStorageQuota(
       WebKit::WebFrame* frame,
       WebKit::WebStorageQuotaType type,
@@ -187,16 +182,21 @@ class CONTENT_EXPORT RenderFrameImpl
   virtual bool allowWebGL(WebKit::WebFrame* frame, bool default_value);
   virtual void didLoseWebGLContext(WebKit::WebFrame* frame,
                                    int arb_robustness_status_code);
-
-  // RenderFrameImpl methods
-  int GetRoutingID() const;
+  virtual void willHandleNavigationPolicy(
+                                          WebKit::WebFrame*,
+                                          const WebKit::WebURLRequest&,
+                                          WebKit::WebNavigationPolicy*);
 
  protected:
   RenderFrameImpl(RenderViewImpl* render_view, int32 routing_id);
 
  private:
+  int GetRoutingID() const;
+
   RenderViewImpl* render_view_;
   int routing_id_;
+  bool is_swapped_out_;
+  bool is_detaching_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderFrameImpl);
 };

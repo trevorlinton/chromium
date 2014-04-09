@@ -70,18 +70,18 @@ bool CreateVideoCaptureDevice(const char* sym_link, IMFMediaSource** source) {
   return SUCCEEDED(MFCreateDeviceSource(attributes, source));
 }
 
-bool FormatFromGuid(const GUID& guid, VideoCaptureCapability::Format* format) {
+bool FormatFromGuid(const GUID& guid, VideoPixelFormat* format) {
   struct {
     const GUID& guid;
-    const VideoCaptureCapability::Format format;
+    const VideoPixelFormat format;
   } static const kFormatMap[] = {
-    { MFVideoFormat_I420, VideoCaptureCapability::kI420 },
-    { MFVideoFormat_YUY2, VideoCaptureCapability::kYUY2 },
-    { MFVideoFormat_UYVY, VideoCaptureCapability::kUYVY },
-    { MFVideoFormat_RGB24, VideoCaptureCapability::kRGB24 },
-    { MFVideoFormat_ARGB32, VideoCaptureCapability::kARGB },
-    { MFVideoFormat_MJPG, VideoCaptureCapability::kMJPEG },
-    { MFVideoFormat_YV12, VideoCaptureCapability::kYV12 },
+    { MFVideoFormat_I420, PIXEL_FORMAT_I420 },
+    { MFVideoFormat_YUY2, PIXEL_FORMAT_YUY2 },
+    { MFVideoFormat_UYVY, PIXEL_FORMAT_UYVY },
+    { MFVideoFormat_RGB24, PIXEL_FORMAT_RGB24 },
+    { MFVideoFormat_ARGB32, PIXEL_FORMAT_ARGB },
+    { MFVideoFormat_MJPG, PIXEL_FORMAT_MJPEG },
+    { MFVideoFormat_YV12, PIXEL_FORMAT_YV12 },
   };
 
   for (int i = 0; i < arraysize(kFormatMap); ++i) {
@@ -131,9 +131,6 @@ bool FillCapabilitiesFromType(IMFMediaType* type,
   // Keep the integer version of the frame_rate for (potential) returns.
   capability->frame_rate =
       capability->frame_rate_numerator / capability->frame_rate_denominator;
-
-  capability->expected_capture_delay = 0;  // Currently not used.
-  capability->interlaced = false;          // Currently not used.
 
   return true;
 }
@@ -312,7 +309,7 @@ const std::string VideoCaptureDevice::Name::GetModel() const {
 }
 
 VideoCaptureDeviceMFWin::VideoCaptureDeviceMFWin(const Name& device_name)
-    : name_(device_name), observer_(NULL), capture_(0) {
+    : name_(device_name), capture_(0) {
   DetachFromThread();
 }
 
@@ -339,19 +336,14 @@ bool VideoCaptureDeviceMFWin::Init() {
                                                        reader_.Receive()));
 }
 
-void VideoCaptureDeviceMFWin::Allocate(
+void VideoCaptureDeviceMFWin::AllocateAndStart(
     const VideoCaptureCapability& capture_format,
-    VideoCaptureDevice::EventHandler* observer) {
+    scoped_ptr<VideoCaptureDevice::Client> client) {
   DCHECK(CalledOnValidThread());
 
   base::AutoLock lock(lock_);
 
-  if (observer_) {
-    DCHECK_EQ(observer, observer_);
-    return;
-  }
-
-  observer_ = observer;
+  client_ = client.Pass();
   DCHECK_EQ(capture_, false);
 
   CapabilityList capabilities;
@@ -380,25 +372,17 @@ void VideoCaptureDeviceMFWin::Allocate(
     return;
   }
 
-  observer_->OnFrameInfo(found_capability);
-}
+  client_->OnFrameInfo(found_capability);
 
-void VideoCaptureDeviceMFWin::Start() {
-  DCHECK(CalledOnValidThread());
-
-  base::AutoLock lock(lock_);
-  if (!capture_) {
-    capture_ = true;
-    HRESULT hr;
-    if (FAILED(hr = reader_->ReadSample(MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0,
-                                        NULL, NULL, NULL, NULL))) {
-      OnError(hr);
-      capture_ = false;
-    }
+  if (FAILED(hr = reader_->ReadSample(MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0,
+                                      NULL, NULL, NULL, NULL))) {
+    OnError(hr);
+    return;
   }
+  capture_ = true;
 }
 
-void VideoCaptureDeviceMFWin::Stop() {
+void VideoCaptureDeviceMFWin::StopAndDeAllocate() {
   DCHECK(CalledOnValidThread());
   base::WaitableEvent flushed(false, false);
   const int kFlushTimeOutInMs = 1000;
@@ -412,9 +396,9 @@ void VideoCaptureDeviceMFWin::Stop() {
       wait = SUCCEEDED(hr);
       if (!wait) {
         callback_->SetSignalOnFlush(NULL);
-        OnError(hr);
       }
     }
+    client_.reset();
   }
 
   // If the device has been unplugged, the Flush() won't trigger the event
@@ -426,20 +410,6 @@ void VideoCaptureDeviceMFWin::Stop() {
     flushed.TimedWait(base::TimeDelta::FromMilliseconds(kFlushTimeOutInMs));
 }
 
-void VideoCaptureDeviceMFWin::DeAllocate() {
-  DCHECK(CalledOnValidThread());
-
-  Stop();
-
-  base::AutoLock lock(lock_);
-  observer_ = NULL;
-}
-
-const VideoCaptureDevice::Name& VideoCaptureDeviceMFWin::device_name() {
-  DCHECK(CalledOnValidThread());
-  return name_;
-}
-
 void VideoCaptureDeviceMFWin::OnIncomingCapturedFrame(
     const uint8* data,
     int length,
@@ -448,9 +418,9 @@ void VideoCaptureDeviceMFWin::OnIncomingCapturedFrame(
     bool flip_vert,
     bool flip_horiz) {
   base::AutoLock lock(lock_);
-  if (data && observer_)
-    observer_->OnIncomingCapturedFrame(data, length, time_stamp,
-                                       rotation, flip_vert, flip_horiz);
+  if (data && client_.get())
+    client_->OnIncomingCapturedFrame(data, length, time_stamp,
+                                     rotation, flip_vert, flip_horiz);
 
   if (capture_) {
     HRESULT hr = reader_->ReadSample(MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0,
@@ -468,8 +438,8 @@ void VideoCaptureDeviceMFWin::OnIncomingCapturedFrame(
 
 void VideoCaptureDeviceMFWin::OnError(HRESULT hr) {
   DLOG(ERROR) << "VideoCaptureDeviceMFWin: " << std::hex << hr;
-  if (observer_)
-    observer_->OnError();
+  if (client_.get())
+    client_->OnError();
 }
 
 }  // namespace media

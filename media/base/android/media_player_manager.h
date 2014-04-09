@@ -14,10 +14,6 @@
 #include "media/base/media_export.h"
 #include "media/base/media_keys.h"
 
-namespace content {
-class RenderViewHost;
-}
-
 namespace media {
 
 class MediaDrmBridge;
@@ -25,25 +21,8 @@ class MediaPlayerAndroid;
 class MediaResourceGetter;
 
 // This class is responsible for managing active MediaPlayerAndroid objects.
-// Objects implementing this interface a created via
-// MediaPlayerManager::Create(), allowing embedders to provide their
-// implementation.
 class MEDIA_EXPORT MediaPlayerManager {
  public:
-  // The type of the factory function that returns a new instance of the
-  // MediaPlayerManager implementation.
-  typedef MediaPlayerManager* (*FactoryFunction)(content::RenderViewHost*);
-
-  // Allows to override the default factory function in order to provide
-  // a custom implementation to the RenderViewHost instance.
-  // Must be called from the main thread.
-  static void RegisterFactoryFunction(FactoryFunction factory_function);
-
-  // Returns a new instance of MediaPlayerManager interface implementation.
-  // The returned object is owned by the caller. Must be called on the main
-  // thread.
-  static MediaPlayerManager* Create(content::RenderViewHost* render_view_host);
-
   virtual ~MediaPlayerManager() {}
 
   // Called by a MediaPlayerAndroid object when it is going to decode
@@ -83,7 +62,9 @@ class MEDIA_EXPORT MediaPlayerManager {
   virtual void OnBufferingUpdate(int player_id, int percentage) = 0;
 
   // Called when seek completed. Args: player ID, current time.
-  virtual void OnSeekComplete(int player_id, base::TimeDelta current_time) = 0;
+  virtual void OnSeekComplete(
+      int player_id,
+      const base::TimeDelta& current_time) = 0;
 
   // Called when error happens. Args: player ID, error type.
   virtual void OnError(int player_id, int error) = 0;
@@ -99,17 +80,6 @@ class MEDIA_EXPORT MediaPlayerManager {
 
   // Release all the players managed by this object.
   virtual void DestroyAllMediaPlayers() = 0;
-
-  // Callback when DemuxerStreamPlayer wants to read data from the demuxer.
-  virtual void OnReadFromDemuxer(int player_id,
-                                 media::DemuxerStream::Type type) = 0;
-
-  // Called when player wants the media element to initiate a seek.
-  virtual void OnMediaSeekRequest(int player_id, base::TimeDelta time_to_seek,
-                                  unsigned seek_request_id) = 0;
-
-  // Called when player wants to read the config data from the demuxer.
-  virtual void OnMediaConfigRequest(int player_id) = 0;
 
   // Get the MediaDrmBridge object for the given media key Id.
   virtual media::MediaDrmBridge* GetDrmBridge(int media_keys_id) = 0;

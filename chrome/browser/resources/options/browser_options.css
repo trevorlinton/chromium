@@ -14,7 +14,8 @@
   vertical-align: top;
 }
 
-#default-browser-state {
+#default-browser-state,
+#profiles-supervised-dashboard-tip {
   margin-top: 6px;
 }
 
@@ -401,4 +402,13 @@ list:not([disabled]) > .network-group[selected] {
 #keyboard-overlay table {
   /* Same as .settings-row {margin}. */
   -webkit-border-vertical-spacing: 0.65em;
+}
+
+#accessibility-autoclick .controlled-setting-with-label {
+  -webkit-box-align: baseline;
+}
+
+#accessibility-autoclick label + select {
+  /* Same as .controlled-setting-with-label > input + span. */
+  -webkit-margin-start: 0.6em;
 }

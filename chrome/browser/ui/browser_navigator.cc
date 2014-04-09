@@ -102,8 +102,7 @@ bool AdjustNavigateParamsForURL(chrome::NavigateParams* params) {
     }
 
     params->disposition = SINGLETON_TAB;
-    params->browser =
-        chrome::FindOrCreateTabbedBrowser(profile, params->host_desktop_type);
+    params->browser = GetOrCreateBrowser(profile, params->host_desktop_type);
     params->window_action = chrome::NavigateParams::SHOW_WINDOW;
   }
 
@@ -246,6 +245,7 @@ void LoadURLInContents(WebContents* target_contents,
                        chrome::NavigateParams* params) {
   NavigationController::LoadURLParams load_url_params(url);
   load_url_params.referrer = params->referrer;
+  load_url_params.redirect_chain = params->redirect_chain;
   load_url_params.transition_type = params->transition;
   load_url_params.extra_headers = params->extra_headers;
   load_url_params.should_replace_current_entry =
@@ -271,12 +271,12 @@ void LoadURLInContents(WebContents* target_contents,
 
 // This class makes sure the Browser object held in |params| is made visible
 // by the time it goes out of scope, provided |params| wants it to be shown.
-class ScopedBrowserDisplayer {
+class ScopedBrowserShower {
  public:
-  explicit ScopedBrowserDisplayer(chrome::NavigateParams* params)
+  explicit ScopedBrowserShower(chrome::NavigateParams* params)
       : params_(params) {
   }
-  ~ScopedBrowserDisplayer() {
+  ~ScopedBrowserShower() {
     if (params_->window_action == chrome::NavigateParams::SHOW_WINDOW_INACTIVE)
       params_->browser->window()->ShowInactive();
     else if (params_->window_action == chrome::NavigateParams::SHOW_WINDOW)
@@ -284,7 +284,7 @@ class ScopedBrowserDisplayer {
   }
  private:
   chrome::NavigateParams* params_;
-  DISALLOW_COPY_AND_ASSIGN(ScopedBrowserDisplayer);
+  DISALLOW_COPY_AND_ASSIGN(ScopedBrowserShower);
 };
 
 // This class manages the lifetime of a WebContents created by the
@@ -332,6 +332,9 @@ content::WebContents* CreateTargetContents(const chrome::NavigateParams& params,
     if (params.should_set_opener)
       create_params.opener = params.source_contents;
   }
+  if (params.disposition == NEW_BACKGROUND_TAB)
+    create_params.initially_hidden = true;
+
 #if defined(USE_AURA)
   if (params.browser->window() &&
       params.browser->window()->GetNativeWindow()) {
@@ -348,25 +351,19 @@ content::WebContents* CreateTargetContents(const chrome::NavigateParams& params,
   BrowserNavigatorWebContentsAdoption::AttachTabHelpers(target_contents);
   extensions::TabHelper::FromWebContents(target_contents)->
       SetExtensionAppById(params.extension_app_id);
-  // TODO(sky): Figure out why this is needed. Without it we seem to get
-  // failures in startup tests.
-  // By default, content believes it is not hidden.  When adding contents
-  // in the background, tell it that it's hidden.
-  if ((params.tabstrip_add_types & TabStripModel::ADD_ACTIVE) == 0) {
-    // TabStripModel::AddWebContents invokes WasHidden if not foreground.
-    target_contents->WasHidden();
-  }
   return target_contents;
 }
 
-// If a prerendered page exists for |url|, replace the page at |target_contents|
-// with it.
-bool SwapInPrerender(WebContents* target_contents, const GURL& url) {
+// If a prerendered page exists for |url|, replace the page at
+// |params->target_contents| with it and update to point to the swapped-in
+// WebContents.
+bool SwapInPrerender(const GURL& url, chrome::NavigateParams* params) {
   prerender::PrerenderManager* prerender_manager =
       prerender::PrerenderManagerFactory::GetForProfile(
-          Profile::FromBrowserContext(target_contents->GetBrowserContext()));
+          Profile::FromBrowserContext(
+              params->target_contents->GetBrowserContext()));
   return prerender_manager &&
-      prerender_manager->MaybeUsePrerenderedPage(target_contents, url);
+      prerender_manager->MaybeUsePrerenderedPage(url, params);
 }
 
 bool SwapInInstantNTP(chrome::NavigateParams* params,
@@ -459,9 +456,9 @@ NavigateParams::~NavigateParams() {}
 void FillNavigateParamsFromOpenURLParams(chrome::NavigateParams* nav_params,
                                          const content::OpenURLParams& params) {
   nav_params->referrer = params.referrer;
+  nav_params->redirect_chain = params.redirect_chain;
   nav_params->extra_headers = params.extra_headers;
   nav_params->disposition = params.disposition;
-  nav_params->override_encoding = params.override_encoding;
   nav_params->is_renderer_initiated = params.is_renderer_initiated;
   nav_params->transferred_global_request_id =
       params.transferred_global_request_id;
@@ -507,7 +504,7 @@ void Navigate(NavigateParams* params) {
   }
 
   // Make sure the Browser is shown if params call for it.
-  ScopedBrowserDisplayer displayer(params);
+  ScopedBrowserShower shower(params);
 
   // Makes sure any WebContents created by this function is destroyed if
   // not properly added to a tab strip.
@@ -516,7 +513,7 @@ void Navigate(NavigateParams* params) {
   // Some dispositions need coercion to base types.
   NormalizeDisposition(params);
 
-  // If a new window has been created, it needs to be displayed.
+  // If a new window has been created, it needs to be shown.
   if (params->window_action == NavigateParams::NO_ACTION &&
       source_browser != params->browser &&
       params->browser->tab_strip_model()->empty()) {
@@ -546,8 +543,8 @@ void Navigate(NavigateParams* params) {
   // Check if this is a singleton tab that already exists
   int singleton_index = chrome::GetIndexOfSingletonTab(params);
 
-  // Did we use Instant's NTP contents?
-  bool swapped_in_instant = false;
+  // Did we use Instant's NTP contents or a prerender?
+  bool swapped_in = false;
 
   // If no target WebContents was specified, we need to construct one if
   // we are supposed to target a new tab; unless it's a singleton that already
@@ -563,8 +560,8 @@ void Navigate(NavigateParams* params) {
     }
 
     if (params->disposition != CURRENT_TAB) {
-      swapped_in_instant = SwapInInstantNTP(params, url, NULL);
-      if (!swapped_in_instant)
+      swapped_in = SwapInInstantNTP(params, url, NULL);
+      if (!swapped_in)
         params->target_contents = CreateTargetContents(*params, url);
 
       // This function takes ownership of |params->target_contents| until it
@@ -574,20 +571,21 @@ void Navigate(NavigateParams* params) {
       // ... otherwise if we're loading in the current tab, the target is the
       // same as the source.
       DCHECK(params->source_contents);
-      swapped_in_instant = SwapInInstantNTP(params, url,
-                                            params->source_contents);
-      if (!swapped_in_instant)
+      swapped_in = SwapInInstantNTP(params, url, params->source_contents);
+      if (!swapped_in)
         params->target_contents = params->source_contents;
       DCHECK(params->target_contents);
+      // Prerender expects |params->target_contents| to be attached to a browser
+      // window, so only call for CURRENT_TAB navigations. (Others are currently
+      // unsupported because of session storage namespaces anyway.)
+      if (!swapped_in)
+        swapped_in = SwapInPrerender(url, params);
     }
 
     if (user_initiated)
       params->target_contents->UserGestureDone();
 
-    if (!swapped_in_instant) {
-      if (SwapInPrerender(params->target_contents, url))
-        return;
-
+    if (!swapped_in) {
       // Try to handle non-navigational URLs that popup dialogs and such, these
       // should not actually navigate.
       if (!HandleNonNavigationAboutURL(url)) {
@@ -613,7 +611,7 @@ void Navigate(NavigateParams* params) {
     params->source_contents->GetView()->Focus();
 
   if (params->source_contents == params->target_contents ||
-      (swapped_in_instant && params->disposition == CURRENT_TAB)) {
+      (swapped_in && params->disposition == CURRENT_TAB)) {
     // The navigation occurred in the source tab.
     params->browser->UpdateUIForNavigationInTab(params->target_contents,
                                                 params->transition,
@@ -682,7 +680,20 @@ bool IsURLAllowedInIncognito(const GURL& url,
        url.host() == chrome::kChromeUISettingsFrameHost ||
        url.host() == chrome::kChromeUIExtensionsHost ||
        url.host() == chrome::kChromeUIBookmarksHost ||
-       url.host() == chrome::kChromeUIUberHost)) {
+#if defined(ENABLE_ENHANCED_BOOKMARKS)
+       url.host() == chrome::kChromeUIEnhancedBookmarksHost ||
+#endif
+       url.host() == chrome::kChromeUIUberHost ||
+       url.host() == chrome::kChromeUIThumbnailHost ||
+       url.host() == chrome::kChromeUIThumbnailHost2 ||
+       url.host() == chrome::kChromeUIThumbnailListHost)) {
+    return false;
+  }
+
+  if (url.scheme() == chrome::kChromeSearchScheme &&
+      (url.host() == chrome::kChromeUIThumbnailHost ||
+       url.host() == chrome::kChromeUIThumbnailHost2 ||
+       url.host() == chrome::kChromeUIThumbnailListHost)) {
     return false;
   }
 

@@ -7,19 +7,24 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/stl_util.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/policy/cloud/cloud_policy_constants.h"
 #include "chrome/browser/policy/cloud/device_management_service.h"
+#include "chrome/browser/policy/cloud/mock_device_management_service.h"
 #include "chrome/browser/policy/cloud/test_request_interceptor.h"
 #include "chrome/browser/policy/test/local_policy_test_server.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "content/public/browser/browser_thread.h"
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/base/upload_data_stream.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_request.h"
+#include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_test_job.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+using content::BrowserThread;
 using testing::DoAll;
 using testing::Invoke;
 using testing::InvokeWithoutArgs;
@@ -93,7 +98,9 @@ class DeviceManagementServiceIntegrationTest
                                const em::DeviceManagementResponse&));
 
   std::string InitCannedResponse() {
-    interceptor_.reset(new TestRequestInterceptor("localhost"));
+    interceptor_.reset(new TestRequestInterceptor(
+        "localhost",
+        BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO)));
     return "http://localhost";
   }
 
@@ -135,7 +142,10 @@ class DeviceManagementServiceIntegrationTest
 
   virtual void SetUpOnMainThread() OVERRIDE {
     std::string service_url((this->*(GetParam()))());
-    service_.reset(new DeviceManagementService(service_url));
+    service_.reset(new DeviceManagementService(
+        scoped_ptr<DeviceManagementService::Configuration>(
+            new MockDeviceManagementServiceConfiguration(service_url)),
+        g_browser_process->system_request_context()));
     service_->ScheduleInitialization(0);
   }
 

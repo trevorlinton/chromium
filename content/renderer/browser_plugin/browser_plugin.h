@@ -14,7 +14,6 @@
 #include "base/memory/shared_memory.h"
 #endif
 #include "base/values.h"
-#include "content/public/common/browser_plugin_permission_type.h"
 #include "content/renderer/browser_plugin/browser_plugin_backing_store.h"
 #include "content/renderer/browser_plugin/browser_plugin_bindings.h"
 #include "content/renderer/mouse_lock_dispatcher.h"
@@ -40,6 +39,7 @@ class CONTENT_EXPORT BrowserPlugin :
   RenderViewImpl* render_view() const { return render_view_.get(); }
   int render_view_routing_id() const { return render_view_routing_id_; }
   int guest_instance_id() const { return guest_instance_id_; }
+  bool attached() const { return attached_; }
 
   static BrowserPlugin* FromContainer(WebKit::WebPluginContainer* container);
 
@@ -115,10 +115,6 @@ class CONTENT_EXPORT BrowserPlugin :
 
   // A request to enable hardware compositing.
   void EnableCompositing(bool enable);
-  // A request from content client to track lifetime of a JavaScript object.
-  // This is used to track permission request objects, and new window API
-  // window objects.
-  void TrackObjectLifetime(const NPVariant* request, int id);
 
   // Returns true if |point| lies within the bounds of the plugin rectangle.
   // Not OK to use this function for making security-sensitive decision since it
@@ -255,23 +251,22 @@ class CONTENT_EXPORT BrowserPlugin :
   // allocates a new |pending_damage_buffer_| if in software rendering mode.
   void PopulateResizeGuestParameters(
       BrowserPluginHostMsg_ResizeGuest_Params* params,
-      const gfx::Rect& view_size);
+      const gfx::Rect& view_size,
+      bool needs_repaint);
 
   // Populates BrowserPluginHostMsg_AutoSize_Params object with autosize state.
   void PopulateAutoSizeParameters(
-      BrowserPluginHostMsg_AutoSize_Params* params, bool current_auto_size);
+      BrowserPluginHostMsg_AutoSize_Params* params, bool auto_size_enabled);
 
   // Populates both AutoSize and ResizeGuest parameters based on the current
   // autosize state.
   void GetDamageBufferWithSizeParams(
       BrowserPluginHostMsg_AutoSize_Params* auto_size_params,
-      BrowserPluginHostMsg_ResizeGuest_Params* resize_guest_params);
+      BrowserPluginHostMsg_ResizeGuest_Params* resize_guest_params,
+      bool needs_repaint);
 
   // Informs the guest of an updated autosize state.
-  void UpdateGuestAutoSizeState(bool current_auto_size);
-
-  // Informs the BrowserPlugin that guest has changed its size in autosize mode.
-  void SizeChangedDueToAutoSize(const gfx::Size& old_view_size);
+  void UpdateGuestAutoSizeState(bool auto_size_enabled);
 
   // Indicates whether a damage buffer was used by the guest process for the
   // provided |params|.
@@ -282,14 +277,6 @@ class CONTENT_EXPORT BrowserPlugin :
   // given the provided |params|.
   bool UsesPendingDamageBuffer(
       const BrowserPluginMsg_UpdateRect_Params& params);
-
-  // Called when the tracked object of |id| ID becomes unreachable in
-  // JavaScript.
-  void OnTrackedObjectGarbageCollected(int id);
-  // V8 garbage collection callback for |object|.
-  static void WeakCallbackForTrackedObject(v8::Isolate* isolate,
-                                           v8::Persistent<v8::Value>* object,
-                                           void* param);
 
   // IPC message handlers.
   // Please keep in alphabetical order.
@@ -312,6 +299,9 @@ class CONTENT_EXPORT BrowserPlugin :
   // This is the browser-process-allocated instance ID that uniquely identifies
   // a guest WebContents.
   int guest_instance_id_;
+  // This indicates whether this BrowserPlugin has been attached to a
+  // WebContents.
+  bool attached_;
   base::WeakPtr<RenderViewImpl> render_view_;
   // We cache the |render_view_|'s routing ID because we need it on destruction.
   // If the |render_view_| is destroyed before the BrowserPlugin is destroyed
@@ -323,14 +313,16 @@ class CONTENT_EXPORT BrowserPlugin :
   scoped_ptr<base::SharedMemory> current_damage_buffer_;
   scoped_ptr<base::SharedMemory> pending_damage_buffer_;
   uint32 damage_buffer_sequence_id_;
-  bool resize_ack_received_;
+  bool paint_ack_received_;
   gfx::Rect plugin_rect_;
   float last_device_scale_factor_;
   // Bitmap for crashed plugin. Lazily initialized, non-owning pointer.
   SkBitmap* sad_guest_;
   bool guest_crashed_;
   scoped_ptr<BrowserPluginHostMsg_ResizeGuest_Params> pending_resize_params_;
-  bool auto_size_ack_pending_;
+  bool is_auto_size_state_dirty_;
+  // Maximum size constraint for autosize.
+  gfx::Size max_auto_size_;
   std::string storage_partition_id_;
   bool persist_storage_;
   bool valid_partition_id_;
@@ -343,7 +335,6 @@ class CONTENT_EXPORT BrowserPlugin :
   WebCursor cursor_;
 
   gfx::Size last_view_size_;
-  bool size_changed_in_flight_;
   bool before_first_navigation_;
   bool mouse_locked_;
 
@@ -361,6 +352,9 @@ class CONTENT_EXPORT BrowserPlugin :
 
   // Used to identify the plugin to WebBindings.
   scoped_ptr<struct _NPP> npp_;
+
+  // URL for the embedder frame.
+  GURL embedder_frame_url_;
 
   // Weak factory used in v8 |MakeWeak| callback, since the v8 callback might
   // get called after BrowserPlugin has been destroyed.

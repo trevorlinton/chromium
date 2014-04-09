@@ -20,6 +20,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread.h"
 #include "base/threading/worker_pool.h"
 #include "base/time/default_tick_clock.h"
@@ -89,6 +90,10 @@
 #include "net/proxy/proxy_resolver_v8.h"
 #endif
 
+#if defined(OS_ANDROID) || defined(OS_IOS)
+#include "chrome/browser/net/spdyproxy/data_reduction_proxy_settings.h"
+#endif
+
 using content::BrowserThread;
 
 class SafeBrowsingURLRequestContext;
@@ -101,6 +106,9 @@ namespace {
 const char kQuicFieldTrialName[] = "QUIC";
 const char kQuicFieldTrialEnabledGroupName[] = "Enabled";
 const char kQuicFieldTrialHttpsEnabledGroupName[] = "HttpsEnabled";
+
+const char kSpdyFieldTrialName[] = "SPDY";
+const char kSpdyFieldTrialDisabledGroupName[] = "SpdyDisabled";
 
 #if defined(OS_MACOSX) && !defined(OS_IOS)
 void ObserveKeychainEvents() {
@@ -510,6 +518,8 @@ void IOThread::InitAsync() {
   ChromeNetworkDelegate* network_delegate =
       new ChromeNetworkDelegate(extension_event_router_forwarder_,
                                 &system_enable_referrers_);
+  if (command_line.HasSwitch(switches::kEnableClientHints))
+    network_delegate->SetEnableClientHints();
   if (command_line.HasSwitch(switches::kDisableExtensionsHttpThrottling))
     network_delegate->NeverThrottleRequests();
   globals_->system_network_delegate.reset(network_delegate);
@@ -518,14 +528,12 @@ void IOThread::InitAsync() {
   globals_->cert_verifier.reset(net::CertVerifier::CreateDefault());
   globals_->transport_security_state.reset(new net::TransportSecurityState());
   globals_->ssl_config_service = GetSSLConfigService();
-  if (command_line.HasSwitch(switches::kSpdyProxyAuthOrigin)) {
-    spdyproxy_auth_origin_ =
-        command_line.GetSwitchValueASCII(switches::kSpdyProxyAuthOrigin);
-  } else {
-#if defined(SPDY_PROXY_AUTH_ORIGIN)
-    spdyproxy_auth_origin_ = SPDY_PROXY_AUTH_ORIGIN;
-#endif
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  if (DataReductionProxySettings::IsDataReductionProxyAllowed()) {
+    spdyproxy_auth_origins_ =
+        DataReductionProxySettings::GetDataReductionProxies();
   }
+#endif  // defined(OS_ANDROID) || defined(OS_IOS)
   globals_->http_auth_handler_factory.reset(CreateDefaultAuthHandlerFactory(
       globals_->host_resolver.get()));
   globals_->http_server_properties.reset(new net::HttpServerPropertiesImpl());
@@ -594,8 +602,12 @@ void IOThread::InitAsync() {
       new net::URLRequestJobFactoryImpl());
   job_factory->SetProtocolHandler(chrome::kDataScheme,
                                   new net::DataProtocolHandler());
-  job_factory->SetProtocolHandler(chrome::kFileScheme,
-                                  new net::FileProtocolHandler());
+  job_factory->SetProtocolHandler(
+      chrome::kFileScheme,
+      new net::FileProtocolHandler(
+          content::BrowserThread::GetBlockingPool()->
+              GetTaskRunnerWithShutdownBehavior(
+                  base::SequencedWorkerPool::SKIP_ON_SHUTDOWN)));
 #if !defined(DISABLE_FTP_SUPPORT)
   globals_->proxy_script_fetcher_ftp_transaction_factory.reset(
       new net::FtpNetworkLayer(globals_->host_resolver.get()));
@@ -680,20 +692,25 @@ void IOThread::InitializeNetworkOptions(const CommandLine& command_line) {
 
   // Only handle use-spdy command line flags if "spdy.disabled" preference is
   // not disabled via policy.
-  if (!is_spdy_disabled_by_policy_) {
+  if (is_spdy_disabled_by_policy_) {
+    base::FieldTrial* trial = base::FieldTrialList::Find(kSpdyFieldTrialName);
+    if (trial)
+      trial->Disable();
+  } else {
+    std::string spdy_trial_group =
+        base::FieldTrialList::FindFullName(kSpdyFieldTrialName);
+
     if (command_line.HasSwitch(switches::kEnableIPPooling))
       globals_->enable_spdy_ip_pooling.set(true);
 
     if (command_line.HasSwitch(switches::kDisableIPPooling))
       globals_->enable_spdy_ip_pooling.set(false);
 
-    if (command_line.HasSwitch(switches::kEnableSpdyCredentialFrames))
-      globals_->enable_spdy_credential_frames.set(true);
-
     if (command_line.HasSwitch(switches::kEnableWebSocketOverSpdy)) {
       // Enable WebSocket over SPDY.
       net::WebSocketJob::set_websocket_over_spdy_enabled(true);
     }
+
     if (command_line.HasSwitch(switches::kMaxSpdyConcurrentStreams)) {
       globals_->max_spdy_concurrent_streams_limit.set(
           GetSwitchValueAsInt(command_line,
@@ -716,13 +733,21 @@ void IOThread::InitializeNetworkOptions(const CommandLine& command_line) {
       net::HttpStreamFactory::EnableNpnSpdy4a2();
     } else if (command_line.HasSwitch(switches::kDisableSpdy31)) {
       net::HttpStreamFactory::EnableNpnSpdy3();
-    } else if (command_line.HasSwitch(switches::kEnableNpn)) {
-      net::HttpStreamFactory::EnableNpnSpdy();
+    } else if (command_line.HasSwitch(switches::kDisableSpdy2)) {
+      net::HttpStreamFactory::EnableNpnSpdy31();
     } else if (command_line.HasSwitch(switches::kEnableNpnHttpOnly)) {
       net::HttpStreamFactory::EnableNpnHttpOnly();
     } else {
-      // Use SPDY/3.1 by default.
-      net::HttpStreamFactory::EnableNpnSpdy31();
+      if (spdy_trial_group == kSpdyFieldTrialDisabledGroupName &&
+          !command_line.HasSwitch(switches::kEnableWebSocketOverSpdy)) {
+         net::HttpStreamFactory::set_spdy_enabled(false);
+      } else {
+        // Use SPDY/3.1 by default.
+        //
+        // TODO(akalin): Turn off SPDY/2 by default
+        // (http://crbug.com/318651).
+        net::HttpStreamFactory::EnableNpnSpdy31WithSpdy2();
+      }
     }
   }
 
@@ -763,11 +788,11 @@ void IOThread::EnableSpdy(const std::string& mode) {
     if (option == kOff) {
       net::HttpStreamFactory::set_spdy_enabled(false);
     } else if (option == kDisableSSL) {
-      globals_->spdy_default_protocol.set(net::kProtoSPDY2);
+      globals_->spdy_default_protocol.set(net::kProtoSPDY3);
       net::HttpStreamFactory::set_force_spdy_over_ssl(false);
       net::HttpStreamFactory::set_force_spdy_always(true);
     } else if (option == kSSL) {
-      globals_->spdy_default_protocol.set(net::kProtoSPDY2);
+      globals_->spdy_default_protocol.set(net::kProtoSPDY3);
       net::HttpStreamFactory::set_force_spdy_over_ssl(true);
       net::HttpStreamFactory::set_force_spdy_always(true);
     } else if (option == kDisablePing) {
@@ -781,7 +806,7 @@ void IOThread::EnableSpdy(const std::string& mode) {
     } else if (option == kForceAltProtocols) {
       net::PortAlternateProtocolPair pair;
       pair.port = 443;
-      pair.protocol = net::NPN_SPDY_2;
+      pair.protocol = net::NPN_SPDY_3;
       net::HttpServerPropertiesImpl::ForceAlternateProtocol(pair);
     } else if (option == kSingleDomain) {
       DLOG(INFO) << "FORCING SINGLE DOMAIN";
@@ -817,9 +842,13 @@ void IOThread::RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterListPref(prefs::kDailyHttpOriginalContentLength);
   registry->RegisterListPref(prefs::kDailyHttpReceivedContentLength);
   registry->RegisterListPref(
-      prefs::kDailyHttpReceivedContentLengthViaDataReductionProxy);
+      prefs::kDailyOriginalContentLengthWithDataReductionProxyEnabled);
   registry->RegisterListPref(
-      prefs::kDailyHttpReceivedContentLengthWithDataReductionProxyEnabled);
+      prefs::kDailyContentLengthWithDataReductionProxyEnabled);
+  registry->RegisterListPref(
+      prefs::kDailyOriginalContentLengthViaDataReductionProxy);
+  registry->RegisterListPref(
+      prefs::kDailyContentLengthViaDataReductionProxy);
   registry->RegisterInt64Pref(prefs::kDailyHttpContentLengthLastUpdateDate, 0L);
 #endif
   registry->RegisterBooleanPref(prefs::kBuiltInDnsClientEnabled, true);
@@ -849,17 +878,11 @@ net::HttpAuthHandlerFactory* IOThread::CreateDefaultAuthHandlerFactory(
           resolver, gssapi_library_name_, negotiate_disable_cname_lookup_,
           negotiate_enable_port_));
 
-  if (!spdyproxy_auth_origin_.empty()) {
-    GURL origin_url(spdyproxy_auth_origin_);
-    if (origin_url.is_valid()) {
-      registry_factory->RegisterSchemeFactory(
-          "spdyproxy",
-          new spdyproxy::HttpAuthHandlerSpdyProxy::Factory(origin_url));
-    } else {
-      LOG(WARNING) << "Skipping creation of SpdyProxy auth handler since "
-                   << "authorized origin is invalid: "
-                   << spdyproxy_auth_origin_;
-    }
+  if (!spdyproxy_auth_origins_.empty()) {
+    registry_factory->RegisterSchemeFactory(
+        "spdyproxy",
+        new spdyproxy::HttpAuthHandlerSpdyProxy::Factory(
+            spdyproxy_auth_origins_));
   }
 
   return registry_factory.release();
@@ -899,8 +922,6 @@ void IOThread::InitializeNetworkSessionParams(
       &params->force_spdy_single_domain);
   globals_->enable_spdy_ip_pooling.CopyToIfSet(
       &params->enable_spdy_ip_pooling);
-  globals_->enable_spdy_credential_frames.CopyToIfSet(
-      &params->enable_spdy_credential_frames);
   globals_->enable_spdy_compression.CopyToIfSet(
       &params->enable_spdy_compression);
   globals_->enable_spdy_ping_based_connection_checking.CopyToIfSet(

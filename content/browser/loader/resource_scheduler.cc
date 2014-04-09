@@ -81,6 +81,8 @@ class ResourceScheduler::ScheduledResourceRequest
         ready_(false),
         deferred_(false),
         scheduler_(scheduler) {
+    TRACE_EVENT_ASYNC_BEGIN1("net", "URLRequest", request_,
+                             "url", request->url().spec());
   }
 
   virtual ~ScheduledResourceRequest() {
@@ -88,6 +90,7 @@ class ResourceScheduler::ScheduledResourceRequest
   }
 
   void Start() {
+    TRACE_EVENT_ASYNC_STEP_PAST0("net", "URLRequest", request_, "Queued");
     ready_ = true;
     if (deferred_ && request_->status().is_success()) {
       deferred_ = false;
@@ -333,6 +336,7 @@ size_t ResourceScheduler::GetNumDelayableRequestsInFlight(
 //   * Higher priority requests (>= net::LOW).
 //   * Synchronous requests.
 //   * Requests to SPDY-capable origin servers.
+//   * Non-HTTP[S] requests.
 //
 // 2. The remainder are delayable requests, which follow these rules:
 //
@@ -344,6 +348,13 @@ size_t ResourceScheduler::GetNumDelayableRequestsInFlight(
 bool ResourceScheduler::ShouldStartRequest(ScheduledResourceRequest* request,
                                            Client* client) const {
   const net::URLRequest& url_request = *request->url_request();
+
+  // TODO(simonjam): This may end up causing disk contention. We should
+  // experiment with throttling if that happens.
+  if (!url_request.url().SchemeIsHTTPOrHTTPS()) {
+    return true;
+  }
+
   const net::HttpServerProperties& http_server_properties =
       *url_request.context()->http_server_properties();
 

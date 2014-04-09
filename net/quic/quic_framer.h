@@ -44,7 +44,9 @@ const size_t kQuicStreamPayloadLengthSize = 2;
 const size_t kQuicEntropyHashSize = 1;
 // Size in bytes reserved for the delta time of the largest observed
 // sequence number in ack frames.
-const size_t kQuicDeltaTimeLargestObservedSize = 4;
+// TODO(ianswett): Remove this once QUIC_VERSION_11 is removed.
+const size_t kQuicv11DeltaTimeLargestObservedSize = 4;
+const size_t kQuicDeltaTimeLargestObservedSize = 2;
 // Size in bytes reserved for the number of missing packets in ack frames.
 const size_t kNumberOfMissingPacketsSize = 1;
 
@@ -150,8 +152,10 @@ class NET_EXPORT_PRIVATE QuicReceivedEntropyHashCalculatorInterface {
 class NET_EXPORT_PRIVATE QuicFramer {
  public:
   // Constructs a new framer that installs a kNULL QuicEncrypter and
-  // QuicDecrypter for level ENCRYPTION_NONE.
-  QuicFramer(QuicVersion quic_version,
+  // QuicDecrypter for level ENCRYPTION_NONE. |supported_versions| specifies the
+  // list of supported QUIC versions. |quic_version_| is set to the maximum
+  // version in |supported_versions|.
+  QuicFramer(const QuicVersionVector& supported_versions,
              QuicTime creation_time,
              bool is_server);
 
@@ -182,14 +186,15 @@ class NET_EXPORT_PRIVATE QuicFramer {
     fec_builder_ = builder;
   }
 
+  const QuicVersionVector& supported_versions() const {
+    return supported_versions_;
+  }
+
   QuicVersion version() const {
     return quic_version_;
   }
 
-  void set_version(const QuicVersion version) {
-    DCHECK(IsSupportedVersion(version));
-    quic_version_ = version;
-  }
+  void set_version(const QuicVersion version);
 
   // Does not DCHECK for supported version. Used by tests to set unsupported
   // version to trigger version negotiation.
@@ -230,7 +235,12 @@ class NET_EXPORT_PRIVATE QuicFramer {
                                       QuicStreamOffset offset,
                                       bool last_frame_in_packet);
   // Size in bytes of all ack frame fields without the missing packets.
-  static size_t GetMinAckFrameSize();
+  // TODO(ianswett): Remove this once QUIC_VERSION_11 is removed.
+  static size_t GetMinAckFrameSizev11();
+  static size_t GetMinAckFrameSize(
+      QuicVersion version,
+      QuicSequenceNumberLength sequence_number_length,
+      QuicSequenceNumberLength largest_observed_length);
   // Size in bytes of all reset stream frame without the error details.
   static size_t GetMinRstStreamFrameSize();
   // Size in bytes of all connection close frame fields without the error
@@ -239,7 +249,7 @@ class NET_EXPORT_PRIVATE QuicFramer {
   // Size in bytes of all GoAway frame fields without the reason phrase.
   static size_t GetMinGoAwayFrameSize();
   // The maximum number of nacks which can be transmitted in a single ack packet
-  // without exceeding kMaxPacketSize.
+  // without exceeding kDefaultMaxPacketSize.
   static size_t GetMaxUnackedPackets(QuicPacketHeader header);
   // Size in bytes required to serialize the stream id.
   static size_t GetStreamIdSize(QuicStreamId stream_id);
@@ -249,13 +259,18 @@ class NET_EXPORT_PRIVATE QuicFramer {
   static size_t GetVersionNegotiationPacketSize(size_t number_versions);
 
 
-  static bool CanTruncate(const QuicFrame& frame, size_t free_bytes);
+  static bool CanTruncate(
+      QuicVersion version, const QuicFrame& frame, size_t free_bytes);
 
   // Returns the number of bytes added to the packet for the specified frame,
   // and 0 if the frame doesn't fit.  Includes the header size for the first
   // frame.
   size_t GetSerializedFrameLength(
-      const QuicFrame& frame, size_t free_bytes, bool first_frame);
+      const QuicFrame& frame,
+      size_t free_bytes,
+      bool first_frame,
+      bool last_frame,
+      QuicSequenceNumberLength sequence_number_length);
 
   // Returns the associated data from the encrypted packet |encrypted| as a
   // stringpiece.
@@ -336,8 +351,27 @@ class NET_EXPORT_PRIVATE QuicFramer {
   static bool ReadGuidFromPacket(const QuicEncryptedPacket& packet,
                                  QuicGuid* guid);
 
+  static QuicSequenceNumberLength ReadSequenceNumberLength(uint8 flags);
+
+  // The minimum sequence number length required to represent |sequence_number|.
+  static QuicSequenceNumberLength GetMinSequenceNumberLength(
+      QuicPacketSequenceNumber sequence_number);
+
  private:
   friend class test::QuicFramerPeer;
+
+  typedef std::map<QuicPacketSequenceNumber, uint8> NackRangeMap;
+
+  class AckFrameInfo {
+   public:
+    AckFrameInfo();
+    virtual ~AckFrameInfo();
+
+    // The maximum delta between ranges.
+    QuicPacketSequenceNumber max_delta;
+    // Nack ranges starting with start sequence numbers and lengths.
+    NackRangeMap nack_ranges;
+  };
 
   QuicPacketEntropyHash GetPacketEntropyHash(
       const QuicPacketHeader& header) const;
@@ -349,9 +383,6 @@ class NET_EXPORT_PRIVATE QuicFramer {
 
   bool ProcessVersionNegotiationPacket(QuicPacketPublicHeader* public_header);
 
-  bool WritePacketHeader(const QuicPacketHeader& header,
-                         QuicDataWriter* writer);
-
   bool ProcessPublicHeader(QuicPacketPublicHeader* header);
 
   bool ProcessPacketHeader(QuicPacketHeader* header,
@@ -360,11 +391,16 @@ class NET_EXPORT_PRIVATE QuicFramer {
   bool ProcessPacketSequenceNumber(
       QuicSequenceNumberLength sequence_number_length,
       QuicPacketSequenceNumber* sequence_number);
-  bool ProcessFrameData();
+  bool ProcessFrameData(const QuicPacketHeader& header);
   bool ProcessStreamFrame(uint8 frame_type, QuicStreamFrame* frame);
-  bool ProcessAckFrame(QuicAckFrame* frame);
-  bool ProcessReceivedInfo(ReceivedPacketInfo* received_info);
-  bool ProcessSentInfo(SentPacketInfo* sent_info);
+  bool ProcessAckFrame(const QuicPacketHeader& header,
+                       uint8 frame_type,
+                       QuicAckFrame* frame);
+  // TODO(ianswett): Remove this once QUIC_VERSION_11 is removed.
+  bool ProcessReceivedInfoV11(ReceivedPacketInfo* received_info);
+  bool ProcessReceivedInfo(uint8 frame_type, ReceivedPacketInfo* received_info);
+  bool ProcessSentInfo(const QuicPacketHeader& public_header,
+                       SentPacketInfo* sent_info);
   bool ProcessQuicCongestionFeedbackFrame(
       QuicCongestionFeedbackFrame* congestion_feedback);
   bool ProcessRstStreamFrame(QuicRstStreamFrame* frame);
@@ -380,22 +416,39 @@ class NET_EXPORT_PRIVATE QuicFramer {
       QuicSequenceNumberLength sequence_number_length,
       QuicPacketSequenceNumber packet_sequence_number) const;
 
+  // Computes the wire size in bytes of the |ack| frame, assuming no truncation.
+  size_t GetAckFrameSize(const QuicAckFrame& ack,
+                         QuicSequenceNumberLength sequence_number_length);
+
   // Computes the wire size in bytes of the payload of |frame|.
-  size_t ComputeFrameLength(const QuicFrame& frame, bool last_frame_in_packet);
+  size_t ComputeFrameLength(const QuicFrame& frame,
+                            bool last_frame_in_packet,
+                            QuicSequenceNumberLength sequence_number_length);
 
   static bool AppendPacketSequenceNumber(
       QuicSequenceNumberLength sequence_number_length,
       QuicPacketSequenceNumber packet_sequence_number,
       QuicDataWriter* writer);
 
+  static uint8 GetSequenceNumberFlags(
+      QuicSequenceNumberLength sequence_number_length);
+
+  static AckFrameInfo GetAckFrameInfo(const QuicAckFrame& frame);
+
+  bool AppendPacketHeader(const QuicPacketHeader& header,
+                          QuicDataWriter* writer);
   bool AppendTypeByte(const QuicFrame& frame,
                       bool last_frame_in_packet,
                       QuicDataWriter* writer);
   bool AppendStreamFramePayload(const QuicStreamFrame& frame,
                                 bool last_frame_in_packet,
                                 QuicDataWriter* builder);
-  bool AppendAckFramePayload(const QuicAckFrame& frame,
-                             QuicDataWriter* builder);
+  bool AppendAckFramePayloadAndTypeByte(const QuicPacketHeader& header,
+                                        const QuicAckFrame& frame,
+                                        QuicDataWriter* builder);
+  // TODO(ianswett): Remove this once QUIC_VERSION_11 is removed.
+  bool AppendAckFramePayloadV11(const QuicAckFrame& frame,
+                                QuicDataWriter* builder);
   bool AppendQuicCongestionFeedbackFramePayload(
       const QuicCongestionFeedbackFrame& frame,
       QuicDataWriter* builder);
@@ -430,6 +483,11 @@ class NET_EXPORT_PRIVATE QuicFramer {
   scoped_ptr<QuicData> decrypted_;
   // Version of the protocol being used.
   QuicVersion quic_version_;
+  // This vector contains QUIC versions which we currently support.
+  // This should be ordered such that the highest supported version is the first
+  // element, with subsequent elements in descending order (versions can be
+  // skipped as necessary).
+  QuicVersionVector supported_versions_;
   // Primary decrypter used to decrypt packets during parsing.
   scoped_ptr<QuicDecrypter> decrypter_;
   // Alternative decrypter that can also be used to decrypt packets.

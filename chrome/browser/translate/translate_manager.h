@@ -14,6 +14,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
+#include "chrome/browser/ui/translate/translate_bubble_model.h"
 #include "chrome/common/translate/translate_errors.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -191,13 +192,15 @@ class TranslateManager : public content::NotificationObserver {
   // Notifies to the observers when translate failed.
   void NotifyTranslateError(const TranslateErrorDetails& details);
 
+  // Shows the translate bubble.
+  void ShowBubble(content::WebContents* web_contents,
+                  TranslateBubbleModel::ViewState view_state);
+
   // Returns the different parameters used to decide whether extra shortcuts
   // are needed.
   static ShortcutConfiguration ShortcutConfig();
 
   content::NotificationRegistrar notification_registrar_;
-
-  base::WeakPtrFactory<TranslateManager> weak_method_factory_;
 
   // Max number of attempts before checking if a page has been reloaded.
   int max_reload_check_attempts_;
@@ -220,6 +223,8 @@ class TranslateManager : public content::NotificationObserver {
   // An instance of TranslateAcceptLanguages which manages Accept languages of
   // each profiles.
   scoped_ptr<TranslateAcceptLanguages> accept_languages_;
+
+  base::WeakPtrFactory<TranslateManager> weak_method_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(TranslateManager);
 };

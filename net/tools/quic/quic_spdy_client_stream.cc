@@ -62,8 +62,8 @@ ssize_t QuicSpdyClientStream::SendRequest(const BalsaHeaders& headers,
   SpdyHeaderBlock header_block =
       SpdyUtils::RequestHeadersToSpdyHeaders(headers);
 
-  string headers_string =
-      session()->compressor()->CompressHeaders(header_block);
+  string headers_string = session()->compressor()->CompressHeadersWithPriority(
+      priority(), header_block);
 
   bool has_body = !body.empty();
 
@@ -91,6 +91,7 @@ int QuicSpdyClientStream::ParseResponseHeaders() {
     Close(QUIC_BAD_APPLICATION_PAYLOAD);
     return -1;
   }
+  response_headers_received_ = true;
 
   size_t delta = read_buf_len - len;
   if (delta > 0) {

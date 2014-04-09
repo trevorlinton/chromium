@@ -6,6 +6,18 @@
 
 namespace syncer {
 
+ObjectIdInvalidationMap BuildInvalidationMap(
+    ModelType type,
+    int version,
+    const std::string& payload) {
+  ObjectIdInvalidationMap map;
+  invalidation::ObjectId id;
+  bool result = RealModelTypeToObjectId(type, &id);
+  DCHECK(result);
+  map.Insert(Invalidation::Init(id, version, payload));
+  return map;
+}
+
 void PrintTo(ModelTypeSet model_types, ::std::ostream* os) {
   *os << ModelTypeSetToString(model_types);
 }

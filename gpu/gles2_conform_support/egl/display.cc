@@ -11,6 +11,7 @@
 #include "gpu/command_buffer/client/gles2_lib.h"
 #include "gpu/command_buffer/client/transfer_buffer.h"
 #include "gpu/command_buffer/service/context_group.h"
+#include "gpu/command_buffer/service/gpu_control_service.h"
 #include "gpu/command_buffer/service/transfer_buffer_manager.h"
 #include "gpu/gles2_conform_support/egl/config.h"
 #include "gpu/gles2_conform_support/egl/surface.h"
@@ -122,6 +123,8 @@ EGLSurface Display::CreateWindowSurface(EGLConfig config,
   gpu_scheduler_.reset(new gpu::GpuScheduler(command_buffer.get(),
                                              decoder_.get(),
                                              NULL));
+  gpu_control_.reset(
+      new gpu::GpuControlService(NULL, NULL, group->mailbox_manager(), NULL));
 
   decoder_->set_engine(gpu_scheduler_.get());
   gfx::Size size(create_offscreen_width_, create_offscreen_height_);
@@ -165,7 +168,6 @@ EGLSurface Display::CreateWindowSurface(EGLConfig config,
                             gl_surface_->IsOffscreen(),
                             size,
                             gpu::gles2::DisallowedFeatures(),
-                            NULL,
                             attribs)) {
     return EGL_NO_SURFACE;
   }
@@ -229,12 +231,13 @@ EGLContext Display::CreateContext(EGLConfig config,
       NULL,
       transfer_buffer_.get(),
       true,
-      NULL));
+      gpu_control_.get()));
 
   if (!context_->Initialize(
       kTransferBufferSize,
       kTransferBufferSize / 2,
-      kTransferBufferSize * 2)) {
+      kTransferBufferSize * 2,
+      gpu::gles2::GLES2Implementation::kNoLimit)) {
     return EGL_NO_CONTEXT;
   }
 

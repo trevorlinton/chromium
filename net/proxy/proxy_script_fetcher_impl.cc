@@ -13,6 +13,7 @@
 #include "net/base/io_buffer.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
+#include "net/base/request_priority.h"
 #include "net/cert/cert_status_flags.h"
 #include "net/http/http_response_headers.h"
 #include "net/url_request/url_request_context.h"
@@ -133,7 +134,8 @@ int ProxyScriptFetcherImpl::Fetch(
     return OK;
   }
 
-  cur_request_.reset(url_request_context_->CreateRequest(url, this));
+  cur_request_ =
+      url_request_context_->CreateRequest(url, DEFAULT_PRIORITY, this);
   cur_request_->set_method("GET");
 
   // Make sure that the PAC script is downloaded using a direct connection,
@@ -211,7 +213,7 @@ void ProxyScriptFetcherImpl::OnResponseStarted(URLRequest* request) {
   }
 
   // Require HTTP responses to have a success status code.
-  if (request->url().SchemeIs("http") || request->url().SchemeIs("https")) {
+  if (request->url().SchemeIsHTTPOrHTTPS()) {
     // NOTE about status codes: We are like Firefox 3 in this respect.
     // {IE 7, Safari 3, Opera 9.5} do not care about the status code.
     if (request->GetResponseCode() != 200) {

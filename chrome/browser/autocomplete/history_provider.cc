@@ -95,9 +95,7 @@ bool HistoryProvider::FixupUserInput(AutocompleteInput* input) {
   string16 output = UTF8ToUTF16(canonical_gurl_str);
   // Don't prepend a scheme when the user didn't have one.  Since the fixer
   // upper only prepends the "http" scheme, that's all we need to check for.
-  if (canonical_gurl.SchemeIs(chrome::kHttpScheme) &&
-      !url_util::FindAndCompareScheme(UTF16ToUTF8(input_text),
-                                      chrome::kHttpScheme, NULL))
+  if (!AutocompleteInput::HasHTTPScheme(input_text))
     TrimHttpPrefix(&output);
 
   // Make the number of trailing slashes on the output exactly match the input.
@@ -137,14 +135,14 @@ bool HistoryProvider::FixupUserInput(AutocompleteInput* input) {
 // static
 size_t HistoryProvider::TrimHttpPrefix(string16* url) {
   // Find any "http:".
-  if (!HasHTTPScheme(*url))
+  if (!AutocompleteInput::HasHTTPScheme(*url))
     return 0;
   size_t scheme_pos =
-      url->find(ASCIIToUTF16(chrome::kHttpScheme) + char16(':'));
+      url->find(ASCIIToUTF16(content::kHttpScheme) + char16(':'));
   DCHECK_NE(string16::npos, scheme_pos);
 
   // Erase scheme plus up to two slashes.
-  size_t prefix_end = scheme_pos + strlen(chrome::kHttpScheme) + 1;
+  size_t prefix_end = scheme_pos + strlen(content::kHttpScheme) + 1;
   const size_t after_slashes = std::min(url->length(), prefix_end + 2);
   while ((prefix_end < after_slashes) && ((*url)[prefix_end] == '/'))
     ++prefix_end;

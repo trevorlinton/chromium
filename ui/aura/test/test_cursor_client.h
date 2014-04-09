@@ -5,6 +5,7 @@
 #ifndef UI_AURA_TEST_TEST_CURSOR_CLIENT_H_
 #define UI_AURA_TEST_TEST_CURSOR_CLIENT_H_
 
+#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/observer_list.h"
 #include "ui/aura/client/cursor_client.h"
@@ -21,6 +22,7 @@ class TestCursorClient : public aura::client::CursorClient {
   virtual void SetCursor(gfx::NativeCursor cursor) OVERRIDE;
   virtual void ShowCursor() OVERRIDE;
   virtual void HideCursor() OVERRIDE;
+  virtual void SetCursorSet(ui::CursorSetType cursor_set) OVERRIDE;
   virtual void SetScale(float scale) OVERRIDE;
   virtual bool IsCursorVisible() const OVERRIDE;
   virtual void EnableMouseEvents() OVERRIDE;
@@ -29,6 +31,7 @@ class TestCursorClient : public aura::client::CursorClient {
   virtual void SetDisplay(const gfx::Display& display) OVERRIDE;
   virtual void LockCursor() OVERRIDE;
   virtual void UnlockCursor() OVERRIDE;
+  virtual bool IsCursorLocked() const OVERRIDE;
   virtual void AddObserver(
       aura::client::CursorClientObserver* observer) OVERRIDE;
   virtual void RemoveObserver(
@@ -37,6 +40,7 @@ class TestCursorClient : public aura::client::CursorClient {
  private:
   bool visible_;
   bool mouse_events_enabled_;
+  int cursor_lock_count_;
   ObserverList<aura::client::CursorClientObserver> observers_;
   aura::Window* root_window_;
 

@@ -81,6 +81,9 @@ enum FileSystemType {
   // Indicates a synthetic iTunes filesystem.
   kFileSystemTypeItunes,
 
+  // Indicates a synthetic iPhoto filesystem.
+  kFileSystemTypeIphoto,
+
   // Indicates a Drive filesystem which provides access to Google Drive.
   kFileSystemTypeDrive,
 
@@ -107,6 +110,11 @@ enum FileSystemType {
   // This type is useful for creating a blob reference for a temporary
   // file which must go away when the blob's last reference is dropped.
   kFileSystemTypeForTransientFile,
+
+  // Sandboxed private filesystem. This filesystem cannot be opened
+  // via regular OpenFileSystem, and provides private filesystem space for
+  // given identifier in each origin.
+  kFileSystemTypePluginPrivate,
 
   // --------------------------------------------------------------------
   // Marks the end of internal type enum. (This is not the actual fs type)

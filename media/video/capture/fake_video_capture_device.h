@@ -25,35 +25,33 @@ class MEDIA_EXPORT FakeVideoCaptureDevice : public VideoCaptureDevice {
   static void SetFailNextCreate();
 
   static void GetDeviceNames(Names* device_names);
+  static void GetDeviceSupportedFormats(const Name& device,
+                                        VideoCaptureCapabilities* formats);
 
   // VideoCaptureDevice implementation.
-  virtual void Allocate(const VideoCaptureCapability& capture_format,
-                         VideoCaptureDevice::EventHandler* observer) OVERRIDE;
-  virtual void Start() OVERRIDE;
-  virtual void Stop() OVERRIDE;
-  virtual void DeAllocate() OVERRIDE;
-  virtual const Name& device_name() OVERRIDE;
+  virtual void AllocateAndStart(
+      const VideoCaptureCapability& capture_format,
+      scoped_ptr<VideoCaptureDevice::Client> client) OVERRIDE;
+  virtual void StopAndDeAllocate() OVERRIDE;
 
  private:
   // Flag indicating the internal state.
   enum InternalState {
     kIdle,
-    kAllocated,
     kCapturing,
     kError
   };
-  explicit FakeVideoCaptureDevice(const Name& device_name);
+  FakeVideoCaptureDevice();
 
   // Called on the capture_thread_.
   void OnCaptureTask();
 
   // EXPERIMENTAL, similar to allocate, but changes resolution and calls
-  // observer->OnFrameInfoChanged(VideoCaptureCapability&)
+  // client->OnFrameInfoChanged(VideoCaptureCapability&)
   void Reallocate();
   void PopulateCapabilitiesRoster();
 
-  Name device_name_;
-  VideoCaptureDevice::EventHandler* observer_;
+  scoped_ptr<VideoCaptureDevice::Client> client_;
   InternalState state_;
   base::Thread capture_thread_;
   scoped_ptr<uint8[]> fake_frame_;
@@ -67,7 +65,7 @@ class MEDIA_EXPORT FakeVideoCaptureDevice : public VideoCaptureDevice {
 
   static bool fail_next_create_;
 
-  DISALLOW_IMPLICIT_CONSTRUCTORS(FakeVideoCaptureDevice);
+  DISALLOW_COPY_AND_ASSIGN(FakeVideoCaptureDevice);
 };
 
 }  // namespace media

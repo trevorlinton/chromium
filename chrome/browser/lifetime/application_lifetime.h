@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_LIFETIME_APPLICATION_LIFETIME_H_
 #define CHROME_BROWSER_LIFETIME_APPLICATION_LIFETIME_H_
 
+#include "base/compiler_specific.h"
+
 class Browser;
 
 namespace chrome {
@@ -15,6 +17,11 @@ namespace chrome {
 // that chrome is signing out, which lets session manager send
 // SIGTERM to start actual exit process.
 void AttemptUserExit();
+
+// Starts to collect shutdown traces. On ChromeOS this will start immediately
+// on AttemptUserExit() and all other systems will start once all tabs are
+// closed.
+void StartShutdownTracing();
 
 // Starts a user initiated restart process. On platforms other than
 // chromeos, this sets a restart bit in the preference so that
@@ -28,6 +35,18 @@ void AttemptRestart();
 // in desktop mode it starts in metro mode and vice-versa. The switching like
 // the restarting is controlled by a preference.
 void AttemptRestartWithModeSwitch();
+void AttemptRestartToDesktopMode();
+void AttemptRestartToMetroMode();
+
+enum AshExecutionStatus {
+  ASH_KEEP_RUNNING,
+  ASH_TERMINATE,
+};
+
+// Helper function to activate the desktop from Ash mode. The
+// |ash_execution_status| parameter indicates if we should exit Ash after
+// activating desktop.
+void ActivateDesktopHelper(AshExecutionStatus ash_execution_status);
 #endif
 
 // Attempt to exit by closing all browsers.  This is equivalent to
@@ -48,9 +67,13 @@ void AttemptExit();
 void ExitCleanly();
 #endif
 
+// Closes all browsers and if successful, quits.
+void CloseAllBrowsersAndQuit();
+
 // Closes all browsers. If the session is ending the windows are closed
 // directly. Otherwise the windows are closed by way of posting a WM_CLOSE
-// message.
+// message. This will quit the application if there is nothing other than
+// browser windows keeping it alive or the application is quitting.
 void CloseAllBrowsers();
 
 // Begins shutdown of the application when the desktop session is ending.

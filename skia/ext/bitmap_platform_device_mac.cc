@@ -125,19 +125,20 @@ BitmapPlatformDevice* BitmapPlatformDevice::Create(CGContextRef context,
     return NULL;
 
   SkBitmap bitmap;
-  bitmap.setConfig(SkBitmap::kARGB_8888_Config, width, height);
-  if (bitmap.allocPixels() != true)
-    return NULL;
+  // TODO: verify that the CG Context's pixels will have tight rowbytes or pass in the correct
+  // rowbytes for the case when context != NULL.
+  bitmap.setConfig(SkBitmap::kARGB_8888_Config, width, height, 0,
+                   is_opaque ? kOpaque_SkAlphaType : kPremul_SkAlphaType);
 
-  void* data = NULL;
+  void* data;
   if (context) {
     data = CGBitmapContextGetData(context);
     bitmap.setPixels(data);
   } else {
+    if (!bitmap.allocPixels())
+      return NULL;
     data = bitmap.getPixels();
   }
-
-  bitmap.setIsOpaque(is_opaque);
 
   // If we were given data, then don't clobber it!
 #ifndef NDEBUG
@@ -193,10 +194,10 @@ BitmapPlatformDevice* BitmapPlatformDevice::CreateWithData(uint8_t* data,
 }
 
 // The device will own the bitmap, which corresponds to also owning the pixel
-// data. Therefore, we do not transfer ownership to the SkDevice's bitmap.
+// data. Therefore, we do not transfer ownership to the SkBitmapDevice's bitmap.
 BitmapPlatformDevice::BitmapPlatformDevice(
     const skia::RefPtr<BitmapPlatformDeviceData>& data, const SkBitmap& bitmap)
-    : SkDevice(bitmap),
+    : SkBitmapDevice(bitmap),
       data_(data) {
   SetPlatformDevice(this, this);
 }
@@ -246,17 +247,13 @@ void BitmapPlatformDevice::DrawToNativeContext(CGContextRef context, int x,
     data_->ReleaseBitmapContext();
 }
 
-const SkBitmap& BitmapPlatformDevice::onAccessBitmap(SkBitmap* bitmap) {
-  // Not needed in CoreGraphics
-  return *bitmap;
-}
-
-SkDevice* BitmapPlatformDevice::onCreateCompatibleDevice(
+SkBaseDevice* BitmapPlatformDevice::onCreateCompatibleDevice(
     SkBitmap::Config config, int width, int height, bool isOpaque,
     Usage /*usage*/) {
   SkASSERT(config == SkBitmap::kARGB_8888_Config);
-  SkDevice* bitmap_device = BitmapPlatformDevice::CreateAndClear(width, height,
-                                                                 isOpaque);
+  SkBaseDevice* bitmap_device = BitmapPlatformDevice::CreateAndClear(width, 
+                                                                     height,
+                                                                     isOpaque);
   return bitmap_device;
 }
 
@@ -264,14 +261,14 @@ SkDevice* BitmapPlatformDevice::onCreateCompatibleDevice(
 
 SkCanvas* CreatePlatformCanvas(CGContextRef ctx, int width, int height,
                                bool is_opaque, OnFailureType failureType) {
-  skia::RefPtr<SkDevice> dev = skia::AdoptRef(
+  skia::RefPtr<SkBaseDevice> dev = skia::AdoptRef(
       BitmapPlatformDevice::Create(ctx, width, height, is_opaque));
   return CreateCanvas(dev, failureType);
 }
 
 SkCanvas* CreatePlatformCanvas(int width, int height, bool is_opaque,
                                uint8_t* data, OnFailureType failureType) {
-  skia::RefPtr<SkDevice> dev = skia::AdoptRef(
+  skia::RefPtr<SkBaseDevice> dev = skia::AdoptRef(
       BitmapPlatformDevice::CreateWithData(data, width, height, is_opaque));
   return CreateCanvas(dev, failureType);
 }
@@ -287,13 +284,13 @@ bool PlatformBitmap::Allocate(int width, int height, bool is_opaque) {
   if (RasterDeviceTooBigToAllocate(width, height))
     return false;
     
-  bitmap_.setConfig(SkBitmap::kARGB_8888_Config, width, height, width * 4);
+  bitmap_.setConfig(SkBitmap::kARGB_8888_Config, width, height, width * 4,
+                    is_opaque ? kOpaque_SkAlphaType : kPremul_SkAlphaType);
   if (!bitmap_.allocPixels())
       return false;
 
   if (!is_opaque)
     bitmap_.eraseColor(0);
-  bitmap_.setIsOpaque(is_opaque);
 
   surface_ = CGContextForData(bitmap_.getPixels(), bitmap_.width(),
                               bitmap_.height());

@@ -8,11 +8,17 @@
 #include <string>
 
 #include "base/basictypes.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
+#include "base/observer_list.h"
 #include "base/prefs/pref_member.h"
 #include "chrome/browser/policy/cloud/cloud_policy_constants.h"
 
 class PrefService;
+
+namespace base {
+class SequencedTaskRunner;
+}
 
 namespace policy {
 
@@ -29,8 +35,25 @@ class CloudPolicyStore;
 // CloudPolicyRefreshScheduler which triggers periodic refreshes.
 class CloudPolicyCore {
  public:
+  // Callbacks for policy core events.
+  class Observer {
+   public:
+    virtual ~Observer();
+
+    // Called after the core is connected.
+    virtual void OnCoreConnected(CloudPolicyCore* core) = 0;
+
+    // Called after the refresh scheduler is started.
+    virtual void OnRefreshSchedulerStarted(CloudPolicyCore* core) = 0;
+
+    // Called before the core is disconnected.
+    virtual void OnCoreDisconnecting(CloudPolicyCore* core) = 0;
+  };
+
+  // |task_runner| is the runner for policy refresh tasks.
   CloudPolicyCore(const PolicyNamespaceKey& policy_ns_key,
-                  CloudPolicyStore* store);
+                  CloudPolicyStore* store,
+                  const scoped_refptr<base::SequencedTaskRunner>& task_runner);
   ~CloudPolicyCore();
 
   CloudPolicyClient* client() { return client_.get(); }
@@ -67,16 +90,24 @@ class CloudPolicyCore {
   void TrackRefreshDelayPref(PrefService* pref_service,
                              const std::string& refresh_pref_name);
 
+  // Registers an observer to be notified of policy core events.
+  void AddObserver(Observer* observer);
+
+  // Removes the specified observer.
+  void RemoveObserver(Observer* observer);
+
  private:
   // Updates the refresh scheduler on refresh delay changes.
   void UpdateRefreshDelayFromPref();
 
   PolicyNamespaceKey policy_ns_key_;
   CloudPolicyStore* store_;
+  scoped_refptr<base::SequencedTaskRunner> task_runner_;
   scoped_ptr<CloudPolicyClient> client_;
   scoped_ptr<CloudPolicyService> service_;
   scoped_ptr<CloudPolicyRefreshScheduler> refresh_scheduler_;
   scoped_ptr<IntegerPrefMember> refresh_delay_;
+  ObserverList<Observer, true> observers_;
 
   DISALLOW_COPY_AND_ASSIGN(CloudPolicyCore);
 };

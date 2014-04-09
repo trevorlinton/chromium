@@ -8,6 +8,7 @@
 #include "base/file_util.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
+#include "content/public/common/content_switches.h"
 #include "content/shell/common/shell_switches.h"
 #include "third_party/WebKit/public/testing/WebPreferences.h"
 #include "webkit/common/webpreferences.h"
@@ -40,7 +41,6 @@ void ExportLayoutTestSpecificPreferences(
   to->caret_browsing_enabled = from.caretBrowsingEnabled;
   to->allow_displaying_insecure_content = from.allowDisplayOfInsecureContent;
   to->allow_running_insecure_content = from.allowRunningOfInsecureContent;
-  to->css_shaders_enabled = from.cssCustomFilterEnabled;
   to->should_respect_image_orientation = from.shouldRespectImageOrientation;
   to->asynchronous_spell_checking_enabled =
       from.asynchronousSpellCheckingEnabled;
@@ -55,10 +55,11 @@ void ExportLayoutTestSpecificPreferences(
 // of the defaults are controlled via command line flags which are
 // automatically set for layout tests.
 void ApplyLayoutTestDefaultPreferences(WebPreferences* prefs) {
-  CommandLine& command_line = *CommandLine::ForCurrentProcess();
+  const CommandLine& command_line = *CommandLine::ForCurrentProcess();
   prefs->allow_universal_access_from_file_urls = true;
   prefs->dom_paste_enabled = true;
   prefs->javascript_can_access_clipboard = true;
+  prefs->xslt_enabled = true;
   prefs->xss_auditor_enabled = false;
 #if defined(OS_MACOSX)
   prefs->editing_behavior = webkit_glue::EDITING_BEHAVIOR_MAC;
@@ -100,6 +101,8 @@ void ApplyLayoutTestDefaultPreferences(WebPreferences* prefs) {
   prefs->threaded_html_parser = true;
   prefs->accelerated_2d_canvas_enabled =
       command_line.HasSwitch(switches::kEnableAccelerated2DCanvas);
+  prefs->force_compositing_mode =
+      command_line.HasSwitch(switches::kForceCompositingMode);
   prefs->accelerated_compositing_for_video_enabled = false;
   prefs->mock_scrollbars_enabled = false;
   prefs->fixed_position_creates_stacking_context = false;
@@ -108,6 +111,7 @@ void ApplyLayoutTestDefaultPreferences(WebPreferences* prefs) {
 #if defined(OS_ANDROID)
   prefs->text_autosizing_enabled = false;
 #endif
+  prefs->viewport_enabled = false;
 }
 
 base::FilePath GetWebKitRootDirFilePath() {

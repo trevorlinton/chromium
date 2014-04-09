@@ -11,9 +11,11 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/content_settings/content_settings_utils.h"
 #include "chrome/browser/content_settings/host_content_settings_map.h"
+#include "chrome/browser/extensions/extension_renderer_state.h"
 #include "chrome/browser/plugins/chrome_plugin_service_filter.h"
 #include "chrome/browser/plugins/plugin_finder.h"
 #include "chrome/browser/plugins/plugin_metadata.h"
+#include "chrome/browser/plugins/plugin_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_content_client.h"
 #include "chrome/common/content_settings.h"
@@ -30,6 +32,7 @@
 #include "base/win/metro.h"
 #endif
 
+using chrome::ChromeContentClient;
 using content::PluginService;
 using content::WebPluginInfo;
 
@@ -43,7 +46,7 @@ bool ShouldUseJavaScriptSettingForPlugin(const WebPluginInfo& plugin) {
   }
 
   // Treat Native Client invocations like JavaScript.
-  if (plugin.name == ASCIIToUTF16(chrome::ChromeContentClient::kNaClPluginName))
+  if (plugin.name == ASCIIToUTF16(ChromeContentClient::kNaClPluginName))
     return true;
 
 #if defined(WIDEVINE_CDM_AVAILABLE) && defined(ENABLE_PEPPER_CDMS)
@@ -63,7 +66,8 @@ PluginInfoMessageFilter::Context::Context(int render_process_id,
                                           Profile* profile)
     : render_process_id_(render_process_id),
       resource_context_(profile->GetResourceContext()),
-      host_content_settings_map_(profile->GetHostContentSettingsMap()) {
+      host_content_settings_map_(profile->GetHostContentSettingsMap()),
+      plugin_prefs_(PluginPrefs::GetForProfile(profile)) {
   allow_outdated_plugins_.Init(prefs::kPluginsAllowOutdated,
                                profile->GetPrefs());
   allow_outdated_plugins_.MoveToThread(
@@ -97,6 +101,9 @@ bool PluginInfoMessageFilter::OnMessageReceived(const IPC::Message& message,
   IPC_BEGIN_MESSAGE_MAP_EX(PluginInfoMessageFilter, message, *message_was_ok)
     IPC_MESSAGE_HANDLER_DELAY_REPLY(ChromeViewHostMsg_GetPluginInfo,
                                     OnGetPluginInfo)
+    IPC_MESSAGE_HANDLER(
+        ChromeViewHostMsg_IsInternalPluginRegisteredForMimeType,
+        OnIsInternalPluginRegisteredForMimeType)
     IPC_MESSAGE_UNHANDLED(return false)
   IPC_END_MESSAGE_MAP()
   return true;
@@ -164,6 +171,29 @@ void PluginInfoMessageFilter::PluginsLoaded(
   Send(reply_msg);
 }
 
+void PluginInfoMessageFilter::OnIsInternalPluginRegisteredForMimeType(
+    const std::string& mime_type,
+    bool* is_registered,
+    std::vector<base::string16>* additional_param_names,
+    std::vector<base::string16>* additional_param_values) {
+  std::vector<WebPluginInfo> plugins;
+  PluginService::GetInstance()->GetInternalPlugins(&plugins);
+  for (size_t i = 0; i < plugins.size(); ++i) {
+    const std::vector<content::WebPluginMimeType>& mime_types =
+        plugins[i].mime_types;
+    for (size_t j = 0; j < mime_types.size(); ++j) {
+      if (mime_types[j].mime_type == mime_type) {
+        *is_registered = true;
+        *additional_param_names = mime_types[j].additional_param_names;
+        *additional_param_values = mime_types[j].additional_param_values;
+        return;
+      }
+    }
+  }
+
+  *is_registered = false;
+}
+
 void PluginInfoMessageFilter::Context::DecidePluginStatus(
     const GetPluginInfo_Params& params,
     const WebPluginInfo& plugin,
@@ -177,6 +207,17 @@ void PluginInfoMessageFilter::Context::DecidePluginStatus(
     return;
   }
 #endif
+  if (plugin.type == WebPluginInfo::PLUGIN_TYPE_NPAPI) {
+    CHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::IO));
+    // NPAPI plugins are not supported inside <webview> guests.
+    ExtensionRendererState::WebViewInfo info;
+    if (ExtensionRendererState::GetInstance()->GetWebViewInfo(
+            render_process_id_, params.render_view_id, &info)) {
+      status->value =
+          ChromeViewHostMsg_GetPluginInfo_Status::kNPAPINotSupported;
+      return;
+    }
+  }
 
   ContentSetting plugin_setting = CONTENT_SETTING_DEFAULT;
   bool uses_default_content_setting = true;
@@ -202,6 +243,11 @@ void PluginInfoMessageFilter::Context::DecidePluginStatus(
     return;
   }
 #endif
+  // Check if the plug-in or its group is enabled by policy.
+  PluginPrefs::PolicyStatus plugin_policy =
+      plugin_prefs_->PolicyStatusForPlugin(plugin.name);
+  PluginPrefs::PolicyStatus group_policy =
+      plugin_prefs_->PolicyStatusForPlugin(plugin_metadata->name());
 
   // Check if the plug-in requires authorization.
   if (plugin_status ==
@@ -210,7 +256,11 @@ void PluginInfoMessageFilter::Context::DecidePluginStatus(
       plugin.type != WebPluginInfo::PLUGIN_TYPE_PEPPER_OUT_OF_PROCESS &&
       !always_authorize_plugins_.GetValue() &&
       plugin_setting != CONTENT_SETTING_BLOCK &&
-      uses_default_content_setting) {
+      uses_default_content_setting &&
+      plugin_policy != PluginPrefs::POLICY_ENABLED &&
+      group_policy != PluginPrefs::POLICY_ENABLED &&
+      !ChromePluginServiceFilter::GetInstance()->IsPluginRestricted(
+          plugin.path)) {
     status->value = ChromeViewHostMsg_GetPluginInfo_Status::kUnauthorized;
     return;
   }
@@ -228,6 +278,19 @@ void PluginInfoMessageFilter::Context::DecidePluginStatus(
     status->value = ChromeViewHostMsg_GetPluginInfo_Status::kClickToPlay;
   else if (plugin_setting == CONTENT_SETTING_BLOCK)
     status->value = ChromeViewHostMsg_GetPluginInfo_Status::kBlocked;
+
+  if (status->value == ChromeViewHostMsg_GetPluginInfo_Status::kAllowed) {
+    // Allow an embedder of <webview> to block a plugin from being loaded inside
+    // the guest. In order to do this, set the status to 'Unauthorized' here,
+    // and update the status as appropriate depending on the response from the
+    // embedder.
+    ExtensionRendererState::WebViewInfo info;
+    if (ExtensionRendererState::GetInstance()->GetWebViewInfo(
+            render_process_id_, params.render_view_id, &info)) {
+      status->value =
+          ChromeViewHostMsg_GetPluginInfo_Status::kUnauthorized;
+    }
+  }
 }
 
 bool PluginInfoMessageFilter::Context::FindEnabledPlugin(
@@ -286,7 +349,6 @@ void PluginInfoMessageFilter::Context::GetPluginContentSetting(
     const std::string& resource,
     ContentSetting* setting,
     bool* uses_default_content_setting) const {
-
   scoped_ptr<base::Value> value;
   content_settings::SettingInfo info;
   bool uses_plugin_specific_setting = false;

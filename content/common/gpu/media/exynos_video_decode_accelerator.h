@@ -16,8 +16,10 @@
 #include "base/memory/scoped_ptr.h"
 #include "base/threading/thread.h"
 #include "content/common/content_export.h"
+#include "content/common/gpu/media/video_decode_accelerator_impl.h"
+#include "media/base/limits.h"
 #include "media/base/video_decoder_config.h"
-#include "media/video/video_decode_accelerator.h"
+#include "media/video/picture.h"
 #include "ui/gfx/size.h"
 #include "ui/gl/gl_bindings.h"
 
@@ -54,14 +56,16 @@ class H264Parser;
 // decoder_thread_, so there are no synchronization issues.
 // ... well, there are, but it's a matter of getting messages posted in the
 // right order, not fiddling with locks.
-class CONTENT_EXPORT ExynosVideoDecodeAccelerator :
-    public media::VideoDecodeAccelerator {
+class CONTENT_EXPORT ExynosVideoDecodeAccelerator
+    : public VideoDecodeAcceleratorImpl {
  public:
   ExynosVideoDecodeAccelerator(
       EGLDisplay egl_display,
       EGLContext egl_context,
       Client* client,
-      const base::Callback<bool(void)>& make_context_current);
+      const base::WeakPtr<Client>& io_client_,
+      const base::Callback<bool(void)>& make_context_current,
+      const scoped_refptr<base::MessageLoopProxy>& io_message_loop_proxy);
   virtual ~ExynosVideoDecodeAccelerator();
 
   // media::VideoDecodeAccelerator implementation.
@@ -74,6 +78,9 @@ class CONTENT_EXPORT ExynosVideoDecodeAccelerator :
   virtual void Flush() OVERRIDE;
   virtual void Reset() OVERRIDE;
   virtual void Destroy() OVERRIDE;
+
+  // VideoDecodeAcceleratorImpl implementation.
+  virtual bool CanDecodeOnIOThread() OVERRIDE;
 
   // Do any necessary initialization before the sandbox is enabled.
   static void PreSandboxInitialization();
@@ -91,8 +98,10 @@ class CONTENT_EXPORT ExynosVideoDecodeAccelerator :
     kMfcInputBufferMaxSize = 1024 * 1024,
     kGscInputBufferCount = 4,
     // Number of output buffers to use for each VDA stage above what's required
-    // by the decoder (e.g. DPB size, in H264).
-    kDpbOutputBufferExtraCount = 3,
+    // by the decoder (e.g. DPB size, in H264).  We need
+    // media::limits::kMaxVideoFrames to fill up the GpuVideoDecode pipeline,
+    // and +1 for a frame in transit.
+    kDpbOutputBufferExtraCount = media::limits::kMaxVideoFrames + 1,
   };
 
   // Internal state of the decoder.
@@ -127,6 +136,9 @@ class CONTENT_EXPORT ExynosVideoDecodeAccelerator :
 
   // Auto-destruction reference for EGLSync (for message-passing).
   struct EGLSyncKHRRef;
+
+  // Record for decoded pictures that can be sent to PictureReady.
+  struct PictureRecord;
 
   // Record for MFC input buffers.
   struct MfcInputRecord {
@@ -169,6 +181,8 @@ class CONTENT_EXPORT ExynosVideoDecodeAccelerator :
     EGLImageKHR egl_image; // backing EGLImage.
     EGLSyncKHR egl_sync;   // sync the compositor's use of the EGLImage.
     int32 picture_id;      // picture buffer id as returned to PictureReady().
+    bool cleared;          // Whether the texture is cleared and safe to render
+                           // from. See TextureManager for details.
   };
 
   //
@@ -178,7 +192,7 @@ class CONTENT_EXPORT ExynosVideoDecodeAccelerator :
   // Enqueue a BitstreamBuffer to decode.  This will enqueue a buffer to the
   // decoder_input_queue_, then queue a DecodeBufferTask() to actually decode
   // the buffer.
-  void DecodeTask(scoped_ptr<BitstreamBufferRef> bitstream_record);
+  void DecodeTask(const media::BitstreamBuffer& bitstream_buffer);
 
   // Decode from the buffers queued in decoder_input_queue_.  Calls
   // DecodeBufferInitial() or DecodeBufferContinue() as appropriate.
@@ -308,8 +322,17 @@ class CONTENT_EXPORT ExynosVideoDecodeAccelerator :
   void DestroyGscOutputBuffers();
   void ResolutionChangeDestroyBuffers();
 
+  // Send decoded pictures to PictureReady.
+  void SendPictureReady();
+
+  // Callback that indicates a picture has been cleared.
+  void PictureCleared();
+
   // Our original calling message loop for the child thread.
   scoped_refptr<base::MessageLoopProxy> child_message_loop_proxy_;
+
+  // Message loop of the IO thread.
+  scoped_refptr<base::MessageLoopProxy> io_message_loop_proxy_;
 
   // WeakPtr<> pointing to |this| for use in posting tasks from the decoder or
   // device worker threads back to the child thread.  Because the worker threads
@@ -324,6 +347,8 @@ class CONTENT_EXPORT ExynosVideoDecodeAccelerator :
   // child_message_loop_proxy_.
   base::WeakPtrFactory<Client> client_ptr_factory_;
   base::WeakPtr<Client> client_;
+  // Callbacks to |io_client_| must be executed on |io_message_loop_proxy_|.
+  base::WeakPtr<Client> io_client_;
 
   //
   // Decoder state, owned and operated by decoder_thread_.
@@ -423,6 +448,12 @@ class CONTENT_EXPORT ExynosVideoDecodeAccelerator :
   std::list<int> gsc_free_output_buffers_;
   // Mapping of int index to GSC output buffer record.
   std::vector<GscOutputRecord> gsc_output_buffer_map_;
+
+  // Pictures that are ready but not sent to PictureReady yet.
+  std::queue<PictureRecord> pending_picture_ready_;
+
+  // The number of pictures that are sent to PictureReady and will be cleared.
+  int picture_clearing_count_;
 
   // Output picture size.
   gfx::Size frame_buffer_size_;

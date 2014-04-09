@@ -15,7 +15,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "cc/debug/rendering_stats.h"
+#include "cc/debug/rendering_stats_instrumentation.h"
 #include "content/common/browser_rendering_stats.h"
 #include "content/common/content_export.h"
 #include "content/common/gpu/client/webgraphicscontext3d_command_buffer_impl.h"
@@ -32,8 +32,8 @@
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/ime/text_input_mode.h"
 #include "ui/base/ime/text_input_type.h"
-#include "ui/base/range/range.h"
 #include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/range/range.h"
 #include "ui/gfx/rect.h"
 #include "ui/gfx/vector2d.h"
 #include "ui/gfx/vector2d_f.h"
@@ -54,20 +54,22 @@ class WebInputEvent;
 class WebKeyboardEvent;
 class WebMouseEvent;
 class WebTouchEvent;
-struct WebPoint;
 struct WebRenderingStatsImpl;
 }
 
 namespace cc { class OutputSurface; }
 
-namespace ui {
+namespace gfx {
 class Range;
 }
 
 namespace content {
+class ExternalPopupMenu;
 class PepperPluginInstanceImpl;
 class RenderWidgetCompositor;
 class RenderWidgetTest;
+class ResizingModeSelector;
+struct ContextMenuParams;
 struct GpuRenderingStats;
 struct WebPluginGeometry;
 
@@ -139,7 +141,6 @@ class CONTENT_EXPORT RenderWidget
   virtual void closeWidgetSoon();
   virtual void show(WebKit::WebNavigationPolicy);
   virtual void runModal() {}
-  virtual void didProgrammaticallyScroll(const WebKit::WebPoint& scroll_point);
   virtual WebKit::WebRect windowRect();
   virtual void setToolTipText(const WebKit::WebString& text,
                               WebKit::WebTextDirection hint);
@@ -176,18 +177,28 @@ class CONTENT_EXPORT RenderWidget
 
   virtual scoped_ptr<cc::OutputSurface> CreateOutputSurface(bool fallback);
 
-  // Callback for use with BeginSmoothScroll.
-  typedef base::Callback<void()> SmoothScrollCompletionCallback;
+  // Callback for use with synthetic gestures (e.g. BeginSmoothScroll).
+  typedef base::Callback<void()> SyntheticGestureCompletionCallback;
 
   // Directs the host to begin a smooth scroll. This scroll should have the same
   // performance characteristics as a user-initiated scroll. Returns an ID of
   // the scroll gesture. |mouse_event_x| and |mouse_event_y| are expected to be
   // in local DIP coordinates.
   void BeginSmoothScroll(bool scroll_down,
-                         const SmoothScrollCompletionCallback& callback,
+                         const SyntheticGestureCompletionCallback& callback,
                          int pixels_to_scroll,
                          int mouse_event_x,
                          int mouse_event_y);
+
+  // Directs the host to begin a pinch gesture. This gesture should have the
+  // same performance characteristics as a user-initiated pinch.
+  // |pixels_to_move|, |anchor_x| and |anchor_y| are expected to be in local
+  // DIP coordinates.
+  void BeginPinch(bool zoom_in,
+                  int pixels_to_move,
+                  int anchor_x,
+                  int anchor_y,
+                  const SyntheticGestureCompletionCallback& callback);
 
   // Close the underlying WebWidget.
   virtual void Close();
@@ -213,6 +224,24 @@ class CONTENT_EXPORT RenderWidget
 
   bool is_swapped_out() { return is_swapped_out_; }
 
+  // ScreenMetricsEmulator class manages screen emulation inside a render
+  // widget. This includes resizing, placing view on the screen at desired
+  // position, changing device scale factor, and scaling down the whole
+  // widget if required to fit into the browser window.
+  class ScreenMetricsEmulator;
+
+  // Emulates screen and widget metrics. Supplied values override everything
+  // coming from host.
+  void EnableScreenMetricsEmulation(
+      const gfx::Size& device_size,
+      const gfx::Rect& widget_rect,
+      float device_scale_factor,
+      bool fit_to_view);
+  void DisableScreenMetricsEmulation();
+  void SetPopupOriginAdjustmentsForEmulation(ScreenMetricsEmulator* emulator);
+
+  void ScheduleCompositeWithForcedRedraw();
+
  protected:
   // Friend RefCounted so that the dtor can be non-public. Using this class
   // without ref-counting is an error.
@@ -227,7 +256,8 @@ class CONTENT_EXPORT RenderWidget
 
   RenderWidget(WebKit::WebPopupType popup_type,
                const WebKit::WebScreenInfo& screen_info,
-               bool swapped_out);
+               bool swapped_out,
+               bool hidden);
 
   virtual ~RenderWidget();
 
@@ -262,6 +292,7 @@ class CONTENT_EXPORT RenderWidget
   void AnimationCallback();
   void AnimateIfNeeded();
   void InvalidationCallback();
+  void FlushPendingInputEventAck();
   void DoDeferredUpdateAndSendInputAck();
   void DoDeferredUpdate();
   void DoDeferredClose();
@@ -280,6 +311,13 @@ class CONTENT_EXPORT RenderWidget
               const gfx::Rect& resizer_rect,
               bool is_fullscreen,
               ResizeAck resize_ack);
+  // Used to force the size of a window when running layout tests.
+  void ResizeSynchronously(const gfx::Rect& new_position);
+  virtual void SetScreenMetricsEmulationParameters(
+      float device_scale_factor, float root_layer_scale);
+  void SetExternalPopupOriginAdjustmentsForEmulation(
+      ExternalPopupMenu* popup, ScreenMetricsEmulator* emulator);
+  virtual void OnShowHostContextMenu(ContextMenuParams* params);
 
   // RenderWidget IPC message handlers
   void OnHandleInputEvent(const WebKit::WebInputEvent* event,
@@ -306,20 +344,19 @@ class CONTENT_EXPORT RenderWidget
       int selection_start,
       int selection_end);
   virtual void OnImeConfirmComposition(const string16& text,
-                                       const ui::Range& replacement_range,
+                                       const gfx::Range& replacement_range,
                                        bool keep_selection);
   void OnPaintAtSize(const TransportDIB::Handle& dib_id,
                      int tag,
                      const gfx::Size& page_size,
                      const gfx::Size& desired_size);
   void OnRepaint(gfx::Size size_to_paint);
-  void OnSmoothScrollCompleted();
+  void OnSyntheticGestureCompleted();
   void OnSetTextDirection(WebKit::WebTextDirection direction);
   void OnGetFPS();
   void OnUpdateScreenRects(const gfx::Rect& view_screen_rect,
                            const gfx::Rect& window_screen_rect);
 #if defined(OS_ANDROID)
-  void OnImeBatchStateChanged(bool is_begin);
   void OnShowImeIfNeeded();
 
   // Whenever an IME event that needs an acknowledgement is sent to the browser,
@@ -345,13 +382,11 @@ class CONTENT_EXPORT RenderWidget
   virtual void SetDeviceScaleFactor(float device_scale_factor);
 
   // Override points to notify derived classes that a paint has happened.
-  // WillInitiatePaint happens when we're about to generate a new bitmap and
-  // send it to the browser. DidInitiatePaint happens when that has completed,
-  // and subsequent rendering won't affect the painted content. DidFlushPaint
-  // happens once we've received the ACK that the screen has been updated.
-  // For a given paint operation, these overrides will always be called in the
-  // order WillInitiatePaint, DidInitiatePaint, DidFlushPaint.
-  virtual void WillInitiatePaint() {}
+  // DidInitiatePaint happens when that has completed, and subsequent rendering
+  // won't affect the painted content. DidFlushPaint happens once we've received
+  // the ACK that the screen has been updated. For a given paint operation,
+  // these overrides will always be called in the order DidInitiatePaint,
+  // DidFlushPaint.
   virtual void DidInitiatePaint() {}
   virtual void DidFlushPaint() {}
 
@@ -448,12 +483,12 @@ class CONTENT_EXPORT RenderWidget
 
   // Returns the range of the text that is being composed or the selection if
   // the composition does not exist.
-  virtual void GetCompositionRange(ui::Range* range);
+  virtual void GetCompositionRange(gfx::Range* range);
 
   // Returns true if the composition range or composition character bounds
   // should be sent to the browser process.
   bool ShouldUpdateCompositionInfo(
-      const ui::Range& range,
+      const gfx::Range& range,
       const std::vector<gfx::Rect>& bounds);
 #endif
 
@@ -511,10 +546,12 @@ class CONTENT_EXPORT RenderWidget
   virtual void hasTouchEventHandlers(bool has_handlers);
 
   // Creates a 3D context associated with this view.
-  WebGraphicsContext3DCommandBufferImpl* CreateGraphicsContext3D(
+  scoped_ptr<WebGraphicsContext3DCommandBufferImpl> CreateGraphicsContext3D(
       const WebKit::WebGraphicsContext3D::Attributes& attributes);
 
   bool OnSnapshotHelper(const gfx::Rect& src_subrect, SkBitmap* bitmap);
+
+  void ScheduleCompositeImpl(bool force_redraw);
 
   // Routing ID that allows us to communicate to the parent browser process
   // RenderWidgetHost. When MSG_ROUTING_NONE, no messages may be sent.
@@ -640,11 +677,11 @@ class CONTENT_EXPORT RenderWidget
   // Stores the current text input type of |webwidget_|.
   ui::TextInputType text_input_type_;
 
-  // Stores the current type of composition text rendering of |webwidget_|.
-  bool can_compose_inline_;
-
   // Stores the current text input mode of |webwidget_|.
   ui::TextInputMode text_input_mode_;
+
+  // Stores the current type of composition text rendering of |webwidget_|.
+  bool can_compose_inline_;
 
   // Stores the current selection bounds.
   gfx::Rect selection_focus_rect_;
@@ -654,7 +691,7 @@ class CONTENT_EXPORT RenderWidget
   std::vector<gfx::Rect> composition_character_bounds_;
 
   // Stores the current composition range.
-  ui::Range composition_range_;
+  gfx::Range composition_range_;
 
   // The kind of popup this widget represents, NONE if not a popup.
   WebKit::WebPopupType popup_type_;
@@ -677,12 +714,20 @@ class CONTENT_EXPORT RenderWidget
 
   scoped_ptr<IPC::Message> pending_input_event_ack_;
 
+  // The time spent in input handlers this frame. Used to throttle input acks.
+  base::TimeDelta total_input_handling_time_this_frame_;
+
   // Indicates if the next sequence of Char events should be suppressed or not.
   bool suppress_next_char_events_;
 
   // Set to true if painting to the window is handled by the accelerated
   // compositor.
   bool is_accelerated_compositing_active_;
+
+  // Set to true if compositing has ever been active for this widget. Once a
+  // widget has used compositing, it will act as though force compositing mode
+  // is on for the remainder of the widget's lifetime.
+  bool was_accelerated_compositing_ever_active_;
 
   base::OneShotTimer<RenderWidget> animation_timer_;
   base::Time animation_floor_time_;
@@ -692,7 +737,8 @@ class CONTENT_EXPORT RenderWidget
   bool has_disable_gpu_vsync_switch_;
   base::TimeTicks last_do_deferred_update_time_;
 
-  cc::RenderingStats software_stats_;
+  // Stats for legacy software mode
+  scoped_ptr<cc::RenderingStatsInstrumentation> legacy_software_mode_stats_;
 
   // UpdateRect parameters for the current compositing pass. This is used to
   // pass state between DoDeferredUpdate and OnSwapBuffersPosted.
@@ -712,8 +758,9 @@ class CONTENT_EXPORT RenderWidget
   // |screen_info_| on some platforms, and defaults to 1 on other platforms.
   float device_scale_factor_;
 
-  // State associated with the BeginSmoothScroll synthetic scrolling function.
-  SmoothScrollCompletionCallback pending_smooth_scroll_gesture_;
+  // State associated with the synthetic gestures function
+  // (e.g. BeginSmoothScroll).
+  SyntheticGestureCompletionCallback pending_synthetic_gesture_;
 
   // Specified whether the compositor will run in its own thread.
   bool is_threaded_compositing_enabled_;
@@ -734,6 +781,16 @@ class CONTENT_EXPORT RenderWidget
   // browser. If this value is not 0 IME events will be dropped.
   int outstanding_ime_acks_;
 #endif
+
+  scoped_ptr<ScreenMetricsEmulator> screen_metrics_emulator_;
+
+  // Popups may be displaced when screen metrics emulation is enabled.
+  // These values are used to properly adjust popup position.
+  gfx::Point popup_view_origin_for_emulation_;
+  gfx::Point popup_screen_origin_for_emulation_;
+  float popup_origin_scale_for_emulation_;
+
+  scoped_ptr<ResizingModeSelector> resizing_mode_selector_;
 
   base::WeakPtrFactory<RenderWidget> weak_ptr_factory_;
 

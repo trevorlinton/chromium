@@ -9,6 +9,7 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/event_router_forwarder.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/common/extensions/api/system_private.h"
 #include "chrome/common/pref_names.h"
 
 #if defined(OS_CHROMEOS)
@@ -38,14 +39,11 @@ const char kVolumeKey[] = "volume";
 
 // System update states.
 const char kNotAvailableState[] = "NotAvailable";
-const char kUpdatingState[] = "Updating";
 const char kNeedRestartState[] = "NeedRestart";
 
-// Event names.
-const char kOnBrightnessChanged[] = "systemPrivate.onBrightnessChanged";
-const char kOnVolumeChanged[] = "systemPrivate.onVolumeChanged";
-const char kOnScreenUnlocked[] = "systemPrivate.onScreenUnlocked";
-const char kOnWokeUp[] = "systemPrivate.onWokeUp";
+#if defined(OS_CHROMEOS)
+const char kUpdatingState[] = "Updating";
+#endif  // defined(OS_CHROMEOS)
 
 // Dispatches an extension event with |argument|
 void DispatchEvent(const std::string& event_name, base::Value* argument) {
@@ -61,13 +59,15 @@ void DispatchEvent(const std::string& event_name, base::Value* argument) {
 
 namespace extensions {
 
+namespace system_private = api::system_private;
+
 bool SystemPrivateGetIncognitoModeAvailabilityFunction::RunImpl() {
-  PrefService* prefs = profile_->GetPrefs();
+  PrefService* prefs = GetProfile()->GetPrefs();
   int value = prefs->GetInteger(prefs::kIncognitoModeAvailability);
   EXTENSION_FUNCTION_VALIDATE(
       value >= 0 &&
       value < static_cast<int>(arraysize(kIncognitoModeAvailabilityStrings)));
-  SetResult(Value::CreateStringValue(kIncognitoModeAvailabilityStrings[value]));
+  SetResult(new base::StringValue(kIncognitoModeAvailabilityStrings[value]));
   return true;
 }
 
@@ -136,22 +136,22 @@ void DispatchVolumeChangedEvent(double volume, bool is_volume_muted) {
   base::DictionaryValue* dict = new base::DictionaryValue();
   dict->SetDouble(kVolumeKey, volume);
   dict->SetBoolean(kIsVolumeMutedKey, is_volume_muted);
-  DispatchEvent(kOnVolumeChanged, dict);
+  DispatchEvent(system_private::OnVolumeChanged::kEventName, dict);
 }
 
 void DispatchBrightnessChangedEvent(int brightness, bool user_initiated) {
   base::DictionaryValue* dict = new base::DictionaryValue();
   dict->SetInteger(kBrightnessKey, brightness);
   dict->SetBoolean(kUserInitiatedKey, user_initiated);
-  DispatchEvent(kOnBrightnessChanged, dict);
+  DispatchEvent(system_private::OnBrightnessChanged::kEventName, dict);
 }
 
 void DispatchScreenUnlockedEvent() {
-  DispatchEvent(kOnScreenUnlocked, NULL);
+  DispatchEvent(system_private::OnScreenUnlocked::kEventName, NULL);
 }
 
 void DispatchWokeUpEvent() {
-  DispatchEvent(kOnWokeUp, NULL);
+  DispatchEvent(system_private::OnWokeUp::kEventName, NULL);
 }
 
 }  // namespace extensions

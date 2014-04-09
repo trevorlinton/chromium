@@ -13,15 +13,14 @@
 
 class Profile;
 namespace gfx {
-class Font;
+class FontList;
 class Size;
 }
 
 // SelectedKeywordView displays the tab-to-search UI in the location bar view.
 class SelectedKeywordView : public IconLabelBubbleView {
  public:
-  SelectedKeywordView(const gfx::Font& font,
-                      int font_y_offset,
+  SelectedKeywordView(const gfx::FontList& font_list,
                       SkColor text_color,
                       SkColor parent_background_color,
                       Profile* profile);

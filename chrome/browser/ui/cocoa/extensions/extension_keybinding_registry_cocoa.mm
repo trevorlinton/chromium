@@ -9,11 +9,11 @@
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/extension.h"
-#include "chrome/common/extensions/extension_manifest_constants.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/browser/notification_service.h"
+#include "extensions/common/manifest_constants.h"
 
-namespace values = extension_manifest_values;
+namespace values = extensions::manifest_values;
 
 // static
 void extensions::ExtensionKeybindingRegistry::SetShortcutHandlingSuspended(
@@ -84,6 +84,7 @@ void ExtensionKeybindingRegistryCocoa::AddExtensionKeybinding(
   command_service->GetNamedCommands(
           extension->id(),
           extensions::CommandService::ACTIVE_ONLY,
+          extensions::CommandService::REGULAR,
           &commands);
 
   for (extensions::CommandMap::const_iterator iter = commands.begin();
@@ -135,14 +136,7 @@ void ExtensionKeybindingRegistryCocoa::AddExtensionKeybinding(
   }
 }
 
-void ExtensionKeybindingRegistryCocoa::RemoveExtensionKeybinding(
-    const extensions::Extension* extension,
+void ExtensionKeybindingRegistryCocoa::RemoveExtensionKeybindingImpl(
+    const ui::Accelerator& accelerator,
     const std::string& command_name) {
-  EventTargets::iterator iter = event_targets_.begin();
-  while (iter != event_targets_.end()) {
-    EventTargets::iterator old = iter++;
-    if (old->second.first == extension->id() &&
-        (command_name.empty() || (old->second.second == command_name)))
-      event_targets_.erase(old);
-  }
 }

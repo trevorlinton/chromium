@@ -25,6 +25,10 @@ class ReliableQuicStream;
 
 namespace tools {
 
+namespace test {
+class QuicServerSessionPeer;
+}  // namespace test
+
 // An interface from the session to the entity owning the session.
 // This lets the session notify its owner (the Dispatcher) when the connection
 // is closed.
@@ -32,7 +36,7 @@ class QuicSessionOwner {
  public:
   virtual ~QuicSessionOwner() {}
 
-  virtual void OnConnectionClose(QuicGuid guid, QuicErrorCode error) = 0;
+  virtual void OnConnectionClosed(QuicGuid guid, QuicErrorCode error) = 0;
 };
 
 class QuicServerSession : public QuicSession {
@@ -42,7 +46,7 @@ class QuicServerSession : public QuicSession {
                     QuicSessionOwner* owner);
 
   // Override the base class to notify the owner of the connection close.
-  virtual void ConnectionClose(QuicErrorCode error, bool from_peer) OVERRIDE;
+  virtual void OnConnectionClosed(QuicErrorCode error, bool from_peer) OVERRIDE;
 
   virtual ~QuicServerSession();
 
@@ -66,6 +70,8 @@ class QuicServerSession : public QuicSession {
     const QuicCryptoServerConfig& crypto_config);
 
  private:
+  friend class test::QuicServerSessionPeer;
+
   scoped_ptr<QuicCryptoServerStream> crypto_stream_;
   QuicSessionOwner* owner_;
 

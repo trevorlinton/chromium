@@ -12,7 +12,7 @@
 #include "base/observer_list.h"
 #include "base/threading/thread_checker.h"
 #include "chrome/browser/google_apis/auth_service_interface.h"
-#include "chrome/browser/signin/oauth2_token_service.h"
+#include "google_apis/gaia/oauth2_token_service.h"
 
 namespace net {
 class URLRequestContextGetter;
@@ -34,6 +34,7 @@ class AuthService : public AuthServiceInterface,
   //
   // |scopes| specifies OAuth2 scopes.
   AuthService(OAuth2TokenService* oauth2_token_service,
+              const std::string& account_id,
               net::URLRequestContextGetter* url_request_context_getter,
               const std::vector<std::string>& scopes);
   virtual ~AuthService();
@@ -50,9 +51,7 @@ class AuthService : public AuthServiceInterface,
 
   // Overridden from OAuth2TokenService::Observer:
   virtual void OnRefreshTokenAvailable(const std::string& account_id) OVERRIDE;
-  virtual void OnRefreshTokenRevoked(
-      const std::string& account_id,
-      const GoogleServiceAuthError& error) OVERRIDE;
+  virtual void OnRefreshTokenRevoked(const std::string& account_id) OVERRIDE;
 
  private:
   // Called when the state of the refresh token changes.
@@ -65,7 +64,8 @@ class AuthService : public AuthServiceInterface,
                        const std::string& access_token);
 
   OAuth2TokenService* oauth2_token_service_;
-  net::URLRequestContextGetter* url_request_context_getter_;  // Not owned.
+  std::string account_id_;
+  scoped_refptr<net::URLRequestContextGetter> url_request_context_getter_;
   bool has_refresh_token_;
   std::string access_token_;
   std::vector<std::string> scopes_;

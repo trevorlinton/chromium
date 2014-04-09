@@ -4,6 +4,9 @@
 
 #include "chrome/browser/search_engines/template_url.h"
 
+#include <string>
+#include <vector>
+
 #include "base/basictypes.h"
 #include "base/command_line.h"
 #include "base/format_macros.h"
@@ -20,6 +23,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/google/google_util.h"
+#include "chrome/browser/search/search.h"
 #include "chrome/browser/search_engines/search_terms_data.h"
 #include "chrome/browser/search_engines/template_url_service.h"
 #include "chrome/common/chrome_switches.h"
@@ -60,8 +64,9 @@ const char kGoogleBaseURLParameterFull[] = "{google:baseURL}";
 // Like google:baseURL, but for the Search Suggest capability.
 const char kGoogleBaseSuggestURLParameter[] = "google:baseSuggestURL";
 const char kGoogleBaseSuggestURLParameterFull[] = "{google:baseSuggestURL}";
+const char kGoogleBookmarkBarPinnedParameter[] = "google:bookmarkBarPinned";
 const char kGoogleCursorPositionParameter[] = "google:cursorPosition";
-const char kGoogleInstantEnabledParameter[] = "google:instantEnabledParameter";
+const char kGoogleForceInstantResultsParameter[] = "google:forceInstantResults";
 const char kGoogleInstantExtendedEnabledParameter[] =
     "google:instantExtendedEnabledParameter";
 const char kGoogleInstantExtendedEnabledKey[] =
@@ -90,11 +95,10 @@ const char kGoogleUnescapedSearchTermsParameterFull[] =
     "{google:unescapedSearchTerms}";
 
 const char kGoogleImageSearchSource[] = "google:imageSearchSource";
-const char kGoogleImageSearchSourceFull[] = "{google:imageSearchSource}";
 const char kGoogleImageThumbnailParameter[] = "google:imageThumbnail";
-const char kGoogleImageThumbnailParameterFull[] = "{google:imageThumbnail}";
 const char kGoogleImageURLParameter[] = "google:imageURL";
-const char kGoogleImageURLParameterFull[] = "{google:imageURL}";
+const char kGoogleImageOriginalWidth[] = "google:imageOriginalWidth";
+const char kGoogleImageOriginalHeight[] = "google:imageOriginalHeight";
 
 // Display value for kSearchTermsParameter.
 const char kDisplaySearchTerms[] = "%s";
@@ -183,6 +187,11 @@ bool IsTemplateParameterString(const std::string& param) {
       (*(param.rbegin()) == kEndParameter);
 }
 
+bool ShowingSearchTermsOnSRP() {
+  return chrome::IsInstantExtendedAPIEnabled() &&
+      !chrome::ShouldSuppressInstantExtendedOnSRP();
+}
+
 }  // namespace
 
 
@@ -194,7 +203,9 @@ TemplateURLRef::SearchTermsArgs::SearchTermsArgs(const string16& search_terms)
       cursor_position(string16::npos),
       omnibox_start_margin(-1),
       page_classification(AutocompleteInput::INVALID_SPEC),
-      append_extra_query_params(false) {
+      bookmark_bar_pinned(false),
+      append_extra_query_params(false),
+      force_instant_results(false) {
 }
 
 TemplateURLRef::SearchTermsArgs::~SearchTermsArgs() {
@@ -211,7 +222,8 @@ TemplateURLRef::TemplateURLRef(TemplateURL* owner, Type type)
       valid_(false),
       supports_replacements_(false),
       search_term_key_location_(url_parse::Parsed::QUERY),
-      prepopulated_(false) {
+      prepopulated_(false),
+      showing_search_terms_(ShowingSearchTermsOnSRP()) {
   DCHECK(owner_);
   DCHECK_NE(INDEXED, type_);
 }
@@ -224,7 +236,8 @@ TemplateURLRef::TemplateURLRef(TemplateURL* owner, size_t index_in_owner)
       valid_(false),
       supports_replacements_(false),
       search_term_key_location_(url_parse::Parsed::QUERY),
-      prepopulated_(false) {
+      prepopulated_(false),
+      showing_search_terms_(ShowingSearchTermsOnSRP()) {
   DCHECK(owner_);
   DCHECK_LT(index_in_owner_, owner_->URLCount());
 }
@@ -238,6 +251,7 @@ std::string TemplateURLRef::GetURL() const {
     case SUGGEST: return owner_->suggestions_url();
     case INSTANT: return owner_->instant_url();
     case IMAGE:   return owner_->image_url();
+    case NEW_TAB: return owner_->new_tab_url();
     case INDEXED: return owner_->GetURL(index_in_owner_);
     default:      NOTREACHED(); return std::string();  // NOLINT
   }
@@ -249,6 +263,7 @@ std::string TemplateURLRef::GetPostParamsString() const {
     case SEARCH:  return owner_->search_url_post_params();
     case SUGGEST: return owner_->suggestions_url_post_params();
     case INSTANT: return owner_->instant_url_post_params();
+    case NEW_TAB: return std::string();
     case IMAGE:   return owner_->image_url_post_params();
     default:      NOTREACHED(); return std::string();  // NOLINT
   }
@@ -323,23 +338,30 @@ std::string TemplateURLRef::ReplaceSearchTermsUsingTermsData(
   std::string url(HandleReplacements(search_terms_args, search_terms_data,
                                      post_content));
 
-  // If the user specified additional query params on the command line, add
-  // them.
-  if (search_terms_args.append_extra_query_params) {
-    std::string query_params(CommandLine::ForCurrentProcess()->
-        GetSwitchValueASCII(switches::kExtraSearchQueryParams));
-    GURL gurl(url);
-    if (!query_params.empty() && gurl.is_valid()) {
-      GURL::Replacements replacements;
-      const std::string existing_query_params(gurl.query());
-      if (!existing_query_params.empty())
-        query_params += "&" + existing_query_params;
-      replacements.SetQueryStr(query_params);
-      return gurl.ReplaceComponents(replacements).possibly_invalid_spec();
-    }
-  }
+  GURL gurl(url);
+  if (!gurl.is_valid())
+    return url;
 
-  return url;
+  std::vector<std::string> query_params;
+  if (search_terms_args.append_extra_query_params) {
+    std::string extra_params(
+        CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+            switches::kExtraSearchQueryParams));
+    if (!extra_params.empty())
+      query_params.push_back(extra_params);
+  }
+  if (!search_terms_args.suggest_query_params.empty())
+    query_params.push_back(search_terms_args.suggest_query_params);
+  if (!gurl.query().empty())
+    query_params.push_back(gurl.query());
+
+  if (query_params.empty())
+    return url;
+
+  GURL::Replacements replacements;
+  std::string query_str = JoinString(query_params, "&");
+  replacements.SetQueryStr(query_str);
+  return gurl.ReplaceComponents(replacements).possibly_invalid_spec();
 }
 
 bool TemplateURLRef::IsValid() const {
@@ -529,28 +551,32 @@ bool TemplateURLRef::ParseParameter(size_t start,
   } else if (parameter == kCountParameter) {
     if (!optional)
       url->insert(start, kDefaultCount);
-  } else if ((parameter == kStartIndexParameter) ||
-             (parameter == kStartPageParameter)) {
-    // We don't support these.
-    if (!optional)
-      url->insert(start, "1");
-  } else if (parameter == kLanguageParameter) {
-    replacements->push_back(Replacement(LANGUAGE, start));
-  } else if (parameter == kInputEncodingParameter) {
-    replacements->push_back(Replacement(ENCODING, start));
-  } else if (parameter == kOutputEncodingParameter) {
-    if (!optional)
-      url->insert(start, kOutputEncodingType);
   } else if (parameter == kGoogleAssistedQueryStatsParameter) {
     replacements->push_back(Replacement(GOOGLE_ASSISTED_QUERY_STATS, start));
   } else if (parameter == kGoogleBaseURLParameter) {
     replacements->push_back(Replacement(GOOGLE_BASE_URL, start));
   } else if (parameter == kGoogleBaseSuggestURLParameter) {
     replacements->push_back(Replacement(GOOGLE_BASE_SUGGEST_URL, start));
+  } else if (parameter == kGoogleBookmarkBarPinnedParameter) {
+    replacements->push_back(Replacement(GOOGLE_BOOKMARK_BAR_PINNED, start));
   } else if (parameter == kGoogleCursorPositionParameter) {
     replacements->push_back(Replacement(GOOGLE_CURSOR_POSITION, start));
-  } else if (parameter == kGoogleInstantEnabledParameter) {
-    replacements->push_back(Replacement(GOOGLE_INSTANT_ENABLED, start));
+  } else if (parameter == kGoogleImageOriginalHeight) {
+    replacements->push_back(
+        Replacement(TemplateURLRef::GOOGLE_IMAGE_ORIGINAL_HEIGHT, start));
+  } else if (parameter == kGoogleImageOriginalWidth) {
+    replacements->push_back(
+        Replacement(TemplateURLRef::GOOGLE_IMAGE_ORIGINAL_WIDTH, start));
+  } else if (parameter == kGoogleImageSearchSource) {
+    url->insert(start, GetGoogleImageSearchSource());
+  } else if (parameter == kGoogleImageThumbnailParameter) {
+    replacements->push_back(
+        Replacement(TemplateURLRef::GOOGLE_IMAGE_THUMBNAIL, start));
+  } else if (parameter == kGoogleImageURLParameter) {
+    replacements->push_back(Replacement(TemplateURLRef::GOOGLE_IMAGE_URL,
+                                        start));
+  } else if (parameter == kGoogleForceInstantResultsParameter) {
+    replacements->push_back(Replacement(GOOGLE_FORCE_INSTANT_RESULTS, start));
   } else if (parameter == kGoogleInstantExtendedEnabledParameter) {
     replacements->push_back(Replacement(GOOGLE_INSTANT_EXTENDED_ENABLED,
                                         start));
@@ -571,29 +597,33 @@ bool TemplateURLRef::ParseParameter(size_t start,
     replacements->push_back(Replacement(GOOGLE_SEARCH_CLIENT, start));
   } else if (parameter == kGoogleSearchFieldtrialParameter) {
     replacements->push_back(Replacement(GOOGLE_SEARCH_FIELDTRIAL_GROUP, start));
-  } else if (parameter == kGoogleSuggestClient) {
-    replacements->push_back(Replacement(GOOGLE_SUGGEST_CLIENT, start));
-  } else if (parameter == kGoogleZeroPrefixUrlParameter) {
-    replacements->push_back(Replacement(GOOGLE_ZERO_PREFIX_URL, start));
-  } else if (parameter == kGoogleSuggestAPIKeyParameter) {
-    url->insert(start,
-                net::EscapeQueryParamValue(google_apis::GetAPIKey(), false));
   } else if (parameter == kGoogleSourceIdParameter) {
 #if defined(OS_ANDROID)
     url->insert(start, "sourceid=chrome-mobile&");
 #else
     url->insert(start, "sourceid=chrome&");
 #endif
+  } else if (parameter == kGoogleSuggestAPIKeyParameter) {
+    url->insert(start,
+                net::EscapeQueryParamValue(google_apis::GetAPIKey(), false));
+  } else if (parameter == kGoogleSuggestClient) {
+    replacements->push_back(Replacement(GOOGLE_SUGGEST_CLIENT, start));
   } else if (parameter == kGoogleUnescapedSearchTermsParameter) {
     replacements->push_back(Replacement(GOOGLE_UNESCAPED_SEARCH_TERMS, start));
-  } else if (parameter == kGoogleImageSearchSource) {
-    url->insert(start, GetGoogleImageSearchSource());
-  } else if (parameter == kGoogleImageThumbnailParameter) {
-    replacements->push_back(
-        Replacement(TemplateURLRef::GOOGLE_IMAGE_THUMBNAIL, start));
-  } else if (parameter == kGoogleImageURLParameter) {
-    replacements->push_back(Replacement(TemplateURLRef::GOOGLE_IMAGE_URL,
-                                        start));
+  } else if (parameter == kGoogleZeroPrefixUrlParameter) {
+    replacements->push_back(Replacement(GOOGLE_ZERO_PREFIX_URL, start));
+  } else if (parameter == kInputEncodingParameter) {
+    replacements->push_back(Replacement(ENCODING, start));
+  } else if (parameter == kLanguageParameter) {
+    replacements->push_back(Replacement(LANGUAGE, start));
+  } else if (parameter == kOutputEncodingParameter) {
+    if (!optional)
+      url->insert(start, kOutputEncodingType);
+  } else if ((parameter == kStartIndexParameter) ||
+             (parameter == kStartPageParameter)) {
+    // We don't support these.
+    if (!optional)
+      url->insert(start, "1");
   } else if (!prepopulated_) {
     // If it's a prepopulated URL, we know that it's safe to remove unknown
     // parameters, so just ignore this and return true below. Otherwise it could
@@ -801,7 +831,7 @@ std::string TemplateURLRef::HandleReplacements(
           search_terms_args_without_aqs.assisted_query_stats.clear();
           GURL base_url(ReplaceSearchTermsUsingTermsData(
               search_terms_args_without_aqs, search_terms_data, NULL));
-          if (base_url.SchemeIs(chrome::kHttpsScheme)) {
+          if (base_url.SchemeIs(content::kHttpsScheme)) {
             HandleReplacement(
                 "aqs", search_terms_args.assisted_query_stats, *i, &url);
           }
@@ -821,6 +851,17 @@ std::string TemplateURLRef::HandleReplacements(
             &url);
         break;
 
+      case GOOGLE_BOOKMARK_BAR_PINNED:
+        if (showing_search_terms_) {
+          // Log whether the bookmark bar is pinned when the user is seeing
+          // InstantExtended on the SRP.
+          DCHECK(!i->is_post_param);
+          HandleReplacement(
+              "bmbp", search_terms_args.bookmark_bar_pinned ? "1" : "0", *i,
+              &url);
+        }
+        break;
+
       case GOOGLE_CURSOR_POSITION:
         DCHECK(!i->is_post_param);
         if (search_terms_args.cursor_position != string16::npos)
@@ -831,10 +872,13 @@ std::string TemplateURLRef::HandleReplacements(
               &url);
         break;
 
-      case GOOGLE_INSTANT_ENABLED:
+      case GOOGLE_FORCE_INSTANT_RESULTS:
         DCHECK(!i->is_post_param);
-        HandleReplacement(
-            std::string(), search_terms_data.InstantEnabledParam(), *i, &url);
+        HandleReplacement(std::string(),
+                          search_terms_data.ForceInstantResultsParam(
+                              search_terms_args.force_instant_results),
+                          *i,
+                          &url);
         break;
 
       case GOOGLE_INSTANT_EXTENDED_ENABLED:
@@ -953,6 +997,24 @@ std::string TemplateURLRef::HandleReplacements(
         }
         break;
 
+      case GOOGLE_IMAGE_ORIGINAL_WIDTH:
+        if (!search_terms_args.image_original_size.IsEmpty()) {
+          HandleReplacement(
+              std::string(),
+              base::IntToString(search_terms_args.image_original_size.width()),
+              *i, &url);
+        }
+        break;
+
+      case GOOGLE_IMAGE_ORIGINAL_HEIGHT:
+        if (!search_terms_args.image_original_size.IsEmpty()) {
+          HandleReplacement(
+              std::string(),
+              base::IntToString(search_terms_args.image_original_size.height()),
+              *i, &url);
+        }
+        break;
+
       default:
         NOTREACHED();
         break;
@@ -1009,7 +1071,8 @@ TemplateURL::TemplateURL(Profile* profile, const TemplateURLData& data)
                            TemplateURLRef::SUGGEST),
       instant_url_ref_(this,
                        TemplateURLRef::INSTANT),
-      image_url_ref_(this, TemplateURLRef::IMAGE) {
+      image_url_ref_(this, TemplateURLRef::IMAGE),
+      new_tab_url_ref_(this, TemplateURLRef::NEW_TAB) {
   SetPrepopulateId(data_.prepopulate_id);
 
   if (data_.search_terms_replacement_key ==
@@ -1058,7 +1121,7 @@ bool TemplateURL::SupportsReplacementUsingTermsData(
 }
 
 bool TemplateURL::IsGoogleSearchURLWithReplaceableKeyword() const {
-  return !IsExtensionKeyword() && url_ref_.HasGoogleBaseURLs() &&
+  return (GetType() == NORMAL) && url_ref_.HasGoogleBaseURLs() &&
       google_util::IsGoogleHostname(UTF16ToUTF8(data_.keyword()),
                                     google_util::DISALLOW_SUBDOMAIN);
 }
@@ -1069,13 +1132,17 @@ bool TemplateURL::HasSameKeywordAs(const TemplateURL& other) const {
        other.IsGoogleSearchURLWithReplaceableKeyword());
 }
 
-std::string TemplateURL::GetExtensionId() const {
-  DCHECK(IsExtensionKeyword());
-  return GURL(data_.url()).host();
+TemplateURL::Type TemplateURL::GetType() const {
+  if (extension_info_)
+    return NORMAL_CONTROLLED_BY_EXTENSION;
+  return GURL(data_.url()).SchemeIs(extensions::kExtensionScheme) ?
+      OMNIBOX_API_EXTENSION : NORMAL;
 }
 
-bool TemplateURL::IsExtensionKeyword() const {
-  return GURL(data_.url()).SchemeIs(extensions::kExtensionScheme);
+std::string TemplateURL::GetExtensionId() const {
+  DCHECK_NE(NORMAL, GetType());
+  return extension_info_ ?
+      extension_info_->extension_id : GURL(data_.url()).host();
 }
 
 size_t TemplateURL::URLCount() const {
@@ -1225,7 +1292,7 @@ void TemplateURL::SetPrepopulateId(int id) {
 
 void TemplateURL::ResetKeywordIfNecessary(bool force) {
   if (IsGoogleSearchURLWithReplaceableKeyword() || force) {
-    DCHECK(!IsExtensionKeyword());
+    DCHECK(GetType() != OMNIBOX_API_EXTENSION);
     GURL url(TemplateURLService::GenerateSearchURL(this));
     if (url.is_valid())
       data_.SetKeyword(TemplateURLService::GenerateKeyword(url));

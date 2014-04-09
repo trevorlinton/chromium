@@ -10,8 +10,10 @@
 #include "base/command_line.h"
 #include "base/message_loop/message_loop.h"
 #include "base/prefs/pref_service.h"
+#include "base/prefs/scoped_user_pref_update.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/background/background_contents_service_factory.h"
 #include "chrome/browser/browser_process.h"
@@ -22,9 +24,10 @@
 #include "chrome/browser/extensions/image_loader.h"
 #include "chrome/browser/notifications/desktop_notification_service.h"
 #include "chrome/browser/notifications/notification.h"
+#include "chrome/browser/notifications/notification_delegate.h"
 #include "chrome/browser/notifications/notification_ui_manager.h"
-#include "chrome/browser/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
@@ -56,10 +59,12 @@ namespace {
 
 const char kNotificationPrefix[] = "app.background.crashed.";
 
-void CloseBalloon(const std::string id) {
-  g_browser_process->notification_ui_manager()->CancelById(id);
+void CloseBalloon(const std::string& balloon_id) {
+  g_browser_process->notification_ui_manager()->
+      CancelById(balloon_id);
 }
 
+// Closes the crash notification balloon for the app/extension with this id.
 void ScheduleCloseBalloon(const std::string& extension_id) {
   if (!base::MessageLoop::current())  // For unit_tests
     return;
@@ -67,6 +72,8 @@ void ScheduleCloseBalloon(const std::string& extension_id) {
       FROM_HERE, base::Bind(&CloseBalloon, kNotificationPrefix + extension_id));
 }
 
+// Delegate for the app/extension crash notification balloon. Restarts the
+// app/extension when the balloon is clicked.
 class CrashNotificationDelegate : public NotificationDelegate {
  public:
   CrashNotificationDelegate(Profile* profile,
@@ -107,8 +114,8 @@ class CrashNotificationDelegate : public NotificationDelegate {
           ReloadExtension(copied_extension_id);
     }
 
-    // Closing the balloon here should be OK, but it causes a crash on Mac
-    // http://crbug.com/78167
+    // Closing the crash notification balloon for the app/extension here should
+    // be OK, but it causes a crash on Mac, see: http://crbug.com/78167
     ScheduleCloseBalloon(copied_extension_id);
   }
 
@@ -157,19 +164,18 @@ void NotificationImageReady(
 }
 #endif
 
+// Show a popup notification balloon with a crash message for a given app/
+// extension.
 void ShowBalloon(const Extension* extension, Profile* profile) {
 #if defined(ENABLE_NOTIFICATIONS)
-  string16 message = l10n_util::GetStringFUTF16(
+  const string16 message = l10n_util::GetStringFUTF16(
       extension->is_app() ? IDS_BACKGROUND_CRASHED_APP_BALLOON_MESSAGE :
                             IDS_BACKGROUND_CRASHED_EXTENSION_BALLOON_MESSAGE,
       UTF8ToUTF16(extension->name()));
-
   extension_misc::ExtensionIcons size(extension_misc::EXTENSION_ICON_MEDIUM);
   extensions::ExtensionResource resource =
       extensions::IconsInfo::GetIconResource(
           extension, size, ExtensionIconSet::MATCH_SMALLER);
-  scoped_refptr<CrashNotificationDelegate> delegate =
-    new CrashNotificationDelegate(profile, extension);
   // We can't just load the image in the Observe method below because, despite
   // what this method is called, it may call the callback synchronously.
   // However, it's possible that the extension went away during the interim,
@@ -183,12 +189,30 @@ void ShowBalloon(const Extension* extension, Profile* profile) {
           extension->name(),
           message,
           extension->url(),
-          delegate,
+          make_scoped_refptr(new CrashNotificationDelegate(profile, extension)),
           profile));
 #endif
 }
 
+void ReloadExtension(const std::string& extension_id, Profile* profile) {
+  if (g_browser_process->IsShuttingDown() ||
+      !g_browser_process->profile_manager()->IsValidProfile(profile)) {
+      return;
+  }
+  extensions::ExtensionSystem* extension_system =
+      extensions::ExtensionSystem::Get(profile);
+  if (!extension_system || !extension_system->extension_service())
+    return;
+  if (!extension_system->extension_service()->
+          GetTerminatedExtension(extension_id)) {
+    // Either the app/extension was uninstalled by policy or it has since
+    // been restarted successfully by someone else (the user).
+    return;
+  }
+  extension_system->extension_service()->ReloadExtension(extension_id);
 }
+
+}  // namespace
 
 // Keys for the information we store about individual BackgroundContents in
 // prefs. There is one top-level DictionaryValue (stored at
@@ -204,6 +228,8 @@ void ShowBalloon(const Extension* extension, Profile* profile) {
 //    }
 const char kUrlKey[] = "url";
 const char kFrameNameKey[] = "name";
+
+int BackgroundContentsService::restart_delay_in_ms_ = 3000;  // 3 seconds.
 
 BackgroundContentsService::BackgroundContentsService(
     Profile* profile, const CommandLine* command_line)
@@ -223,6 +249,13 @@ BackgroundContentsService::~BackgroundContentsService() {
   // BackgroundContents should be shutdown before we go away, as otherwise
   // our browser process refcount will be off.
   DCHECK(contents_map_.empty());
+}
+
+// static
+void BackgroundContentsService::
+    SetRestartDelayForForceInstalledAppsAndExtensionsForTesting(
+        int restart_delay_in_ms) {
+  restart_delay_in_ms_ = restart_delay_in_ms;
 }
 
 std::vector<BackgroundContents*>
@@ -350,7 +383,7 @@ void BackgroundContentsService::Observe(
         }
       }
 
-      // Remove any "This extension has crashed" balloons.
+      // Close the crash notification balloon for the app/extension, if any.
       ScheduleCloseBalloon(extension->id());
       SendChangeNotification(profile);
       break;
@@ -376,27 +409,35 @@ void BackgroundContentsService::Observe(
       if (!extension)
         break;
 
-      // When an extension crashes, EXTENSION_PROCESS_TERMINATED is followed by
-      // an EXTENSION_UNLOADED notification. This UNLOADED signal causes all the
-      // notifications for this extension to be cancelled by
-      // DesktopNotificationService. For this reason, instead of showing the
-      // balloon right now, we schedule it to show a little later.
-      base::MessageLoop::current()->PostTask(
-          FROM_HERE, base::Bind(&ShowBalloon, extension, profile));
+      const bool force_installed =
+          extensions::Manifest::IsPolicyLocation(extension->location());
+      if (!force_installed) {
+        // When an extension crashes, EXTENSION_PROCESS_TERMINATED is followed
+        // by an EXTENSION_UNLOADED notification. This UNLOADED signal causes
+        // all the notifications for this extension to be cancelled by
+        // DesktopNotificationService. For this reason, we post the crash
+        // handling code as a task here so that it is not executed before this
+        // event.
+        base::MessageLoop::current()->PostTask(
+            FROM_HERE, base::Bind(&ShowBalloon, extension, profile));
+      } else {
+        // Restart the extension.
+        RestartForceInstalledExtensionOnCrash(extension, profile);
+      }
       break;
     }
     case chrome::NOTIFICATION_EXTENSION_UNLOADED:
       switch (content::Details<UnloadedExtensionInfo>(details)->reason) {
-        case extension_misc::UNLOAD_REASON_DISABLE:    // Fall through.
-        case extension_misc::UNLOAD_REASON_TERMINATE:  // Fall through.
-        case extension_misc::UNLOAD_REASON_UNINSTALL:  // Fall through.
-        case extension_misc::UNLOAD_REASON_BLACKLIST:
+        case UnloadedExtensionInfo::REASON_DISABLE:    // Fall through.
+        case UnloadedExtensionInfo::REASON_TERMINATE:  // Fall through.
+        case UnloadedExtensionInfo::REASON_UNINSTALL:  // Fall through.
+        case UnloadedExtensionInfo::REASON_BLACKLIST:
           ShutdownAssociatedBackgroundContents(
               ASCIIToUTF16(content::Details<UnloadedExtensionInfo>(details)->
                   extension->id()));
           SendChangeNotification(content::Source<Profile>(source).ptr());
           break;
-        case extension_misc::UNLOAD_REASON_UPDATE: {
+        case UnloadedExtensionInfo::REASON_UPDATE: {
           // If there is a manifest specified background page, then shut it down
           // here, since if the updated extension still has the background page,
           // then it will be loaded from LOADED callback. Otherwise, leave
@@ -419,7 +460,7 @@ void BackgroundContentsService::Observe(
       break;
 
     case chrome::NOTIFICATION_EXTENSION_UNINSTALLED: {
-      // Remove any "This extension has crashed" balloons.
+      // Close the crash notification balloon for the app/extension, if any.
       ScheduleCloseBalloon(
           content::Details<const Extension>(details).ptr()->id());
       break;
@@ -429,6 +470,14 @@ void BackgroundContentsService::Observe(
       NOTREACHED();
       break;
   }
+}
+
+void BackgroundContentsService::RestartForceInstalledExtensionOnCrash(
+    const Extension* extension,
+    Profile* profile) {
+  base::MessageLoop::current()->PostDelayedTask(FROM_HERE,
+      base::Bind(&ReloadExtension, extension->id(), profile),
+      base::TimeDelta::FromMilliseconds(restart_delay_in_ms_));
 }
 
 // Loads all background contents whose urls have been stored in prefs.
@@ -554,7 +603,9 @@ void BackgroundContentsService::LoadBackgroundContents(
       MSG_ROUTING_NONE,
       profile,
       frame_name,
-      application_id);
+      application_id,
+      std::string(),
+      NULL);
 
   // TODO(atwilson): Create RenderViews asynchronously to avoid increasing
   // startup latency (http://crbug.com/47236).
@@ -567,8 +618,11 @@ BackgroundContents* BackgroundContentsService::CreateBackgroundContents(
     int routing_id,
     Profile* profile,
     const string16& frame_name,
-    const string16& application_id) {
-  BackgroundContents* contents = new BackgroundContents(site, routing_id, this);
+    const string16& application_id,
+    const std::string& partition_id,
+    content::SessionStorageNamespace* session_storage_namespace) {
+  BackgroundContents* contents = new BackgroundContents(
+      site, routing_id, this, partition_id, session_storage_namespace);
 
   // Register the BackgroundContents internally, then send out a notification
   // to external listeners.

@@ -21,19 +21,22 @@
 #include "chrome/browser/extensions/state_store.h"
 #include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/common/extensions/api/context_menus.h"
 #include "chrome/common/extensions/background_info.h"
 #include "chrome/common/extensions/extension.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/context_menu_params.h"
-#include "ui/base/text/text_elider.h"
 #include "ui/gfx/favicon_size.h"
+#include "ui/gfx/text_elider.h"
 
 using content::WebContents;
 using extensions::ExtensionSystem;
 
 namespace extensions {
+
+namespace context_menus = api::context_menus;
 
 namespace {
 
@@ -170,7 +173,7 @@ string16 MenuItem::TitleWithReplacement(
   ReplaceSubstringsAfterOffset(&result, 0, ASCIIToUTF16("%s"), selection);
 
   if (result.length() > max_length)
-    result = ui::TruncateString(result, max_length);
+    result = gfx::TruncateString(result, max_length);
   return result;
 }
 
@@ -681,7 +684,7 @@ void MenuManager::ExecuteCommand(Profile* profile,
     event_router->DispatchEventToExtension(item->extension_id(), event.Pass());
   }
   {
-    scoped_ptr<Event> event(new Event(event_names::kOnContextMenuClicked,
+    scoped_ptr<Event> event(new Event(context_menus::OnClicked::kEventName,
                                       args.Pass()));
     event->restrict_to_profile = profile;
     event->user_gesture = EventRouter::USER_GESTURE_ENABLED;

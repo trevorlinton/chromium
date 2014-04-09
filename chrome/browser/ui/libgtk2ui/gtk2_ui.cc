@@ -16,11 +16,13 @@
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/libgtk2ui/app_indicator_icon.h"
 #include "chrome/browser/ui/libgtk2ui/chrome_gtk_frame.h"
+#include "chrome/browser/ui/libgtk2ui/gconf_titlebar_listener.h"
 #include "chrome/browser/ui/libgtk2ui/gtk2_util.h"
 #include "chrome/browser/ui/libgtk2ui/native_theme_gtk2.h"
 #include "chrome/browser/ui/libgtk2ui/select_file_dialog_impl.h"
 #include "chrome/browser/ui/libgtk2ui/skia_utils_gtk2.h"
 #include "chrome/browser/ui/libgtk2ui/unity_service.h"
+#include "chrome/browser/ui/libgtk2ui/x11_input_method_context_impl_gtk2.h"
 #include "grit/theme_resources.h"
 #include "grit/ui_resources.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -34,6 +36,7 @@
 #include "ui/gfx/size.h"
 #include "ui/gfx/skbitmap_operations.h"
 #include "ui/gfx/skia_util.h"
+#include "ui/views/linux_ui/window_button_order_observer.h"
 
 // A minimized port of GtkThemeService into something that can provide colors
 // and images for aura.
@@ -80,7 +83,6 @@ const double kLightInactiveSaturation = 0.3;
 const GdkColor kDefaultLinkColor = { 0, 0, 0, 0xeeee };
 
 const int kSkiaToGDKMultiplier = 257;
-
 
 // TODO(erg): ThemeService has a whole interface just for reading default
 // constants. Figure out what to do with that more long term; for now, just
@@ -292,9 +294,10 @@ color_utils::HSL GetDefaultTint(int id) {
 namespace libgtk2ui {
 
 Gtk2UI::Gtk2UI() {
-  DLOG(ERROR) << "Activating the gtk2 component";
   GtkInitFromCommandLine(*CommandLine::ForCurrentProcess());
+}
 
+void Gtk2UI::Initialize() {
   // Create our fake widgets.
   fake_window_ = gtk_window_new(GTK_WINDOW_TOPLEVEL);
   fake_frame_ = chrome_gtk_frame_new();
@@ -312,6 +315,9 @@ Gtk2UI::Gtk2UI() {
   // style-set signal handler.
   LoadGtkValues();
   SetXDGIconTheme();
+
+  // We must build this after GTK gets initialized.
+  titlebar_listener_.reset(new GConfTitlebarListener(this));
 
   indicators_count = 0;
 }
@@ -359,6 +365,58 @@ bool Gtk2UI::HasCustomImage(int id) const {
   return IsOverridableImage(id);
 }
 
+SkColor Gtk2UI::GetFocusRingColor() const {
+  return focus_ring_color_;
+}
+
+SkColor Gtk2UI::GetThumbActiveColor() const {
+  return thumb_active_color_;
+}
+
+SkColor Gtk2UI::GetThumbInactiveColor() const {
+  return thumb_inactive_color_;
+}
+
+SkColor Gtk2UI::GetTrackColor() const {
+  return track_color_;
+}
+
+SkColor Gtk2UI::GetActiveSelectionBgColor() const {
+  return active_selection_bg_color_;
+}
+
+SkColor Gtk2UI::GetActiveSelectionFgColor() const {
+  return active_selection_fg_color_;
+}
+
+SkColor Gtk2UI::GetInactiveSelectionBgColor() const {
+  return inactive_selection_bg_color_;
+}
+
+SkColor Gtk2UI::GetInactiveSelectionFgColor() const {
+  return inactive_selection_fg_color_;
+}
+
+double Gtk2UI::GetCursorBlinkInterval() const {
+  // From http://library.gnome.org/devel/gtk/unstable/GtkSettings.html, this is
+  // the default value for gtk-cursor-blink-time.
+  static const gint kGtkDefaultCursorBlinkTime = 1200;
+
+  // Dividing GTK's cursor blink cycle time (in milliseconds) by this value
+  // yields an appropriate value for
+  // content::RendererPreferences::caret_blink_interval.  This matches the
+  // logic in the WebKit GTK port.
+  static const double kGtkCursorBlinkCycleFactor = 2000.0;
+
+  gint cursor_blink_time = kGtkDefaultCursorBlinkTime;
+  gboolean cursor_blink = TRUE;
+  g_object_get(gtk_settings_get_default(),
+               "gtk-cursor-blink-time", &cursor_blink_time,
+               "gtk-cursor-blink", &cursor_blink,
+               NULL);
+  return cursor_blink ? (cursor_blink_time / kGtkCursorBlinkCycleFactor) : 0.0;
+}
+
 ui::NativeTheme* Gtk2UI::GetNativeTheme() const {
   return NativeThemeGtk2::instance();
 }
@@ -395,18 +453,50 @@ bool Gtk2UI::IsStatusIconSupported() const {
   return AppIndicatorIcon::CouldOpen();
 }
 
-scoped_ptr<StatusIconLinux> Gtk2UI::CreateLinuxStatusIcon(
+scoped_ptr<views::StatusIconLinux> Gtk2UI::CreateLinuxStatusIcon(
     const gfx::ImageSkia& image,
     const string16& tool_tip) const {
   if (AppIndicatorIcon::CouldOpen()) {
     ++indicators_count;
-    return scoped_ptr<StatusIconLinux>(new AppIndicatorIcon(
+    return scoped_ptr<views::StatusIconLinux>(new AppIndicatorIcon(
         base::StringPrintf("%s%d", kAppIndicatorIdPrefix, indicators_count),
         image,
         tool_tip));
   } else {
-    return scoped_ptr<StatusIconLinux>();
+    return scoped_ptr<views::StatusIconLinux>();
   }
+}
+
+void Gtk2UI::AddWindowButtonOrderObserver(
+    views::WindowButtonOrderObserver* observer) {
+  if (!leading_buttons_.empty() || !trailing_buttons_.empty()) {
+    observer->OnWindowButtonOrderingChange(leading_buttons_,
+                                           trailing_buttons_);
+  }
+
+  observer_list_.AddObserver(observer);
+}
+
+void Gtk2UI::RemoveWindowButtonOrderObserver(
+    views::WindowButtonOrderObserver* observer) {
+  observer_list_.RemoveObserver(observer);
+}
+
+void Gtk2UI::SetWindowButtonOrdering(
+    const std::vector<views::FrameButton>& leading_buttons,
+    const std::vector<views::FrameButton>& trailing_buttons) {
+  leading_buttons_ = leading_buttons;
+  trailing_buttons_ = trailing_buttons;
+
+  FOR_EACH_OBSERVER(views::WindowButtonOrderObserver, observer_list_,
+                    OnWindowButtonOrderingChange(leading_buttons_,
+                                                 trailing_buttons_));
+}
+
+scoped_ptr<ui::LinuxInputMethodContext> Gtk2UI::CreateInputMethodContext(
+    ui::LinuxInputMethodContextDelegate* delegate) const {
+  return scoped_ptr<ui::LinuxInputMethodContext>(
+      new X11InputMethodContextImplGtk2(delegate));
 }
 
 ui::SelectFileDialog* Gtk2UI::CreateSelectFileDialog(
@@ -837,7 +927,7 @@ SkBitmap Gtk2UI::GenerateFrameImage(
   SkColor base = it->second;
 
   gfx::Canvas canvas(gfx::Size(kToolbarImageWidth, kToolbarImageHeight),
-      ui::SCALE_FACTOR_100P, true);
+      1.0f, true);
 
   int gradient_size;
   GdkColor* gradient_top_color = NULL;
@@ -1042,6 +1132,6 @@ void Gtk2UI::ClearAllThemeData() {
 
 }  // namespace libgtk2ui
 
-ui::LinuxUI* BuildGtk2UI() {
+views::LinuxUI* BuildGtk2UI() {
   return new libgtk2ui::Gtk2UI;
 }

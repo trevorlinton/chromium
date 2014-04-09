@@ -585,8 +585,11 @@ void CloudPrintWebDialogDelegate::OnDialogClosed(
 
   // If we're modal we can show the dialog with no browser.
   // End the keep-alive so that Chrome can exit.
-  if (!modal_parent_ && keep_alive_when_non_modal_)
-    chrome::EndKeepAlive();
+  if (!modal_parent_ && keep_alive_when_non_modal_) {
+    // Post to prevent recursive call tho this function.
+    base::MessageLoop::current()->PostTask(FROM_HERE,
+                                           base::Bind(&chrome::EndKeepAlive));
+  }
   delete this;
 }
 
@@ -636,7 +639,7 @@ void CreateDialogImpl(content::BrowserContext* browser_context,
   if (window) {
     HWND dialog_handle;
 #if defined(USE_AURA)
-    dialog_handle = window->GetRootWindow()->GetAcceleratedWidget();
+    dialog_handle = window->GetDispatcher()->GetAcceleratedWidget();
 #else
     dialog_handle = window;
 #endif
@@ -671,7 +674,7 @@ void CreateDialogForFileImpl(content::BrowserContext* browser_context,
     } else {
       DLOG(WARNING) << " print data file too large to reserve space";
     }
-    if (file_util::ReadFileToString(path_to_file, &file_data)) {
+    if (base::ReadFileToString(path_to_file, &file_data)) {
       data = base::RefCountedString::TakeString(&file_data);
     }
   }

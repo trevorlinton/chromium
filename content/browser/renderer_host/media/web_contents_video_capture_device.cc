@@ -7,9 +7,9 @@
 // performance. Spanning several threads, the process of capturing has been
 // split up into four conceptual stages:
 //
-//   1. Reserve Buffer: Before a frame can be captured, a slot in the consumer's
+//   1. Reserve Buffer: Before a frame can be captured, a slot in the client's
 //      shared-memory IPC buffer is reserved. There are only a few of these;
-//      when they run out, it indicates that the downstream consumer -- likely a
+//      when they run out, it indicates that the downstream client -- likely a
 //      video encoder -- is the performance bottleneck, and that the rate of
 //      frame capture should be throttled back.
 //
@@ -27,9 +27,9 @@
 //      bitmap returned by Capture, and writes into the reserved slot in the
 //      shared-memory buffer.
 //
-//   4. Deliver: The rendered video frame is returned to the consumer (which
-//      implements the VideoCaptureDevice::EventHandler interface). Because
-//      all paths have written the frame into the IPC buffer, this step should
+//   4. Deliver: The rendered video frame is returned to the client (which
+//      implements the VideoCaptureDevice::Client interface). Because all
+//      paths have written the frame into the IPC buffer, this step should
 //      never need to do an additional copy of the pixel data.
 //
 // In the best-performing case, the Render step is bypassed: Capture produces
@@ -56,8 +56,8 @@
 
 #include "base/basictypes.h"
 #include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "base/callback_forward.h"
+#include "base/callback_helpers.h"
 #include "base/debug/trace_event.h"
 #include "base/logging.h"
 #include "base/memory/scoped_ptr.h"
@@ -101,8 +101,6 @@ namespace {
 
 const int kMinFrameWidth = 2;
 const int kMinFrameHeight = 2;
-const int kMaxFramesInFlight = 2;
-const int kMaxSnapshotsInFlight = 1;
 
 // TODO(nick): Remove this once frame subscription is supported on Aura and
 // Linux.
@@ -135,13 +133,14 @@ gfx::Rect ComputeYV12LetterboxRegion(const gfx::Size& frame_size,
 
 // Thread-safe, refcounted proxy to the VideoCaptureOracle.  This proxy wraps
 // the VideoCaptureOracle, which decides which frames to capture, and a
-// VideoCaptureDevice::EventHandler, which allocates and receives the captured
+// VideoCaptureDevice::Client, which allocates and receives the captured
 // frames, in a lock to synchronize state between the two.
 class ThreadSafeCaptureOracle
     : public base::RefCountedThreadSafe<ThreadSafeCaptureOracle> {
  public:
-  ThreadSafeCaptureOracle(media::VideoCaptureDevice::EventHandler* consumer,
-                          scoped_ptr<VideoCaptureOracle> oracle);
+  ThreadSafeCaptureOracle(scoped_ptr<media::VideoCaptureDevice::Client> client,
+                          scoped_ptr<VideoCaptureOracle> oracle,
+                          const gfx::Size& capture_size);
 
   bool ObserveEventAndDecideCapture(
       VideoCaptureOracle::Event event,
@@ -153,18 +152,11 @@ class ThreadSafeCaptureOracle
     return oracle_->capture_period();
   }
 
-  // Allow new captures to start occurring.
-  void Start();
-
-  // Stop new captures from happening (but doesn't forget the consumer).
+  // Stop new captures from happening (but doesn't forget the client).
   void Stop();
 
-  // Signal an error to the consumer.
+  // Signal an error to the client.
   void ReportError();
-
-  // Permanently stop capturing. Immediately cease all activity on the
-  // VCD::EventHandler.
-  void InvalidateConsumer();
 
  private:
   friend class base::RefCountedThreadSafe<ThreadSafeCaptureOracle>;
@@ -175,18 +167,17 @@ class ThreadSafeCaptureOracle
                        int frame_number,
                        base::Time timestamp,
                        bool success);
-
   // Protects everything below it.
   base::Lock lock_;
 
-  // Recipient of our capture activity. Becomes null after it is invalidated.
-  media::VideoCaptureDevice::EventHandler* consumer_;
+  // Recipient of our capture activity.
+  scoped_ptr<media::VideoCaptureDevice::Client> client_;
 
   // Makes the decision to capture a frame.
   const scoped_ptr<VideoCaptureOracle> oracle_;
 
-  // Whether capturing is currently allowed. Can toggle back and forth.
-  bool is_started_;
+  // The resolution at which we're capturing.
+  const gfx::Size capture_size_;
 };
 
 // FrameSubscriber is a proxy to the ThreadSafeCaptureOracle that's compatible
@@ -408,11 +399,12 @@ class VideoFrameDeliveryLog {
 };
 
 ThreadSafeCaptureOracle::ThreadSafeCaptureOracle(
-    media::VideoCaptureDevice::EventHandler* consumer,
-    scoped_ptr<VideoCaptureOracle> oracle)
-    : consumer_(consumer),
+    scoped_ptr<media::VideoCaptureDevice::Client> client,
+    scoped_ptr<VideoCaptureOracle> oracle,
+    const gfx::Size& capture_size)
+    : client_(client.Pass()),
       oracle_(oracle.Pass()),
-      is_started_(false) {
+      capture_size_(capture_size) {
 }
 
 bool ThreadSafeCaptureOracle::ObserveEventAndDecideCapture(
@@ -422,11 +414,11 @@ bool ThreadSafeCaptureOracle::ObserveEventAndDecideCapture(
     RenderWidgetHostViewFrameSubscriber::DeliverFrameCallback* callback) {
   base::AutoLock guard(lock_);
 
-  if (!consumer_ || !is_started_)
+  if (!client_)
     return false;  // Capture is stopped.
 
   scoped_refptr<media::VideoFrame> output_buffer =
-      consumer_->ReserveOutputBuffer();
+      client_->ReserveOutputBuffer(capture_size_);
   const bool should_capture =
       oracle_->ObserveEventAndDecideCapture(event, event_time);
   const bool content_is_dirty =
@@ -473,30 +465,15 @@ bool ThreadSafeCaptureOracle::ObserveEventAndDecideCapture(
   return true;
 }
 
-void ThreadSafeCaptureOracle::Start() {
-  base::AutoLock guard(lock_);
-  is_started_ = true;
-}
-
 void ThreadSafeCaptureOracle::Stop() {
   base::AutoLock guard(lock_);
-  is_started_ = false;
+  client_.reset();
 }
 
 void ThreadSafeCaptureOracle::ReportError() {
   base::AutoLock guard(lock_);
-  if (consumer_)
-    consumer_->OnError();
-}
-
-void ThreadSafeCaptureOracle::InvalidateConsumer() {
-  base::AutoLock guard(lock_);
-
-  TRACE_EVENT_INSTANT0("mirroring", "InvalidateConsumer",
-                       TRACE_EVENT_SCOPE_THREAD);
-
-  is_started_ = false;
-  consumer_ = NULL;
+  if (client_)
+    client_->OnError();
 }
 
 void ThreadSafeCaptureOracle::DidCaptureFrame(
@@ -505,17 +482,17 @@ void ThreadSafeCaptureOracle::DidCaptureFrame(
     base::Time timestamp,
     bool success) {
   base::AutoLock guard(lock_);
-
   TRACE_EVENT_ASYNC_END2("mirroring", "Capture", frame.get(),
                          "success", success,
                          "timestamp", timestamp.ToInternalValue());
 
-  if (!consumer_ || !is_started_)
+  if (!client_)
     return;  // Capture is stopped.
 
-  if (success)
+  if (success) {
     if (oracle_->CompleteCapture(frame_number, timestamp))
-      consumer_->OnIncomingCapturedVideoFrame(frame, timestamp);
+      client_->OnIncomingCapturedVideoFrame(frame, timestamp);
+  }
 }
 
 bool FrameSubscriber::ShouldCaptureFrame(
@@ -673,7 +650,7 @@ void RenderVideoFrame(const SkBitmap& input,
       method = skia::ImageOperations::RESIZE_BOX;
     }
 
-    TRACE_EVENT_ASYNC_STEP0("mirroring", "Capture", output.get(), "Scale");
+    TRACE_EVENT_ASYNC_STEP_INTO0("mirroring", "Capture", output.get(), "Scale");
     scaled_bitmap = skia::ImageOperations::Resize(input, method,
                                                   region_in_frame.width(),
                                                   region_in_frame.height());
@@ -681,7 +658,7 @@ void RenderVideoFrame(const SkBitmap& input,
     scaled_bitmap = input;
   }
 
-  TRACE_EVENT_ASYNC_STEP0("mirroring", "Capture", output.get(), "YUV");
+  TRACE_EVENT_ASYNC_STEP_INTO0("mirroring", "Capture", output.get(), "YUV");
   {
     SkAutoLockPixels scaled_bitmap_locker(scaled_bitmap);
 
@@ -693,7 +670,7 @@ void RenderVideoFrame(const SkBitmap& input,
   }
 
   // The result is now ready.
-  failure_handler.Release();
+  ignore_result(failure_handler.Release());
   done_cb.Run(true);
 }
 
@@ -895,7 +872,8 @@ void CaptureMachine::DidCopyFromBackingStore(
   base::Time now = base::Time::Now();
   if (success) {
     UMA_HISTOGRAM_TIMES("TabCapture.CopyTimeBitmap", now - start_time);
-    TRACE_EVENT_ASYNC_STEP0("mirroring", "Capture", target.get(), "Render");
+    TRACE_EVENT_ASYNC_STEP_INTO0("mirroring", "Capture", target.get(),
+                                 "Render");
     render_task_runner_->PostTask(FROM_HERE, base::Bind(
         &RenderVideoFrame, bitmap, target,
         base::Bind(deliver_frame_cb, start_time)));
@@ -961,27 +939,24 @@ class WebContentsVideoCaptureDevice::Impl : public base::SupportsWeakPtr<Impl> {
   virtual ~Impl();
 
   // Asynchronous requests to change WebContentsVideoCaptureDevice::Impl state.
-  void Allocate(int width,
-                int height,
-                int frame_rate,
-                media::VideoCaptureDevice::EventHandler* consumer);
-  void Start();
-  void Stop();
-  void DeAllocate();
+  void AllocateAndStart(int width,
+                        int height,
+                        int frame_rate,
+                        scoped_ptr<media::VideoCaptureDevice::Client> client);
+  void StopAndDeAllocate();
 
  private:
 
   // Flag indicating current state.
   enum State {
     kIdle,
-    kAllocated,
     kCapturing,
     kError
   };
 
   void TransitionStateTo(State next_state);
 
-  // Stops capturing and notifies consumer_ of an error state.
+  // Stops capturing and notifies client_ of an error state.
   void Error();
 
   // Called in response to CaptureMachine::Create that runs on the UI thread.
@@ -1000,9 +975,6 @@ class WebContentsVideoCaptureDevice::Impl : public base::SupportsWeakPtr<Impl> {
   const int initial_render_process_id_;
   const int initial_render_view_id_;
 
-  // Our event handler, which gobbles the frames we capture.
-  VideoCaptureDevice::EventHandler* consumer_;
-
   // Current lifecycle state.
   State state_;
 
@@ -1017,7 +989,7 @@ class WebContentsVideoCaptureDevice::Impl : public base::SupportsWeakPtr<Impl> {
 
   // Our thread-safe capture oracle which serves as the gateway to the video
   // capture pipeline. Besides the WCVCD itself, it is the only component of the
-  // system with direct access to |consumer_|.
+  // system with direct access to |client_|.
   scoped_refptr<ThreadSafeCaptureOracle> oracle_proxy_;
 
   DISALLOW_COPY_AND_ASSIGN(Impl);
@@ -1027,16 +999,14 @@ WebContentsVideoCaptureDevice::Impl::Impl(int render_process_id,
                                           int render_view_id)
     : initial_render_process_id_(render_process_id),
       initial_render_view_id_(render_view_id),
-      consumer_(NULL),
       state_(kIdle),
-      render_thread_("WebContentsVideo_RenderThread") {
-}
+      render_thread_("WebContentsVideo_RenderThread") {}
 
-void WebContentsVideoCaptureDevice::Impl::Allocate(
+void WebContentsVideoCaptureDevice::Impl::AllocateAndStart(
     int width,
     int height,
     int frame_rate,
-    VideoCaptureDevice::EventHandler* consumer) {
+    scoped_ptr<VideoCaptureDevice::Client> client) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   if (state_ != kIdle) {
@@ -1046,51 +1016,42 @@ void WebContentsVideoCaptureDevice::Impl::Allocate(
 
   if (frame_rate <= 0) {
     DVLOG(1) << "invalid frame_rate: " << frame_rate;
-    consumer->OnError();
+    client->OnError();
     return;
   }
 
   if (!render_thread_.Start()) {
     DVLOG(1) << "Failed to spawn render thread.";
-    consumer->OnError();
+    client->OnError();
     return;
   }
 
-  // Frame dimensions must each be a positive, even integer, since the consumer
+  // Frame dimensions must each be a positive, even integer, since the client
   // wants (or will convert to) YUV420.
   width = MakeEven(width);
   height = MakeEven(height);
   if (width < kMinFrameWidth || height < kMinFrameHeight) {
     DVLOG(1) << "invalid width (" << width << ") and/or height ("
              << height << ")";
-    consumer->OnError();
+    client->OnError();
     return;
   }
 
-  // Initialize capture settings which will be consistent for the
-  // duration of the capture.
+  // Need to call OnFrameInfo just to set the frame rate.
+  // TODO(nick): http://crbug.com/309907 The other parameters of this struct are
+  // ignored. Come up with a better way to communicate the frame rate.
   media::VideoCaptureCapability settings;
-
-  settings.width = width;
-  settings.height = height;
   settings.frame_rate = frame_rate;
-  // Note: the value of |settings.color| doesn't matter if we use only the
-  // VideoFrame based methods on |consumer|.
-  settings.color = media::VideoCaptureCapability::kI420;
-  settings.expected_capture_delay = 0;
-  settings.interlaced = false;
+  client->OnFrameInfo(settings);
 
   base::TimeDelta capture_period = base::TimeDelta::FromMicroseconds(
-      1000000.0 / settings.frame_rate + 0.5);
+      1000000.0 / frame_rate + 0.5);
 
-  consumer_ = consumer;
-  consumer_->OnFrameInfo(settings);
   scoped_ptr<VideoCaptureOracle> oracle(
       new VideoCaptureOracle(capture_period,
                              kAcceleratedSubscriberIsSupported));
   oracle_proxy_ = new ThreadSafeCaptureOracle(
-      consumer_,
-      oracle.Pass());
+      client.Pass(), oracle.Pass(), gfx::Size(width, height));
 
   // Allocates the CaptureMachine. The CaptureMachine will be tracking render
   // view swapping over its lifetime, and we don't want to lose our reference to
@@ -1105,19 +1066,7 @@ void WebContentsVideoCaptureDevice::Impl::Allocate(
                  render_thread_.message_loop_proxy(), oracle_proxy_),
       base::Bind(&Impl::AssignCaptureMachine, AsWeakPtr()));
 
-  TransitionStateTo(kAllocated);
-}
-
-void WebContentsVideoCaptureDevice::Impl::Start() {
-  DCHECK(thread_checker_.CalledOnValidThread());
-
-  if (state_ != kAllocated) {
-    return;
-  }
-
   TransitionStateTo(kCapturing);
-
-  oracle_proxy_->Start();
 }
 
 // static
@@ -1143,34 +1092,18 @@ void WebContentsVideoCaptureDevice::Impl::AssignCaptureMachine(
   }
 }
 
-void WebContentsVideoCaptureDevice::Impl::Stop() {
+void WebContentsVideoCaptureDevice::Impl::StopAndDeAllocate() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   if (state_ != kCapturing) {
     return;
   }
   oracle_proxy_->Stop();
+  oracle_proxy_ = NULL;
+  render_thread_.Stop();
 
-  TransitionStateTo(kAllocated);
-}
+  TransitionStateTo(kIdle);
 
-void WebContentsVideoCaptureDevice::Impl::DeAllocate() {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  if (state_ == kCapturing) {
-    Stop();
-  }
-  if (state_ == kAllocated) {
-    // |consumer_| is about to be deleted, so we mustn't use it anymore.
-    oracle_proxy_->InvalidateConsumer();
-    consumer_ = NULL;
-    oracle_proxy_ = NULL;
-    render_thread_.Stop();
-
-    TransitionStateTo(kIdle);
-  }
-}
-
-WebContentsVideoCaptureDevice::Impl::~Impl() {
   // There is still a capture pipeline running that is checking in with the
   // oracle, and processing captures that are already started in flight. That
   // pipeline must be shut down asynchronously, on the UI thread.
@@ -1182,9 +1115,10 @@ WebContentsVideoCaptureDevice::Impl::~Impl() {
         BrowserThread::UI, FROM_HERE, base::Bind(
             &DeleteCaptureMachineOnUIThread, base::Passed(&capture_machine_)));
   }
+}
 
+WebContentsVideoCaptureDevice::Impl::~Impl() {
   DCHECK(!capture_machine_) << "Cleanup on UI thread did not happen.";
-  DCHECK(!consumer_) << "Device not DeAllocated -- possible data race.";
   DVLOG(1) << "WebContentsVideoCaptureDevice::Impl@" << this << " destroying.";
 }
 
@@ -1208,19 +1142,17 @@ void WebContentsVideoCaptureDevice::Impl::Error() {
   if (state_ == kIdle)
     return;
 
-  if (consumer_)
-    consumer_->OnError();
+  if (oracle_proxy_)
+    oracle_proxy_->ReportError();
 
-  DeAllocate();
+  StopAndDeAllocate();
   TransitionStateTo(kError);
 }
 
 WebContentsVideoCaptureDevice::WebContentsVideoCaptureDevice(
-    const media::VideoCaptureDevice::Name& name,
     int render_process_id,
     int render_view_id)
-    : device_name_(name),
-      impl_(new WebContentsVideoCaptureDevice::Impl(render_process_id,
+    : impl_(new WebContentsVideoCaptureDevice::Impl(render_process_id,
                                                     render_view_id)) {}
 
 WebContentsVideoCaptureDevice::~WebContentsVideoCaptureDevice() {
@@ -1233,46 +1165,27 @@ media::VideoCaptureDevice* WebContentsVideoCaptureDevice::Create(
   // Parse device_id into render_process_id and render_view_id.
   int render_process_id = -1;
   int render_view_id = -1;
-  if (!WebContentsCaptureUtil::ExtractTabCaptureTarget(device_id,
-                                                       &render_process_id,
-                                                       &render_view_id))
+  if (!WebContentsCaptureUtil::ExtractTabCaptureTarget(
+           device_id, &render_process_id, &render_view_id)) {
     return NULL;
+  }
 
-  std::string device_name;
-  base::SStringPrintf(&device_name,
-                      "WebContents[%.*s]",
-                      static_cast<int>(device_id.size()), device_id.data());
-  return new WebContentsVideoCaptureDevice(
-      media::VideoCaptureDevice::Name(device_name, device_id),
-      render_process_id, render_view_id);
+  return new WebContentsVideoCaptureDevice(render_process_id, render_view_id);
 }
 
-void WebContentsVideoCaptureDevice::Allocate(
+void WebContentsVideoCaptureDevice::AllocateAndStart(
     const media::VideoCaptureCapability& capture_format,
-    VideoCaptureDevice::EventHandler* observer) {
+    scoped_ptr<Client> client) {
   DVLOG(1) << "Allocating " << capture_format.width << "x"
            << capture_format.height;
-  impl_->Allocate(capture_format.width,
-                  capture_format.height,
-                  capture_format.frame_rate,
-                  observer);
+  impl_->AllocateAndStart(capture_format.width,
+                          capture_format.height,
+                          capture_format.frame_rate,
+                          client.Pass());
 }
 
-void WebContentsVideoCaptureDevice::Start() {
-  impl_->Start();
-}
-
-void WebContentsVideoCaptureDevice::Stop() {
-  impl_->Stop();
-}
-
-void WebContentsVideoCaptureDevice::DeAllocate() {
-  impl_->DeAllocate();
-}
-
-const media::VideoCaptureDevice::Name&
-WebContentsVideoCaptureDevice::device_name() {
-  return device_name_;
+void WebContentsVideoCaptureDevice::StopAndDeAllocate() {
+  impl_->StopAndDeAllocate();
 }
 
 }  // namespace content

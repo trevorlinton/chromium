@@ -77,8 +77,9 @@ class ExtensionProcessManager : public content::NotificationObserver {
 
   // Creates a new UI-less extension instance.  Like CreateViewHost, but not
   // displayed anywhere.
-  virtual void CreateBackgroundHost(const extensions::Extension* extension,
-                                    const GURL& url);
+  virtual extensions::ExtensionHost* CreateBackgroundHost(
+      const extensions::Extension* extension,
+      const GURL& url);
 
   // Gets the ExtensionHost for the background page for an extension, or NULL if
   // the extension isn't running or doesn't have a background page.
@@ -133,6 +134,11 @@ class ExtensionProcessManager : public content::NotificationObserver {
   // Prevents |extension|'s background page from being closed and sends the
   // onSuspendCanceled() event to it.
   void CancelSuspend(const extensions::Extension* extension);
+
+  // If |defer| is true background host creation is to be deferred until this is
+  // called again with |defer| set to false, at which point all deferred
+  // background hosts will be created.  Defaults to false.
+  void DeferBackgroundHostCreation(bool defer);
 
  protected:
   explicit ExtensionProcessManager(Profile* profile);
@@ -194,12 +200,17 @@ class ExtensionProcessManager : public content::NotificationObserver {
   // extension. Does nothing if this is not an extension renderer.
   void RegisterRenderViewHost(content::RenderViewHost* render_view_host);
 
+  // Unregister RenderViewHosts and clear background page data for an extension
+  // which has been unloaded.
+  void UnregisterExtension(const std::string& extension_id);
+
   // Clears background page data for this extension.
   void ClearBackgroundPageData(const std::string& extension_id);
 
   // Returns true if loading background pages should be deferred. This is
   // true if there are no browser windows open and the browser process was
-  // started to show the app launcher.
+  // started to show the app launcher, or if DeferBackgroundHostCreation was
+  // called with true, or if the profile is not yet valid.
   bool DeferLoadingBackgroundHosts() const;
 
   void OnDevToolsStateChanged(content::DevToolsAgentHost*, bool attached);
@@ -218,6 +229,9 @@ class ExtensionProcessManager : public content::NotificationObserver {
   // The time to delay between sending a ShouldSuspend message and
   // sending a Suspend message; read from command-line switch.
   base::TimeDelta event_page_suspending_time_;
+
+  // If true, then creation of background hosts is suspended.
+  bool defer_background_host_creation_;
 
   base::WeakPtrFactory<ExtensionProcessManager> weak_ptr_factory_;
 

@@ -52,11 +52,14 @@ class SynchronousCompositorImpl
       scoped_refptr<gfx::GLSurface> surface) OVERRIDE;
   virtual void ReleaseHwDraw() OVERRIDE;
   virtual bool DemandDrawHw(
-      gfx::Size view_size,
+      gfx::Size surface_size,
       const gfx::Transform& transform,
+      gfx::Rect viewport,
       gfx::Rect clip,
       bool stencil_enabled) OVERRIDE;
   virtual bool DemandDrawSw(SkCanvas* canvas) OVERRIDE;
+  virtual void SetMemoryPolicy(
+      const SynchronousCompositorMemoryPolicy& policy) OVERRIDE;
   virtual void DidChangeRootLayerScrollOffset() OVERRIDE;
 
   // SynchronousCompositorOutputSurfaceDelegate
@@ -70,8 +73,12 @@ class SynchronousCompositorImpl
   virtual void DidActivatePendingTree() OVERRIDE;
 
   // LayerScrollOffsetDelegate
+  virtual void SetMaxScrollOffset(gfx::Vector2dF max_scroll_offset) OVERRIDE;
   virtual void SetTotalScrollOffset(gfx::Vector2dF new_value) OVERRIDE;
   virtual gfx::Vector2dF GetTotalScrollOffset() OVERRIDE;
+  virtual bool IsExternalFlingActive() const OVERRIDE;
+  virtual void SetTotalPageScaleFactor(float page_scale_factor) OVERRIDE;
+  virtual void SetScrollableSize(gfx::SizeF scrollable_size) OVERRIDE;
 
   void SetInputHandler(cc::InputHandler* input_handler);
   void DidOverscroll(const cc::DidOverscrollParams& params);

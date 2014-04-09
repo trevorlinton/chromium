@@ -17,7 +17,7 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/devtools/devtools_window.h"
 #include "chrome/browser/fullscreen.h"
-#include "chrome/browser/profiles/avatar_menu_model.h"
+#include "chrome/browser/profiles/avatar_menu.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -277,7 +277,7 @@ enum {
     // Set different minimum sizes on tabbed windows vs non-tabbed, e.g. popups.
     // This has to happen before -enforceMinWindowSize: is called further down.
     NSSize minSize = [self isTabbedWindow] ?
-      NSMakeSize(400, 272) : NSMakeSize(100, 122);
+      NSMakeSize(320, 240) : NSMakeSize(100, 122);
     [[self window] setMinSize:minSize];
 
     // Create the bar visibility lock set; 10 is arbitrary, but should hopefully
@@ -361,11 +361,10 @@ enum {
     // registering for the appropriate command state changes from the back-end.
     // Adds the toolbar to the content area.
     toolbarController_.reset([[ToolbarController alloc]
-              initWithModel:browser->toolbar_model()
-                   commands:browser->command_controller()->command_updater()
-                    profile:browser->profile()
-                    browser:browser
-             resizeDelegate:self]);
+              initWithCommands:browser->command_controller()->command_updater()
+                       profile:browser->profile()
+                       browser:browser
+                resizeDelegate:self]);
     [toolbarController_ setHasToolbar:[self hasToolbar]
                        hasLocationBar:[self hasLocationBar]];
 
@@ -1249,10 +1248,8 @@ enum {
   return [view convertRect:[view bounds] toView:nil];
 }
 
-- (void)updateToolbarWithContents:(WebContents*)tab
-               shouldRestoreState:(BOOL)shouldRestore {
-  [toolbarController_ updateToolbarWithContents:tab
-                             shouldRestoreState:shouldRestore];
+- (void)updateToolbarWithContents:(WebContents*)tab {
+  [toolbarController_ updateToolbarWithContents:tab];
 }
 
 - (void)setStarredState:(BOOL)isStarred {
@@ -1506,7 +1503,7 @@ enum {
     return NO;
   }
 
-  return AvatarMenuModel::ShouldShowAvatarMenu();
+  return AvatarMenu::ShouldShowAvatarMenu();
 }
 
 - (BOOL)isBookmarkBarVisible {
@@ -1587,7 +1584,7 @@ enum {
   if (!contents)
     return NO;
   return !WebContentsModalDialogManager::FromWebContents(contents)->
-      IsShowingDialog();
+      IsDialogActive();
 }
 
 // TabStripControllerDelegate protocol.
@@ -1658,13 +1655,14 @@ enum {
   return style;
 }
 
-- (NSPoint)themePatternPhaseForAlignment:(ThemePatternAlignment)alignment {
+- (NSPoint)themeImagePositionForAlignment:(ThemeImageAlignment)alignment {
   NSView* windowChromeView = [[[self window] contentView] superview];
   NSView* tabStripView = nil;
-  if (alignment == THEME_PATTERN_ALIGN_WITH_TAB_STRIP && [self hasTabStrip])
+  if ([self hasTabStrip])
     tabStripView = [self tabStripView];
-  return [BrowserWindowUtils themePatternPhaseFor:windowChromeView
-                                     withTabStrip:tabStripView];
+  return [BrowserWindowUtils themeImagePositionFor:windowChromeView
+                                      withTabStrip:tabStripView
+                                         alignment:alignment];
 }
 
 - (NSPoint)bookmarkBubblePoint {
@@ -1947,6 +1945,10 @@ willAnimateFromState:(BookmarkBar::State)oldState
 
   // Shift to window base coordinates.
   return [[toolbarView superview] convertRect:anchorRect toView:nil];
+}
+
+- (void)layoutInfoBars {
+  [self layoutSubviews];
 }
 
 - (void)sheetDidEnd:(NSWindow*)sheet

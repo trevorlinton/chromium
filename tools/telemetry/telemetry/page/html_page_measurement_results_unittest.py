@@ -48,7 +48,7 @@ class HtmlPageMeasurementResultsTest(unittest.TestCase):
 
     # Run the first time and verify the results are written to the HTML file.
     results = DeterministicHtmlPageMeasurementResults(
-        output_file, 'test_name', False, 'browser_type')
+        output_file, 'test_name', False, False, 'browser_type')
     results.WillMeasurePage(test_page_set.pages[0])
     results.Add('a', 'seconds', 3)
     results.DidMeasurePage()
@@ -62,6 +62,7 @@ class HtmlPageMeasurementResultsTest(unittest.TestCase):
           '[{'
             '"platform": "browser_type", '
             '"buildTime": "build_time", '
+            '"label": null, '
             '"tests": {'
               '"test_name": {'
                 '"metrics": {'
@@ -70,9 +71,19 @@ class HtmlPageMeasurementResultsTest(unittest.TestCase):
                     '"units": "seconds", '
                     '"important": true'
                   '}, '
+                  '"telemetry_page_measurement_results.num_failed": {'
+                    '"current": [0], '
+                    '"units": "count", '
+                    '"important": false'
+                  '}, '
                   '"a_by_url.http://www.bar.com/": {'
                     '"current": [7], '
                     '"units": "seconds", '
+                    '"important": false'
+                  '}, '
+                  '"telemetry_page_measurement_results.num_errored": {'
+                    '"current": [0], '
+                    '"units": "count", '
                     '"important": false'
                   '}, '
                   '"a_by_url.http://www.foo.com/": {'
@@ -91,7 +102,7 @@ class HtmlPageMeasurementResultsTest(unittest.TestCase):
     # Run the second time and verify the results are appended to the HTML file.
     output_file.seek(0)
     results = DeterministicHtmlPageMeasurementResults(
-        output_file, 'test_name', False, 'browser_type')
+        output_file, 'test_name', False, False, 'browser_type')
     results.WillMeasurePage(test_page_set.pages[0])
     results.Add('a', 'seconds', 4)
     results.DidMeasurePage()
@@ -105,6 +116,7 @@ class HtmlPageMeasurementResultsTest(unittest.TestCase):
           '[{'
             '"platform": "browser_type", '
             '"buildTime": "build_time", '
+            '"revision": "revision", '
             '"tests": {'
               '"test_name": {'
                 '"metrics": {'
@@ -113,9 +125,19 @@ class HtmlPageMeasurementResultsTest(unittest.TestCase):
                     '"units": "seconds", '
                     '"important": true'
                   '}, '
+                  '"telemetry_page_measurement_results.num_failed": {'
+                    '"current": [0], '
+                    '"units": "count", '
+                    '"important": false'
+                  '}, '
                   '"a_by_url.http://www.bar.com/": {'
                     '"current": [7], '
                     '"units": "seconds", '
+                    '"important": false'
+                  '}, '
+                  '"telemetry_page_measurement_results.num_errored": {'
+                    '"current": [0], '
+                    '"units": "count", '
                     '"important": false'
                   '}, '
                   '"a_by_url.http://www.foo.com/": {'
@@ -126,11 +148,12 @@ class HtmlPageMeasurementResultsTest(unittest.TestCase):
                 '}'
               '}'
             '}, '
-            '"revision": "revision"'
+            '"label": null'
           '}, '
           '{'
             '"platform": "browser_type", '
             '"buildTime": "build_time", '
+            '"label": null, '
             '"tests": {'
               '"test_name": {'
                 '"metrics": {'
@@ -139,9 +162,19 @@ class HtmlPageMeasurementResultsTest(unittest.TestCase):
                     '"units": "seconds", '
                     '"important": true'
                   '}, '
+                  '"telemetry_page_measurement_results.num_failed": {'
+                    '"current": [0], '
+                    '"units": "count", '
+                    '"important": false'
+                  '}, '
                   '"a_by_url.http://www.bar.com/": {'
                     '"current": [8], '
                     '"units": "seconds", '
+                    '"important": false'
+                  '}, '
+                  '"telemetry_page_measurement_results.num_errored": {'
+                    '"current": [0], '
+                    '"units": "count", '
                     '"important": false'
                   '}, '
                   '"a_by_url.http://www.foo.com/": {'
@@ -161,7 +194,7 @@ class HtmlPageMeasurementResultsTest(unittest.TestCase):
     # Now reset the results and verify the old ones are gone.
     output_file.seek(0)
     results = DeterministicHtmlPageMeasurementResults(
-        output_file, 'test_name', True, 'browser_type')
+       output_file, 'test_name', True, False, 'browser_type')
     results.WillMeasurePage(test_page_set.pages[0])
     results.Add('a', 'seconds', 5)
     results.DidMeasurePage()
@@ -175,6 +208,7 @@ class HtmlPageMeasurementResultsTest(unittest.TestCase):
           '[{'
             '"platform": "browser_type", '
             '"buildTime": "build_time", '
+            '"label": null, '
             '"tests": {'
               '"test_name": {'
                 '"metrics": {'
@@ -183,9 +217,19 @@ class HtmlPageMeasurementResultsTest(unittest.TestCase):
                     '"units": "seconds", '
                     '"important": true'
                   '}, '
+                  '"telemetry_page_measurement_results.num_failed": {'
+                    '"current": [0], '
+                    '"units": "count", '
+                    '"important": false'
+                  '}, '
                   '"a_by_url.http://www.bar.com/": {'
                     '"current": [9], '
                     '"units": "seconds", '
+                    '"important": false'
+                  '}, '
+                  '"telemetry_page_measurement_results.num_errored": {'
+                    '"current": [0], '
+                    '"units": "count", '
                     '"important": false'
                   '}, '
                   '"a_by_url.http://www.foo.com/": {'

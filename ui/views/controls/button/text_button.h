@@ -65,7 +65,6 @@ class VIEWS_EXPORT TextButtonDefaultBorder : public TextButtonBorder {
   TextButtonDefaultBorder();
   virtual ~TextButtonDefaultBorder();
 
- protected:
   // TextButtonDefaultBorder takes and retains ownership of these |painter|s.
   void set_normal_painter(Painter* painter) { normal_painter_.reset(painter); }
   void set_hot_painter(Painter* painter) { hot_painter_.reset(painter); }
@@ -142,7 +141,7 @@ class VIEWS_EXPORT TextButtonBase : public CustomButton,
 
   void set_alignment(TextAlignment alignment) { alignment_ = alignment; }
 
-  const ui::Animation* GetAnimation() const;
+  const gfx::Animation* GetAnimation() const;
 
   void SetIsDefault(bool is_default);
   bool is_default() const { return is_default_; }
@@ -234,7 +233,7 @@ class VIEWS_EXPORT TextButtonBase : public CustomButton,
   virtual gfx::Rect GetThemePaintRect() const OVERRIDE;
   virtual ui::NativeTheme::State GetThemeState(
       ui::NativeTheme::ExtraParams* params) const OVERRIDE;
-  virtual const ui::Animation* GetThemeAnimation() const OVERRIDE;
+  virtual const gfx::Animation* GetThemeAnimation() const OVERRIDE;
   virtual ui::NativeTheme::State GetBackgroundThemeState(
       ui::NativeTheme::ExtraParams* params) const OVERRIDE;
   virtual ui::NativeTheme::State GetForegroundThemeState(

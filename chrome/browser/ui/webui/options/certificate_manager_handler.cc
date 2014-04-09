@@ -19,7 +19,7 @@
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/certificate_viewer.h"
-#include "chrome/browser/policy/browser_policy_connector.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/certificate_dialogs.h"
 #include "chrome/browser/ui/chrome_select_file_policy.h"
 #include "chrome/browser/ui/crypto_module_password_dialog.h"
@@ -29,11 +29,12 @@
 #include "grit/generated_resources.h"
 #include "net/base/crypto_module.h"
 #include "net/base/net_errors.h"
-#include "net/cert/cert_trust_anchor_provider.h"
 #include "net/cert/x509_certificate.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if defined(OS_CHROMEOS)
+#include "chrome/browser/policy/profile_policy_connector.h"
+#include "chrome/browser/policy/profile_policy_connector_factory.h"
 #include "chromeos/dbus/cryptohome_client.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #endif
@@ -48,7 +49,6 @@ static const char kNameId[] = "name";
 static const char kReadOnlyId[] = "readonly";
 static const char kUntrustedId[] = "untrusted";
 static const char kExtractableId[] = "extractable";
-static const char kSecurityDeviceId[] = "device";
 static const char kErrorId[] = "error";
 static const char kPolicyTrustedId[] = "policy";
 
@@ -119,26 +119,6 @@ struct CertEquals {
   }
   const net::X509Certificate* cert_;
 };
-
-#if defined(OS_CHROMEOS)
-net::CertificateList CopyPolicyWebTrustCerts(
-    net::CertTrustAnchorProvider* provider) {
-  // Return a copy.
-  return provider->GetAdditionalTrustAnchors();
-}
-
-void RetrievePolicyWebTrustCerts(
-    base::Callback<void(const net::CertificateList&)> on_completion) {
-  net::CertTrustAnchorProvider* provider =
-      g_browser_process->browser_policy_connector()->
-          GetCertTrustAnchorProvider();
-  // Retrieve the anchors on the IO thread.
-  BrowserThread::PostTaskAndReplyWithResult(
-      BrowserThread::IO, FROM_HERE,
-      base::Bind(&CopyPolicyWebTrustCerts, base::Unretained(provider)),
-      on_completion);
-}
-#endif
 
 // Determine whether a certificate was stored with web trust by a policy.
 bool IsPolicyInstalledWithWebTrust(
@@ -291,7 +271,7 @@ CancelableTaskTracker::TaskId FileAccessProvider::StartWrite(
 void FileAccessProvider::DoRead(const base::FilePath& path,
                                 int* saved_errno,
                                 std::string* data) {
-  bool success = file_util::ReadFileToString(path, data);
+  bool success = base::ReadFileToString(path, data);
   *saved_errno = success ? 0 : errno;
 }
 
@@ -300,7 +280,7 @@ void FileAccessProvider::DoWrite(const base::FilePath& path,
                                  int* saved_errno,
                                  int* bytes_written) {
   *bytes_written = file_util::WriteFile(path, data.data(), data.size());
-  *saved_errno = bytes_written >= 0 ? 0 : errno;
+  *saved_errno = *bytes_written >= 0 ? 0 : errno;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -309,8 +289,8 @@ void FileAccessProvider::DoWrite(const base::FilePath& path,
 CertificateManagerHandler::CertificateManagerHandler()
     : use_hardware_backed_(false),
       file_access_provider_(new FileAccessProvider()),
-      weak_ptr_factory_(this),
-      cert_id_map_(new CertIdMap) {
+      cert_id_map_(new CertIdMap),
+      weak_ptr_factory_(this) {
   certificate_manager_model_.reset(new CertificateManagerModel(this));
 }
 
@@ -331,8 +311,8 @@ void CertificateManagerHandler::GetLocalizedValues(
       l10n_util::GetStringUTF16(IDS_CERT_MANAGER_SERVER_CERTS_TAB_LABEL));
   localized_strings->SetString("caCertsTabTitle",
       l10n_util::GetStringUTF16(IDS_CERT_MANAGER_CERT_AUTHORITIES_TAB_LABEL));
-  localized_strings->SetString("unknownCertsTabTitle",
-      l10n_util::GetStringUTF16(IDS_CERT_MANAGER_UNKNOWN_TAB_LABEL));
+  localized_strings->SetString("otherCertsTabTitle",
+      l10n_util::GetStringUTF16(IDS_CERT_MANAGER_OTHER_TAB_LABEL));
 
   // Tab descriptions.
   localized_strings->SetString("personalCertsTabDescription",
@@ -341,8 +321,8 @@ void CertificateManagerHandler::GetLocalizedValues(
       l10n_util::GetStringUTF16(IDS_CERT_MANAGER_SERVER_TREE_DESCRIPTION));
   localized_strings->SetString("caCertsTabDescription",
       l10n_util::GetStringUTF16(IDS_CERT_MANAGER_AUTHORITIES_TREE_DESCRIPTION));
-  localized_strings->SetString("unknownCertsTabDescription",
-      l10n_util::GetStringUTF16(IDS_CERT_MANAGER_UNKNOWN_TREE_DESCRIPTION));
+  localized_strings->SetString("otherCertsTabDescription",
+      l10n_util::GetStringUTF16(IDS_CERT_MANAGER_OTHER_TREE_DESCRIPTION));
 
   // Buttons.
   localized_strings->SetString("view_certificate",
@@ -369,9 +349,9 @@ void CertificateManagerHandler::GetLocalizedValues(
       l10n_util::GetStringUTF16(IDS_CERT_MANAGER_DELETE_CA_FORMAT));
   localized_strings->SetString("caCertsTabDeleteImpact",
       l10n_util::GetStringUTF16(IDS_CERT_MANAGER_DELETE_CA_DESCRIPTION));
-  localized_strings->SetString("unknownCertsTabDeleteConfirm",
-      l10n_util::GetStringUTF16(IDS_CERT_MANAGER_DELETE_UNKNOWN_FORMAT));
-  localized_strings->SetString("unknownCertsTabDeleteImpact", std::string());
+  localized_strings->SetString("otherCertsTabDeleteConfirm",
+      l10n_util::GetStringUTF16(IDS_CERT_MANAGER_DELETE_OTHER_FORMAT));
+  localized_strings->SetString("otherCertsTabDeleteImpact", std::string());
 
   // Certificate Restore overlay strings.
   localized_strings->SetString("certificateRestorePasswordDescription",
@@ -507,13 +487,16 @@ void CertificateManagerHandler::RegisterMessages() {
 }
 
 void CertificateManagerHandler::CertificatesRefreshed() {
+  net::CertificateList web_trusted_certs;
 #if defined(OS_CHROMEOS)
-  RetrievePolicyWebTrustCerts(
-      base::Bind(&CertificateManagerHandler::OnPolicyWebTrustCertsRetrieved,
-                 weak_ptr_factory_.GetWeakPtr()));
-#else
-  OnPolicyWebTrustCertsRetrieved(net::CertificateList());
+  policy::ProfilePolicyConnectorFactory::GetForProfile(
+      Profile::FromWebUI(web_ui()))->GetWebTrustedCertificates(
+          &web_trusted_certs);
 #endif
+  PopulateTree("personalCertsTab", net::USER_CERT, web_trusted_certs);
+  PopulateTree("serverCertsTab", net::SERVER_CERT, web_trusted_certs);
+  PopulateTree("caCertsTab", net::CA_CERT, web_trusted_certs);
+  PopulateTree("otherCertsTab", net::OTHER_CERT, web_trusted_certs);
 }
 
 void CertificateManagerHandler::FileSelected(const base::FilePath& path,
@@ -1074,15 +1057,6 @@ void CertificateManagerHandler::PopulateTree(
     args.Append(nodes);
     web_ui()->CallJavascriptFunction("CertificateManager.onPopulateTree", args);
   }
-}
-
-void CertificateManagerHandler::OnPolicyWebTrustCertsRetrieved(
-    const net::CertificateList& web_trust_certs) {
-  PopulateTree("personalCertsTab", net::USER_CERT, web_trust_certs);
-  PopulateTree("serverCertsTab", net::SERVER_CERT, web_trust_certs);
-  PopulateTree("caCertsTab", net::CA_CERT, web_trust_certs);
-  PopulateTree("otherCertsTab", net::UNKNOWN_CERT, web_trust_certs);
-  VLOG(1) << "populating finished";
 }
 
 void CertificateManagerHandler::ShowError(const std::string& title,

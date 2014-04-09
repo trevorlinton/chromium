@@ -39,24 +39,24 @@ struct HomogeneousCoordinate {
   bool ShouldBeClipped() const { return w() <= 0.0; }
 
   gfx::PointF CartesianPoint2d() const {
-    if (w() == 1.0)
+    if (w() == SK_MScalar1)
       return gfx::PointF(x(), y());
 
     // For now, because this code is used privately only by MathUtil, it should
     // never be called when w == 0, and we do not yet need to handle that case.
     DCHECK(w());
-    double inv_w = 1.0 / w();
+    SkMScalar inv_w = SK_MScalar1 / w();
     return gfx::PointF(x() * inv_w, y() * inv_w);
   }
 
   gfx::Point3F CartesianPoint3d() const {
-    if (w() == 1)
+    if (w() == SK_MScalar1)
       return gfx::Point3F(x(), y(), z());
 
     // For now, because this code is used privately only by MathUtil, it should
     // never be called when w == 0, and we do not yet need to handle that case.
     DCHECK(w());
-    double inv_w = 1.0 / w();
+    SkMScalar inv_w = SK_MScalar1 / w();
     return gfx::Point3F(x() * inv_w, y() * inv_w, z() * inv_w);
   }
 
@@ -143,6 +143,15 @@ class CC_EXPORT MathUtil {
 
   static gfx::Vector2dF ComputeTransform2dScaleComponents(const gfx::Transform&,
                                                           float fallbackValue);
+
+  // Makes a rect that has the same relationship to input_outer_rect as
+  // scale_inner_rect has to scale_outer_rect. scale_inner_rect should be
+  // contained within scale_outer_rect, and likewise the rectangle that is
+  // returned will be within input_outer_rect at a similar relative, scaled
+  // position.
+  static gfx::RectF ScaleRectProportional(const gfx::RectF& input_outer_rect,
+                                          const gfx::RectF& scale_outer_rect,
+                                          const gfx::RectF& scale_inner_rect);
 
   // Returns the smallest angle between the given two vectors in degrees.
   // Neither vector is assumed to be normalized.

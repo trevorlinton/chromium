@@ -4,13 +4,15 @@
 
 #include "ash/launcher/launcher.h"
 #include "ash/launcher/launcher_button.h"
+#include "ash/launcher/launcher_item_delegate_manager.h"
 #include "ash/launcher/launcher_model.h"
-#include "ash/launcher/launcher_view.h"
-
+#include "ash/shelf/shelf_view.h"
 #include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/test/launcher_view_test_api.h"
+#include "ash/test/launcher_test_api.h"
+#include "ash/test/shelf_view_test_api.h"
+#include "ash/test/test_launcher_item_delegate.h"
 #include "ash/wm/window_util.h"
 #include "ui/aura/root_window.h"
 #include "ui/gfx/display.h"
@@ -24,96 +26,142 @@
 #endif
 
 typedef ash::test::AshTestBase LauncherTest;
-using ash::internal::LauncherView;
+using ash::internal::ShelfView;
 using ash::internal::LauncherButton;
 
 namespace ash {
 
-// Confirm that launching a browser gets the appropriate state reflected in
-// its button.
-TEST_F(LauncherTest, OpenBrowser) {
-  Launcher* launcher = Launcher::ForPrimaryDisplay();
-  ASSERT_TRUE(launcher);
-  LauncherView* launcher_view = launcher->GetLauncherViewForTest();
-  test::LauncherViewTestAPI test(launcher_view);
-  LauncherModel* model = launcher_view->model();
+class LauncherTest : public ash::test::AshTestBase {
+ public:
+  LauncherTest() : launcher_(NULL),
+                   shelf_view_(NULL),
+                   launcher_model_(NULL),
+                   item_delegate_manager_(NULL) {
+  }
 
-  // Initially we have the app list and chrome icon.
-  int button_count = test.GetButtonCount();
+  virtual ~LauncherTest() {}
 
-  // Add running tab.
+  virtual void SetUp() {
+    test::AshTestBase::SetUp();
+
+    launcher_ = Launcher::ForPrimaryDisplay();
+    ASSERT_TRUE(launcher_);
+
+    ash::test::LauncherTestAPI test(launcher_);
+    shelf_view_ = test.shelf_view();
+    launcher_model_ = shelf_view_->model();
+    item_delegate_manager_ =
+        Shell::GetInstance()->launcher_item_delegate_manager();
+
+    test_.reset(new ash::test::ShelfViewTestAPI(shelf_view_));
+  }
+
+  virtual void TearDown() OVERRIDE {
+    test::AshTestBase::TearDown();
+  }
+
+  Launcher* launcher() {
+    return launcher_;
+  }
+
+  ShelfView* shelf_view() {
+    return shelf_view_;
+  }
+
+  LauncherModel* launcher_model() {
+    return launcher_model_;
+  }
+
+  LauncherItemDelegateManager* item_manager() {
+    return item_delegate_manager_;
+  }
+
+  ash::test::ShelfViewTestAPI* test_api() {
+    return test_.get();
+  }
+
+ private:
+  Launcher* launcher_;
+  ShelfView* shelf_view_;
+  LauncherModel* launcher_model_;
+  LauncherItemDelegateManager* item_delegate_manager_;
+  scoped_ptr<ash::test::ShelfViewTestAPI> test_;
+
+  DISALLOW_COPY_AND_ASSIGN(LauncherTest);
+};
+
+// Confirms that LauncherItem reflects the appropriated state.
+TEST_F(LauncherTest, StatusReflection) {
+  // Initially we have the app list.
+  int button_count = test_api()->GetButtonCount();
+
+  // Add running platform app.
   LauncherItem item;
-  item.type = TYPE_TABBED;
+  item.type = TYPE_PLATFORM_APP;
   item.status = STATUS_RUNNING;
-  int index = model->Add(item);
-  ASSERT_EQ(++button_count, test.GetButtonCount());
-  LauncherButton* button = test.GetButton(index);
+  int index = launcher_model()->Add(item);
+  ASSERT_EQ(++button_count, test_api()->GetButtonCount());
+  LauncherButton* button = test_api()->GetButton(index);
   EXPECT_EQ(LauncherButton::STATE_RUNNING, button->state());
 
   // Remove it.
-  model->RemoveItemAt(index);
-  ASSERT_EQ(--button_count, test.GetButtonCount());
+  launcher_model()->RemoveItemAt(index);
+  ASSERT_EQ(--button_count, test_api()->GetButtonCount());
 }
 
 // Confirm that using the menu will clear the hover attribute. To avoid another
 // browser test we check this here.
 TEST_F(LauncherTest, checkHoverAfterMenu) {
-  Launcher* launcher = Launcher::ForPrimaryDisplay();
-  ASSERT_TRUE(launcher);
-  LauncherView* launcher_view = launcher->GetLauncherViewForTest();
-  test::LauncherViewTestAPI test(launcher_view);
-  LauncherModel* model = launcher_view->model();
+  // Initially we have the app list.
+  int button_count = test_api()->GetButtonCount();
 
-  // Initially we have the app list and chrome icon.
-  int button_count = test.GetButtonCount();
-
-  // Add running tab.
+  // Add running platform app.
   LauncherItem item;
-  item.type = TYPE_TABBED;
+  item.type = TYPE_PLATFORM_APP;
   item.status = STATUS_RUNNING;
-  int index = model->Add(item);
-  ASSERT_EQ(++button_count, test.GetButtonCount());
-  LauncherButton* button = test.GetButton(index);
+  int index = launcher_model()->Add(item);
+
+  scoped_ptr<LauncherItemDelegate> delegate(
+      new ash::test::TestLauncherItemDelegate(NULL));
+  item_manager()->SetLauncherItemDelegate(launcher_model()->items()[index].id,
+                                          delegate.Pass());
+
+  ASSERT_EQ(++button_count, test_api()->GetButtonCount());
+  LauncherButton* button = test_api()->GetButton(index);
   button->AddState(LauncherButton::STATE_HOVERED);
   button->ShowContextMenu(gfx::Point(), ui::MENU_SOURCE_MOUSE);
   EXPECT_FALSE(button->state() & LauncherButton::STATE_HOVERED);
 
   // Remove it.
-  model->RemoveItemAt(index);
+  launcher_model()->RemoveItemAt(index);
 }
 
 TEST_F(LauncherTest, ShowOverflowBubble) {
-  Launcher* launcher = Launcher::ForPrimaryDisplay();
-  ASSERT_TRUE(launcher);
+  LauncherID first_item_id = launcher_model()->next_id();
 
-  LauncherView* launcher_view = launcher->GetLauncherViewForTest();
-  test::LauncherViewTestAPI test(launcher_view);
-
-  LauncherModel* model = launcher_view->model();
-  LauncherID first_item_id = model->next_id();
-
-  // Add tabbed browser until overflow.
+  // Add platform app button until overflow.
   int items_added = 0;
-  while (!test.IsOverflowButtonVisible()) {
+  while (!test_api()->IsOverflowButtonVisible()) {
     LauncherItem item;
-    item.type = TYPE_TABBED;
+    item.type = TYPE_PLATFORM_APP;
     item.status = STATUS_RUNNING;
-    model->Add(item);
+    launcher_model()->Add(item);
 
     ++items_added;
     ASSERT_LT(items_added, 10000);
   }
 
   // Shows overflow bubble.
-  test.ShowOverflowBubble();
-  EXPECT_TRUE(launcher->IsShowingOverflowBubble());
+  test_api()->ShowOverflowBubble();
+  EXPECT_TRUE(launcher()->IsShowingOverflowBubble());
 
-  // Removes the first item in main launcher view.
-  model->RemoveItemAt(model->ItemIndexByID(first_item_id));
+  // Removes the first item in main shelf view.
+  launcher_model()->RemoveItemAt(
+      launcher_model()->ItemIndexByID(first_item_id));
 
   // Waits for all transitions to finish and there should be no crash.
-  test.RunMessageLoopUntilAnimationsDone();
-  EXPECT_FALSE(launcher->IsShowingOverflowBubble());
+  test_api()->RunMessageLoopUntilAnimationsDone();
+  EXPECT_FALSE(launcher()->IsShowingOverflowBubble());
 }
 
 }  // namespace ash

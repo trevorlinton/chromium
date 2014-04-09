@@ -78,6 +78,10 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, DISABLED_TabDuplicate) {
   ASSERT_TRUE(RunExtensionSubtest("tabs/basics", "duplicate.html")) << message_;
 }
 
+IN_PROC_BROWSER_TEST_F(ExtensionApiTest, TabSize) {
+  ASSERT_TRUE(RunExtensionSubtest("tabs/basics", "tab_size.html")) << message_;
+}
+
 IN_PROC_BROWSER_TEST_F(ExtensionApiTest, TabUpdate) {
   ASSERT_TRUE(RunExtensionSubtest("tabs/basics", "update.html")) << message_;
 }
@@ -152,7 +156,17 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, DISABLED_TabReload) {
   ASSERT_TRUE(RunExtensionTest("tabs/reload")) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionApiTest, DISABLED_CaptureVisibleTabJpeg) {
+class ExtensionApiCaptureTest : public ExtensionApiTest {
+ public:
+  ExtensionApiCaptureTest() {}
+  virtual void SetUpCommandLine(CommandLine* command_line) OVERRIDE {
+    UseRealGLContexts();
+    ExtensionApiTest::SetUpCommandLine(command_line);
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(ExtensionApiCaptureTest,
+                       DISABLED_CaptureVisibleTabJpeg) {
   host_resolver()->AddRule("a.com", "127.0.0.1");
   host_resolver()->AddRule("b.com", "127.0.0.1");
   ASSERT_TRUE(StartEmbeddedTestServer());
@@ -160,7 +174,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, DISABLED_CaptureVisibleTabJpeg) {
                                   "test_jpeg.html")) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionApiTest, DISABLED_CaptureVisibleTabPng) {
+IN_PROC_BROWSER_TEST_F(ExtensionApiCaptureTest, DISABLED_CaptureVisibleTabPng) {
   host_resolver()->AddRule("a.com", "127.0.0.1");
   host_resolver()->AddRule("b.com", "127.0.0.1");
   ASSERT_TRUE(StartEmbeddedTestServer());
@@ -170,12 +184,13 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, DISABLED_CaptureVisibleTabPng) {
 
 // Times out on non-Windows.
 // See http://crbug.com/80212
-IN_PROC_BROWSER_TEST_F(ExtensionApiTest, DISABLED_CaptureVisibleTabRace) {
+IN_PROC_BROWSER_TEST_F(ExtensionApiCaptureTest,
+                       DISABLED_CaptureVisibleTabRace) {
   ASSERT_TRUE(RunExtensionSubtest("tabs/capture_visible_tab",
                                   "test_race.html")) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionApiTest, CaptureVisibleFile) {
+IN_PROC_BROWSER_TEST_F(ExtensionApiCaptureTest, CaptureVisibleFile) {
   ASSERT_TRUE(RunExtensionSubtest("tabs/capture_visible_tab",
                                   "test_file.html")) << message_;
 }
@@ -186,13 +201,13 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, CaptureVisibleFile) {
 #else
 #define MAYBE_CaptureVisibleNoFile CaptureVisibleNoFile
 #endif
-IN_PROC_BROWSER_TEST_F(ExtensionApiTest, MAYBE_CaptureVisibleNoFile) {
+IN_PROC_BROWSER_TEST_F(ExtensionApiCaptureTest, MAYBE_CaptureVisibleNoFile) {
   ASSERT_TRUE(RunExtensionSubtest(
       "tabs/capture_visible_tab", "test_nofile.html",
       ExtensionApiTest::kFlagNone)) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionApiTest, CaptureVisibleDisabled) {
+IN_PROC_BROWSER_TEST_F(ExtensionApiCaptureTest, CaptureVisibleDisabled) {
   browser()->profile()->GetPrefs()->SetBoolean(prefs::kDisableScreenshots,
                                                true);
   ASSERT_TRUE(RunExtensionSubtest("tabs/capture_visible_tab",

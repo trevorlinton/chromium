@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 #include "content/renderer/media/rtc_media_constraints.h"
 
+#include <string>
+
 #include "base/logging.h"
 #include "base/strings/string_util.h"
 #include "content/common/media/media_stream_options.h"
@@ -28,11 +30,12 @@ void GetNativeMediaConstraints(
       continue;
 
     // Ignore internal constraints set by JS.
-    // TODO(jiayl): replace the hard coded string with
-    // webrtc::MediaConstraintsInterface::kInternalConstraintPrefix when
-    // the Libjingle change is rolled.
-    if (StartsWithASCII(new_constraint.key, "internal", true))
+    if (StartsWithASCII(
+        new_constraint.key,
+        webrtc::MediaConstraintsInterface::kInternalConstraintPrefix,
+        true)) {
       continue;
+    }
 
     DVLOG(3) << "MediaStreamConstraints:" << new_constraint.key
              << " : " <<  new_constraint.value;
@@ -41,6 +44,8 @@ void GetNativeMediaConstraints(
 }
 
 }  // namespace
+
+RTCMediaConstraints::RTCMediaConstraints() {}
 
 RTCMediaConstraints::RTCMediaConstraints(
       const WebKit::WebMediaConstraints& constraints) {
@@ -69,6 +74,23 @@ RTCMediaConstraints::GetOptional() const {
 void RTCMediaConstraints::AddOptional(const std::string& key,
                                       const std::string& value) {
   optional_.push_back(Constraint(key, value));
+}
+
+bool RTCMediaConstraints::AddMandatory(const std::string& key,
+                                       const std::string& value,
+                                       bool override_if_exists) {
+  for (Constraints::iterator iter = mandatory_.begin();
+       iter != mandatory_.end();
+       ++iter) {
+    if (iter->key == key) {
+      if (override_if_exists)
+        iter->value = value;
+      return override_if_exists;
+    }
+  }
+  // The key wasn't found, add it.
+  mandatory_.push_back(Constraint(key, value));
+  return true;
 }
 
 }  // namespace content

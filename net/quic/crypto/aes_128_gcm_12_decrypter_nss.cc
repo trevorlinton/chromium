@@ -104,7 +104,6 @@ CK_MECHANISM_TYPE GcmSupportChecker::aes_key_mechanism_ = CKM_AES_GCM;
 base::LazyInstance<GcmSupportChecker>::Leaky g_gcm_support_checker =
     LAZY_INSTANCE_INITIALIZER;
 
-const size_t kKeySize = 16;
 const size_t kNoncePrefixSize = 4;
 const size_t kAESNonceSize = 12;
 
@@ -334,13 +333,10 @@ bool Aes128Gcm12Decrypter::Decrypt(StringPiece nonce,
   param.len = sizeof(gcm_params);
 
   unsigned int output_len;
-  // If an incorrect authentication tag causes a decryption failure, the NSS
-  // error is SEC_ERROR_BAD_DATA (-8190).
   if (My_Decrypt(aes_key.get(), CKM_AES_GCM, &param,
                  output, &output_len, ciphertext.length(),
                  reinterpret_cast<const unsigned char*>(ciphertext.data()),
                  ciphertext.length()) != SECSuccess) {
-    DLOG(INFO) << "My_Decrypt failed: NSS error " << PORT_GetError();
     return false;
   }
 

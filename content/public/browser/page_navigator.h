@@ -42,6 +42,9 @@ struct CONTENT_EXPORT OpenURLParams {
   GURL url;
   Referrer referrer;
 
+  // Any redirect URLs that occurred for this navigation before |url|.
+  std::vector<GURL> redirect_chain;
+
   // Indicates whether this navigation will be sent using POST.
   // The POST method is limited support for basic POST data by leveraging
   // NavigationController::LOAD_TYPE_BROWSER_INITIATED_HTTP_POST.
@@ -67,9 +70,6 @@ struct CONTENT_EXPORT OpenURLParams {
 
   // Whether this navigation is initiated by the renderer process.
   bool is_renderer_initiated;
-
-  // The override encoding of the URL contents to be opened.
-  std::string override_encoding;
 
   // Reference to the old request id in case this is a navigation that is being
   // transferred to a new renderer.

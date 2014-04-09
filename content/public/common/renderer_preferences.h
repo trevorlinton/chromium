@@ -140,10 +140,21 @@ struct CONTENT_EXPORT RendererPreferences {
   // How to handle a tap gesture touching multiple targets
   TapMultipleTargetsStrategy tap_multiple_targets_strategy;
 
+  // Disables rendering default error page when client choses to block a page.
+  // Corresponds to net::ERR_BLOCKED_BY_CLIENT.
+  bool disable_client_blocked_error_page;
+
+  // Determines whether plugins are allowed to enter fullscreen mode.
+  bool plugin_fullscreen_allowed;
+
   // node-webkit: remote page rules in package.json
   std::string nw_remote_page_rules;
 
   base::FilePath nw_app_root_path;
+
+  std::string nw_inject_css_fn;
+  std::string nw_inject_js_doc_start;
+  std::string nw_inject_js_doc_end;
 };
 
 }  // namespace content

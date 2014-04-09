@@ -9,11 +9,17 @@
 
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/policy/cloud/user_policy_signin_service_base.h"
 
+class ProfileOAuth2TokenService;
 class Profile;
+
+namespace net {
+class URLRequestContextGetter;
+}
 
 namespace policy {
 
@@ -23,7 +29,12 @@ class CloudPolicyClientRegistrationHelper;
 class UserPolicySigninService : public UserPolicySigninServiceBase {
  public:
   // Creates a UserPolicySigninService associated with the passed |profile|.
-  explicit UserPolicySigninService(Profile* profile);
+  UserPolicySigninService(
+      Profile* profile,
+      PrefService* local_state,
+      scoped_refptr<net::URLRequestContextGetter> request_context,
+      DeviceManagementService* device_management_service,
+      ProfileOAuth2TokenService* token_service);
   virtual ~UserPolicySigninService();
 
   // Registers a CloudPolicyClient for fetching policy for |username|.
@@ -54,6 +65,10 @@ class UserPolicySigninService : public UserPolicySigninServiceBase {
 
   scoped_ptr<CloudPolicyClientRegistrationHelper> registration_helper_;
   base::WeakPtrFactory<UserPolicySigninService> weak_factory_;
+
+  // Weak pointer to the token service used to authenticate the
+  // CloudPolicyClient during registration.
+  ProfileOAuth2TokenService* oauth2_token_service_;
 
   DISALLOW_COPY_AND_ASSIGN(UserPolicySigninService);
 };

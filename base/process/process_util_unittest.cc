@@ -54,12 +54,6 @@ using base::FilePath;
 
 namespace {
 
-#if defined(OS_WIN)
-const wchar_t kProcessName[] = L"base_unittests.exe";
-#else
-const wchar_t kProcessName[] = L"base_unittests";
-#endif  // defined(OS_WIN)
-
 #if defined(OS_ANDROID)
 const char kShellPath[] = "/system/bin/sh";
 const char kPosixShell[] = "sh";
@@ -69,7 +63,6 @@ const char kPosixShell[] = "bash";
 #endif
 
 const char kSignalFileSlow[] = "SlowChildProcess.die";
-const char kSignalFileCrash[] = "CrashingChildProcess.die";
 const char kSignalFileKill[] = "KilledChildProcess.die";
 
 #if defined(OS_WIN)
@@ -221,6 +214,7 @@ TEST_F(ProcessUtilTest, GetProcId) {
 // TODO(gspencer): turn this test process into a very small program
 // with no symbols (instead of using the multiprocess testing
 // framework) to reduce the ReportCrash overhead.
+const char kSignalFileCrash[] = "CrashingChildProcess.die";
 
 MULTIPROCESS_TEST_MAIN(CrashingChildProcess) {
   WaitToDie(ProcessUtilTest::GetSignalFilePath(kSignalFileCrash).c_str());
@@ -595,7 +589,7 @@ TEST_F(ProcessUtilTest, MAYBE_FDRemapping) {
 
 namespace {
 
-std::string TestLaunchProcess(const base::EnvironmentVector& env_changes,
+std::string TestLaunchProcess(const base::EnvironmentMap& env_changes,
                               const int clone_flags) {
   std::vector<std::string> args;
   base::FileHandleMappingVector fds_to_remap;
@@ -610,7 +604,7 @@ std::string TestLaunchProcess(const base::EnvironmentVector& env_changes,
   fds_to_remap.push_back(std::make_pair(fds[1], 1));
   base::LaunchOptions options;
   options.wait = true;
-  options.environ = &env_changes;
+  options.environ = env_changes;
   options.fds_to_remap = &fds_to_remap;
 #if defined(OS_LINUX)
   options.clone_flags = clone_flags;
@@ -641,31 +635,30 @@ const char kLargeString[] =
 }  // namespace
 
 TEST_F(ProcessUtilTest, LaunchProcess) {
-  base::EnvironmentVector env_changes;
+  base::EnvironmentMap env_changes;
   const int no_clone_flags = 0;
 
-  env_changes.push_back(std::make_pair(std::string("BASE_TEST"),
-                                       std::string("bar")));
+  const char kBaseTest[] = "BASE_TEST";
+
+  env_changes[kBaseTest] = "bar";
   EXPECT_EQ("bar\n", TestLaunchProcess(env_changes, no_clone_flags));
   env_changes.clear();
 
-  EXPECT_EQ(0, setenv("BASE_TEST", "testing", 1 /* override */));
+  EXPECT_EQ(0, setenv(kBaseTest, "testing", 1 /* override */));
   EXPECT_EQ("testing\n", TestLaunchProcess(env_changes, no_clone_flags));
 
-  env_changes.push_back(
-      std::make_pair(std::string("BASE_TEST"), std::string()));
+  env_changes[kBaseTest] = std::string();
   EXPECT_EQ("\n", TestLaunchProcess(env_changes, no_clone_flags));
 
-  env_changes[0].second = "foo";
+  env_changes[kBaseTest] = "foo";
   EXPECT_EQ("foo\n", TestLaunchProcess(env_changes, no_clone_flags));
 
   env_changes.clear();
-  EXPECT_EQ(0, setenv("BASE_TEST", kLargeString, 1 /* override */));
+  EXPECT_EQ(0, setenv(kBaseTest, kLargeString, 1 /* override */));
   EXPECT_EQ(std::string(kLargeString) + "\n",
             TestLaunchProcess(env_changes, no_clone_flags));
 
-  env_changes.push_back(std::make_pair(std::string("BASE_TEST"),
-                                       std::string("wibble")));
+  env_changes[kBaseTest] = "wibble";
   EXPECT_EQ("wibble\n", TestLaunchProcess(env_changes, no_clone_flags));
 
 #if defined(OS_LINUX)
@@ -675,48 +668,6 @@ TEST_F(ProcessUtilTest, LaunchProcess) {
     EXPECT_EQ("wibble\n", TestLaunchProcess(env_changes, CLONE_FS | SIGCHLD));
   }
 #endif
-}
-
-TEST_F(ProcessUtilTest, AlterEnvironment) {
-  const char* const empty[] = { NULL };
-  const char* const a2[] = { "A=2", NULL };
-  base::EnvironmentVector changes;
-  char** e;
-
-  e = base::AlterEnvironment(changes, empty);
-  EXPECT_TRUE(e[0] == NULL);
-  delete[] e;
-
-  changes.push_back(std::make_pair(std::string("A"), std::string("1")));
-  e = base::AlterEnvironment(changes, empty);
-  EXPECT_EQ(std::string("A=1"), e[0]);
-  EXPECT_TRUE(e[1] == NULL);
-  delete[] e;
-
-  changes.clear();
-  changes.push_back(std::make_pair(std::string("A"), std::string()));
-  e = base::AlterEnvironment(changes, empty);
-  EXPECT_TRUE(e[0] == NULL);
-  delete[] e;
-
-  changes.clear();
-  e = base::AlterEnvironment(changes, a2);
-  EXPECT_EQ(std::string("A=2"), e[0]);
-  EXPECT_TRUE(e[1] == NULL);
-  delete[] e;
-
-  changes.clear();
-  changes.push_back(std::make_pair(std::string("A"), std::string("1")));
-  e = base::AlterEnvironment(changes, a2);
-  EXPECT_EQ(std::string("A=1"), e[0]);
-  EXPECT_TRUE(e[1] == NULL);
-  delete[] e;
-
-  changes.clear();
-  changes.push_back(std::make_pair(std::string("A"), std::string()));
-  e = base::AlterEnvironment(changes, a2);
-  EXPECT_TRUE(e[0] == NULL);
-  delete[] e;
 }
 
 TEST_F(ProcessUtilTest, GetAppOutput) {
@@ -818,7 +769,16 @@ TEST_F(ProcessUtilTest, GetAppOutputRestrictedSIGPIPE) {
 }
 #endif
 
-TEST_F(ProcessUtilTest, GetAppOutputRestrictedNoZombies) {
+#if defined(ADDRESS_SANITIZER) && defined(OS_MACOSX) && \
+    defined(ARCH_CPU_64_BITS)
+// Times out under AddressSanitizer on 64-bit OS X, see
+// http://crbug.com/298197.
+#define MAYBE_GetAppOutputRestrictedNoZombies \
+    DISABLED_GetAppOutputRestrictedNoZombies
+#else
+#define MAYBE_GetAppOutputRestrictedNoZombies GetAppOutputRestrictedNoZombies
+#endif
+TEST_F(ProcessUtilTest, MAYBE_GetAppOutputRestrictedNoZombies) {
   std::vector<std::string> argv;
 
   argv.push_back(std::string(kShellPath));  // argv[0]

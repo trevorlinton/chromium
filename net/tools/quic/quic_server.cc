@@ -28,7 +28,6 @@
 #endif
 
 const int kEpollFlags = EPOLLIN | EPOLLOUT | EPOLLET;
-const int kNumPacketsPerReadCall = 5;  // Arbitrary
 static const char kSourceAddressTokenSecret[] = "secret";
 
 namespace net {
@@ -36,22 +35,28 @@ namespace tools {
 
 QuicServer::QuicServer()
     : port_(0),
+      fd_(-1),
       packets_dropped_(0),
       overflow_supported_(false),
       use_recvmmsg_(false),
-      crypto_config_(kSourceAddressTokenSecret, QuicRandom::GetInstance()) {
+      crypto_config_(kSourceAddressTokenSecret, QuicRandom::GetInstance()),
+      supported_versions_(QuicSupportedVersions()) {
   // Use hardcoded crypto parameters for now.
   config_.SetDefaults();
+  config_.set_initial_round_trip_time_us(kMaxInitialRoundTripTimeUs, 0);
   Initialize();
 }
 
-QuicServer::QuicServer(const QuicConfig& config)
+QuicServer::QuicServer(const QuicConfig& config,
+                       const QuicVersionVector& supported_versions)
     : port_(0),
+      fd_(-1),
       packets_dropped_(0),
       overflow_supported_(false),
       use_recvmmsg_(false),
       config_(config),
-      crypto_config_(kSourceAddressTokenSecret, QuicRandom::GetInstance()) {
+      crypto_config_(kSourceAddressTokenSecret, QuicRandom::GetInstance()),
+      supported_versions_(supported_versions) {
   Initialize();
 }
 
@@ -140,8 +145,9 @@ bool QuicServer::Listen(const IPEndPoint& address) {
   }
 
   epoll_server_.RegisterFD(fd_, this, kEpollFlags);
-  dispatcher_.reset(new QuicDispatcher(config_, crypto_config_, fd_,
-                                       &epoll_server_));
+  dispatcher_.reset(new QuicDispatcher(config_, crypto_config_,
+                                       supported_versions_,
+                                       fd_, &epoll_server_));
 
   return true;
 }
@@ -154,6 +160,9 @@ void QuicServer::Shutdown() {
   // Before we shut down the epoll server, give all active sessions a chance to
   // notify clients that they're closing.
   dispatcher_->Shutdown();
+
+  close(fd_);
+  fd_ = -1;
 }
 
 void QuicServer::OnEvent(int fd, EpollEvent* event) {

@@ -16,6 +16,9 @@ namespace {
 TracingManager* g_tracing_manager = NULL;
 // Trace IDs start at 1 and increase.
 int g_next_trace_id = 1;
+// Name of the file to store the tracing data as.
+const base::FilePath::CharType kTracingFilename[] =
+    FILE_PATH_LITERAL("tracing.json");
 }
 
 TracingManager::TracingManager()
@@ -93,8 +96,11 @@ void TracingManager::OnEndTracingComplete() {
   if (!current_trace_id_)
     return;
 
+  data_ = std::string("[") + data_ + "]";
+
   std::string output_val;
-  FeedbackUtil::ZipString(data_, &output_val);
+  feedback_util::ZipString(
+      base::FilePath(kTracingFilename), data_, &output_val);
 
   scoped_refptr<base::RefCountedString> output(
       base::RefCountedString::TakeString(&output_val));
@@ -119,8 +125,11 @@ void TracingManager::OnEndTracingComplete() {
 
 void TracingManager::OnTraceDataCollected(
     const scoped_refptr<base::RefCountedString>& trace_fragment) {
-  if (current_trace_id_)
+  if (current_trace_id_) {
+    if (!data_.empty())
+      data_ += ",";
     data_ += trace_fragment->data();
+  }
 }
 
 // static

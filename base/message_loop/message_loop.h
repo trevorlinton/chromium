@@ -36,11 +36,15 @@
 #if !defined(OS_MACOSX) && !defined(OS_ANDROID)
 
 #if defined(USE_AURA) && defined(USE_X11) && !defined(OS_NACL)
-#include "base/message_loop/message_pump_aurax11.h"
+#include "base/message_loop/message_pump_x11.h"
 #elif defined(USE_OZONE) && !defined(OS_NACL)
 #include "base/message_loop/message_pump_ozone.h"
 #else
+#define USE_GTK_MESSAGE_PUMP
 #include "base/message_loop/message_pump_gtk.h"
+#if defined(TOOLKIT_GTK)
+#include "base/message_loop/message_pump_x11.h"
+#endif
 #endif
 
 #endif
@@ -53,6 +57,8 @@
 namespace base {
 
 class HistogramBase;
+class MessagePumpDispatcher;
+class MessagePumpObserver;
 class RunLoop;
 class ThreadTaskRunnerHandle;
 #if defined(OS_ANDROID)
@@ -94,7 +100,9 @@ class WaitableEvent;
 class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
  public:
 
-#if !defined(OS_MACOSX) && !defined(OS_ANDROID)
+#if defined(USE_GTK_MESSAGE_PUMP)
+  typedef MessagePumpGdkObserver Observer;
+#elif !defined(OS_MACOSX) && !defined(OS_ANDROID)
   typedef MessagePumpDispatcher Dispatcher;
   typedef MessagePumpObserver Observer;
 #endif
@@ -108,6 +116,11 @@ class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
   // TYPE_UI
   //   This type of ML also supports native UI events (e.g., Windows messages).
   //   See also MessageLoopForUI.
+  //
+  // TYPE_GPU
+  //   This type of ML also supports native UI events for use in the GPU
+  //   process. On Linux this will always be an X11 ML (as compared with the
+  //   sometimes-GTK ML in the browser process).
   //
   // TYPE_IO
   //   This type of ML also supports asynchronous IO.  See also
@@ -125,6 +138,9 @@ class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
   enum Type {
     TYPE_DEFAULT,
     TYPE_UI,
+#if defined(TOOLKIT_GTK)
+    TYPE_GPU,
+#endif
     TYPE_IO,
 #if defined(OS_ANDROID)
     TYPE_JAVA,
@@ -419,6 +435,13 @@ class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
   MessagePumpLibevent* pump_libevent() {
     return static_cast<MessagePumpLibevent*>(pump_.get());
   }
+#if defined(TOOLKIT_GTK)
+  friend class MessagePumpX11;
+  MessagePumpX11* pump_gpu() {
+    DCHECK_EQ(TYPE_GPU, type());
+    return static_cast<MessagePumpX11*>(pump_.get());
+  }
+#endif
 #endif
 
   scoped_ptr<MessagePump> pump_;
@@ -486,6 +509,8 @@ class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
   virtual bool DoWork() OVERRIDE;
   virtual bool DoDelayedWork(TimeTicks* next_delayed_work_time) OVERRIDE;
   virtual bool DoIdleWork() OVERRIDE;
+  virtual void GetQueueingInformation(size_t* queue_size,
+                                      TimeDelta* queueing_delay) OVERRIDE;
 
   Type type_;
 
@@ -569,10 +594,6 @@ class BASE_EXPORT MessageLoopForUI : public MessageLoop {
     return static_cast<MessageLoopForUI*>(loop);
   }
 
-#if defined(OS_WIN)
-  void DidProcessMessage(const MSG& message);
-#endif  // defined(OS_WIN)
-
 #if defined(OS_IOS)
   // On iOS, the main message loop cannot be Run().  Instead call Attach(),
   // which connects this MessageLoop to the UI thread's CFRunLoop and allows
@@ -600,8 +621,8 @@ class BASE_EXPORT MessageLoopForUI : public MessageLoop {
 #endif
 
  protected:
-#if defined(USE_AURA) && defined(USE_X11) && !defined(OS_NACL)
-  friend class MessagePumpAuraX11;
+#if defined(USE_X11)
+  friend class MessagePumpX11;
 #endif
 #if defined(USE_OZONE) && !defined(OS_NACL)
   friend class MessagePumpOzone;

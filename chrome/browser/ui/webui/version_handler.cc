@@ -85,7 +85,6 @@ void VersionHandler::HandleRequestVersionInfo(const ListValue* args) {
                      base::Owned(profile_path_buffer)));
 
   // Respond with the variations info immediately.
-  scoped_ptr<ListValue> variations_list(new ListValue());
   std::vector<std::string> variations;
 #if !defined(NDEBUG)
   base::FieldTrial::ActiveGroups active_groups;
@@ -102,20 +101,17 @@ void VersionHandler::HandleRequestVersionInfo(const ListValue* args) {
   }
 #else
   // In release mode, display the hashes only.
-  std::vector<string16> active_groups;
-  chrome_variations::GetFieldTrialActiveGroupIdsAsStrings(&active_groups);
-  for (size_t i = 0; i < active_groups.size(); ++i)
-    variations.push_back(UTF16ToASCII(active_groups[i]));
+  chrome_variations::GetFieldTrialActiveGroupIdsAsStrings(&variations);
 #endif
 
+  ListValue variations_list;
   for (std::vector<std::string>::const_iterator it = variations.begin();
       it != variations.end(); ++it) {
-    variations_list->Append(Value::CreateStringValue(*it));
+    variations_list.Append(Value::CreateStringValue(*it));
   }
 
   // In release mode, this will return an empty list to clear the section.
-  web_ui()->CallJavascriptFunction("returnVariationInfo",
-                                   *variations_list.release());
+  web_ui()->CallJavascriptFunction("returnVariationInfo", variations_list);
 }
 
 void VersionHandler::OnGotFilePaths(string16* executable_path_data,

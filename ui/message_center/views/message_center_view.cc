@@ -11,15 +11,16 @@
 #include "base/message_loop/message_loop.h"
 #include "base/stl_util.h"
 #include "grit/ui_strings.h"
-#include "ui/base/animation/multi_animation.h"
-#include "ui/base/animation/slide_animation.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/gfx/animation/multi_animation.h"
+#include "ui/gfx/animation/slide_animation.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/insets.h"
 #include "ui/gfx/rect.h"
 #include "ui/gfx/size.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/message_center_style.h"
+#include "ui/message_center/message_center_types.h"
 #include "ui/message_center/views/message_center_button_bar.h"
 #include "ui/message_center/views/message_view.h"
 #include "ui/message_center/views/notification_view.h"
@@ -39,17 +40,15 @@ namespace message_center {
 
 namespace {
 
-const SkColor kBorderDarkColor = SkColorSetRGB(0xaa, 0xaa, 0xaa);
-const SkColor kButtonTextHighlightColor = SkColorSetRGB(0x2a, 0x2a, 0x2a);
-const SkColor kButtonTextHoverColor = SkColorSetRGB(0x2a, 0x2a, 0x2a);
 const SkColor kNoNotificationsTextColor = SkColorSetRGB(0xb4, 0xb4, 0xb4);
+#if defined(OS_LINUX) && defined(OS_CHROMEOS)
 const SkColor kTransparentColor = SkColorSetARGB(0, 0, 0, 0);
+#endif
 const int kAnimateClearingNextNotificationDelayMS = 40;
-const int kButtonBarBorderThickness = 1;
 const int kMinScrollViewHeight = 100;
 
-static const int kDefaultAnimationDurationMs = 120;
-static const int kDefaultFrameRateHz = 60;
+const int kDefaultAnimationDurationMs = 120;
+const int kDefaultFrameRateHz = 60;
 
 }  // namespace
 
@@ -254,10 +253,10 @@ MessageListView::MessageListView(MessageCenterView* message_center_view,
   set_background(views::Background::CreateSolidBackground(
       kMessageCenterBackgroundColor));
   set_border(views::Border::CreateEmptyBorder(
-      kMarginBetweenItems - shadow_insets.top(), /* top */
-      kMarginBetweenItems - shadow_insets.left(), /* left */
-      kMarginBetweenItems - shadow_insets.bottom(),  /* bottom */
-      kMarginBetweenItems - shadow_insets.right() /* right */ ));
+      top_down ? 0 : kMarginBetweenItems - shadow_insets.top(),    /* top */
+      kMarginBetweenItems - shadow_insets.left(),                  /* left */
+      top_down ? kMarginBetweenItems - shadow_insets.bottom() : 0, /* bottom */
+      kMarginBetweenItems - shadow_insets.right() /* right */));
 }
 
 MessageListView::~MessageListView() {
@@ -415,7 +414,7 @@ void MessageListView::OnBoundsAnimatorProgressed(
   DCHECK_EQ(animator_.get(), animator);
   for (std::set<views::View*>::iterator iter = deleted_when_done_.begin();
        iter != deleted_when_done_.end(); ++iter) {
-    const ui::SlideAnimation* animation = animator->GetAnimationForView(*iter);
+    const gfx::SlideAnimation* animation = animator->GetAnimationForView(*iter);
     if (animation)
       (*iter)->layer()->SetOpacity(animation->CurrentValueBetween(1.0, 0.0));
   }
@@ -683,28 +682,28 @@ void MessageCenterView::SetSettingsVisible(bool visible) {
   source_height_ = source_view_->GetHeightForWidth(width());
   target_height_ = target_view_->GetHeightForWidth(width());
 
-  ui::MultiAnimation::Parts parts;
+  gfx::MultiAnimation::Parts parts;
   // First part: slide resize animation.
-  parts.push_back(ui::MultiAnimation::Part(
+  parts.push_back(gfx::MultiAnimation::Part(
       (source_height_ == target_height_) ? 0 : kDefaultAnimationDurationMs,
-      ui::Tween::EASE_OUT));
+      gfx::Tween::EASE_OUT));
   // Second part: fade-out the source_view.
   if (source_view_->layer()) {
-    parts.push_back(ui::MultiAnimation::Part(
-        kDefaultAnimationDurationMs, ui::Tween::LINEAR));
+    parts.push_back(gfx::MultiAnimation::Part(
+        kDefaultAnimationDurationMs, gfx::Tween::LINEAR));
   } else {
-    parts.push_back(ui::MultiAnimation::Part());
+    parts.push_back(gfx::MultiAnimation::Part());
   }
   // Third part: fade-in the target_view.
   if (target_view_->layer()) {
-    parts.push_back(ui::MultiAnimation::Part(
-        kDefaultAnimationDurationMs, ui::Tween::LINEAR));
+    parts.push_back(gfx::MultiAnimation::Part(
+        kDefaultAnimationDurationMs, gfx::Tween::LINEAR));
     target_view_->layer()->SetOpacity(0);
     target_view_->SetVisible(true);
   } else {
-    parts.push_back(ui::MultiAnimation::Part());
+    parts.push_back(gfx::MultiAnimation::Part());
   }
-  settings_transition_animation_.reset(new ui::MultiAnimation(
+  settings_transition_animation_.reset(new gfx::MultiAnimation(
       parts, base::TimeDelta::FromMicroseconds(1000000 / kDefaultFrameRateHz)));
   settings_transition_animation_->set_delegate(this);
   settings_transition_animation_->set_continuous(false);
@@ -754,12 +753,13 @@ void MessageCenterView::Layout() {
   int button_height = button_bar_->GetHeightForWidth(width()) +
                       button_bar_->GetInsets().height();
   // Skip unnecessary re-layout of contents during the resize animation.
-  if (settings_transition_animation_ &&
-      settings_transition_animation_->is_animating() &&
-      settings_transition_animation_->current_part_index() == 0) {
-    if (!top_down_)
+  bool animating = settings_transition_animation_ &&
+                   settings_transition_animation_->is_animating();
+  if (animating && settings_transition_animation_->current_part_index() == 0) {
+    if (!top_down_) {
       button_bar_->SetBounds(
           0, height() - button_height, width(), button_height);
+    }
     return;
   }
 
@@ -778,18 +778,16 @@ void MessageCenterView::Layout() {
   else
     is_scrollable = settings_view_->IsScrollable();
 
-  if (is_scrollable && !button_bar_->border()) {
-    // Draw separator line on the top of the button bar if it is on the bottom
-    // or draw it at the bottom if the bar is on the top.
-    button_bar_->set_border(views::Border::CreateSolidSidedBorder(
-        top_down_ ? 0 : 1,
-        0,
-        top_down_ ? 1 : 0,
-        0,
-        kFooterDelimiterColor));
-    button_bar_->SchedulePaint();
-  } else if (!is_scrollable && button_bar_->border()) {
-    button_bar_->set_border(NULL);
+  if (!animating) {
+    if (is_scrollable) {
+      // Draw separator line on the top of the button bar if it is on the bottom
+      // or draw it at the bottom if the bar is on the top.
+      button_bar_->set_border(views::Border::CreateSolidSidedBorder(
+          top_down_ ? 0 : 1, 0, top_down_ ? 1 : 0, 0, kFooterDelimiterColor));
+    } else {
+      button_bar_->set_border(views::Border::CreateEmptyBorder(
+          top_down_ ? 0 : 1, 0, top_down_ ? 1 : 0, 0));
+    }
     button_bar_->SchedulePaint();
   }
   button_bar_->SetBounds(0,
@@ -860,7 +858,7 @@ void MessageCenterView::OnMouseExited(const ui::MouseEvent& event) {
 void MessageCenterView::OnNotificationAdded(const std::string& id) {
   int index = 0;
   const NotificationList::Notifications& notifications =
-      message_center_->GetNotifications();
+      message_center_->GetVisibleNotifications();
   for (NotificationList::Notifications::const_iterator iter =
            notifications.begin(); iter != notifications.end();
        ++iter, ++index) {
@@ -907,7 +905,7 @@ void MessageCenterView::OnNotificationRemoved(const std::string& id,
 
 void MessageCenterView::OnNotificationUpdated(const std::string& id) {
   const NotificationList::Notifications& notifications =
-      message_center_->GetNotifications();
+      message_center_->GetVisibleNotifications();
   size_t index = 0;
   for (NotificationList::Notifications::const_iterator iter =
            notifications.begin();
@@ -931,8 +929,13 @@ void MessageCenterView::OnNotificationUpdated(const std::string& id) {
   }
 }
 
-void MessageCenterView::AnimationEnded(const ui::Animation* animation) {
+void MessageCenterView::AnimationEnded(const gfx::Animation* animation) {
   DCHECK_EQ(animation, settings_transition_animation_.get());
+
+  Visibility visibility = target_view_ == settings_view_
+                              ? VISIBILITY_SETTINGS
+                              : VISIBILITY_MESSAGE_CENTER;
+  message_center_->SetVisibility(visibility);
 
   source_view_->SetVisible(false);
   target_view_->SetVisible(true);
@@ -945,7 +948,7 @@ void MessageCenterView::AnimationEnded(const ui::Animation* animation) {
   Layout();
 }
 
-void MessageCenterView::AnimationProgressed(const ui::Animation* animation) {
+void MessageCenterView::AnimationProgressed(const gfx::Animation* animation) {
   DCHECK_EQ(animation, settings_transition_animation_.get());
   PreferredSizeChanged();
   if (settings_transition_animation_->current_part_index() == 1 &&
@@ -961,7 +964,7 @@ void MessageCenterView::AnimationProgressed(const ui::Animation* animation) {
   }
 }
 
-void MessageCenterView::AnimationCanceled(const ui::Animation* animation) {
+void MessageCenterView::AnimationCanceled(const gfx::Animation* animation) {
   DCHECK_EQ(animation, settings_transition_animation_.get());
   AnimationEnded(animation);
 }

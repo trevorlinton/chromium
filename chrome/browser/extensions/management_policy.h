@@ -68,6 +68,12 @@ class ManagementPolicy {
     virtual bool MustRemainEnabled(const Extension* extension,
                                    string16* error) const;
 
+    // Similar to MustRemainEnabled, but for whether an extension must remain
+    // disabled, and returns an error and/or reason if the caller needs it.
+    virtual bool MustRemainDisabled(const Extension* extension,
+                                    Extension::DisableReason* reason,
+                                    string16* error) const;
+
    private:
     DISALLOW_COPY_AND_ASSIGN(Provider);
   };
@@ -97,17 +103,39 @@ class ManagementPolicy {
   bool MustRemainEnabled(const Extension* extension,
                          string16* error) const;
 
+  // Returns true immediately if any registered provider's MustRemainDisabled
+  // function returns true.
+  bool MustRemainDisabled(const Extension* extension,
+                          Extension::DisableReason* reason,
+                          string16* error) const;
+
   // For use in testing.
   void UnregisterAllProviders();
   int GetNumProviders() const;
 
  private:
+  // This is a pointer to a function in the Provider interface, used in
+  // ApplyToProviderList.
+  typedef bool (Provider::*ProviderFunction)(const Extension*, string16*) const;
+
   typedef std::set<Provider*> ProviderList;
+
+  // This is a helper to apply a method in the Provider interface to each of
+  // the Provider objects in |providers_|. The return value of this function
+  // will be |normal_result|, unless any of the Provider calls to |function|
+  // return !normal_result, in which case this function will then early-return
+  // !normal_result.
+  bool ApplyToProviderList(ProviderFunction function,
+                           const char* debug_operation_name,
+                           bool normal_result,
+                           const Extension* extension,
+                           string16* error) const;
+
   ProviderList providers_;
 
   DISALLOW_COPY_AND_ASSIGN(ManagementPolicy);
 };
 
-}  // namespace
+}  // namespace extensions
 
 #endif  // CHROME_BROWSER_EXTENSIONS_MANAGEMENT_POLICY_H_

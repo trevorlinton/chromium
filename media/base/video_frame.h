@@ -40,7 +40,7 @@ class MEDIA_EXPORT VideoFrame : public base::RefCountedThreadSafe<VideoFrame> {
   // http://www.fourcc.org/rgb.php
   // http://www.fourcc.org/yuv.php
   enum Format {
-    INVALID = 0,  // Invalid format value.  Used for error reporting.
+    UNKNOWN = 0,  // Unknown format value.
     RGB32 = 4,  // 32bpp RGB packed with extra byte 8:8:8
     YV12 = 6,  // 12bpp YVU planar 1x1 Y, 2x2 VU samples
     YV16 = 7,  // 16bpp YVU planar 1x1 Y, 2x1 VU samples
@@ -148,6 +148,7 @@ class MEDIA_EXPORT VideoFrame : public base::RefCountedThreadSafe<VideoFrame> {
       const gfx::Rect& visible_rect,
       const gfx::Size& natural_size,
       uint8* data,
+      size_t data_size,
       base::SharedMemoryHandle handle,
       base::TimeDelta timestamp,
       const base::Closure& no_longer_needed_cb);
@@ -191,6 +192,10 @@ class MEDIA_EXPORT VideoFrame : public base::RefCountedThreadSafe<VideoFrame> {
 #endif
 
   static size_t NumPlanes(Format format);
+
+  // Returns the required allocation size for a (tightly packed) frame of the
+  // given coded size and format.
+  static size_t AllocationSize(Format format, const gfx::Size& coded_size);
 
   Format format() const { return format_; }
 

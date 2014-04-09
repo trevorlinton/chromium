@@ -16,8 +16,9 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/result_codes.h"
 #include "content/public/common/url_constants.h"
+#include "content/public/common/url_utils.h"
 #include "net/base/escape.h"
-#include "ui/base/keycodes/keyboard_codes.h"
+#include "ui/events/keycodes/keyboard_codes.h"
 
 namespace content {
 
@@ -44,6 +45,8 @@ BrowserPluginGuest* BrowserPluginGuestManager::CreateGuest(
     const BrowserPluginHostMsg_Attach_Params& params,
     scoped_ptr<base::DictionaryValue> extra_params) {
   SiteInstance* guest_site_instance = NULL;
+  RenderProcessHost* embedder_process_host =
+      embedder_site_instance->GetProcess();
   // Validate that the partition id coming from the renderer is valid UTF-8,
   // since we depend on this in other parts of the code, such as FilePath
   // creation. If the validation fails, treat it as a bad message and kill the
@@ -51,7 +54,7 @@ BrowserPluginGuest* BrowserPluginGuestManager::CreateGuest(
   if (!IsStringUTF8(params.storage_partition_id)) {
     content::RecordAction(UserMetricsAction("BadMessageTerminate_BPGM"));
     base::KillProcess(
-        embedder_site_instance->GetProcess()->GetHandle(),
+        embedder_process_host->GetHandle(),
         content::RESULT_CODE_KILLED_BAD_MESSAGE, false);
     return NULL;
   }
@@ -70,7 +73,16 @@ BrowserPluginGuest* BrowserPluginGuestManager::CreateGuest(
     guest_site_instance =
         embedder_site_instance->GetRelatedSiteInstance(GURL(params.src));
   } else {
-    const std::string& host = embedder_site_instance->GetSiteURL().host();
+    // We usually require BrowserPlugins to be hosted by a storage isolated
+    // extension. We treat WebUI pages as a special case if they host the
+    // BrowserPlugin in a component extension iframe. In that case, we use the
+    // iframe's URL to determine the extension.
+    const GURL& embedder_site_url = embedder_site_instance->GetSiteURL();
+    GURL validated_frame_url(params.embedder_frame_url);
+    RenderViewHost::FilterURL(
+        embedder_process_host, false, &validated_frame_url);
+    const std::string& host = content::HasWebUIScheme(embedder_site_url) ?
+         validated_frame_url.host() : embedder_site_url.host();
 
     std::string url_encoded_partition = net::EscapeQueryParamValue(
         params.storage_partition_id, false);
@@ -78,11 +90,11 @@ BrowserPluginGuest* BrowserPluginGuestManager::CreateGuest(
     // a guest process in addition to which platform application the tag
     // belongs to and what storage partition is in use, rather than the URL
     // that the tag is being navigated to.
-    GURL guest_site(
-        base::StringPrintf("%s://%s/%s?%s", chrome::kGuestScheme,
-                            host.c_str(),
-                            params.persist_storage ? "persist" : "",
-                            url_encoded_partition.c_str()));
+    GURL guest_site(base::StringPrintf("%s://%s/%s?%s",
+                                       kGuestScheme,
+                                       host.c_str(),
+                                       params.persist_storage ? "persist" : "",
+                                       url_encoded_partition.c_str()));
 
     // If we already have a webview tag in the same app using the same storage
     // partition, we should use the same SiteInstance so the existing tag and

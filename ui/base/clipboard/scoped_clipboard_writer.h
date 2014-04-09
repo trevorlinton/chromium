@@ -28,7 +28,7 @@ namespace ui {
 class UI_EXPORT ScopedClipboardWriter {
  public:
   // Create an instance that is a simple wrapper around clipboard.
-  ScopedClipboardWriter(Clipboard* clipboard, Clipboard::Buffer buffer);
+  ScopedClipboardWriter(Clipboard* clipboard, ClipboardType type);
 
   ~ScopedClipboardWriter();
 
@@ -50,8 +50,8 @@ class UI_EXPORT ScopedClipboardWriter {
   void WriteBookmark(const string16& bookmark_title,
                      const std::string& url);
 
-  // Adds an html hyperlink (<a href>) to the clipboard. |anchor_text| should
-  // be escaped prior to being passed in.
+  // Adds an html hyperlink (<a href>) to the clipboard. |anchor_text| and
+  // |url| will be escaped as needed.
   void WriteHyperlink(const string16& anchor_text, const std::string& url);
 
   // Used by WebKit to determine whether WebKit wrote the clipboard last
@@ -77,7 +77,7 @@ class UI_EXPORT ScopedClipboardWriter {
   // vector, and pass it to Clipboard::WriteObjects() during object destruction.
   Clipboard::ObjectMap objects_;
   Clipboard* clipboard_;
-  Clipboard::Buffer buffer_;
+  ClipboardType type_;
 
   // We keep around the UTF-8 text of the URL in order to pass it to
   // Clipboard::DidWriteURL().

@@ -31,6 +31,7 @@
 #include "chrome/browser/download/download_service.h"
 #include "chrome/browser/download/download_service_factory.h"
 #include "chrome/browser/download/download_stats.h"
+#include "chrome/browser/extensions/devtools_util.h"
 #include "chrome/browser/extensions/extension_host.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_system.h"
@@ -89,10 +90,10 @@
 #include "third_party/WebKit/public/web/WebPluginAction.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/text/text_elider.h"
 #include "ui/gfx/favicon_size.h"
 #include "ui/gfx/point.h"
 #include "ui/gfx/size.h"
+#include "ui/gfx/text_elider.h"
 
 #if defined(ENABLE_PRINTING)
 #include "chrome/common/print_messages.h"
@@ -651,7 +652,7 @@ void RenderViewContextMenu::InitMenu() {
       AppendPrintItem();
   }
 
-  if (!IsDevToolsURL(params_.page_url))
+  if (!IsDevToolsURL(params_.page_url) && !is_guest_)
     AppendAllExtensionItems();
 
   AppendDeveloperItems();
@@ -742,8 +743,6 @@ void RenderViewContextMenu::AppendPopupExtensionItems() {
 }
 
 void RenderViewContextMenu::AppendPanelItems() {
-  const Extension* extension = GetExtension();
-
   bool has_selection = !params_.selection_text.empty();
 
   // Checking link should take precedence before checking selection since on Mac
@@ -756,10 +755,16 @@ void RenderViewContextMenu::AppendPanelItems() {
   else if (has_selection)
     AppendCopyItem();
 
-  // Only add extension items from this extension.
-  int index = 0;
-  extension_items_.AppendExtensionItems(extension->id(),
-                                        PrintableSelectionText(), &index);
+  // Avoid appending extension related items when |extension| is null. This
+  // happens when the panel is navigated to a url outside of the extension's
+  // package.
+  const Extension* extension = GetExtension();
+  if (extension) {
+    // Only add extension items from this extension.
+    int index = 0;
+    extension_items_.AppendExtensionItems(extension->id(),
+                                          PrintableSelectionText(), &index);
+  }
 }
 
 void RenderViewContextMenu::AddMenuItem(int command_id,
@@ -865,7 +870,8 @@ void RenderViewContextMenu::AppendImageItems() {
   const TemplateURL* const default_provider =
       TemplateURLServiceFactory::GetForProfile(profile_)->
           GetDefaultSearchProvider();
-  if (default_provider && !default_provider->image_url().empty() &&
+  if (params_.has_image_contents && default_provider &&
+      !default_provider->image_url().empty() &&
       default_provider->image_url_ref().IsValid()) {
     menu_model_.AddItem(
         IDC_CONTENT_CONTEXT_SEARCHWEBFORIMAGE,
@@ -1288,7 +1294,7 @@ bool RenderViewContextMenu::IsCommandIdEnabled(int id) const {
           (params_.src_url.scheme() != chrome::kChromeUIScheme);
 
     case IDC_CONTENT_CONTEXT_COPYIMAGE:
-      return !params_.is_image_blocked;
+      return params_.has_image_contents;
 
     // Media control commands should all be disabled if the player is in an
     // error state.
@@ -1790,8 +1796,7 @@ void RenderViewContextMenu::ExecuteCommand(int id, int event_flags) {
       DCHECK(platform_app);
       DCHECK(platform_app->is_platform_app());
 
-      extensions::ExtensionSystem::Get(profile_)->extension_service()->
-          InspectBackgroundPage(platform_app);
+      extensions::devtools_util::InspectBackgroundPage(platform_app, profile_);
       break;
     }
 
@@ -2031,7 +2036,7 @@ bool RenderViewContextMenu::IsDevCommandEnabled(int id) const {
 }
 
 string16 RenderViewContextMenu::PrintableSelectionText() {
-  return ui::TruncateString(params_.selection_text,
+  return gfx::TruncateString(params_.selection_text,
                             kMaxSelectionTextLength);
 }
 

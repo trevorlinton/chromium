@@ -34,6 +34,10 @@ void AwContentRendererClient::RenderThreadStarted() {
       ASCIIToUTF16(android_webview::kContentScheme));
   WebKit::WebSecurityPolicy::registerURLSchemeAsLocal(content_scheme);
 
+  WebKit::WebString aw_scheme(
+      ASCIIToUTF16(android_webview::kAndroidWebViewVideoPosterScheme));
+  WebKit::WebSecurityPolicy::registerURLSchemeAsSecure(aw_scheme);
+
   content::RenderThread* thread = content::RenderThread::Get();
 
   aw_render_process_observer_.reset(new AwRenderProcessObserver);
@@ -67,6 +71,7 @@ void AwContentRendererClient::GetNavigationErrorStrings(
     WebKit::WebFrame* /* frame */,
     const WebKit::WebURLRequest& failed_request,
     const WebKit::WebURLError& error,
+    const std::string& accept_languages,
     std::string* error_html,
     string16* error_description) {
   if (error_html) {
