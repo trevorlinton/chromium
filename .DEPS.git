@@ -520,7 +520,8 @@ hooks = [
     'action':
          [
     'python',
-    'src/build/gyp_chromium'
+    'src/build/gyp_chromium',
+    '-Dffmpeg_branding=Chrome -Dproprietary_codecs=1 -Dtarget_arch=x64 --no-circular-check src/content/content.gyp',
 ],
     'pattern':
          '.',
