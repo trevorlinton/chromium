@@ -75,7 +75,6 @@ class VideoCaptureDeviceMac : public VideoCaptureDevice {
   base::WeakPtr<VideoCaptureDeviceMac> weak_this_;
 
   id<PlatformVideoCapturingMac> capture_device_;
->>>>>>> upstream/node
 
   DISALLOW_COPY_AND_ASSIGN(VideoCaptureDeviceMac);
 };

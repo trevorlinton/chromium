@@ -18,8 +18,8 @@ vars = {
 deps = {
     'src/tint':
 	'https://github.com/trueinteractions/ti-sdk.git',
-    'src/third_party/node-ffi':
-	'https://github.com/rbranson/node-ffi.git',
+    #'src/third_party/node-ffi':
+	#'https://github.com/rbranson/node-ffi.git',
     'src/breakpad/src':
     #    Var('git_url') + '/external/google-breakpad/src.git@44fd3d06cb4b57b80a44004a2b7d5a7d28d96ebc',
         'https://github.com/rogerwang/breakpad.git@origin/rb32',
@@ -144,7 +144,8 @@ deps = {
     'src/v8':
         'https://github.com/trevorlinton/v8.git@origin/rb32',
     'src/third_party/node':
-        'https://github.com/trevorlinton/node-rw.git@origin/master',
+        'https://github.com/rogerwang/node.git@origin/master',
+	#'https://github.com/trevorlinton/node-rw.git@origin/master',
     'src/content/nw':
         'https://github.com/trevorlinton/node-webkit.git@origin/master',
 }

@@ -110,7 +110,7 @@ VideoCaptureDevice* VideoCaptureDevice::Create(const Name& device_name) {
 
 VideoCaptureDeviceMac::VideoCaptureDeviceMac(const Name& device_name)
     : device_name_(device_name),
-      observer_(NULL),
+      //observer_(NULL),
       sent_frame_info_(false),
       tried_to_square_pixels_(false),
       loop_proxy_(base::MessageLoopProxy::current()),
@@ -179,27 +179,27 @@ void VideoCaptureDeviceMac::AllocateAndStart(
   return;
 }
 
-void VideoCaptureDeviceMac::Stop() {
-  DCHECK_EQ(state_, kCapturing);
+//void VideoCaptureDeviceMac::Stop() {
+//  DCHECK_EQ(state_, kCapturing);
   //[capture_device_ stopCapture];
-  state_ = kAllocated;
-}
+  //state_ = kAllocated;
+//}
 
-void VideoCaptureDeviceMac::DeAllocate() {
-  if (state_ != kAllocated && state_ != kCapturing) {
-    return;
-  }
+//void VideoCaptureDeviceMac::DeAllocate() {
+  //if (state_ != kAllocated && state_ != kCapturing) {
+  //  return;
+  //}
   //if (state_ == kCapturing) {
   //  [capture_device_ stopCapture];
   //}
   //[capture_device_ setCaptureDevice:nil];
   //[capture_device_ setFrameReceiver:nil];
   //state_ = kCapturing;
-}
+//}
 
 void VideoCaptureDeviceMac::StopAndDeAllocate() {
-  DCHECK_EQ(loop_proxy_, base::MessageLoopProxy::current());
-  DCHECK(state_ == kCapturing || state_ == kError) << state_;
+ // DCHECK_EQ(loop_proxy_, base::MessageLoopProxy::current());
+ // DCHECK(state_ == kCapturing || state_ == kError) << state_;
   //[capture_device_ stopCapture];
 
   //[capture_device_ setCaptureDevice:nil];
@@ -210,12 +210,12 @@ void VideoCaptureDeviceMac::StopAndDeAllocate() {
 }
 
 bool VideoCaptureDeviceMac::Init() {
-  DCHECK_EQ(loop_proxy_, base::MessageLoopProxy::current());
-  DCHECK_EQ(state_, kNotInitialized);
+  //DCHECK_EQ(loop_proxy_, base::MessageLoopProxy::current());
+  //DCHECK_EQ(state_, kNotInitialized);
 
-  Names device_names;
-  GetDeviceNames(&device_names);
-  Name* found = device_names.FindById(device_name_.id());
+  //Names device_names;
+  //GetDeviceNames(&device_names);
+  //Name* found = device_names.FindById(device_name_.id());
   //if (!found)
     return false;
 

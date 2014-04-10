@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "content/browser/device_monitor_mac.h"
+#import <Foundation/Foundation.h>
 
 // #import <QTKit/QTKit.h>
 
@@ -76,13 +77,11 @@ void DeviceMonitorMac::QTMonitorImpl::Stop() {
   [nc removeObserver:device_removal_];
 */
 }
-
-void DeviceMonitorMac::QTMonitorImpl::OnDeviceChanged() {
 /*
+void DeviceMonitorMac::QTMonitorImpl::OnDeviceChanged() {
   [nc removeObserver:device_change_];
-*/
 }
-
+*/
 void DeviceMonitorMac::QTMonitorImpl::OnAttributeChanged(
     NSNotification* notification) {
  /* if ([[[notification userInfo] objectForKey:QTCaptureDeviceChangedAttributeKey]
@@ -120,7 +119,6 @@ void DeviceMonitorMac::QTMonitorImpl::OnDeviceChanged() {
 
   if (number_audio_devices_ != number_audio_devices)
     monitor_->NotifyDeviceChanged(base::SystemMonitor::DEVTYPE_AUDIO_CAPTURE);
-*/
 }
 
 DeviceMonitorMac::DeviceMonitorMac() {
