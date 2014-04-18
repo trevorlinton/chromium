@@ -2862,6 +2862,7 @@ LRESULT RenderWidgetHostViewWin::OnSessionChange(UINT message,
     case WTS_SESSION_UNLOCK:
       // Force a repaint to update the window contents.
       if (!render_widget_host_->is_hidden())
+      {
         InvalidateRect(NULL, FALSE);
         update_layered_window_ = true;
       }
