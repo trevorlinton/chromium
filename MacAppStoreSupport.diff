@@ -1,17 +1,16 @@
 diff --git a/chrome/browser/process_singleton_mac.cc b/chrome/browser/process_singleton_mac.cc
-index ae234d6..a491ecd 100644
+index ae234d6..9b9abaf 100644
 --- a/chrome/browser/process_singleton_mac.cc
 +++ b/chrome/browser/process_singleton_mac.cc
-@@ -36,7 +36,7 @@
+@@ -36,7 +36,6 @@
  // process will be considered as hung for some reason. The second process then
  // retrieves the process id from the symbol link and kills it by sending
  // SIGKILL. Then the second process starts as normal.
 -
-+#define MAC_APP_STORE
  #include "chrome/browser/process_singleton.h"
  
  #include <errno.h>
-@@ -898,14 +898,19 @@ bool ProcessSingleton::Create() {
+@@ -898,14 +897,19 @@ bool ProcessSingleton::Create() {
      return false;
    }
    // Setup the socket symlink and the two cookies.
@@ -32,7 +31,7 @@ index ae234d6..a491ecd 100644
        !SymlinkPath(cookie, cookie_path_) ||
        !SymlinkPath(cookie, remote_cookie_path)) {
      // We've already locked things, so we can't have lost the startup race,
-@@ -916,10 +921,18 @@ bool ProcessSingleton::Create() {
+@@ -916,10 +920,18 @@ bool ProcessSingleton::Create() {
      return false;
    }
  
@@ -53,19 +52,10 @@ index ae234d6..a491ecd 100644
      return false;
    }
 diff --git a/chrome/common/chrome_constants.cc b/chrome/common/chrome_constants.cc
-index c9a5a51..8e68cc0 100644
+index c9a5a51..93ee028 100644
 --- a/chrome/common/chrome_constants.cc
 +++ b/chrome/common/chrome_constants.cc
-@@ -8,6 +8,8 @@
- 
- #define FPL FILE_PATH_LITERAL
- 
-+#define MAC_APP_STORE
-+
- #if defined(OS_MACOSX)
- #define CHROMIUM_PRODUCT_STRING "Chromium"
- #if defined(GOOGLE_CHROME_BUILD)
-@@ -186,8 +188,18 @@ const base::FilePath::CharType kShortcutsDatabaseName[] = FPL("Shortcuts");
+@@ -186,8 +186,18 @@ const base::FilePath::CharType kShortcutsDatabaseName[] = FPL("Shortcuts");
  const base::FilePath::CharType kSingletonCookieFilename[] =
      FPL("SingletonCookie");
  const base::FilePath::CharType kSingletonLockFilename[] = FPL("SingletonLock");
@@ -75,340 +65,498 @@ index c9a5a51..8e68cc0 100644
 +// work around.
 +//
 +// See: https://developer.apple.com/library/mac/documentation/Darwin/Reference/Manpages/man4/unix.4.html
- const base::FilePath::CharType kSingletonSocketFilename[] =
--    FPL("SingletonSocket");
++const base::FilePath::CharType kSingletonSocketFilename[] =
 +    FPL("S");
 +#else
-+const base::FilePath::CharType kSingletonSocketFilename[] =
+ const base::FilePath::CharType kSingletonSocketFilename[] =
+-    FPL("SingletonSocket");
 +      FPL("SingletonSocket");
 +#endif
  const base::FilePath::CharType kSyncCredentialsFilename[] =
      FPL("Sync Credentials");
  const base::FilePath::CharType kThemePackFilename[] = FPL("Cached Theme.pak");
+diff --git a/content/browser/accessibility/browser_accessibility_cocoa.mm b/content/browser/accessibility/browser_accessibility_cocoa.mm
+index be9ff5b..09edb3e 100644
+--- a/content/browser/accessibility/browser_accessibility_cocoa.mm
++++ b/content/browser/accessibility/browser_accessibility_cocoa.mm
+@@ -17,10 +17,12 @@
+ #include "content/public/common/content_client.h"
+ #include "grit/webkit_strings.h"
+ 
++#ifndef MAC_APP_STORE
+ // See http://openradar.appspot.com/9896491. This SPI has been tested on 10.5,
+ // 10.6, and 10.7. It allows accessibility clients to observe events posted on
+ // this object.
+ extern "C" void NSAccessibilityUnregisterUniqueIdForUIElement(id element);
++#endif
+ 
+ using content::AccessibilityNodeData;
+ using content::BrowserAccessibility;
+@@ -317,7 +319,9 @@ NSDictionary* attributeToMethodNameMap = nil;
+ 
+ - (void)detach {
+   if (browserAccessibility_) {
++#ifndef MAC_APP_STORE
+     NSAccessibilityUnregisterUniqueIdForUIElement(self);
++#endif
+     browserAccessibility_ = NULL;
+   }
+ }
 diff --git a/content/browser/device_monitor_mac.mm b/content/browser/device_monitor_mac.mm
-index e30cd5b..73aa157 100644
+index e30cd5b..3630dba 100644
 --- a/content/browser/device_monitor_mac.mm
 +++ b/content/browser/device_monitor_mac.mm
-@@ -4,7 +4,8 @@
+@@ -4,7 +4,10 @@
  
  #include "content/browser/device_monitor_mac.h"
  
--#import <QTKit/QTKit.h>
-+// #import <QTKit/QTKit.h>
++#ifndef MAC_APP_STORE
+ #import <QTKit/QTKit.h>
++#endif
 +#import <Foundation/Foundation.h>
  
  #include "base/logging.h"
  
-@@ -43,6 +44,7 @@ DeviceMonitorMac::QTMonitorImpl::QTMonitorImpl(DeviceMonitorMac* monitor)
+@@ -43,6 +46,7 @@ DeviceMonitorMac::QTMonitorImpl::QTMonitorImpl(DeviceMonitorMac* monitor)
  }
  
  void DeviceMonitorMac::QTMonitorImpl::Start() {
-+/*
++#ifndef MAC_APP_STORE
    NSNotificationCenter* nc = [NSNotificationCenter defaultCenter];
    device_arrival_ =
        [nc addObserverForName:QTCaptureDeviceWasConnectedNotification
-@@ -64,9 +66,11 @@ void DeviceMonitorMac::QTMonitorImpl::Start() {
+@@ -64,9 +68,11 @@ void DeviceMonitorMac::QTMonitorImpl::Start() {
                         queue:nil
                    usingBlock:^(NSNotification* notification) {
                        OnAttributeChanged(notification);}];
-+*/
++#endif
  }
  
  void DeviceMonitorMac::QTMonitorImpl::Stop() {
-+/*
++#ifndef MAC_APP_STORE
    if (!monitor_)
      return;
  
-@@ -74,16 +78,20 @@ void DeviceMonitorMac::QTMonitorImpl::Stop() {
+@@ -74,16 +80,20 @@ void DeviceMonitorMac::QTMonitorImpl::Stop() {
    [nc removeObserver:device_arrival_];
    [nc removeObserver:device_removal_];
    [nc removeObserver:device_change_];
-+*/
++#endif
  }
  
  void DeviceMonitorMac::QTMonitorImpl::OnAttributeChanged(
      NSNotification* notification) {
-+/*
++#ifndef MAC_APP_STORE
    if ([[[notification userInfo] objectForKey:QTCaptureDeviceChangedAttributeKey]
            isEqualToString:QTCaptureDeviceSuspendedAttribute])
      OnDeviceChanged();
-+*/
++#endif
  }
  
  void DeviceMonitorMac::QTMonitorImpl::CountDevices() {
-+/*
++#ifndef MAC_APP_STORE
    NSArray* devices = [QTCaptureDevice inputDevices];
    number_video_devices_ = 0;
    number_audio_devices_ = 0;
-@@ -99,9 +107,11 @@ void DeviceMonitorMac::QTMonitorImpl::CountDevices() {
+@@ -99,9 +109,11 @@ void DeviceMonitorMac::QTMonitorImpl::CountDevices() {
          [device hasMediaType:QTMediaTypeMuxed])
        ++number_audio_devices_;
    }
-+*/
++#endif
  }
  
  void DeviceMonitorMac::QTMonitorImpl::OnDeviceChanged() {
-+/*
++#ifndef MAC_APP_STORE
    int number_video_devices = number_video_devices_;
    int number_audio_devices = number_audio_devices_;
    CountDevices();
-@@ -111,21 +121,24 @@ void DeviceMonitorMac::QTMonitorImpl::OnDeviceChanged() {
+@@ -111,21 +123,28 @@ void DeviceMonitorMac::QTMonitorImpl::OnDeviceChanged() {
  
    if (number_audio_devices_ != number_audio_devices)
      monitor_->NotifyDeviceChanged(base::SystemMonitor::DEVTYPE_AUDIO_CAPTURE);
-+*/
++#endif
  }
  
  DeviceMonitorMac::DeviceMonitorMac() {
-+/*
++#ifndef MAC_APP_STORE
    qt_monitor_.reset(new QTMonitorImpl(this));
    qt_monitor_->Start();
-+*/
++#endif
  }
  
  DeviceMonitorMac::~DeviceMonitorMac() {
--  qt_monitor_->Stop();
-+//  qt_monitor_->Stop();
++#ifndef MAC_APP_STORE
+   qt_monitor_->Stop();
++#endif
  }
  
  void DeviceMonitorMac::NotifyDeviceChanged(
      base::SystemMonitor::DeviceType type) {
    // TODO(xians): Remove the global variable for SystemMonitor.
--  base::SystemMonitor::Get()->ProcessDevicesChanged(type);
-+//  base::SystemMonitor::Get()->ProcessDevicesChanged(type);
++#ifndef MAC_APP_STORE
+   base::SystemMonitor::Get()->ProcessDevicesChanged(type);
++#endif
  }
  
  }  // namespace content
+diff --git a/content/browser/renderer_host/render_widget_host_view_mac.mm b/content/browser/renderer_host/render_widget_host_view_mac.mm
+index 71dfb16..384c9c4 100644
+--- a/content/browser/renderer_host/render_widget_host_view_mac.mm
++++ b/content/browser/renderer_host/render_widget_host_view_mac.mm
+@@ -3379,9 +3379,12 @@ static const NSTrackingRectTag kTrackingRectTag = 0xBADFACE;
+ // Since this implementation doesn't have to wait any IPC calls, this doesn't
+ // make any key-typing jank. --hbono 7/23/09
+ //
++
++#ifndef MAC_APP_STORE
+ extern "C" {
+ extern NSString *NSTextInputReplacementRangeAttributeName;
+ }
++#endif
+ 
+ - (NSArray *)validAttributesForMarkedText {
+   // This code is just copied from WebKit except renaming variables.
+@@ -3390,8 +3393,10 @@ extern NSString *NSTextInputReplacementRangeAttributeName;
+         NSUnderlineStyleAttributeName,
+         NSUnderlineColorAttributeName,
+         NSMarkedClauseSegmentAttributeName,
++#ifndef MAC_APP_STORE
+         NSTextInputReplacementRangeAttributeName,
+-        nil]);
++#endif
++				nil]);
+   }
+   return validAttributesForMarkedText_.get();
+ }
+diff --git a/content/renderer/renderer_main_platform_delegate_mac.mm b/content/renderer/renderer_main_platform_delegate_mac.mm
+index b121144..610f838 100644
+--- a/content/renderer/renderer_main_platform_delegate_mac.mm
++++ b/content/renderer/renderer_main_platform_delegate_mac.mm
+@@ -20,6 +20,7 @@
+ #include "content/common/sandbox_init_mac.h"
+ #include "third_party/mach_override/mach_override.h"
+ 
++#ifndef MAC_APP_STORE
+ extern "C" {
+ // SPI logging functions for CF that are exported externally.
+ void CFLog(int32_t level, CFStringRef format, ...);
+@@ -27,6 +28,7 @@ void _CFLogvEx(void* log_func, void* copy_desc_func,
+     CFDictionaryRef format_options, int32_t level,
+     CFStringRef format, va_list args);
+ }  // extern "C"
++#endif
+ 
+ namespace content {
+ 
+@@ -64,7 +66,9 @@ void CrRendererCFLog(int32_t level, CFStringRef format, ...) {
+ 
+   va_list args;
+   va_start(args, format);
++#ifndef MAC_APP_STORE
+   _CFLogvEx(NULL, NULL, NULL, level, format, args);
++#endif
+   va_end(args);
+ }
+ 
+@@ -127,6 +131,7 @@ bool RendererMainPlatformDelegate::InitSandboxTests(bool no_sandbox) {
+ }
+ 
+ bool RendererMainPlatformDelegate::EnableSandbox() {
++#ifndef MAC_APP_STORE
+   // rdar://9251340 http://openradar.me/9251340
+   // See http://crbug.com/31225 and http://crbug.com/152566
+   // To check if this is broken:
+@@ -155,10 +160,10 @@ bool RendererMainPlatformDelegate::EnableSandbox() {
+     err = mach_override_ptr((void*)&CFLog, (void*)&CrRendererCFLog, NULL);
+     CHECK_EQ(err_none, err);
+   }
+-
++#endif
+   // Enable the sandbox.
+   bool sandbox_initialized = InitializeSandbox();
+-
++#ifndef MAC_APP_STORE
+   if (needs_ime_hack) {
+     // After the sandbox is initialized, call into TIS. Doing this before
+     // the sandbox is in place will open up renderer access to the
+@@ -172,7 +177,7 @@ bool RendererMainPlatformDelegate::EnableSandbox() {
+     g_text_input_services_source_list_ = CFArrayCreate(kCFAllocatorDefault,
+         source_list, arraysize(source_list), &kCFTypeArrayCallBacks);
+   }
+-
++#endif
+   return sandbox_initialized;
+ }
+ 
 diff --git a/media/media.gyp b/media/media.gyp
-index d346dac4..bcdf216 100644
+index d346dac4..6eb680f 100644
 --- a/media/media.gyp
 +++ b/media/media.gyp
-@@ -401,8 +401,8 @@
-         'video/capture/mac/platform_video_capturing_mac.h',
-         'video/capture/mac/video_capture_device_mac.h',
-         'video/capture/mac/video_capture_device_mac.mm',
--        'video/capture/mac/video_capture_device_qtkit_mac.h',
--        'video/capture/mac/video_capture_device_qtkit_mac.mm',
-+        #'video/capture/mac/video_capture_device_qtkit_mac.h',
-+        #'video/capture/mac/video_capture_device_qtkit_mac.mm',
-         'video/capture/video_capture.h',
-         'video/capture/video_capture_device.cc',
-         'video/capture/video_capture_device.h',
-@@ -725,7 +725,7 @@
+@@ -725,6 +725,9 @@
                '$(SDKROOT)/System/Library/Frameworks/CoreMIDI.framework',
                '$(SDKROOT)/System/Library/Frameworks/CoreVideo.framework',
                '$(SDKROOT)/System/Library/Frameworks/OpenGL.framework',
--              '$(SDKROOT)/System/Library/Frameworks/QTKit.framework',
-+              #'$(SDKROOT)/System/Library/Frameworks/QTKit.framework',
++	      # This may need to be removed for support for the MAC_APP_STORE
++	      # if MAC_APP_STORE is enabled this line can be removed as the 
++	      # source code doesn't require it.
+               '$(SDKROOT)/System/Library/Frameworks/QTKit.framework',
              ],
            },
-         }],
 diff --git a/media/video/capture/mac/video_capture_device_mac.h b/media/video/capture/mac/video_capture_device_mac.h
-index adfd4c7..54834b4 100644
+index adfd4c7..2509d6b 100644
 --- a/media/video/capture/mac/video_capture_device_mac.h
 +++ b/media/video/capture/mac/video_capture_device_mac.h
-@@ -18,7 +18,7 @@
+@@ -18,8 +18,9 @@
  #include "media/video/capture/video_capture_device.h"
  #include "media/video/capture/video_capture_types.h"
  
--@protocol PlatformVideoCapturingMac;
-+// @protocol PlatformVideoCapturingMac;
- 
++#ifndef MAC_APP_STORE
+ @protocol PlatformVideoCapturingMac;
+-
++#endif
  namespace media {
  
-@@ -74,7 +74,7 @@ class VideoCaptureDeviceMac : public VideoCaptureDevice {
+ // Called by VideoCaptureManager to open, close and start, stop video capture
+@@ -73,9 +74,9 @@ class VideoCaptureDeviceMac : public VideoCaptureDevice {
+   // after the VideoCaptureDeviceMac is destroyed.
    base::WeakPtrFactory<VideoCaptureDeviceMac> weak_factory_;
    base::WeakPtr<VideoCaptureDeviceMac> weak_this_;
- 
--  id<PlatformVideoCapturingMac> capture_device_;
-+  //id<PlatformVideoCapturingMac> capture_device_;
- 
+-
++#ifndef MAC_APP_STORE
+   id<PlatformVideoCapturingMac> capture_device_;
+-
++#endif
    DISALLOW_COPY_AND_ASSIGN(VideoCaptureDeviceMac);
  };
+ 
 diff --git a/media/video/capture/mac/video_capture_device_mac.mm b/media/video/capture/mac/video_capture_device_mac.mm
-index 77d30e9..99ced68 100644
+index 77d30e9..b52649a 100644
 --- a/media/video/capture/mac/video_capture_device_mac.mm
 +++ b/media/video/capture/mac/video_capture_device_mac.mm
-@@ -9,7 +9,7 @@
+@@ -9,8 +9,9 @@
  #include "base/logging.h"
  #include "base/time/time.h"
  #import "media/video/capture/mac/platform_video_capturing_mac.h"
--#include "media/video/capture/mac/video_capture_device_qtkit_mac.h"
-+// #include "media/video/capture/mac/video_capture_device_qtkit_mac.h"
- 
++#ifndef MAC_APP_STORE
+ #include "media/video/capture/mac/video_capture_device_qtkit_mac.h"
+-
++#endif
  namespace {
  
-@@ -65,6 +65,7 @@ void GetBestMatchSupportedResolution(int* width, int* height) {
+ const int kMinFrameRate = 1;
+@@ -65,6 +66,7 @@ void GetBestMatchSupportedResolution(int* width, int* height) {
  namespace media {
  
  void VideoCaptureDevice::GetDeviceNames(Names* device_names) {
-+/*
++#ifndef MAC_APP_STORE
    // Loop through all available devices and add to |device_names|.
    device_names->clear();
  
-@@ -74,6 +75,7 @@ void VideoCaptureDevice::GetDeviceNames(Names* device_names) {
+@@ -74,6 +76,7 @@ void VideoCaptureDevice::GetDeviceNames(Names* device_names) {
                [key UTF8String]);
      device_names->push_back(name);
    }
-+*/
++#endif
  }
  
  // static
-@@ -83,6 +85,7 @@ void VideoCaptureDevice::GetDeviceSupportedFormats(const Name& device,
+@@ -83,6 +86,7 @@ void VideoCaptureDevice::GetDeviceSupportedFormats(const Name& device,
  }
  
  const std::string VideoCaptureDevice::Name::GetModel() const {
-+/*
++#ifndef MAC_APP_STORE
    // Both PID and VID are 4 characters.
    if (unique_id_.size() < 2 * kVidPidSize) {
      return "";
-@@ -95,9 +98,12 @@ const std::string VideoCaptureDevice::Name::GetModel() const {
+@@ -95,9 +99,13 @@ const std::string VideoCaptureDevice::Name::GetModel() const {
    std::string id_product = unique_id_.substr(pid_location, kVidPidSize);
  
    return id_vendor + ":" + id_product;
-+*/
++#else
 +  return "";
++#endif
  }
  
  VideoCaptureDevice* VideoCaptureDevice::Create(const Name& device_name) {
-+/*
++#ifndef MAC_APP_STORE
    VideoCaptureDeviceMac* capture_device =
        new VideoCaptureDeviceMac(device_name);
    if (!capture_device->Init()) {
-@@ -106,6 +112,8 @@ VideoCaptureDevice* VideoCaptureDevice::Create(const Name& device_name) {
+@@ -106,6 +114,9 @@ VideoCaptureDevice* VideoCaptureDevice::Create(const Name& device_name) {
      capture_device = NULL;
    }
    return capture_device;
-+*/
++#else
 +  return NULL;
++#endif
  }
  
  VideoCaptureDeviceMac::VideoCaptureDeviceMac(const Name& device_name)
-@@ -115,18 +123,20 @@ VideoCaptureDeviceMac::VideoCaptureDeviceMac(const Name& device_name)
+@@ -115,18 +126,25 @@ VideoCaptureDeviceMac::VideoCaptureDeviceMac(const Name& device_name)
        loop_proxy_(base::MessageLoopProxy::current()),
        state_(kNotInitialized),
        weak_factory_(this),
 -      weak_this_(weak_factory_.GetWeakPtr()),
 -      capture_device_(nil) {
-+      weak_this_(weak_factory_.GetWeakPtr()) //,
-+      //capture_device_(nil) {
++      weak_this_(weak_factory_.GetWeakPtr())
++#ifndef MAC_STORE_APP
++      ,capture_device_(nil) 
++#endif
++{
 +     {
  }
  
  VideoCaptureDeviceMac::~VideoCaptureDeviceMac() {
--  DCHECK_EQ(loop_proxy_, base::MessageLoopProxy::current());
--  [capture_device_ release];
-+//  DCHECK_EQ(loop_proxy_, base::MessageLoopProxy::current());
-+//  [capture_device_ release];
++#ifndef MAC_APP_STORE
+   DCHECK_EQ(loop_proxy_, base::MessageLoopProxy::current());
+   [capture_device_ release];
++#endif
  }
  
  void VideoCaptureDeviceMac::AllocateAndStart(
      const VideoCaptureCapability& capture_format,
      scoped_ptr<VideoCaptureDevice::Client> client) {
-+/*
++#ifndef MAC_APP_STORE
    DCHECK_EQ(loop_proxy_, base::MessageLoopProxy::current());
    if (state_ != kIdle) {
      return;
-@@ -181,9 +191,11 @@ void VideoCaptureDeviceMac::AllocateAndStart(
+@@ -181,9 +199,11 @@ void VideoCaptureDeviceMac::AllocateAndStart(
    }
  
    state_ = kCapturing;
-+*/
++#endif
  }
  
  void VideoCaptureDeviceMac::StopAndDeAllocate() {
-+/*
++#ifndef MAC_APP_STORE
    DCHECK_EQ(loop_proxy_, base::MessageLoopProxy::current());
    DCHECK(state_ == kCapturing || state_ == kError) << state_;
    [capture_device_ stopCapture];
-@@ -193,9 +205,11 @@ void VideoCaptureDeviceMac::StopAndDeAllocate() {
+@@ -193,9 +213,11 @@ void VideoCaptureDeviceMac::StopAndDeAllocate() {
    client_.reset();
    state_ = kIdle;
    tried_to_square_pixels_ = false;
-+*/
++#endif
  }
  
  bool VideoCaptureDeviceMac::Init() {
-+/*
++#ifndef MAC_APP_STORE
    DCHECK_EQ(loop_proxy_, base::MessageLoopProxy::current());
    DCHECK_EQ(state_, kNotInitialized);
  
-@@ -212,6 +226,8 @@ bool VideoCaptureDeviceMac::Init() {
+@@ -212,6 +234,9 @@ bool VideoCaptureDeviceMac::Init() {
  
    state_ = kIdle;
    return true;
-+*/
++#else
 +  return false;
++#endif
  }
  
  void VideoCaptureDeviceMac::ReceiveFrame(
-@@ -220,6 +236,7 @@ void VideoCaptureDeviceMac::ReceiveFrame(
+@@ -220,6 +245,7 @@ void VideoCaptureDeviceMac::ReceiveFrame(
      const VideoCaptureCapability& frame_info,
      int aspect_numerator,
      int aspect_denominator) {
-+/*
++#ifndef MAC_APP_STORE
    // This method is safe to call from a device capture thread,
    // i.e. any thread controlled by QTKit.
  
-@@ -291,22 +308,24 @@ void VideoCaptureDeviceMac::ReceiveFrame(
+@@ -291,22 +317,28 @@ void VideoCaptureDeviceMac::ReceiveFrame(
  
    client_->OnIncomingCapturedFrame(
        video_frame, video_frame_length, base::Time::Now(), 0, false, false);
-+*/
++#endif
  }
  
  void VideoCaptureDeviceMac::ReceiveError(const std::string& reason) {
--  loop_proxy_->PostTask(FROM_HERE,
--      base::Bind(&VideoCaptureDeviceMac::SetErrorState, weak_this_,
--          reason));
-+//  loop_proxy_->PostTask(FROM_HERE,
-+//      base::Bind(&VideoCaptureDeviceMac::SetErrorState, weak_this_,
-+//          reason));
++#ifndef MAC_APP_STORE
+   loop_proxy_->PostTask(FROM_HERE,
+       base::Bind(&VideoCaptureDeviceMac::SetErrorState, weak_this_,
+           reason));
++#endif
  }
  
  void VideoCaptureDeviceMac::SetErrorState(const std::string& reason) {
--  DCHECK_EQ(loop_proxy_, base::MessageLoopProxy::current());
--  DLOG(ERROR) << reason;
--  state_ = kError;
--  client_->OnError();
-+//  DCHECK_EQ(loop_proxy_, base::MessageLoopProxy::current());
-+//  DLOG(ERROR) << reason;
-+//  state_ = kError;
-+//  client_->OnError();
++#ifndef MAC_APP_STORE
+   DCHECK_EQ(loop_proxy_, base::MessageLoopProxy::current());
+   DLOG(ERROR) << reason;
+   state_ = kError;
+   client_->OnError();
++#endif
  }
  
  bool VideoCaptureDeviceMac::UpdateCaptureResolution() {
-+/*
++#ifndef MAC_APP_STORE
   if (![capture_device_ setCaptureHeight:current_settings_.height
                                    width:current_settings_.width
                                frameRate:current_settings_.frame_rate]) {
-@@ -314,6 +333,8 @@ bool VideoCaptureDeviceMac::UpdateCaptureResolution() {
+@@ -314,6 +346,9 @@ bool VideoCaptureDeviceMac::UpdateCaptureResolution() {
     return false;
   }
   return true;
-+*/
++#else
 + return false;
++#endif
  }
  
  } // namespace media
+diff --git a/media/video/capture/mac/video_capture_device_qtkit_mac.h b/media/video/capture/mac/video_capture_device_qtkit_mac.h
+index f3bdcc5..266f536 100644
+--- a/media/video/capture/mac/video_capture_device_qtkit_mac.h
++++ b/media/video/capture/mac/video_capture_device_qtkit_mac.h
+@@ -5,6 +5,8 @@
+ // VideoCaptureDeviceQTKit implements all QTKit related code for
+ // communicating with a QTKit capture device.
+ 
++#ifndef MAC_APP_STORE
++
+ #ifndef MEDIA_VIDEO_CAPTURE_MAC_VIDEO_CAPTURE_DEVICE_MAC_QTKIT_H_
+ #define MEDIA_VIDEO_CAPTURE_MAC_VIDEO_CAPTURE_DEVICE_MAC_QTKIT_H_
+ 
+@@ -66,3 +68,5 @@ namespace media {
+ @end
+ 
+ #endif  // MEDIA_VIDEO_CAPTURE_MAC_VIDEO_CAPTURE_DEVICE_MAC_QTKIT_H_
++
++#endif // MAC_APP_STORE
+diff --git a/media/video/capture/mac/video_capture_device_qtkit_mac.mm b/media/video/capture/mac/video_capture_device_qtkit_mac.mm
+index aa8ae4e..a549c36 100644
+--- a/media/video/capture/mac/video_capture_device_qtkit_mac.mm
++++ b/media/video/capture/mac/video_capture_device_qtkit_mac.mm
+@@ -2,6 +2,8 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
++#ifndef MAC_APP_STORE
++
+ #import "media/video/capture/mac/video_capture_device_qtkit_mac.h"
+ 
+ #import <QTKit/QTKit.h>
+@@ -320,3 +322,5 @@
+ }
+ 
+ @end
++
++#endif // MAC_APP_STORE
 diff --git a/net/dns/dns_config_service_posix.cc b/net/dns/dns_config_service_posix.cc
-index baf9172..adbeec5 100644
+index baf9172..ff68105 100644
 --- a/net/dns/dns_config_service_posix.cc
 +++ b/net/dns/dns_config_service_posix.cc
 @@ -121,10 +121,17 @@ class ConfigWatcher {
    typedef base::Callback<void(bool succeeded)> CallbackType;
  
    bool Watch(const CallbackType& callback) {
-+#if 0
-+		// this is disabled for acceptance to the mac app store,
-+		// entitlements do not allow atching sensitive file system
-+		// data in /etc/
++#ifndef MAC_APP_STORE
++    // this is disabled for acceptance to the mac app store,
++    // entitlements do not allow atching sensitive file system
++    // data in /etc/
      callback_ = callback;
      return watcher_.Watch(base::FilePath(kFilePathConfig), false,
                            base::Bind(&ConfigWatcher::OnCallback,
                                       base::Unretained(this)));
 +#else
-+		return false;
++    return false;
 +#endif
    }
  
@@ -417,10 +565,10 @@ index baf9172..adbeec5 100644
                                  DNS_CONFIG_WATCH_FAILED_TO_START_CONFIG,
                                  DNS_CONFIG_WATCH_MAX);
      }
-+#if 0
-+		// this is disabled for acceptance to the mac app store,
-+		// entitlements do not allow watching sensitive file system
-+		// data in /etc/
++#ifndef MAC_APP_STORE
++    // this is disabled for acceptance to the mac app store,
++    // entitlements do not allow watching sensitive file system
++    // data in /etc/
      if (!hosts_watcher_.Watch(base::FilePath(kFilePathHosts), false,
                                base::Bind(&Watcher::OnHostsChanged,
                                           base::Unretained(this)))) {
@@ -432,3 +580,17 @@ index baf9172..adbeec5 100644
      return success;
    }
  
+diff --git a/ui/shell_dialogs/select_file_dialog_mac.mm b/ui/shell_dialogs/select_file_dialog_mac.mm
+index dcbc93f..2b159e4 100644
+--- a/ui/shell_dialogs/select_file_dialog_mac.mm
++++ b/ui/shell_dialogs/select_file_dialog_mac.mm
+@@ -403,7 +403,9 @@ bool SelectFileDialogImpl::HasMultipleFileTypeChoicesImpl() {
+         index = 1;
+       }
+     } else {
++#ifndef MAC_APP_STORE
+       CHECK([panel isKindOfClass:[NSOpenPanel class]]);
++#endif
+       NSArray* urls = [static_cast<NSOpenPanel*>(panel) URLs];
+       for (NSURL* url in urls)
+         if ([url isFileURL])
